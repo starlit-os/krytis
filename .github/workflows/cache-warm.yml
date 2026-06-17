@@ -29,6 +29,12 @@ jobs:
             python = "3.12"
             uv = "latest"
 
+            [deps.uv]
+            auto = true
+            sources = ["pyproject.toml", "uv.lock"]
+            outputs = [".venv/"]
+            run = "uv sync"
+
             [bootstrap.packages]
             "apt:bubblewrap" = "latest"
             "apt:lzip" = "latest"
@@ -66,6 +72,9 @@ jobs:
 
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Install Python dependencies
+        run: mise deps
 
       - name: Build image
         run: |
