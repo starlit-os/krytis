@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Run bootc container lint via Containerfile — run load-image first"
+#USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image tag for the built container"
+
+set -euo pipefail
+
+TAG="${usage_tag:-localhost/krytis:latest}"
+
+echo "==> Building Containerfile → ${TAG} (runs bootc container lint inside)..."
+podman build --squash-all -t "${TAG}" -f Containerfile .
+echo "==> Lint passed. Image tagged as ${TAG}."
