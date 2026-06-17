@@ -6,7 +6,7 @@ sources:
   ref: 9c3d737fed7d822941a3bf5c62f621de3fe8e50a8ebe57c9904d432989432fa3
 
 variables:
-  version: "7.0.12"
+  version: "7.0.10"
   pkgrel: "1"
   strip-binaries: ""
 
