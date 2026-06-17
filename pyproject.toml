@@ -1,0 +1,17 @@
+[project]
+name = "krytis"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "buildstream>=2.5.0",
+  "buildstream-plugins>=2.5.0",
+  "buildstream-plugins-community>=2.3.1",
+  # click 8.3.0 breaks BST 2.5.x internal API — do not unpin without testing
+  "click==8.2.1",
+  # dulwich breaks API in patch releases — pin and test before bumping
+  "dulwich==0.24.0",
+  # required by buildstream-plugins-community git_repo source plugin
+  "requests",
+  # required by buildstream-plugins-community cargo2 source plugin
+  "tomlkit",
+]

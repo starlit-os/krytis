@@ -146,6 +146,54 @@ Dakota's workflows are the reference implementation. Key adaptations:
 - **No `next` branch job** — see track-next-junctions note above
 - **Blacksmith runners** for cache-warm; `ubuntu-24.04` for tracking jobs
 
+## mise bootstrap for system packages (cache-warm)
+
+`cache-warm.yml` installs apt packages (bubblewrap, lzip, xz-utils, bzip2, gzip)
+via `mise bootstrap` rather than a bare `apt-get` step. The config is embedded
+inline using `jdx/mise-action`'s `mise_toml` input with `bootstrap: true` and
+`bootstrap_skip: dotfiles,defaults,launchd,systemd,user,task,final-hook` (leaving
+only the packages and tools steps).
+
+**Caveat — `mise_toml` overwrites `mise.toml`:** the action writes the inline
+content over the workspace `mise.toml` before running bootstrap. This means any
+tools declared in the project's `mise.toml` must also be listed in the workflow's
+`mise_toml` block, or they won't be installed for that job. Currently only
+`usage = "latest"` is in `[tools]`, but when Python and uv are added for native
+BST, they must be mirrored here too.
+
+**Note — `bootstrap` action input not yet released:** the `bootstrap: true` and
+`bootstrap_skip` inputs to `jdx/mise-action` are on the default branch (added in
+commit `5f61b63`, "feat: support bootstrap mode #522", 2026-06-17) but not in any
+released tag as of v4.1.0. Until a release ships them, the workflow calls `mise bootstrap --yes` as a plain
+shell step after the action. The `--skip` flag is also unreleased, but since only
+`[tools]` and `[bootstrap.packages]` are configured in the inline `mise_toml`,
+all other bootstrap steps (dotfiles, systemd, etc.) are no-ops.
+When Renovate bumps `mise-action` to a version that includes bootstrap support,
+consolidate back to a single action step with `bootstrap: true`.
+
+## Future improvements
+
+### Pin mise tool versions and commit mise.lock
+
+`mise.toml` and the inline `mise_toml` blocks in CI workflows currently use
+`"latest"` for all tools (`usage`, `python`, `uv`). This means tool versions
+are unpinned and can silently change between runs.
+
+Improvement: pin to explicit versions (e.g. `python = "3.12.10"`,
+`uv = "0.7.13"`) and commit `mise.lock` for reproducible installs. Add
+`"mise"` to `enabledManagers` in `renovate.json5` so Renovate opens PRs for
+tool version bumps — same pattern as GitHub Actions SHA pinning.
+
+### Drop inline mise_toml from CI workflows
+
+`cache-warm.yml` uses the `mise_toml` input to inject an inline config because
+`jdx/mise-action` overwrites the workspace `mise.toml` before running. Once
+tool versions are pinned and `[settings]`, `[deps.uv]`, and
+`[bootstrap.packages]` are all in the repo's `mise.toml`, the inline block
+becomes redundant — the action will read the project file directly. At that
+point, remove `mise_toml` from the action inputs and let the repo `mise.toml`
+be the single source of truth for both local dev and CI.
+
 ## Python dependency notes
 
 Mirrors zirconium-hawaii's package set (dropping `pgpy13`, which is specific to

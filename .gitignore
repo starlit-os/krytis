@@ -24,6 +24,9 @@ debug-session/
 cosign.key
 files/boot-keys/
 
+# Python venv (created by uv sync / mise deps)
+.venv/
+
 # Mise local overrides
 .mise.local.toml
 

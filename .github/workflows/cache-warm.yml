@@ -1,0 +1,98 @@
+name: Warm BST Cache
+
+on:
+  schedule:
+    - cron: '0 6 * * 1-5'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: krytis-cache-warm
+  cancel-in-progress: false
+
+jobs:
+  warm-cache:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup mise
+        uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4.1.0
+        with:
+          experimental: true
+          mise_toml: |
+            [tools]
+            usage = "latest"
+            python = "3.12"
+            uv = "latest"
+
+            [settings]
+            python.uv_venv_auto = "create|source"
+
+            [deps.uv]
+            auto = true
+            sources = ["pyproject.toml", "uv.lock"]
+            outputs = [".venv/"]
+            run = "uv sync"
+
+            [bootstrap.packages]
+            "apt:bubblewrap" = "latest"
+            "apt:lzip" = "latest"
+            "apt:xz-utils" = "latest"
+            "apt:bzip2" = "latest"
+            "apt:gzip" = "latest"
+            "apt:patch" = "latest"
+
+      - name: Install system dependencies
+        run: mise bootstrap --yes
+
+      - name: Generate image version
+        run: mise run generate-image-version
+
+      - name: Configure BuildStream
+        run: |
+          mkdir -p ~/.config
+          cat > ~/.config/buildstream.conf <<'EOF'
+          scheduler:
+            fetchers: 10
+            builders: 4
+            pushers: 5
+            network-retries: 3
+          logging:
+            key-length: 8
+            verbose: False
+          cache:
+            quota: 4G
+          EOF
+
+      - name: Restore BST cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            ~/.cache/buildstream
+            !~/.cache/buildstream/sources
+          key: bst-warm-${{ hashFiles('elements/gnome-build-meta.bst', 'elements/freedesktop-sdk.bst', 'uv.lock') }}
+          restore-keys: |
+            bst-warm-
+
+      - name: Enable unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Build image
+        run: |
+          set +e
+          bst -o x86_64_v3 true --no-interactive build oci/krytis/image.bst
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::Cache warm build failed (rc=${rc}) — non-blocking"
+          fi
+          exit 0
+
+      - name: Report cached elements
+        if: always()
+        run: |
+          CACHED=$(bst show --deps all --format '%{name} %{state}' oci/krytis/image.bst 2>/dev/null | grep -c "cached" || echo 0)
+          echo "::notice::Cached elements: ${CACHED}"
