@@ -25,6 +25,8 @@ jobs:
           mise_toml: |
             [tools]
             usage = "latest"
+            python = "3.12"
+            uv = "latest"
 
             [bootstrap.packages]
             "apt:bubblewrap" = "latest"
