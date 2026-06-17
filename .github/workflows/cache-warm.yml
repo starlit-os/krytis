@@ -1,0 +1,70 @@
+name: Warm BST Cache
+
+on:
+  schedule:
+    - cron: '0 6 * * 1-5'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: krytis-cache-warm
+  cancel-in-progress: false
+
+jobs:
+  warm-cache:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Generate image version
+        run: mise run generate-image-version
+
+      - name: Configure BuildStream
+        run: |
+          mkdir -p ~/.config
+          cat > ~/.config/buildstream.conf <<'EOF'
+          scheduler:
+            fetchers: 10
+            builders: 4
+            pushers: 5
+            network-retries: 3
+          logging:
+            key-length: 8
+            verbose: False
+          EOF
+
+      - name: Restore BST cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/buildstream
+          key: bst-warm-${{ hashFiles('elements/gnome-build-meta.bst', 'elements/freedesktop-sdk.bst', 'uv.lock') }}
+          restore-keys: |
+            bst-warm-
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y bubblewrap lzip xz-utils bzip2 gzip
+
+      - name: Enable unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build image
+        run: |
+          set +e
+          uv run bst -o x86_64_v3 true --no-interactive build oci/krytis/image.bst
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::Cache warm build failed (rc=${rc}) — non-blocking"
+          fi
+          exit 0
+
+      - name: Report cached elements
+        if: always()
+        run: |
+          CACHED=$(uv run bst show --deps all --format '%{name} %{state}' oci/krytis/image.bst 2>/dev/null | grep -c "cached" || echo 0)
+          echo "::notice::Cached elements: ${CACHED}"
