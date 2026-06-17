@@ -146,6 +146,21 @@ Dakota's workflows are the reference implementation. Key adaptations:
 - **No `next` branch job** — see track-next-junctions note above
 - **Blacksmith runners** for cache-warm; `ubuntu-24.04` for tracking jobs
 
+## mise bootstrap for system packages (cache-warm)
+
+`cache-warm.yml` installs apt packages (bubblewrap, lzip, xz-utils, bzip2, gzip)
+via `mise bootstrap` rather than a bare `apt-get` step. The config is embedded
+inline using `jdx/mise-action`'s `mise_toml` input with `bootstrap: true` and
+`bootstrap_skip: dotfiles,defaults,launchd,systemd,user,task,final-hook` (leaving
+only the packages and tools steps).
+
+**Caveat — `mise_toml` overwrites `mise.toml`:** the action writes the inline
+content over the workspace `mise.toml` before running bootstrap. This means any
+tools declared in the project's `mise.toml` must also be listed in the workflow's
+`mise_toml` block, or they won't be installed for that job. Currently only
+`usage = "latest"` is in `[tools]`, but when Python and uv are added for native
+BST, they must be mirrored here too.
+
 ## Python dependency notes
 
 Mirrors zirconium-hawaii's package set (dropping `pgpy13`, which is specific to
