@@ -36,7 +36,7 @@ jobs:
             "apt:gzip" = "latest"
 
       - name: Install system dependencies
-        run: mise bootstrap --yes --skip tools,dotfiles,defaults,launchd,systemd,user,task,final-hook
+        run: mise bootstrap --yes
 
       - name: Generate image version
         run: mise run generate-image-version
