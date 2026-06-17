@@ -48,7 +48,7 @@ Tracks git-sourced elements via `uv run bst source track`. Single entry:
 |-------|---------|--------|-------|
 | `manual-merge` | `core/bootc.bst` | `auto/track-bootc` | Cargo2 + git; human review required |
 
-Steps follow dakota's pattern: gate → Mergeraptor token → checkout → `jdx/mise-action` →
+Steps follow dakota's pattern: gate → checkout → `jdx/mise-action` →
 `uv run bst source track` → SHA-comparison diff check (skip format-only
 normalizations) → create/update PR. No auto-merge.
 
@@ -95,12 +95,42 @@ cache and get hits instead of cold-start rebuilds.
 
 ## Secrets required
 
-| Name | Type | Purpose |
-|------|------|---------|
-| `MERGERAPTOR_APP_ID` | Secret | GitHub App for PR creation |
-| `MERGERAPTOR_PRIVATE_KEY` | Secret | GitHub App private key |
+None. Both workflows use the built-in `GITHUB_TOKEN` for branch pushes and PR
+creation. Each job declares:
 
-No CAS credentials needed.
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+```
+
+`GITHUB_TOKEN` is sufficient because:
+- There is no auto-merge group (Mergeraptor's primary value in dakota was
+  bypassing branch protection for auto-merges — not needed here).
+- Pushes from `GITHUB_TOKEN` don't trigger `push` workflows, but `gh pr create`
+  does trigger `pull_request` workflows, which is what we want.
+
+If branch protection rules are later added that require a bypass actor, revisit
+with a krytis-specific GitHub App or a scoped PAT at that point.
+
+### Future: auto-merge
+
+When auto-merge is needed (e.g. for `core/bootc.bst` once trust is established,
+or for future elements added to an auto-merge group), options in order of
+preference:
+
+1. **`gh pr merge --auto --squash`** with `GITHUB_TOKEN` — works if the
+   repository has auto-merge enabled and no required status checks gate on a
+   bypass actor. Enable auto-merge in repo Settings → General. This is the
+   lowest-friction path and should be tried first.
+
+2. **Scoped PAT** stored as a secret — a classic PAT with `repo` scope. Commits
+   and PRs authored by the PAT bypass the "no self-triggering GITHUB_TOKEN"
+   restriction. Simpler than a GitHub App but tied to an individual account.
+
+3. **krytis GitHub App** (equivalent to Mergeraptor) — own app registered in the
+   org, installed on the repo, granted bypass in branch protection rules. Most
+   powerful but most setup overhead. Worth creating if multiple repos need it.
 
 ## Differences from dakota
 
