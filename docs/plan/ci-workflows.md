@@ -161,6 +161,14 @@ tools declared in the project's `mise.toml` must also be listed in the workflow'
 `usage = "latest"` is in `[tools]`, but when Python and uv are added for native
 BST, they must be mirrored here too.
 
+**Note — `bootstrap` action input not yet released:** the `bootstrap: true` and
+`bootstrap_skip` inputs to `jdx/mise-action` are on the default branch (added in
+commit `5f61b63`, "feat: support bootstrap mode #522", 2026-06-17) but not in any
+released tag as of v4.1.0. Until a release ships them, the workflow calls
+`mise bootstrap --yes --skip tools,...` as a plain shell step after the action.
+When Renovate bumps `mise-action` to a version that includes bootstrap support,
+consolidate back to a single action step with `bootstrap: true`.
+
 ## Python dependency notes
 
 Mirrors zirconium-hawaii's package set (dropping `pgpy13`, which is specific to
