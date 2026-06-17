@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Build oci/krytis/image.bst and load the result into podman local storage"
+
+set -euo pipefail
+
+echo "==> Building oci/krytis/image.bst..."
+./mise/tasks/bst build oci/krytis/image.bst
+
+echo "==> Loading into podman..."
+./mise/tasks/bst artifact checkout --tar - oci/krytis/image.bst | podman load
+
+echo "==> Done: localhost/krytis-input:latest"

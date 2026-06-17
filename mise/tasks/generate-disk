@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="Install krytis:latest to a bootable raw disk image via bootc"
+#USAGE flag "--filesystem <fs>" default="btrfs" help="Root filesystem type (btrfs or ext4)"
+#USAGE flag "--disk <path>" default="bootable.raw" help="Output disk image path"
+#USAGE flag "--size <size>" default="30G" help="Sparse disk image size passed to fallocate"
+
+set -euo pipefail
+
+FS="${usage_filesystem:-btrfs}"
+DISK="${usage_disk:-bootable.raw}"
+SIZE="${usage_size:-30G}"
+
+if [ ! -e "${DISK}" ]; then
+    echo "==> Creating ${SIZE} sparse disk image at ${DISK}..."
+    fallocate -l "${SIZE}" "${DISK}"
+fi
+
+# rootless and rootful podman have separate image stores; copy so bootc can find itself
+echo "==> Copying localhost/krytis:latest to root podman store..."
+podman save --format oci-archive localhost/krytis:latest | sudo podman load
+
+echo "==> Installing localhost/krytis:latest → ${DISK} (filesystem: ${FS})..."
+sudo podman run \
+    --rm --privileged --pid=host \
+    -v /var/lib/containers:/var/lib/containers \
+    -v /dev:/dev \
+    -v "$(pwd):/data" \
+    --security-opt label=type:unconfined_t \
+    localhost/krytis:latest \
+    bootc install to-disk \
+        --composefs-backend \
+        --via-loopback "/data/${DISK}" \
+        --filesystem "${FS}" \
+        --wipe \
+        --bootloader systemd \
+        --karg systemd.firstboot=no \
+        --karg console=ttyS0
+
+echo "==> Done: ${DISK}"
