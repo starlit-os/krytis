@@ -19,8 +19,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup mise
+      - name: Setup mise and install system dependencies
         uses: jdx/mise-action@v2
+        with:
+          bootstrap: true
+          bootstrap_skip: dotfiles,defaults,launchd,systemd,user,task,final-hook
+          mise_toml: |
+            [tools]
+            usage = "latest"
+
+            [bootstrap.packages]
+            "apt:bubblewrap" = "latest"
+            "apt:lzip" = "latest"
+            "apt:xz-utils" = "latest"
+            "apt:bzip2" = "latest"
+            "apt:gzip" = "latest"
 
       - name: Generate image version
         run: mise run generate-image-version
@@ -46,9 +59,6 @@ jobs:
           key: bst-warm-${{ hashFiles('elements/gnome-build-meta.bst', 'elements/freedesktop-sdk.bst', 'uv.lock') }}
           restore-keys: |
             bst-warm-
-
-      - name: Install system dependencies
-        run: sudo apt-get install -y bubblewrap lzip xz-utils bzip2 gzip
 
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
