@@ -1,0 +1,129 @@
+# Zirconium Hawaii Reference
+
+Load when referencing the sibling project at `../zirconium-hawaii/` — to compare patterns, borrow elements, or understand what a more mature version of this stack looks like.
+
+## What It Is
+
+Zirconium Hawaii is the upstream inspiration for Krytis. Same foundation:
+
+| Aspect | Zirconium Hawaii | Krytis |
+|---|---|---|
+| Build system | BST 2.5+ | BST 2.5+ |
+| Base SDK | Freedesktop SDK | Freedesktop SDK |
+| Extra junction | GNOME Build Meta | — |
+| Desktop | Niri + Wayland | Niri + Wayland |
+| Output | bootc OCI image | bootc OCI image |
+| Task runner | `just` (via mise) | `mise` |
+| Kernel | Fedora kernel (`core/linux-fedora.bst`) | CachyOS kernel (`core/linux-cachyos.bst`) |
+| Secure Boot | Yes — `just generate-keys` | Deferred |
+| composefs | Yes — `--composefs-backend` in install | Yes — `--composefs-backend` in install |
+| Gaming variant | `zirconium-hawaii-jackrabbit` | — |
+
+## Directory Layout
+
+```
+elements/
+├── core/           # kernel, greetd, initramfs, bootc, uupd, dkms, tuned
+├── config/         # bootc config, system config fragments
+├── desktop/        # niri, foot, quickshell, matugen, iio-niri, fonts, ...
+├── deps/           # dependency aggregation stacks
+├── gamerslop/      # gaming stack (Steam, Gamescope, MangoHUD, SCX schedulers)
+├── stacks/
+│   ├── base-system.bst
+│   ├── bootc.bst
+│   ├── codecs.bst
+│   ├── desktop.bst
+│   └── zirconium.bst   # top-level: all stacks combined
+├── oci/
+│   ├── zirconium/      # filesystem, image, manifest, runtime, stack, init-scripts
+│   └── jackrabbit/     # gaming variant OCI pipeline
+└── sysext/         # systemd sysext images
+```
+
+## Key Workflows
+
+```bash
+# Build and load the main image
+just build          # bst build oci/zirconium/image.bst + pkexec podman load
+
+# Final OCI with bootc lint
+just build-containerfile          # sudo podman build --squash-all -t zirconium-hawaii:latest .
+
+# Install to a raw disk image
+just generate-bootable-image      # 30GB fallocate + bootc install to-disk --composefs-backend
+
+# Generate Secure Boot keys
+just generate-keys                # OpenSSL RSA-2048: PK, KEK, DB, VENDOR, linux-module-cert
+
+# Stamp image version
+just generate-image-version       # writes include/image-version.yml from git log
+```
+
+## Task Runner
+
+Uses `just` (declared in `mise.toml` as a managed tool). The `bst` recipe wraps the bst2 container via rootful podman (`--privileged`). Override the bst2 image with `BST_IMAGE=...`.
+
+Unlike Krytis's mise file tasks, zirconium-hawaii uses `just`'s recipe syntax with positional `$var=default` arguments.
+
+## OCI Assembly Pipeline
+
+Identical pattern to Krytis:
+
+```
+stacks/zirconium.bst              (dep aggregator — stack kind)
+  ↓
+oci/zirconium/filesystem.bst      (compose kind — filters into /layer)
+  ↓
+oci/zirconium/image.bst           (script kind — prepare-image, sysusers, build-oci)
+  ↓
+Containerfile: RUN bootc container lint
+  ↓
+ghcr.io/zirconium-dev/zirconium-hawaii:latest
+```
+
+## GNOME Build Meta Junction
+
+Zirconium Hawaii adds a `gnome-build-meta.bst` junction on top of fdsdk. This provides GNOME components directly from upstream builds. Krytis does not use this junction currently.
+
+When a project uses both fdsdk and gnome-build-meta, the `buildstream-plugins` and `buildstream-plugins-community` junctions are loaded in multiple contexts. Fix: add `junctions: internal:` to `project.conf` (see `docs/skills/bst.md` § Multiple Plugin Junction Contexts).
+
+## Custom Plugin: patch_queue
+
+`plugins/patch_queue.py` — a BST source kind that applies a directory of patches in order:
+
+```yaml
+sources:
+- kind: patch_queue
+  path: patches/some-package
+```
+
+The patch directory must contain only patch files — any non-patch file (`.gitkeep`, etc.) causes a fatal `git apply` error.
+
+## Desktop Components to Reference
+
+| Element | What it is |
+|---|---|
+| `desktop/niri.bst` | Niri compositor (Wayland, tiling) |
+| `desktop/foot.bst` | Terminal emulator |
+| `desktop/quickshell.bst` | Shell/bar framework |
+| `desktop/matugen.bst` | Material You color scheme generator |
+| `desktop/iio-niri.bst` | IIO sensor integration for Niri |
+| `desktop/satty.bst` | Screenshot annotation tool |
+| `desktop/ddcutil.bst` | DDC/CI monitor control |
+| `core/greetd.bst` | Login manager daemon |
+
+## Secure Boot
+
+Keys are generated locally with `just generate-keys <vendor>` and stored in `files/boot-keys/`. The kernel element signs modules with `linux-module-cert`. Cosign public key is at `cosign.pub` in the repo root.
+
+## composefs
+
+`just generate-bootable-image` passes `--composefs-backend` to `bootc install to-disk`. This works with a regular squashed OCI image — bootc creates composefs from the ostree checkout on the target disk. Chunkah pre-builds composefs layers in the image as an optimisation, but is not required.
+
+**Critical**: always use `podman save --format oci-archive` when copying an image between stores before `bootc install to-disk --composefs-backend`. The default docker-archive format converts OCI layer media types to Docker format, which causes bootc to fail with "Invalid splitstream content type" during composefs setup.
+
+Without `--composefs-backend`, bootc takes the traditional ostree path and requires bootupd. bootupd's `generate-update-metadata` relies on RPM-registered EFI component metadata and fails on non-RPM (BST) builds. The composefs path is the correct approach for BST-built images.
+
+## Referencing This Project
+
+When borrowing an element or pattern, copy from `../zirconium-hawaii/elements/` and adapt — don't symlink or junction into zirconium-hawaii from Krytis. Both projects maintain independent BST artifact caches and element trees.
