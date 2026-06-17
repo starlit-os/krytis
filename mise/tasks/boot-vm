@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#MISE description="Boot bootable.raw in QEMU (native KVM+UEFI) or qemux/qemu-docker fallback"
+#USAGE flag "--disk <path>" default="bootable.raw" help="Disk image to boot"
+
+set -euo pipefail
+
+DISK="${usage_disk:-bootable.raw}"
+
+if [ ! -e "${DISK}" ]; then
+    echo "ERROR: ${DISK} not found — run 'mise run generate-disk' first." >&2
+    exit 1
+fi
+
+DISK=$(realpath "${DISK}")
+
+if command -v qemu-system-x86_64 &>/dev/null; then
+    echo "==> Using native qemu-system-x86_64..."
+
+    OVMF_CODE=""
+    for candidate in \
+            /usr/share/edk2/ovmf/OVMF_CODE.fd \
+            /usr/share/OVMF/OVMF_CODE.fd \
+            /usr/share/OVMF/OVMF_CODE_4M.fd \
+            /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+            /usr/share/qemu/OVMF_CODE.fd; do
+        [ -f "${candidate}" ] && OVMF_CODE="${candidate}" && break
+    done
+    if [ -z "${OVMF_CODE}" ]; then
+        echo "ERROR: OVMF firmware not found. Install edk2-ovmf (Fedora) or ovmf (Debian/Ubuntu)." >&2
+        exit 1
+    fi
+
+    # OVMF_VARS must be writable — keep a local copy so EFI state persists across boots
+    OVMF_VARS=".ovmf-vars.fd"
+    if [ ! -e "${OVMF_VARS}" ]; then
+        OVMF_VARS_SRC=""
+        for candidate in \
+                /usr/share/edk2/ovmf/OVMF_VARS.fd \
+                /usr/share/OVMF/OVMF_VARS.fd \
+                /usr/share/OVMF/OVMF_VARS_4M.fd \
+                /usr/share/edk2/x64/OVMF_VARS.4m.fd \
+                /usr/share/qemu/OVMF_VARS.fd; do
+            [ -f "${candidate}" ] && OVMF_VARS_SRC="${candidate}" && break
+        done
+        if [ -z "${OVMF_VARS_SRC}" ]; then
+            echo "ERROR: OVMF_VARS not found alongside OVMF_CODE." >&2
+            exit 1
+        fi
+        cp "${OVMF_VARS_SRC}" "${OVMF_VARS}"
+    fi
+
+    echo "==> Booting ${DISK}"
+    echo "    RAM: ${VM_RAM}M  CPUs: ${VM_CPUS}  Firmware: ${OVMF_CODE}"
+    echo "    SSH forward: localhost:2222 → guest:22"
+    echo "    Serial console on stdio (ttyS0) — Ctrl-A x to quit QEMU"
+    echo ""
+
+    qemu-system-x86_64 \
+        -enable-kvm \
+        -m "${VM_RAM}" \
+        -cpu host \
+        -smp "${VM_CPUS}" \
+        -drive "file=${DISK},format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
+        -device virtio-vga \
+        -display gtk \
+        -device virtio-keyboard \
+        -device virtio-mouse \
+        -device virtio-net-pci,netdev=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22" \
+        -chardev stdio,id=char0,mux=on,signal=off \
+        -serial chardev:char0 \
+        -serial chardev:char0 \
+        -mon chardev=char0
+
+else
+    echo "==> qemu-system-x86_64 not found, falling back to ghcr.io/qemus/qemu..."
+
+    PORT=8006
+    while ss -tunalp 2>/dev/null | grep -q ":${PORT}"; do
+        PORT=$(( PORT + 1 ))
+    done
+    echo "==> Web/VNC at http://localhost:${PORT}"
+    xdg-open "http://localhost:${PORT}" &>/dev/null || true
+
+    podman run \
+        --rm --privileged \
+        --device /dev/kvm \
+        --pull=always \
+        --publish "127.0.0.1:${PORT}:8006" \
+        --publish "127.0.0.1:2222:22" \
+        -e "USER_PORTS=22" \
+        -e "NETWORK=user" \
+        -e "CPU_CORES=${VM_CPUS}" \
+        -e "RAM_SIZE=${VM_RAM}M" \
+        -e "TPM=y" \
+        -e "BOOT_MODE=uefi" \
+        -e "ARGUMENTS=-snapshot" \
+        -v "${DISK}:/boot.img" \
+        ghcr.io/qemus/qemu:latest
+fi
