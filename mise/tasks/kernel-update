@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#MISE description="Update linux-cachyos element to the latest version from the CachyOS v3 repo"
+
+set -euo pipefail
+
+CACHYOS_MIRROR="https://cdn77.cachyos.org/repo/x86_64_v3/cachyos-v3"
+ELEMENT="elements/core/linux-cachyos.bst"
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+echo "==> Fetching CachyOS v3 package database..."
+curl -sSL "${CACHYOS_MIRROR}/cachyos-v3.db" -o "${TMPDIR}/cachyos-v3.db"
+
+# The .db file is a tar.gz (pacman standard); try gz then xz then zst
+if ! tar -xz -C "${TMPDIR}" -f "${TMPDIR}/cachyos-v3.db" 2>/dev/null; then
+  if ! tar -xJ -C "${TMPDIR}" -f "${TMPDIR}/cachyos-v3.db" 2>/dev/null; then
+    tar --zstd -xf "${TMPDIR}/cachyos-v3.db" -C "${TMPDIR}"
+  fi
+fi
+
+# Match linux-cachyos-<version>/ but not linux-cachyos-headers- or other variants
+DESC_FILE=$(find "${TMPDIR}" -name "desc" | grep -E "/linux-cachyos-[0-9]" | head -1)
+
+if [ -z "${DESC_FILE:-}" ]; then
+  echo "ERROR: linux-cachyos not found in package database" >&2
+  exit 1
+fi
+
+get_field() {
+  awk "/^%${1}%/{getline; print; exit}" "${DESC_FILE}"
+}
+
+VERSION_FULL=$(get_field "VERSION")
+SHA256=$(get_field "SHA256SUM")
+FILENAME=$(get_field "FILENAME")
+
+PKGVER="${VERSION_FULL%-*}"
+PKGREL="${VERSION_FULL##*-}"
+
+echo "==> Found: ${FILENAME}"
+echo "    version=${PKGVER}  pkgrel=${PKGREL}"
+echo "    sha256=${SHA256}"
+
+CURRENT_VER=$(awk '/^  version:/{gsub(/"/, "", $2); print $2}' "${ELEMENT}")
+CURRENT_REL=$(awk '/^  pkgrel:/{gsub(/"/, "", $2); print $2}' "${ELEMENT}")
+
+if [ "${PKGVER}" = "${CURRENT_VER}" ] && [ "${PKGREL}" = "${CURRENT_REL}" ]; then
+  echo "==> Already up to date (${PKGVER}-${PKGREL})"
+  exit 0
+fi
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER}-${CURRENT_REL} → ${PKGVER}-${PKGREL}"
+
+sed -i "s|  version: \".*\"|  version: \"${PKGVER}\"|" "${ELEMENT}"
+sed -i "s|  pkgrel: \".*\"|  pkgrel: \"${PKGREL}\"|" "${ELEMENT}"
+sed -i "s|  ref: .*|  ref: ${SHA256}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."

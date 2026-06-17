@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Run any bst command inside the pinned bst2 container via podman"
+#USAGE arg "<args>" var=#true help="bst subcommand and arguments (e.g. build stacks/base-system.bst)"
+
+# BST2_IMAGE and BST_MEMORY_LIMIT are set in mise.toml [env] with defaults;
+# export them in the shell to override (requires mise >= 2026.6.10).
+# BST_FLAGS: appended to default flags; BST_FLAGS_OVERRIDE: replaces all defaults.
+set -euo pipefail
+
+DEFAULT_FLAGS="-o x86_64_v3 true --no-interactive"
+
+if [ -n "${BST_FLAGS_OVERRIDE:-}" ]; then
+    FLAGS="${BST_FLAGS_OVERRIDE}"
+else
+    FLAGS="${DEFAULT_FLAGS} ${BST_FLAGS:-}"
+fi
+
+mkdir -p "${HOME}/.cache/buildstream"
+# word-splitting on FLAGS is intentional (space-separated option flags)
+# shellcheck disable=SC2086
+podman run --rm \
+    --privileged \
+    --device /dev/fuse \
+    --network=host \
+    --memory "${BST_MEMORY_LIMIT}" \
+    -v "$(pwd):/src:rw" \
+    -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
+    -w /src \
+    "${BST2_IMAGE}" \
+    bash -c 'bst --colors "$@"' -- ${FLAGS} "$@"

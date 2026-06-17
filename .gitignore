@@ -1,0 +1,38 @@
+# Python bytecode
+**/__pycache__/
+
+# BuildStream local state
+.bst
+.bst2
+.cache/*
+
+# Build / VM artifacts
+*.img
+*.raw
+*.tar
+.ovmf-vars.fd
+.build-out
+.debug-out/
+debug-session/
+
+# BST artifact checkouts — can be 4+ GB and 70k+ files.
+# Always check out to /tmp or a hidden directory listed here,
+# never directly into the repo tree.
+.*-deps-*
+
+# Signing keys
+cosign.key
+files/boot-keys/
+
+# Mise local overrides
+.mise.local.toml
+
+# AI agent session state (skills are committed; sessions are not)
+.opencode/*
+!.opencode/skills/
+
+# Claude Code local state (AGENTS.md and .claude/commands/ are committed)
+.claude/settings.local.json
+
+# Git worktrees
+.worktrees/

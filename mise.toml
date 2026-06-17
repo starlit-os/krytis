@@ -1,0 +1,10 @@
+[tools]
+usage = "latest"
+
+[env]
+# { default = "..." } keeps the shell value if already set; only applies the
+# fallback when the variable is absent. Requires mise ≥ 2026.6.10.
+BST2_IMAGE = { default = "registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d" }
+BST_MEMORY_LIMIT = { default = "16g" }
+VM_RAM = { default = "8192" }
+VM_CPUS = { default = "4" }
