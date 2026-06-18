@@ -2,6 +2,8 @@
 usage = "latest"
 python = "3.12"
 uv = "latest"
+gum = "latest"
+bat = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"
@@ -19,3 +21,7 @@ BST2_IMAGE = { default = "registry.gitlab.com/freedesktop-sdk/infrastructure/fre
 BST_MEMORY_LIMIT = { default = "16g" }
 VM_RAM = { default = "8192" }
 VM_CPUS = { default = "4" }
+RUNNER_IMAGE = { default = "localhost/krytis-runner:latest" }
+RUNNER_VERSION = { default = "2.325.0" }
+RUNNER_NAME = { default = "krytis-local" }
+RUNNER_LABELS = { default = "self-hosted,linux,x64" }

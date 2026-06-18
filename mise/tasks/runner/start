@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#MISE description="Start the self-hosted GitHub Actions runner"
+
+set -euo pipefail
+
+# Warn if user namespaces are restricted (bubblewrap / BST sandboxing won't work).
+USERNS_RESTRICT=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo "0")
+if [ "${USERNS_RESTRICT}" != "0" ]; then
+    echo "WARNING: kernel.apparmor_restrict_unprivileged_userns=${USERNS_RESTRICT}"
+    echo "         bubblewrap requires user namespaces."
+    echo "         Fix: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+    echo ""
+fi
+
+# Bail if the container is already running.
+if podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
+    echo "ERROR: krytis-runner is already running. Use 'mise runner:stop' first."
+    exit 1
+fi
+
+# Ensure the PAT is stored as a podman secret.
+# Requires a fine-grained PAT with Administration: Read and Write on starlit-os/krytis.
+if ! podman secret ls --format '{{.Name}}' | grep -q '^gh-token$'; then
+    echo "==> GitHub PAT not found in podman secrets."
+    echo "    Required: fine-grained PAT, Administration: Read and Write (starlit-os/krytis)"
+    PAT=$(gum input --password --prompt "GitHub PAT: ")
+    printf '%s' "${PAT}" | podman secret create gh-token -
+    echo "==> Stored as podman secret 'gh-token'."
+fi
+
+# Remove any stale registration with the same name (offline runners left by crashes).
+STALE_ID=$(gh api repos/starlit-os/krytis/actions/runners --jq \
+    ".runners[] | select(.name == \"${RUNNER_NAME}\" and .status == \"offline\") | .id")
+if [ -n "${STALE_ID}" ]; then
+    echo "==> Removing stale offline runner '${RUNNER_NAME}' (id=${STALE_ID})..."
+    gh api -X DELETE "repos/starlit-os/krytis/actions/runners/${STALE_ID}"
+fi
+
+# Get a one-time runner registration token via gh CLI.
+echo "==> Fetching registration token..."
+RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registration-token --jq .token)
+
+echo "==> Starting krytis-runner..."
+podman run \
+    --detach \
+    --replace \
+    --name krytis-runner \
+    --privileged \
+    --secret gh-token \
+    -e RUNNER_TOKEN="${RUNNER_TOKEN}" \
+    -e REPO_URL="https://github.com/starlit-os/krytis" \
+    -e RUNNER_NAME="${RUNNER_NAME}" \
+    -e RUNNER_LABELS="${RUNNER_LABELS}" \
+    -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
+    "${RUNNER_IMAGE}"
+
+echo "==> Runner started. Use 'mise runner:logs' to follow output."

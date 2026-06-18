@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Show self-hosted runner container status"
+
+set -euo pipefail
+
+unset SUDO_UID SUDO_GID SUDO_USER SUDO_COMMAND
+
+podman ps --all \
+    --filter "name=^krytis-runner$" \
+    --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"

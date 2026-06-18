@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Build the self-hosted GitHub Actions runner container image"
+
+set -euo pipefail
+
+podman build \
+    -f Containerfile.runner \
+    -t "${RUNNER_IMAGE}" \
+    --build-arg RUNNER_VERSION="${RUNNER_VERSION}" \
+    .
+
+echo "==> Built ${RUNNER_IMAGE} (runner v${RUNNER_VERSION})"
