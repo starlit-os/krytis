@@ -56,6 +56,9 @@ depends:
   - freedesktop-sdk.bst:components/usbutils.bst
   - freedesktop-sdk.bst:components/dmidecode.bst
 
+  # ── Dev tooling ───────────────────────────────────────────
+  - core/mise.bst
+
   # ── Core utilities ─────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/procps.bst
   - freedesktop-sdk.bst:components/tzdata.bst
