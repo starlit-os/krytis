@@ -18,11 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl https://mise.run | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# GitHub Actions runner binary.
+# GitHub Actions runner binary + its own dependency installer (.NET / libicu).
 RUN mkdir -p /home/runner && \
     curl -fsSL \
         "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
-        | tar -xz -C /home/runner
+        | tar -xz -C /home/runner && \
+    /home/runner/bin/installdependencies.sh
 
 # The runner refuses to start as root without this flag. Since we run the
 # container as root (required for --privileged / bubblewrap), set it explicitly.
