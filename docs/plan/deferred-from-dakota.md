@@ -7,7 +7,7 @@ Zirconium-hawaii does NOT use any of these — they are dakota/Bluefin-specific 
 
 | Element | dakota ref | Notes |
 |---------|-----------|-------|
-| `sudo-rs` | `bluefin/sudo-rs.bst` | Rust sudo replacement. Note `starlit/greetd.bst` has a PAM workaround that references this pattern — check when porting. |
+| `sudo-rs` | `bluefin/sudo-rs.bst` | Rust sudo replacement. Note `starlit/greetd.bst` has a PAM workaround that references this pattern — check when porting. PikaOS has (or had) a wrapper that falls back to `sudo` for cases sudo-rs doesn't yet handle — investigate whether they still see a need for it before deciding whether to carry the same wrapper. |
 | `uutils-coreutils` | `bluefin/uutils-coreutils.bst` | Rust coreutils. dakota intentionally keeps GNU `cp`/`mv`/`rm` due to unresolved TOCTOU issues in uutils — preserve that carve-out. |
 
 ## Build patterns to revisit from dakota
