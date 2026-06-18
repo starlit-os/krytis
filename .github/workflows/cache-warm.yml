@@ -57,6 +57,9 @@ jobs:
       - name: Install system dependencies
         run: mise bootstrap --yes
 
+      - name: Install Python dependencies
+        run: uv sync
+
       - name: Generate image version
         run: mise run generate-image-version
 
