@@ -117,3 +117,188 @@ jobs:
               --body-file /tmp/pr-body.md)
           fi
           echo "PR: $PR_URL"
+
+  # ── BST source tracking (git_repo + cargo2 elements) ─────────────────────
+  track:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    if: >-
+      github.event.inputs.group == 'all' ||
+      github.event.inputs.group == 'manual-merge' ||
+      github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Human review required — Cargo2 + git; lock file changes need validation
+          - group: manual-merge
+            element: core/bootc.bst
+            branch: auto/track-bootc
+            title: "chore(deps): update bootc"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+
+      - name: Track sources with BuildStream
+        run: uv run bst --no-interactive -o x86_64_v3 true source track "${{ matrix.element }}"
+
+      - name: Check for changes
+        id: changes
+        run: |
+          BST_PATH="elements/${{ matrix.element }}"
+          if git diff --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected for ${{ matrix.element }}"
+          else
+            # bst source track can normalize ref format without changing the underlying
+            # commit (e.g. plain SHA -> git-describe "v1.15.2-0-g<sha>").
+            # Compare the set of terminal 40-char hex SHAs from ref: lines in both
+            # the old (HEAD) and new (working tree) file states. If identical,
+            # only formatting changed — no real update, skip the PR.
+            OLD_SHAS=$(git show "HEAD:$BST_PATH" | grep -oP '^\s*ref:\s+\K\S+' | grep -oP '[0-9a-f]{40}$' | sort)
+            NEW_SHAS=$(grep -oP '^\s*ref:\s+\K\S+' "$BST_PATH" | grep -oP '[0-9a-f]{40}$' | sort)
+            if [ -n "$OLD_SHAS" ] && [ "$OLD_SHAS" = "$NEW_SHAS" ]; then
+              echo "has_changes=false" >> "$GITHUB_OUTPUT"
+              echo "Ref format normalized but same underlying commit(s) — skipping PR"
+            else
+              echo "has_changes=true" >> "$GITHUB_OUTPUT"
+              echo "Changes detected:"
+              git diff --stat
+            fi
+          fi
+
+      - name: Create or update PR
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ matrix.branch }}"
+          BASE_TITLE="${{ matrix.title }}"
+          BST_PATH="elements/${{ matrix.element }}"
+
+          # Extract old/new refs for PR body version context
+          OLD_REF=$(git diff -- "$BST_PATH" | grep '^-.*ref:' | grep -oP "ref:\s+\K\S+" || true)
+          NEW_REF=$(git diff -- "$BST_PATH" | grep '^+.*ref:' | grep -oP "ref:\s+\K\S+" || true)
+
+          # Extract version from git-describe refs (e.g. "v1.15.2-0-gabcdef" -> "v1.15.2")
+          OLD_VER=$(echo "$OLD_REF" | grep -oP '^v?\d+[\d\.\-]+' | grep '\.' | sed 's/-$//' || true)
+          NEW_VER=$(echo "$NEW_REF" | grep -oP '^v?\d+[\d\.\-]+' | grep '\.' | sed 's/-$//' || true)
+
+          if [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ] && [ "$OLD_VER" != "$NEW_VER" ]; then
+            TITLE="${BASE_TITLE}: ${OLD_VER} -> ${NEW_VER}"
+          else
+            TITLE="$BASE_TITLE"
+          fi
+
+          UPSTREAM_SLUG=$(grep -oP 'url:\s+github:\K[^\s.]+(?:\.git)?' "$BST_PATH" | head -1 | sed 's/\.git$//' || true)
+          GITHUB_URL="https://github.com/${UPSTREAM_SLUG}"
+
+          OLD_SHA=$(echo "$OLD_REF" | grep -oP '(?<=g)[0-9a-f]+$' || echo "$OLD_REF")
+          NEW_SHA=$(echo "$NEW_REF" | grep -oP '(?<=g)[0-9a-f]+$' || echo "$NEW_REF")
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git stash push -- elements/
+          git checkout -B "$BRANCH" origin/main
+          git stash pop
+
+          git add elements/
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+
+          {
+            echo "## \`${{ matrix.element }}\` update"
+            echo ""
+            if [ -n "$UPSTREAM_SLUG" ]; then
+              echo "| | |"
+              echo "| --- | --- |"
+              echo "| **Source** | [$UPSTREAM_SLUG]($GITHUB_URL) |"
+              if [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ]; then
+                echo "| **Version** | \`$OLD_VER\` → \`$NEW_VER\` |"
+              fi
+              if [ -n "$OLD_SHA" ] && [ -n "$NEW_SHA" ]; then
+                echo "| **Commits** | [\`${OLD_SHA:0:8}\`]($GITHUB_URL/commit/$OLD_SHA) → [\`${NEW_SHA:0:8}\`]($GITHUB_URL/commit/$NEW_SHA) |"
+                echo "| **Compare** | [$GITHUB_URL/compare/${OLD_SHA:0:8}...${NEW_SHA:0:8}]($GITHUB_URL/compare/${OLD_SHA}...${NEW_SHA}) |"
+              fi
+              echo "| **Releases** | [$GITHUB_URL/releases]($GITHUB_URL/releases) |"
+              echo ""
+            fi
+            echo "---"
+            echo "*Generated by [Track BuildStream Sources](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*"
+          } > /tmp/pr-body.md
+
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Updating existing PR #$EXISTING_PR"
+            gh pr edit "$EXISTING_PR" --title "$TITLE" --body-file /tmp/pr-body.md
+            PR_URL=$(gh pr view "$EXISTING_PR" --json url --jq '.url')
+          else
+            PR_URL=$(gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body-file /tmp/pr-body.md)
+          fi
+          echo "PR: $PR_URL"
+
+  # ── Atomic co-tracking of core junctions ─────────────────────────────────
+  # freedesktop-sdk.bst overrides reference gnome-build-meta.bst elements
+  # directly — both must land in one commit or the element graph breaks.
+  track-core-junctions:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    if: >-
+      github.event.inputs.group == 'all' ||
+      github.event.inputs.group == 'core-junctions' ||
+      github.event_name == 'schedule'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+
+      - name: Track core junctions
+        run: |
+          uv run bst --no-interactive -o x86_64_v3 true source track gnome-build-meta.bst
+          uv run bst --no-interactive -o x86_64_v3 true source track freedesktop-sdk.bst
+
+      - name: Create or update PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git diff --quiet && { echo "No junction updates"; exit 0; }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B auto/track-core-junctions origin/main
+          git add elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
+          git commit -m "chore(deps): update core junctions (gnome-build-meta + freedesktop-sdk)"
+          git push --force-with-lease origin auto/track-core-junctions
+
+          EXISTING=$(gh pr list --head auto/track-core-junctions --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            echo "Existing PR already open"
+            gh pr view "$EXISTING" --json url --jq '"PR: " + .url'
+          else
+            PR_URL=$(gh pr create \
+              --base main \
+              --head auto/track-core-junctions \
+              --title "chore(deps): update core junctions (gnome-build-meta + freedesktop-sdk)" \
+              --body "Updates \`gnome-build-meta.bst\` and \`freedesktop-sdk.bst\` atomically. Manual review required — junction bumps can break downstream elements.")
+            echo "PR: $PR_URL"
+          fi
