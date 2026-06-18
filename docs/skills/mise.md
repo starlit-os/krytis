@@ -188,7 +188,13 @@ System packages required for builds and source tracking live in `[bootstrap.pack
 
 Run locally: `mise bootstrap --yes`
 
-In CI with `jdx/mise-action`, `mise bootstrap` requires `experimental: true` on the action step (sets `MISE_EXPERIMENTAL=1`). Add as a shell step — the `bootstrap:` action input is unreleased as of v4.2.0:
+In CI with `jdx/mise-action`, **any job that calls `mise run` (or `mise bootstrap`) needs `experimental: true`** when the project `mise.toml` uses any experimental feature — including `[bootstrap.packages]` *and* `[deps.uv] auto = true`. Omitting it causes:
+
+```
+mise ERROR  deps is experimental. Enable it with `mise settings experimental=true`
+```
+
+Add to every job that invokes mise tasks:
 
 ```yaml
 - uses: jdx/mise-action@... # v4.2.0
