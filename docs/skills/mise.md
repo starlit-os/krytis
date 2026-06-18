@@ -49,7 +49,8 @@ mise/tasks/
 ├── lint                     # mise run lint
 ├── generate-disk            # mise run generate-disk
 ├── boot-vm                  # mise run boot-vm
-└── kernel-update            # mise run kernel-update
+├── kernel-update            # mise run kernel-update
+└── mise-update              # mise run mise-update
 ```
 
 Subdirectory nesting uses `:` as separator: `mise/tasks/test/units` → `mise run test:units`.

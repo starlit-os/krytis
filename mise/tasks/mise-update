@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#MISE description="Update mise element to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/core/mise.bst"
+REPO="jdx/mise"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_VER=$(grep -oP 'download/v\K[^/]+' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+X64_FILE="mise-${LATEST_TAG}-linux-x64-musl"
+ARM64_FILE="mise-${LATEST_TAG}-linux-arm64-musl"
+BASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}"
+
+echo "==> Downloading ${X64_FILE}..."
+curl -sSL "${BASE_URL}/${X64_FILE}" -o "${TMPDIR}/${X64_FILE}"
+X64_SHA=$(sha256sum "${TMPDIR}/${X64_FILE}" | awk '{print $1}')
+echo "    sha256=${X64_SHA}"
+
+echo "==> Downloading ${ARM64_FILE}..."
+curl -sSL "${BASE_URL}/${ARM64_FILE}" -o "${TMPDIR}/${ARM64_FILE}"
+ARM64_SHA=$(sha256sum "${TMPDIR}/${ARM64_FILE}" | awk '{print $1}')
+echo "    sha256=${ARM64_SHA}"
+
+CURRENT_X64_SHA=$(grep -A1 'x64-musl' "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+CURRENT_ARM64_SHA=$(grep -A1 'arm64-musl' "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+
+# Version appears as v<ver>/ in path and mise-v<ver>- in filename — one substitution covers both lines
+sed -i "s|v${CURRENT_VER}/mise-v${CURRENT_VER}|v${LATEST_VER}/mise-v${LATEST_VER}|g" "${ELEMENT}"
+
+# Replace SHA256 refs by current value (unique within the file)
+sed -i "s|ref: ${CURRENT_X64_SHA}|ref: ${X64_SHA}|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_ARM64_SHA}|ref: ${ARM64_SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."
