@@ -89,6 +89,9 @@ jobs:
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
+      - name: Print disk usage before build
+        run: df -h
+
       - name: Build image
         run: |
           set +e
@@ -98,6 +101,12 @@ jobs:
             echo "::warning::Cache warm build failed (rc=${rc}) — non-blocking"
           fi
           exit 0
+
+      - name: Print disk usage after build
+        if: always()
+        run: |
+          df -h
+          du -sh ~/.cache/buildstream
 
       - name: Report cached elements
         if: always()
