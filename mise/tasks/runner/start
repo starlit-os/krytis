@@ -28,6 +28,14 @@ if ! podman secret ls --format '{{.Name}}' | grep -q '^gh-token$'; then
     echo "==> Stored as podman secret 'gh-token'."
 fi
 
+# Remove any stale registration with the same name (offline runners left by crashes).
+STALE_ID=$(gh api repos/starlit-os/krytis/actions/runners --jq \
+    ".runners[] | select(.name == \"${RUNNER_NAME}\" and .status == \"offline\") | .id")
+if [ -n "${STALE_ID}" ]; then
+    echo "==> Removing stale offline runner '${RUNNER_NAME}' (id=${STALE_ID})..."
+    gh api -X DELETE "repos/starlit-os/krytis/actions/runners/${STALE_ID}"
+fi
+
 # Get a one-time runner registration token via gh CLI.
 echo "==> Fetching registration token..."
 RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registration-token --jq .token)
