@@ -35,6 +35,7 @@ RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registrati
 echo "==> Starting krytis-runner..."
 podman run \
     --detach \
+    --replace \
     --name krytis-runner \
     --privileged \
     --secret gh-token \
