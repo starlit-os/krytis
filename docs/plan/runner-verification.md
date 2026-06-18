@@ -11,15 +11,15 @@
 | # | Step | How |
 |---|------|-----|
 | 1 | `[L]` **Set user namespaces** if restricted | `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` — only needed if `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns` returns `1`. Bubblewrap (BST sandbox) requires this. |
-| 2 | `[R]` **Build image** | `mise run runner:build` |
+| 2 | `[R]` **Build image** | `mise runner:build` |
 
 ## Start-up
 
 | # | Step | How |
 |---|------|-----|
-| 3 | `[L]` **First-time PAT entry** | `mise run runner:start` — `gum input` prompts for the PAT on the first run. Requires an interactive terminal. Once the PAT is stored in podman secrets, subsequent starts are non-interactive. |
-| 4 | `[R]` **Subsequent starts** (PAT already stored) | `mise run runner:start` |
-| 5 | `[R]` **Check container running** | `mise run runner:status` |
+| 3 | `[L]` **First-time PAT entry** | `mise runner:start` — `gum input` prompts for the PAT on the first run. Requires an interactive terminal. Once the PAT is stored in podman secrets, subsequent starts are non-interactive. |
+| 4 | `[R]` **Subsequent starts** (PAT already stored) | `mise runner:start` |
+| 5 | `[R]` **Check container running** | `mise runner:status` |
 | 6 | `[R]` **Check runner registered on GitHub** | `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] \| {name,status,labels}'` — runner should appear with `status: online`. |
 
 ## Functional test
@@ -29,14 +29,14 @@
 | 7 | `[R]` **Patch `cache-warm.yml`** (test only) | Change `runs-on:` to `[self-hosted, linux, x64]` on the feature branch. |
 | 8 | `[R]` **Trigger workflow** | `gh workflow run cache-warm.yml` |
 | 9 | `[R]` **Watch run** | `gh run watch` — wait for completion. |
-| 10 | `[R]` **Follow runner logs** | `mise run runner:logs` (in parallel with step 9). |
+| 10 | `[R]` **Follow runner logs** | `mise runner:logs` (in parallel with step 9). |
 | 11 | `[R]` **Revert `runs-on:`** | Restore `blacksmith-8vcpu-ubuntu-2404` after test passes. |
 
 ## Shut-down
 
 | # | Step | How |
 |---|------|-----|
-| 12 | `[R]` **Stop runner** | `mise run runner:stop` |
+| 12 | `[R]` **Stop runner** | `mise runner:stop` |
 | 13 | `[R]` **Verify deregistered** | `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] \| {name,status}'` — `krytis-local` should be absent. |
 
 ---
