@@ -14,6 +14,14 @@ sources = ["pyproject.toml", "uv.lock"]
 outputs = [".venv/"]
 run = "uv sync"
 
+[bootstrap.packages]
+"apt:bubblewrap" = "latest"
+"apt:lzip" = "latest"
+"apt:xz-utils" = "latest"
+"apt:bzip2" = "latest"
+"apt:gzip" = "latest"
+"apt:patch" = "latest"
+
 [env]
 # { default = "..." } keeps the shell value if already set; only applies the
 # fallback when the variable is absent. Requires mise ≥ 2026.6.10.

@@ -31,28 +31,7 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           experimental: true
-          mise_toml: |
-            [tools]
-            usage = "latest"
-            python = "3.12"
-            uv = "latest"
 
-            [settings]
-            python.uv_venv_auto = "create|source"
-
-            [deps.uv]
-            auto = true
-            sources = ["pyproject.toml", "uv.lock"]
-            outputs = [".venv/"]
-            run = "uv sync"
-
-            [bootstrap.packages]
-            "apt:bubblewrap" = "latest"
-            "apt:lzip" = "latest"
-            "apt:xz-utils" = "latest"
-            "apt:bzip2" = "latest"
-            "apt:gzip" = "latest"
-            "apt:patch" = "latest"
 
       - name: Install system dependencies
         run: mise bootstrap --yes
