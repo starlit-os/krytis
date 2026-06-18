@@ -47,6 +47,9 @@ mutation {
 }
 ```
 
+After creating, go to **Project Settings → Default repository** and set it to `starlit-os/krytis`. This makes new issues created from the project board land in the right repo automatically. Not settable via the GraphQL API as of June 2026 — UI only.
+
+
 ---
 
 ## Add issues to the project
