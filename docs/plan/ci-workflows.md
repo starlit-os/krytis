@@ -68,6 +68,20 @@ element graph. No auto-merge — junction bumps can break downstream elements.
 
 Branch: `auto/track-core-junctions`.
 
+### Adding new tracked elements
+
+When adding a new element, wire it into this workflow at the same time:
+
+| Source kind | What to do |
+|---|---|
+| `git_repo` | Add a row to the `track` matrix table. |
+| `remote` (prebuilt binary, release asset) | Add a new standalone job (see `track-linux-cachyos` as the pattern): fetch the latest release via the GitHub API, download both arch binaries, recompute SHA256 refs, update the `.bst` file, open a PR. Add the new group name to the `workflow_dispatch` group choices. |
+| Junction (`git_repo` tracking a branch) | Add to `track-core-junctions` if it must land atomically with other junctions; otherwise a new standalone job. |
+
+**Current gap:** `core/mise.bst` (added 2026-06-18) uses `remote` sources and has
+no tracking job yet. A `track-mise` job following the `track-linux-cachyos` pattern
+needs to be added.
+
 ## `cache-warm.yml`
 
 **Trigger:** `schedule: '0 6 * * 1-5'` (weekday mornings) + `workflow_dispatch`
@@ -141,7 +155,7 @@ Dakota's workflows are the reference implementation. Key adaptations:
 - **No `projectbluefin/actions/setup-runner`** — inline equivalent steps
 - **No `generate-bst-ci-config` action** — no CAS push means no credentials to
   inject
-- **No `track-tarballs` job** — no tarball-sourced elements in krytis
+- **No `track-tarballs` job** — no tarball-sourced elements in krytis (note: `core/mise.bst` uses `remote` sources and will need its own tracking job)
 - **No auto-merge group** — krytis has no elements suitable for auto-merge today
 - **No `next` branch job** — see track-next-junctions note above
 - **Blacksmith runners** for cache-warm; `ubuntu-24.04` for tracking jobs
