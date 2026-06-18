@@ -3,6 +3,7 @@ usage = "latest"
 python = "3.12"
 uv = "latest"
 gum = "latest"
+bat = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"
