@@ -24,6 +24,10 @@ RUN mkdir -p /home/runner && \
         "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
         | tar -xz -C /home/runner
 
+# The runner refuses to start as root without this flag. Since we run the
+# container as root (required for --privileged / bubblewrap), set it explicitly.
+ENV RUNNER_ALLOW_RUNASROOT=1
+
 WORKDIR /home/runner
 
 COPY files/runner/entrypoint.sh /entrypoint.sh
