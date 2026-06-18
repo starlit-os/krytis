@@ -171,6 +171,37 @@ mise run bst build stacks/base-system.bst
 BST_FLAGS="--config /src/buildstream-ci.conf" mise run bst build stacks/base-system.bst
 ```
 
+## Bootstrap packages (`mise bootstrap`)
+
+System packages required for builds and source tracking live in `[bootstrap.packages]` in `mise.toml`. This makes them available for both local dev setup and CI:
+
+```toml
+[bootstrap.packages]
+"apt:bubblewrap" = "latest"
+"apt:lzip" = "latest"
+"apt:xz-utils" = "latest"
+"apt:bzip2" = "latest"
+"apt:gzip" = "latest"
+"apt:patch" = "latest"
+```
+
+Run locally: `mise bootstrap --yes`
+
+In CI with `jdx/mise-action`, `mise bootstrap` requires `experimental: true` on the action step (sets `MISE_EXPERIMENTAL=1`). Add as a shell step — the `bootstrap:` action input is unreleased as of v4.2.0:
+
+```yaml
+- uses: jdx/mise-action@... # v4.2.0
+  with:
+    experimental: true
+- run: mise bootstrap --yes
+```
+
+## `jdx/mise-action` and `mise_toml`
+
+Without the `mise_toml:` input the action reads the project's `mise.toml` directly — this is the preferred mode. Only use `mise_toml:` when you genuinely need to override config for a specific job.
+
+**When `mise_toml:` is set, it completely overwrites the project's `mise.toml`.** Any tools or settings in the project file are invisible to that job unless also listed in the inline block. This is why bootstrap packages belong in the project's `mise.toml` rather than being duplicated per-workflow.
+
 ## Never add loose shell scripts
 
 All development workflows must be `mise run` tasks. No standalone scripts outside `mise/tasks/`.

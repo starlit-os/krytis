@@ -56,6 +56,21 @@ terminate called after throwing an instance of 'std::system_error'
 
 Use **50G** for a full `cache-warm` build on a machine with adequate disk.
 
+### `actions/cache` path spec determines the version hash
+
+`actions/cache` computes an internal **version** from the `path:` input (a hash of paths + compression). This version is part of every lookup — including restore-key prefix matching. **Changing the path spec invalidates all prior cache entries, even those with matching key prefixes.**
+
+```yaml
+# These two configs produce different version hashes and cannot restore from each other:
+path: ~/.cache/buildstream
+
+path: |
+  ~/.cache/buildstream
+  !~/.cache/buildstream/sources
+```
+
+When changing `path:`, expect a cold-start run. Subsequent runs will find the cache.
+
 ### What to cache
 
 The BST cache directory layout:

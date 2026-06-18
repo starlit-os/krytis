@@ -286,6 +286,25 @@ junctions:
 
 This tells BST these junctions are intentionally shared/internal so the multiple-context check is suppressed. Every project that layers on top of fdsdk + gnome-build-meta needs this block.
 
+## System Tool Requirements for `bst source track`
+
+`bst source track` initialises the full BST platform at startup — including `buildbox-run`, which checks for `bwrap` unconditionally even though source tracking never runs a build sandbox. Additionally, BST resolves the complete element graph before tracking, which validates all declared tool binaries (`lzip`, `xz-utils`, `bzip2`, `gzip`, `patch`, etc.) against `PATH`.
+
+**All the same system packages needed for a build are required for source tracking:**
+
+```yaml
+# In mise.toml
+[bootstrap.packages]
+"apt:bubblewrap" = "latest"
+"apt:lzip" = "latest"
+"apt:xz-utils" = "latest"
+"apt:bzip2" = "latest"
+"apt:gzip" = "latest"
+"apt:patch" = "latest"
+```
+
+In CI, run `mise bootstrap --yes` (with `experimental: true` on the action) before any `bst` invocation, not just build jobs.
+
 ## Option Names: Underscores Only
 
 BST option names only allow alphanumeric characters and underscores. Hyphens silently fail:
