@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Stop the self-hosted GitHub Actions runner (graceful, 30s timeout)"
+
+set -euo pipefail
+
+if ! podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
+    echo "krytis-runner is not running."
+    exit 0
+fi
+
+echo "==> Stopping krytis-runner (30s for graceful deregistration)..."
+podman stop --time 30 krytis-runner
+echo "==> Stopped."

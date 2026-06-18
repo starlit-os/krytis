@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="Start the self-hosted GitHub Actions runner"
+
+set -euo pipefail
+
+# Warn if user namespaces are restricted (bubblewrap / BST sandboxing won't work).
+USERNS_RESTRICT=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo "0")
+if [ "${USERNS_RESTRICT}" != "0" ]; then
+    echo "WARNING: kernel.apparmor_restrict_unprivileged_userns=${USERNS_RESTRICT}"
+    echo "         bubblewrap requires user namespaces."
+    echo "         Fix: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+    echo ""
+fi
+
+# Bail if the container is already running.
+if podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
+    echo "ERROR: krytis-runner is already running. Use 'mise run runner:stop' first."
+    exit 1
+fi
+
+# Ensure the PAT is stored as a podman secret.
+if ! podman secret ls --format '{{.Name}}' | grep -q '^gh-token$'; then
+    echo "==> GitHub PAT not found in podman secrets."
+    PAT=$(gum input --password --prompt "GitHub PAT (repo scope): ")
+    printf '%s' "${PAT}" | podman secret create gh-token -
+    echo "==> Stored as podman secret 'gh-token'."
+fi
+
+# Get a one-time runner registration token via gh CLI.
+echo "==> Fetching registration token..."
+RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registration-token --jq .token)
+
+echo "==> Starting krytis-runner..."
+podman run \
+    --detach \
+    --name krytis-runner \
+    --privileged \
+    --secret gh-token \
+    -e RUNNER_TOKEN="${RUNNER_TOKEN}" \
+    -e REPO_URL="https://github.com/starlit-os/krytis" \
+    -e RUNNER_NAME="${RUNNER_NAME}" \
+    -e RUNNER_LABELS="${RUNNER_LABELS}" \
+    -v "${HOME}/.cache/buildstream:/home/runner/.cache/buildstream:rw" \
+    "${RUNNER_IMAGE}"
+
+echo "==> Runner started. Use 'mise run runner:logs' to follow output."

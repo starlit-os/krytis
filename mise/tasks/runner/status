@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Show self-hosted runner container status"
+
+set -euo pipefail
+
+podman ps --all \
+    --filter "name=^krytis-runner$" \
+    --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"

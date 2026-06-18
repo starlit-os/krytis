@@ -1,0 +1,32 @@
+FROM ubuntu:24.04
+
+ARG RUNNER_VERSION=2.325.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bubblewrap \
+    bzip2 \
+    ca-certificates \
+    curl \
+    git \
+    gzip \
+    jq \
+    lzip \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install mise so workflow steps can call `mise run <task>`.
+RUN curl https://mise.run | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# GitHub Actions runner binary.
+RUN mkdir -p /home/runner && \
+    curl -fsSL \
+        "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+        | tar -xz -C /home/runner
+
+WORKDIR /home/runner
+
+COPY files/runner/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

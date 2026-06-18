@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Follow self-hosted runner logs"
+
+set -euo pipefail
+
+podman logs -f krytis-runner
