@@ -42,7 +42,7 @@ podman run \
     -e REPO_URL="https://github.com/starlit-os/krytis" \
     -e RUNNER_NAME="${RUNNER_NAME}" \
     -e RUNNER_LABELS="${RUNNER_LABELS}" \
-    -v "${HOME}/.cache/buildstream:/home/runner/.cache/buildstream:rw" \
+    -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
     "${RUNNER_IMAGE}"
 
 echo "==> Runner started. Use 'mise runner:logs' to follow output."
