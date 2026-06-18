@@ -68,6 +68,62 @@ Non-compliance = automatic rejection.
 
 ---
 
+## Worktree & Branch Policy
+
+Always create a worktree and branch before starting work. Exception: explicit instruction to work on an existing branch or directly on `main`.
+
+Create both together:
+
+```shell
+git worktree add -b <branch> <worktree-path>
+```
+
+### Worktree base
+
+Resolved in order — use the first that exists, or create the third:
+
+1. `<repo-root>/.worktrees/`
+2. `<parent-dir>/<repo-name>.worktrees/` (e.g. `krytis.worktrees/` — already the family convention)
+3. Fall back: create `<parent-dir>/<repo-name>.worktrees/`
+
+### Worktree path
+
+| Scenario | Path |
+|---|---|
+| Issue (top-level) | `<base>/gh<number>-<slug>` |
+| Issue with parent issue | `<base>/gh<parent-number>/<number>-<slug>` |
+| No issue | `<base>/<branch-name>` |
+
+Platform prefixes: `gh` = GitHub · `gl` = GitLab · `bb` = Bitbucket.
+
+### Branch name
+
+Mirrors the worktree leaf name, **without** the platform prefix:
+
+| Scenario | Branch |
+|---|---|
+| Issue | `<number>-<slug>` (e.g. `42-fix-composefs-boot-failure`) |
+| Issue with parent | `<number>-<slug>` — flat, no parent encoding in the branch name |
+| No issue | descriptive name following Conventional Commits style (e.g. `feat/add-greetd-service`) |
+
+### Issue title convention
+
+Issue titles must be **short imperative phrases of ≤ 5 words**. Applies to both agents and humans.
+
+Good: `Fix composefs boot failure` · `Add greetd service` · `Update mise to 2.1`
+
+Bad: `The composefs boot is broken and needs to be fixed` (too long) · `feat: add greetd` (conventional-commit prefixes belong in commits, not issue titles)
+
+### Slug derivation
+
+Issue title → lowercase → spaces and non-alphanumeric chars → hyphens → consecutive hyphens collapsed → leading/trailing hyphens stripped. The ≤ 5-word title constraint means no truncation is needed.
+
+Example: `Fix composefs boot failure` → `fix-composefs-boot-failure`
+
+Worktrees are not automatically deleted — prune manually after merge or abandonment.
+
+---
+
 ## Human Decision Points — Stop and Ask
 
 Agents implement autonomously **except** at these gates. Stop and request human input:
@@ -100,6 +156,8 @@ Do not request review without evidence. Before opening a PR for review:
 [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <description>`
 
 Common types: `feat` `fix` `docs` `ci` `refactor` `chore` `build`
+
+Subject line: soft max 72 characters.
 
 ### AI attribution
 
