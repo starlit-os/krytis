@@ -60,9 +60,9 @@ Non-compliance = automatic rejection.
 
 **Operator accountability:** The human deploying the agent is responsible for all decisions.
 
-**Verification:** Every PR must confirm `mise run lint` passed and the image booted. Use `mise run boot-test` for automated pass/fail. No WIP PRs.
+**Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs.
 
-**Mise task integrity:** All maintenance tasks must be `mise` tasks. No loose shell commands. If a task isn't covered by an existing task, add one alongside your change. Every agent action must be replicable by a human via `mise run <task>`. Do not rename existing tasks without explicit human approval.
+**Mise task integrity:** All maintenance tasks must be `mise` tasks. No loose shell commands. If a task isn't covered by an existing task, add one alongside your change. Every agent action must be replicable by a human via `mise <task>`. Do not rename existing tasks without explicit human approval.
 
 **Agents MUST NOT push directly to `main`.** All changes via PR from a feature branch.
 
