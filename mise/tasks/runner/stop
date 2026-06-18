@@ -5,11 +5,16 @@ set -euo pipefail
 
 unset SUDO_UID SUDO_GID SUDO_USER SUDO_COMMAND
 
-if ! podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
-    echo "krytis-runner is not running."
+if ! podman ps --all --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
+    echo "krytis-runner does not exist."
     exit 0
 fi
 
-echo "==> Stopping krytis-runner (30s for graceful deregistration)..."
-podman stop --time 30 krytis-runner
-echo "==> Stopped."
+if podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
+    echo "==> Stopping krytis-runner (30s for graceful deregistration)..."
+    podman stop --time 30 krytis-runner
+fi
+
+echo "==> Removing container..."
+podman rm krytis-runner
+echo "==> Done."
