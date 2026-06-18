@@ -14,6 +14,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Work with greetd / cage / noctalia-greeter | *(written during implementation — see B4/B5)* |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
+| Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
 
 ## Reference Docs
 
