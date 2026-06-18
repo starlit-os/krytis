@@ -147,6 +147,9 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
 
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
       - name: Track sources with BuildStream
         run: uv run bst --no-interactive -o x86_64_v3 true source track "${{ matrix.element }}"
 
@@ -270,6 +273,9 @@ jobs:
 
       - name: Setup mise
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
 
       - name: Track core junctions
         run: |
