@@ -20,7 +20,7 @@ permissions: read-all
 
 jobs:
   track-linux-cachyos:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
