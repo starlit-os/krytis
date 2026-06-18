@@ -7,6 +7,13 @@ SHA-pins and auto-merges Action digest/patch/minor updates. Everything else in
 the project is updated manually. This document tracks what else Renovate could
 own.
 
+**Principle: prefer Renovate over manual or custom CI tracking wherever
+possible.** Renovate provides consistent PR descriptions, configurable
+auto-merge, audit trails, and cross-repo coordination without custom scripting.
+Custom CI jobs (e.g. `track-linux-cachyos`) are appropriate only when no
+Renovate datasource covers the source — treat them as a last resort, not a
+default.
+
 ---
 
 ## Current coverage
