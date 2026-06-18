@@ -32,4 +32,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-./run.sh
+./run.sh &
+RUNNER_PID=$!
+trap 'kill -SIGTERM $RUNNER_PID' SIGTERM
+wait $RUNNER_PID
