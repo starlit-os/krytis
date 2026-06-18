@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+unset SUDO_UID SUDO_GID SUDO_USER SUDO_COMMAND
+
 if ! podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
     echo "krytis-runner is not running."
     exit 0

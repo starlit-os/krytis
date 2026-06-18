@@ -3,4 +3,8 @@
 
 set -euo pipefail
 
+# Unset sudo env vars that cause podman to refuse with "Must not run with sudo"
+# when SUDO_USER etc. are carried over from a prior sudo invocation in the shell.
+unset SUDO_UID SUDO_GID SUDO_USER SUDO_COMMAND
+
 podman logs -f krytis-runner
