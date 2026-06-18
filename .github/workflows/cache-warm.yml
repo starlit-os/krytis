@@ -76,7 +76,7 @@ jobs:
             key-length: 8
             verbose: False
           cache:
-            quota: 4G
+            quota: 50G
           EOF
 
       - name: Restore BST cache
