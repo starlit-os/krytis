@@ -19,9 +19,11 @@ if podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^k
 fi
 
 # Ensure the PAT is stored as a podman secret.
+# Requires a fine-grained PAT with Administration: Read and Write on starlit-os/krytis.
 if ! podman secret ls --format '{{.Name}}' | grep -q '^gh-token$'; then
     echo "==> GitHub PAT not found in podman secrets."
-    PAT=$(gum input --password --prompt "GitHub PAT (repo scope): ")
+    echo "    Required: fine-grained PAT, Administration: Read and Write (starlit-os/krytis)"
+    PAT=$(gum input --password --prompt "GitHub PAT: ")
     printf '%s' "${PAT}" | podman secret create gh-token -
     echo "==> Stored as podman secret 'gh-token'."
 fi

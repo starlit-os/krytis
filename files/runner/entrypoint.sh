@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd /home/runner
 
+# Fine-grained PAT: Administration Read+Write on starlit-os/krytis.
+# Used only to obtain a removal token for deregistration on exit.
 GH_TOKEN=$(cat /run/secrets/gh-token)
 
 # Derive org/repo from REPO_URL for the deregistration API call.
