@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Stop the self-hosted GitHub Actions runner (graceful, 30s timeout)"
+#MISE description="Stop the self-hosted GitHub Actions runner and deregister from GitHub"
 
 set -euo pipefail
 
@@ -10,9 +10,21 @@ if ! podman ps --all --filter "name=^krytis-runner$" --format '{{.Names}}' | gre
     exit 0
 fi
 
+# Deregister from GitHub before stopping — more reliable than relying on
+# the container's EXIT trap, which may not complete before podman kills the process.
+RUNNER_ID=$(gh api repos/starlit-os/krytis/actions/runners \
+    --jq ".runners[] | select(.name == \"${RUNNER_NAME}\") | .id")
+if [ -n "${RUNNER_ID}" ]; then
+    echo "==> Deregistering runner '${RUNNER_NAME}' (id=${RUNNER_ID})..."
+    gh api -X DELETE "repos/starlit-os/krytis/actions/runners/${RUNNER_ID}"
+    echo "==> Deregistered."
+else
+    echo "==> Runner '${RUNNER_NAME}' not found in GitHub — may already be deregistered."
+fi
+
 if podman ps --filter "name=^krytis-runner$" --format '{{.Names}}' | grep -q '^krytis-runner$'; then
-    echo "==> Stopping krytis-runner (30s for graceful deregistration)..."
-    podman stop --time 30 krytis-runner
+    echo "==> Stopping krytis-runner..."
+    podman stop --time 10 krytis-runner
 fi
 
 echo "==> Removing container..."
