@@ -7,7 +7,7 @@ StarlitOS Krytis is a bootc-based OCI image built on the [Freedesktop SDK](https
 | Component | Details |
 |-----------|---------|
 | Build system | [BuildStream](https://buildstream.build/) 2.5+ |
-| Base SDK | Freedesktop SDK 24 |
+| Base SDK | Freedesktop SDK 25 |
 | Kernel | CachyOS `linux-cachyos` (BORE-EEVDF, x86_64_v3) |
 | Root filesystem | composefs (EROFS over btrfs, set up by bootc) |
 | Task runner | [mise](https://mise.jdx.dev/) |
@@ -18,19 +18,19 @@ Prerequisites: `mise`, rootful podman, OVMF (for VM testing).
 
 ```bash
 # Validate the element graph
-mise run validate
+mise validate
 
 # Build and load the OCI image
-mise run load-image
+mise load-image
 
 # Apply Containerfile (bootc lint)
-mise run lint
+mise lint
 
 # Write to a disk image
-mise run generate-disk
+mise generate-disk
 
 # Boot in a VM
-mise run boot-vm
+mise boot-vm
 ```
 
 ## Source
