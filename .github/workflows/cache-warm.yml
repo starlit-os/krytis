@@ -79,16 +79,6 @@ jobs:
             quota: 50G
           EOF
 
-      - name: Restore BST cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: |
-            ~/.cache/buildstream/cas/objects
-            ~/.cache/buildstream/artifacts
-          key: bst-warm-${{ hashFiles('elements/gnome-build-meta.bst', 'elements/freedesktop-sdk.bst', 'uv.lock') }}
-          restore-keys: |
-            bst-warm-
-
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
