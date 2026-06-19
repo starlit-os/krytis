@@ -288,6 +288,10 @@ junctions:
 
 This tells BST these junctions are intentionally shared/internal so the multiple-context check is suppressed. Every project that layers on top of fdsdk + gnome-build-meta needs this block.
 
+## BST inside a composefs root
+
+bubblewrap + user namespaces work inside a bootc composefs-mounted root without any sysctl override. Verified by running `mise load-image --container` inside a booted Krytis VM. No `kernel.unprivileged_userns_clone` drop-in is needed.
+
 ## System Tool Requirements for `bst source track`
 
 `bst source track` initialises the full BST platform at startup — including `buildbox-run`, which checks for `bwrap` unconditionally even though source tracking never runs a build sandbox. Additionally, BST resolves the complete element graph before tracking, which validates all declared tool binaries (`lzip`, `xz-utils`, `bzip2`, `gzip`, `patch`, etc.) against `PATH`.
