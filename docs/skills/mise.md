@@ -196,7 +196,14 @@ System packages required for builds and source tracking live in `[bootstrap.pack
 "apt:patch" = "latest"
 ```
 
-Run locally: `mise bootstrap --yes`
+Run locally via the project task:
+
+```bash
+mise settings experimental=true   # required once before first invocation
+mise run bootstrap                 # enables experimental, then runs mise bootstrap --yes
+```
+
+**`mise run bootstrap`, not `mise bootstrap`** — `bootstrap` is a mise built-in keyword; the shorthand would invoke the mise built-in directly rather than the project task.
 
 In CI with `jdx/mise-action`, **any job that calls `mise run` (or `mise bootstrap`) needs `experimental: true`** when the project `mise.toml` uses any experimental feature — including `[bootstrap.packages]` *and* `[deps.uv] auto = true`. Omitting it causes:
 
