@@ -1,0 +1,1 @@
+Run the skills compliance self-diagnosis defined in the "Self-diagnosis" section of AGENTS.md. Check all four items (worktree naming, skill file updates, commit timing, memory vs skill file), report pass/fail with specific evidence, and offer to fix any failures in place.
