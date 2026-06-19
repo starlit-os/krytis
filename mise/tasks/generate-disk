@@ -19,6 +19,8 @@ fi
 echo "==> Copying localhost/krytis:latest to root podman store..."
 podman save --format oci-archive localhost/krytis:latest | sudo podman load
 
+# systemd.firstboot=no is intentionally absent: firstboot runs on every fresh disk install.
+# Re-add once the installer handles first-run setup and the greeter becomes the entry point.
 echo "==> Installing localhost/krytis:latest → ${DISK} (filesystem: ${FS})..."
 sudo podman run \
     --rm --privileged --pid=host \
@@ -33,7 +35,6 @@ sudo podman run \
         --filesystem "${FS}" \
         --wipe \
         --bootloader systemd \
-        --karg systemd.firstboot=no \
         --karg console=ttyS0
 
 echo "==> Done: ${DISK}"
