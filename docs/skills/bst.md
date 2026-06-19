@@ -197,6 +197,7 @@ Enable services via preset files. Never `systemctl enable` in install-commands.
 | Missing `%{install-extra}` | Must be the last install-command |
 | Forgot to add element to `deps.bst` | Element builds but won't appear in the image |
 | Preset at `/etc/systemd/system-preset/` | Ignored at boot — must be `%{indep-libdir}/systemd/system-preset/` |
+| Adding `ostree-minimal.bst` when `ostree.bst` is already in the image | Causes non-whitelisted overlaps at `oci/krytis/runtime.bst` — `ostree.bst` (pulled in by `core/bootc.bst`) is a superset; omit `ostree-minimal.bst` entirely |
 
 ## Rust / Cargo Projects
 
