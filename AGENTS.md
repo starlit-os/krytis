@@ -29,13 +29,20 @@ Agent works on task
 
 ### Skill-improvement mandate
 
-**Before marking your work complete:**
+The skill file update is part of the implementation — not a post-task step. Update `docs/skills/` **before you commit**, not after you open the PR. A learning committed as a follow-up is a failure of the loop.
+
+**When you hit a non-obvious pattern, workaround, or convention — before your next commit:**
+
+1. Open the relevant `docs/skills/` file (or create one).
+2. Add the entry.
+3. Stage it alongside your change.
+4. Commit them together.
+
+**Before opening a PR — confirm:**
 
 - [ ] Did I discover any workaround, non-obvious pattern, or convention?
-- [ ] Is there a skill file for the area I worked in?
-- [ ] If yes — did I update it?
-- [ ] If no — did I create one?
-- [ ] Is the skill file committed in the same PR?
+- [ ] Is the relevant `docs/skills/` file updated and in this PR's commits?
+- [ ] If no skill file exists for this area, did I create one?
 
 ### What counts as a learning worth writing back
 
@@ -87,6 +94,8 @@ Resolved in order — use the first that exists, or create the third:
 3. Fall back: create `<parent-dir>/<repo-name>.worktrees/`
 
 ### Worktree path
+
+**Before constructing the path:** run `gh issue view <number>` and read the `parent:` field. A non-empty `parent:` requires the nested form — use the parent issue number, not the child's.
 
 | Scenario | Path |
 |---|---|
