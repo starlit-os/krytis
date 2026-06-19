@@ -41,6 +41,7 @@ sudo podman run \
         --filesystem "${FS}" \
         --wipe \
         --bootloader systemd \
-        --karg console=ttyS0
+        --karg console=ttyS0 \
+        --karg console=tty1
 
 echo "==> Done: ${DISK}"
