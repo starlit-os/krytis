@@ -209,6 +209,39 @@ Without the `mise_toml:` input the action reads the project's `mise.toml` direct
 
 **When `mise_toml:` is set, it completely overwrites the project's `mise.toml`.** Any tools or settings in the project file are invisible to that job unless also listed in the inline block. This is why bootstrap packages belong in the project's `mise.toml` rather than being duplicated per-workflow.
 
+## Propagating flags through tasks that call other tasks
+
+When a task (e.g. `validate`) calls another task script directly (`./mise/tasks/bst`), mise does not parse the child's `#USAGE` annotations — it just runs the script. Flags must be forwarded explicitly as positional args.
+
+**Pattern — caller:**
+```bash
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+CONTAINER=${usage_container:+--container}
+./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/base-system.bst
+```
+
+**Pattern — callee (`mise/tasks/bst`):**
+```bash
+#USAGE flag "--container" help="..."
+CONTAINER="${usage_container:-false}"
+# Consume --container if passed as a literal first arg from a parent task.
+# Do NOT guard on "$CONTAINER" != "true" — see the env-inheritance note below.
+if [ "${1:-}" = "--container" ]; then
+    CONTAINER=true
+    shift
+fi
+```
+
+The unquoted `${CONTAINER:-}` in the caller expands to nothing when empty, so no spurious empty-string arg is passed.
+
+## `usage_container` is inherited by child processes
+
+When mise runs a task it sets `usage_*` env vars for that task's parsed flags. These vars are **inherited by every child process** the task spawns — including direct script invocations like `./mise/tasks/bst`.
+
+This means when `validate --container` calls `./mise/tasks/bst --container show ...`, the bst script sees **both** `usage_container=true` (inherited) **and** `--container` as `$1`. If the shift is guarded by `[ "$CONTAINER" != "true" ]`, the guard fires false and the shift is skipped — `--container` stays in `$@` and is passed through to BST, which rejects it with "No such option".
+
+**Fix:** always shift unconditionally when `$1 = "--container"`. Mise already strips the flag from `$@` for the direct-call case (`mise run bst --container`), so a double-shift cannot happen.
+
 ## New worktrees require `mise trust`
 
 `mise` treats each new worktree directory as untrusted. Any `mise run` command fails immediately with:

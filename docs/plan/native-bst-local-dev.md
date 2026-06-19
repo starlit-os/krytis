@@ -163,7 +163,7 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 # or on older kernels:
 sudo sysctl -w kernel.unprivileged_userns_clone=1
 ```
-Or fall back to `mise run bst-container`.
+Or fall back to `mise run bst --container` (or `mise run validate --container`, etc.).
 
 ### Cache compatibility
 
@@ -190,6 +190,5 @@ The existing convention is preserved: `BST_FLAGS` appends to defaults,
 1. Add `pyproject.toml` + `uv.lock` (required by CI plan — likely done first)
 2. Update `mise.toml` (`[tools]`, `[settings]`, `[deps.uv]`)
 3. Add `.venv/` to `.gitignore`
-4. Rename `mise/tasks/bst` → `mise/tasks/bst-container`; write new `mise/tasks/bst`
-5. Verify `mise run validate` and `mise run load-image` still work
-6. Document Fedora system deps in `README.md` or `AGENTS.md`
+4. Rewrite `mise/tasks/bst` with `--container` flag; update `validate` and `load-image` to accept and pass it through
+5. Verify `mise run validate` and `mise run load-image` still work (and with `--container`)

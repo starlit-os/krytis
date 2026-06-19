@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #MISE description="Build oci/krytis/image.bst and load the result into podman local storage"
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
 
 set -euo pipefail
+CONTAINER=${usage_container:+--container}
 
 echo "==> Building oci/krytis/image.bst..."
-./mise/tasks/bst build oci/krytis/image.bst
+./mise/tasks/bst ${CONTAINER:-} build oci/krytis/image.bst
 
 echo "==> Loading into podman..."
-./mise/tasks/bst artifact checkout --tar - oci/krytis/image.bst | podman load
+./mise/tasks/bst ${CONTAINER:-} artifact checkout --tar - oci/krytis/image.bst | podman load
 
 echo "==> Done: localhost/krytis-input:latest"
