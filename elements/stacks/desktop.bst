@@ -17,3 +17,6 @@ depends:
 
   # ── Credentials ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gnome-keyring.bst
+
+  # ── Config ─────────────────────────────────────────────────────────────
+  - config/niri-config.bst
