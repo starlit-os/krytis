@@ -209,6 +209,16 @@ Without the `mise_toml:` input the action reads the project's `mise.toml` direct
 
 **When `mise_toml:` is set, it completely overwrites the project's `mise.toml`.** Any tools or settings in the project file are invisible to that job unless also listed in the inline block. This is why bootstrap packages belong in the project's `mise.toml` rather than being duplicated per-workflow.
 
+## New worktrees require `mise trust`
+
+`mise` treats each new worktree directory as untrusted. Any `mise run` command fails immediately with:
+
+```
+mise ERROR Config files in .../mise.toml are not trusted. Trust them with `mise trust`.
+```
+
+**Fix:** run `mise trust` once in the worktree root before any `mise run` invocation.
+
 ## Never add loose shell scripts
 
 All development workflows must be `mise run` tasks. No standalone scripts outside `mise/tasks/`.
