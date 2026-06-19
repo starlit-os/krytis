@@ -1,19 +1,19 @@
 # mise — task runner and tool manager
 
-Replaces `just` entirely. Every maintenance task must be a `mise run <task>` call.
+Replaces `just` entirely. Every maintenance task must be a `mise <task>` call.
 **Requires mise ≥ 2026.6.10** (for `[env]` default values).
 
 ## Quick reference
 
 ```bash
-mise run bst build stacks/base-system.bst             # build an element
-mise run bst show --deps all stacks/bootc.bst         # show dep graph
-mise run bst source track core/bootupd.bst            # track new refs
-mise run validate                                      # check all key element graphs resolve
-mise run generate-image-version                        # update include/image-version.yml from git
-mise run load-image                                    # bst build + podman load → localhost/krytis-input:latest
-mise run lint                                          # bootc container lint via Containerfile
-mise run kernel-update                                 # bump linux-cachyos to latest CachyOS v3 release
+mise bst build stacks/base-system.bst             # build an element
+mise bst show --deps all stacks/bootc.bst         # show dep graph
+mise bst source track core/bootupd.bst            # track new refs
+mise validate                                      # check all key element graphs resolve
+mise generate-image-version                        # update include/image-version.yml from git
+mise load-image                                    # bst build + podman load → localhost/krytis-input:latest
+mise lint                                          # bootc container lint via Containerfile
+mise kernel-update                                 # bump linux-cachyos to latest CachyOS v3 release
 ```
 
 `--` is not needed. The bst task uses `#USAGE arg "<args>" var=#true` which captures all
@@ -22,12 +22,12 @@ remaining args as positionals, so flags like `--deps` and `--tar` pass through w
 ## Standard build workflow
 
 ```
-mise run generate-image-version   # stamp include/image-version.yml
-mise run validate                 # confirm element graph resolves
-mise run load-image               # BST build → podman local storage
-mise run lint                     # bootc container lint (squash-all)
-mise run generate-disk            # bootc install to-disk → bootable.raw
-mise run boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
+mise generate-image-version   # stamp include/image-version.yml
+mise validate                 # confirm element graph resolves
+mise load-image               # BST build → podman local storage
+mise lint                     # bootc container lint (squash-all)
+mise generate-disk            # bootc install to-disk → bootable.raw
+mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 ```
 
 - `lint` must be run after `load-image` — not automatically re-triggered.
@@ -38,29 +38,29 @@ mise run boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 
 ## File tasks
 
-All tasks are **file tasks** — standalone executable scripts in `mise/tasks/`. Each file becomes a `mise run <name>` command.
+All tasks are **file tasks** — standalone executable scripts in `mise/tasks/`. Each file becomes a `mise <name>` command.
 
 ```
 mise/tasks/
-├── bst                      # mise run bst [args...]
-├── validate                 # mise run validate
-├── generate-image-version   # mise run generate-image-version
-├── load-image               # mise run load-image
-├── lint                     # mise run lint
-├── generate-disk            # mise run generate-disk
-├── boot-vm                  # mise run boot-vm
-├── kernel-update            # mise run kernel-update
-└── mise-update              # mise run mise-update
+├── bst                      # mise bst [args...]
+├── validate                 # mise validate
+├── generate-image-version   # mise generate-image-version
+├── load-image               # mise load-image
+├── lint                     # mise lint
+├── generate-disk            # mise generate-disk
+├── boot-vm                  # mise boot-vm
+├── kernel-update            # mise kernel-update
+└── mise-update              # mise mise-update
 ```
 
-Subdirectory nesting uses `:` as separator: `mise/tasks/test/units` → `mise run test:units`.
+Subdirectory nesting uses `:` as separator: `mise/tasks/test/units` → `mise test:units`.
 
 ### Creating a new task
 
 1. Create `mise/tasks/<name>` with a shebang and `#MISE`/`#USAGE` metadata header.
 2. `chmod +x mise/tasks/<name>`.
 3. `usage lint mise/tasks/<name>` — auto-generates `--help` and catches spec errors.
-4. `mise run <name> --help` to confirm.
+4. `mise <name> --help` to confirm.
 5. Update this skill if the pattern is non-obvious.
 
 Template:
@@ -97,7 +97,7 @@ The env vars from `mise.toml` are already injected when running as a mise task.
 ./mise/tasks/bst artifact checkout --tar - oci/krytis/image.bst | podman load
 ```
 
-Never use `mise run other-task` from inside a task script — it spawns a nested mise process.
+Never use `mise other-task` from inside a task script — it spawns a nested mise process.
 
 ### Supported `#MISE` metadata fields
 
@@ -147,10 +147,10 @@ BST_MEMORY_LIMIT = { default = "16g" }
 
 Override from the shell before calling mise:
 ```bash
-BST_MEMORY_LIMIT=8g mise run bst build stacks/base-system.bst
+BST_MEMORY_LIMIT=8g mise bst build stacks/base-system.bst
 ```
 
-In a mise-activated shell `hook-env` already injects these defaults, so overriding requires a clean environment (e.g. `env -u BST_MEMORY_LIMIT mise run bst ...`) or a parent mise config file that sets the variable first.
+In a mise-activated shell `hook-env` already injects these defaults, so overriding requires a clean environment (e.g. `env -u BST_MEMORY_LIMIT mise bst ...`) or a parent mise config file that sets the variable first.
 
 Truly optional flags with no meaningful default (e.g. `BST_FLAGS`, `BST_FLAGS_OVERRIDE`) stay as shell expansion in the script: `${BST_FLAGS:-}`.
 
@@ -168,8 +168,8 @@ Wraps the pinned `bst2` container image. Override points:
 Default flags applied: `-o x86_64_v3 true --no-interactive`
 
 ```bash
-mise run bst build stacks/base-system.bst
-BST_FLAGS="--config /src/buildstream-ci.conf" mise run bst build stacks/base-system.bst
+mise bst build stacks/base-system.bst
+BST_FLAGS="--config /src/buildstream-ci.conf" mise bst build stacks/base-system.bst
 ```
 
 ## Bootstrap packages (`mise bootstrap`)
@@ -240,7 +240,7 @@ When mise runs a task it sets `usage_*` env vars for that task's parsed flags. T
 
 This means when `validate --container` calls `./mise/tasks/bst --container show ...`, the bst script sees **both** `usage_container=true` (inherited) **and** `--container` as `$1`. If the shift is guarded by `[ "$CONTAINER" != "true" ]`, the guard fires false and the shift is skipped — `--container` stays in `$@` and is passed through to BST, which rejects it with "No such option".
 
-**Fix:** always shift unconditionally when `$1 = "--container"`. Mise already strips the flag from `$@` for the direct-call case (`mise run bst --container`), so a double-shift cannot happen.
+**Fix:** always shift unconditionally when `$1 = "--container"`. Mise already strips the flag from `$@` for the direct-call case (`mise bst --container`), so a double-shift cannot happen.
 
 ## New worktrees require `mise trust`
 

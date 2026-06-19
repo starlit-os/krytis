@@ -6,15 +6,15 @@ Load when writing, editing, or reviewing `.bst` element files, debugging a build
 
 | Goal | Command |
 |------|---------|
-| Validate full element graph (no build) | `mise run validate` |
-| Inspect element deps | `mise run bst show elements/krytis/<name>.bst` |
-| Build one element | `mise run bst build elements/krytis/<name>.bst` |
-| Enter build sandbox | `mise run bst shell --build elements/krytis/<name>.bst` |
-| Track a git/tarball ref | `mise run bst source track elements/krytis/<name>.bst` |
-| List built element contents | `mise run bst artifact list-contents elements/krytis/<name>.bst` |
-| View build log | `mise run bst artifact log elements/krytis/<name>.bst` |
-| Delete cached build | `mise run bst artifact delete elements/krytis/<name>.bst` |
-| Full image build | `mise run build` |
+| Validate full element graph (no build) | `mise validate` |
+| Inspect element deps | `mise bst show elements/krytis/<name>.bst` |
+| Build one element | `mise bst build elements/krytis/<name>.bst` |
+| Enter build sandbox | `mise bst shell --build elements/krytis/<name>.bst` |
+| Track a git/tarball ref | `mise bst source track elements/krytis/<name>.bst` |
+| List built element contents | `mise bst artifact list-contents elements/krytis/<name>.bst` |
+| View build log | `mise bst artifact log elements/krytis/<name>.bst` |
+| Delete cached build | `mise bst artifact delete elements/krytis/<name>.bst` |
+| Full image build | `mise build` |
 
 ## Variables
 
@@ -169,9 +169,9 @@ rm -rf "$OUTDIR"   # clean up when done
 1. Create `elements/krytis/<name>.bst` (copy a similar existing element)
 2. Add `krytis/<name>.bst` to `depends:` in `elements/krytis/deps.bst`
 3. Add a URL alias to `include/aliases.yml` if the download domain is new
-4. Run `mise run validate` (validates the full element graph)
-5. Run `mise run bst build elements/krytis/<name>.bst`
-6. Run `mise run build` for a full image build
+4. Run `mise validate` (validates the full element graph)
+5. Run `mise bst build elements/krytis/<name>.bst`
+6. Run `mise build` for a full image build
 
 ### Systemd service installation
 
@@ -245,8 +245,8 @@ python3 files/scripts/generate_cargo_sources.py /path/to/Cargo.lock
 ```
 
 To update after a version bump:
-1. `mise run bst source track elements/krytis/<name>.bst`
-2. `mise run bst shell --build elements/krytis/<name>.bst` — copy out the new Cargo.lock
+1. `mise bst source track elements/krytis/<name>.bst`
+2. `mise bst shell --build elements/krytis/<name>.bst` — copy out the new Cargo.lock
 3. Regenerate cargo2 sources and replace the block in the element
 
 Rust elements that link against C libraries (greetd → `pam-sys`, etc.) need the C library in both `build-depends` and `depends`:
