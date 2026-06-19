@@ -36,6 +36,16 @@ mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 - `.ovmf-vars.fd` (writable UEFI state) and `bootable.raw` are `.gitignore`d.
 - `VM_RAM` and `VM_CPUS` are overrideable via `mise.toml [env]` or shell export.
 
+### `console=` karg ordering matters for interactive services
+
+With multiple `console=` kernel arguments, all consoles receive output, but `/dev/console` (used for interactive input by services like `systemd-firstboot`) maps to the **last** one listed. To keep serial output for native QEMU debugging while making firstboot interactive on VGA/noVNC, put `console=ttyS0` first and `console=tty1` last:
+
+```
+--karg console=ttyS0 --karg console=tty1
+```
+
+Reversing the order (tty1 first, ttyS0 last) breaks interactive firstboot on the VGA display.
+
 ## File tasks
 
 All tasks are **file tasks** — standalone executable scripts in `mise/tasks/`. Each file becomes a `mise <name>` command.
