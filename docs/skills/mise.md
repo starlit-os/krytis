@@ -205,6 +205,25 @@ mise run bootstrap                 # enables experimental, then runs mise bootst
 
 **`mise run bootstrap`, not `mise bootstrap`** — `bootstrap` is a mise built-in keyword; the shorthand would invoke the mise built-in directly rather than the project task.
 
+### Fedora / non-apt systems
+
+`[bootstrap.packages]` only supports `apt:` entries. On Fedora (or any running Krytis system, which lacks dnf), install the equivalents manually:
+
+```bash
+sudo dnf install -y bubblewrap lzip xz bzip2 gzip patch
+```
+
+| `[bootstrap.packages]` | Fedora package |
+|---|---|
+| `apt:bubblewrap` | `bubblewrap` |
+| `apt:lzip` | `lzip` |
+| `apt:xz-utils` | `xz` |
+| `apt:bzip2` | `bzip2` |
+| `apt:gzip` | `gzip` |
+| `apt:patch` | `patch` |
+
+On image-based systems (running Krytis), these are baked into `stacks/dev-tools.bst` so no manual install is needed — use `mise bst --container` if the native sandbox still fails.
+
 In CI with `jdx/mise-action`, **any job that calls `mise run` (or `mise bootstrap`) needs `experimental: true`** when the project `mise.toml` uses any experimental feature — including `[bootstrap.packages]` *and* `[deps.uv] auto = true`. Omitting it causes:
 
 ```
