@@ -12,6 +12,17 @@ StarlitOS Krytis is a bootc-based OCI image built on the [Freedesktop SDK](https
 | Root filesystem | composefs (EROFS over btrfs, set up by bootc) |
 | Task runner | [mise](https://mise.jdx.dev/) |
 
+## Setup
+
+Install [mise](https://mise.jdx.dev/), then bootstrap the dev environment:
+
+```bash
+mise settings experimental=true   # required once, before first run
+mise run bootstrap                 # installs system deps; sets up BST venv
+```
+
+`mise run bootstrap` (not `mise bootstrap` — `bootstrap` is a mise built-in keyword).
+
 ## Building
 
 Prerequisites: `mise`, rootful podman, OVMF (for VM testing).

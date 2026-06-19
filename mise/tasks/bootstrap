@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# MISE description="Bootstrap dev environment: enable mise experimental and install system deps"
+# Must be invoked as 'mise run bootstrap' — 'mise bootstrap' calls the mise built-in instead.
+set -euo pipefail
+
+# Enable experimental first: required for [bootstrap.packages] and [deps.uv] auto = true.
+# This is idempotent and safe to re-run.
+mise settings experimental=true
+
+mise bootstrap --yes
+
+echo "==> Bootstrap complete. Run 'mise install' to set up tool versions, then 'mise validate' to verify."
