@@ -35,4 +35,6 @@ public:
       - ln -s var/srv /srv
       - ln -s ../../var/usrlocal usr/local
 
-      - touch /etc/machine-id
+      # "uninitialized" triggers ConditionFirstBoot=yes for systemd-firstboot.service.
+      # An empty file does not.
+      - printf 'uninitialized\n' > /etc/machine-id

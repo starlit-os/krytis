@@ -68,6 +68,19 @@ The user may request a compliance check at any time by asking for a **skills che
 
 **Verdict:** summarise Pass / Fail / N/A per item. If any failures, offer to fix them before the PR is opened (or add a commit to the branch if the PR is already open).
 
+**5. Root-cause introspection (required for every failure)**
+
+For each failure found above, answer:
+- *What specifically was skipped or missed?*
+- *Why wasn't the discipline applied at the time?* Choose the most accurate:
+  - **Oversight** — knew the rule, had the information, didn't act on it
+  - **Misjudgement** — incorrectly decided this pattern wasn't worth writing back
+  - **Rule gap** — the rule as written didn't clearly cover this case
+  - **Sequencing error** — planned to do it later; later never came
+- *What would have triggered correct behaviour?* (e.g. "checking before committing", "recognising this pattern type earlier")
+
+This step is not optional. A failure reported without a root cause is itself a compliance failure.
+
 ### What counts as a learning worth writing back
 
 Write it:
