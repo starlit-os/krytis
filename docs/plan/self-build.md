@@ -162,15 +162,13 @@ The running system's root partition must have sufficient free space. For a self-
 
 ## Open questions
 
-### Can `buildstream` run inside a bootc composefs root?
+### ~~Can `buildstream` run inside a bootc composefs root?~~ — Resolved
 
-BST's sandbox uses bubblewrap with user namespaces. On a composefs-mounted root with the default kernel configuration, user namespaces should be available (`CONFIG_USER_NS=y`, `kernel.unprivileged_userns_clone=1`). Verify after first boot attempt. If restricted, either:
-- Set `kernel.unprivileged_userns_clone=1` in a sysctl drop-in (add to `config/bootc.bst` or a new `config/sysctl.bst`), or
-- Fall back to the container path (Option A), which uses `--privileged`.
+**Yes.** Verified by running `mise load-image --container` inside a booted Krytis VM (composefs root). bubblewrap + user namespaces work without a sysctl drop-in. No `kernel.unprivileged_userns_clone` override is needed. Closed as #23.
 
-### SELinux / AppArmor interference
+### ~~SELinux / AppArmor interference~~ — Resolved
 
-If the image includes a MAC policy, bwrap sandboxes may be denied. The `generate-disk` task already sets `--security-opt label=type:unconfined_t` for the bootc install container — a similar policy may be needed for BST sandbox processes.
+No interference observed in practice. The booted image does not ship a MAC policy that restricts bwrap sandboxes.
 
 ### Pinning `mise` version
 
