@@ -202,6 +202,10 @@ Enable services via preset files. Never `systemctl enable` in install-commands.
 
 ## Rust / Cargo Projects
 
+### Strategy A: cargo2 source (live Cargo.lock)
+
+Use when you want BST to track the exact crate graph from upstream's Cargo.lock.
+
 ```yaml
 kind: make    # not kind: cargo2 — cargo2 is a source kind, not an element kind
 
@@ -249,7 +253,90 @@ To update after a version bump:
 2. `mise bst shell --build elements/krytis/<name>.bst` — copy out the new Cargo.lock
 3. Regenerate cargo2 sources and replace the block in the element
 
-Rust elements that link against C libraries (greetd → `pam-sys`, etc.) need the C library in both `build-depends` and `depends`:
+### Strategy B: upstream vendored-dependencies tarball
+
+Use when the upstream project publishes an official vendored tarball alongside each release (e.g. niri). Avoids the cargo2 plugin entirely and keeps the element short.
+
+```yaml
+kind: make
+
+build-depends:
+- freedesktop-sdk.bst:components/rust.bst
+- freedesktop-sdk.bst:public-stacks/buildsystem-make.bst
+- freedesktop-sdk.bst:components/pkg-config.bst
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  cargo-home: '%{build-root}/.cargo'
+
+config:
+  build-commands:
+  - |
+    mkdir -p .cargo
+    cat > .cargo/config.toml <<'EOF'
+    [source.crates-io]
+    replace-with = "vendored-sources"
+
+    # Add a stanza like this for each git dep that bypasses crates.io:
+    [source."git+https://github.com/Example/repo.git?rev=<sha>"]
+    git = "https://github.com/Example/repo.git"
+    rev = "<sha>"
+    replace-with = "vendored-sources"
+
+    [source.vendored-sources]
+    directory = "vendor"
+    EOF
+  - |
+    export CARGO_HOME="%{cargo-home}"
+    export CARGO_NET_OFFLINE=true
+    cargo build --release --frozen --locked
+
+  install-commands:
+  - install -Dm755 target/release/<binary> "%{install-root}%{bindir}/<binary>"
+  - "%{install-extra}"
+
+sources:
+- kind: tar
+  url: github_files:owner/repo/archive/refs/tags/v<ver>.tar.gz
+  ref: <sha256>
+- kind: tar
+  url: github_files:owner/repo/releases/download/v<ver>/<name>-<ver>-vendored-dependencies.tar.xz
+  base-dir: ""   # vendored tarball extracts directly to vendor/ with no wrapping dir
+  ref: <sha256>
+```
+
+The vendored tarball extracts into `vendor/` inside the source directory. Check the upstream Cargo.lock for `git+` entries — each one needs its own `[source."git+..."]` stanza in `.cargo/config.toml`.
+
+### C library deps and Mesa
+
+C libraries needed at runtime go in `depends` — BST stages `depends` items at build time too, so headers and pkgconfig files are available to the compiler. Mesa is an exception: always list it in **both** `build-depends` and `depends`:
+
+```yaml
+build-depends:
+- freedesktop-sdk.bst:extensions/mesa/mesa.bst   # GL headers + pkgconfig
+
+depends:
+- freedesktop-sdk.bst:extensions/mesa/mesa.bst   # GL libraries at runtime
+```
+
+Mesa installs pkgconfig files under a non-standard path. Add to the build env explicitly:
+
+```yaml
+variables:
+  mesa-gl-dir: '%{libdir}/GL/default/lib'
+
+config:
+  build-commands:
+  - |
+    export PKG_CONFIG_PATH="%{mesa-gl-dir}/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export LIBRARY_PATH="%{mesa-gl-dir}:${LIBRARY_PATH:-}"
+    export LD_LIBRARY_PATH="%{mesa-gl-dir}:${LD_LIBRARY_PATH:-}"
+    cargo build ...
+```
+
+Other Rust elements that link against C libraries need the library in both `build-depends` and `depends`:
 
 ```yaml
 build-depends:
