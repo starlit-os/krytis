@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Validate BST element graph — verify key stacks and OCI pipeline resolve"
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
 
 set -euo pipefail
-./mise/tasks/bst show --deps all stacks/base-system.bst
-./mise/tasks/bst show --deps all stacks/bootc.bst
-./mise/tasks/bst show --deps all oci/krytis/image.bst
+CONTAINER=${usage_container:+--container}
+./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/base-system.bst
+./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/bootc.bst
+./mise/tasks/bst ${CONTAINER:-} show --deps all oci/krytis/image.bst

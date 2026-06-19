@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Run any bst command inside the pinned bst2 container via podman"
+#MISE description="Run any bst command (native uv venv by default; --container for podman)"
+#USAGE flag "--container" help="Use the pinned bst2 podman container instead of native BST"
 #USAGE arg "<args>" var=#true help="bst subcommand and arguments (e.g. build stacks/base-system.bst)"
 
-# BST2_IMAGE and BST_MEMORY_LIMIT are set in mise.toml [env] with defaults;
-# export them in the shell to override (requires mise >= 2026.6.10).
 # BST_FLAGS: appended to default flags; BST_FLAGS_OVERRIDE: replaces all defaults.
 set -euo pipefail
 
@@ -15,16 +14,31 @@ else
     FLAGS="${DEFAULT_FLAGS} ${BST_FLAGS:-}"
 fi
 
-mkdir -p "${HOME}/.cache/buildstream"
-# word-splitting on FLAGS is intentional (space-separated option flags)
+# usage_container is set by mise when invoked via `mise run bst --container` (and
+# is inherited by child processes, so a parent task like validate may also set it).
+# When a parent task passes --container as a literal first arg to this script,
+# consume it here regardless — mise already stripped it from $@ for the direct case.
+CONTAINER="${usage_container:-false}"
+if [ "${1:-}" = "--container" ]; then
+    CONTAINER=true
+    shift
+fi
+
+if [ "$CONTAINER" = "true" ]; then
+    mkdir -p "${HOME}/.cache/buildstream"
+    # word-splitting on FLAGS is intentional (space-separated option flags)
+    # shellcheck disable=SC2086
+    exec podman run --rm \
+        --privileged \
+        --device /dev/fuse \
+        --network=host \
+        --memory "${BST_MEMORY_LIMIT}" \
+        -v "$(pwd):/src:rw" \
+        -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
+        -w /src \
+        "${BST2_IMAGE}" \
+        bash -c 'bst --colors "$@"' -- ${FLAGS} "$@"
+fi
+
 # shellcheck disable=SC2086
-podman run --rm \
-    --privileged \
-    --device /dev/fuse \
-    --network=host \
-    --memory "${BST_MEMORY_LIMIT}" \
-    -v "$(pwd):/src:rw" \
-    -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
-    -w /src \
-    "${BST2_IMAGE}" \
-    bash -c 'bst --colors "$@"' -- ${FLAGS} "$@"
+exec uv run bst --colors ${FLAGS} "$@"
