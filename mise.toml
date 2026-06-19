@@ -21,6 +21,12 @@ run = "uv sync"
 "apt:bzip2" = "latest"
 "apt:gzip" = "latest"
 "apt:patch" = "latest"
+"dnf:bubblewrap" = "latest"
+"dnf:lzip" = "latest"
+"dnf:xz" = "latest"
+"dnf:bzip2" = "latest"
+"dnf:gzip" = "latest"
+"dnf:patch" = "latest"
 
 [env]
 # { default = "..." } keeps the shell value if already set; only applies the

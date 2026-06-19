@@ -205,6 +205,12 @@ mise run bootstrap                 # enables experimental, then runs mise bootst
 
 **`mise run bootstrap`, not `mise bootstrap`** — `bootstrap` is a mise built-in keyword; the shorthand would invoke the mise built-in directly rather than the project task.
 
+### Package manager support
+
+`[bootstrap.packages]` supports both `apt:` (Debian/Ubuntu) and `dnf:` (Fedora) prefixes — mise selects the right one for the current system. Note that Fedora package names differ from apt: `apt:xz-utils` → `dnf:xz`.
+
+On image-based systems (running Krytis), these packages are baked into `stacks/dev-tools.bst` so `mise run bootstrap` is not needed — use `mise bst --container` if the native sandbox still fails.
+
 In CI with `jdx/mise-action`, **any job that calls `mise run` (or `mise bootstrap`) needs `experimental: true`** when the project `mise.toml` uses any experimental feature — including `[bootstrap.packages]` *and* `[deps.uv] auto = true`. Omitting it causes:
 
 ```
