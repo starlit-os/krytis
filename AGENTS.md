@@ -44,6 +44,30 @@ The skill file update is part of the implementation — not a post-task step. Up
 - [ ] Is the relevant `docs/skills/` file updated and in this PR's commits?
 - [ ] If no skill file exists for this area, did I create one?
 
+### Self-diagnosis
+
+The user may request a compliance check at any time by asking for a **skills check** (or running `/skills-check` in Claude Code). When asked, run the following diagnosis and report pass/fail per item with specific evidence. Offer to fix failures in place.
+
+**1. Worktree & branch naming**
+- Get the current branch: `git branch --show-current`.
+- If the branch addresses a GitHub issue, run `gh issue view <number>` and read the `parent:` field.
+- Verify the worktree path (`git worktree list`) matches the AGENTS.md convention for top-level issue, issue-with-parent, or no-issue.
+
+**2. Skill file updates**
+- List areas touched: `git diff main...HEAD -- '*.bst' mise/ .github/ docs/`.
+- List skill file changes: `git diff main...HEAD -- docs/skills/`.
+- For each touched area, confirm the corresponding `docs/skills/` file was updated. Flag any gap, and note whether a skill file exists for that area.
+
+**3. Skill file commit timing**
+- List commits: `git log main...HEAD --oneline`.
+- Confirm skill file updates appear in the same commit as the change that produced the learning — not in a later commit.
+
+**4. Memory vs skill file**
+- Recall any lessons written to the memory system this session.
+- For each, confirm a corresponding `docs/skills/` entry exists. Memory is supplementary; the skill file is the authoritative record.
+
+**Verdict:** summarise Pass / Fail / N/A per item. If any failures, offer to fix them before the PR is opened (or add a commit to the branch if the PR is already open).
+
 ### What counts as a learning worth writing back
 
 Write it:
