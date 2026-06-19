@@ -198,6 +198,7 @@ Enable services via preset files. Never `systemctl enable` in install-commands.
 | Forgot to add element to `deps.bst` | Element builds but won't appear in the image |
 | Preset at `/etc/systemd/system-preset/` | Ignored at boot — must be `%{indep-libdir}/systemd/system-preset/` |
 | Adding `ostree-minimal.bst` when `ostree.bst` is already in the image | Causes non-whitelisted overlaps at `oci/krytis/runtime.bst` — `ostree.bst` (pulled in by `core/bootc.bst`) is a superset; omit `ostree-minimal.bst` entirely |
+| `touch /etc/machine-id` doesn't trigger first boot | `ConditionFirstBoot=yes` (used by `systemd-firstboot.service`) requires `/etc/machine-id` to contain the literal string `uninitialized\n`, not an empty file. Use `printf 'uninitialized\n' > /etc/machine-id` in the OCI stack integration-commands. |
 
 ## Rust / Cargo Projects
 

@@ -19,6 +19,7 @@ depends:
   - freedesktop-sdk.bst:components/sudo.bst
   - freedesktop-sdk.bst:vm/config/sudo.bst
   - freedesktop-sdk.bst:vm/config/systemd-homed-firstboot.bst
+  - config/systemd-firstboot.bst
 
   # ── Networking ─────────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/iproute2.bst
