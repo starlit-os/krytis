@@ -30,10 +30,11 @@ directly, so they inherit this container invocation.
 
 ## Target state
 
-`mise run bst` (and the tasks that call it) should call `uv run bst` instead.
-The `pyproject.toml` + `uv.lock` added for CI (see the CI plan) supply the BST
-Python package. The podman wrapper is preserved as `mise run bst-container` for
-edge cases.
+`mise run bst` defaults to `uv run bst`. A `--container` flag switches it to the
+existing podman invocation for systems without local BST dependencies (restricted
+user namespaces, non-Fedora hosts, etc.). The `--container` flag is propagated
+through `validate` and `load-image` so any task can be run container-backed
+without editing task files. No separate `bst-container` task is needed.
 
 ## Changes required
 
@@ -59,29 +60,48 @@ outputs = [".venv/"]
 run = "uv sync"
 ```
 
-The `BST2_IMAGE` env var stays for `bst-container`; it is no longer referenced by
-the primary `bst` task.
+The `BST2_IMAGE` env var stays for the `--container` path; it is no longer
+referenced by the default native path.
 
 ### `mise/tasks/bst`
 
-Replace the podman invocation with:
+Replace the podman invocation with a native-by-default task that accepts
+`--container` to fall back to podman:
 
 ```bash
 #!/usr/bin/env bash
-#MISE description="Run any bst command with native BST (uv venv)"
+#MISE description="Run any bst command (native uv venv by default; --container for podman)"
+#USAGE flag "--container" help="Use the pinned bst2 podman container instead of native BST"
 #USAGE arg "<args>" var=true help="bst subcommand and arguments"
 
 set -euo pipefail
 DEFAULT_FLAGS="-o x86_64_v3 true --no-interactive"
 FLAGS="${BST_FLAGS_OVERRIDE:-${DEFAULT_FLAGS} ${BST_FLAGS:-}}"
+
+if [ "${usage_container:-false}" = "true" ]; then
+    mkdir -p "${HOME}/.cache/buildstream"
+    # shellcheck disable=SC2086
+    exec podman run --rm \
+        --privileged --device /dev/fuse --network=host \
+        --memory "${BST_MEMORY_LIMIT}" \
+        -v "$(pwd):/src:rw" \
+        -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
+        -w /src \
+        "${BST2_IMAGE}" bash -c 'bst --colors "$@"' -- ${FLAGS} "$@"
+fi
+
 # shellcheck disable=SC2086
 exec uv run bst --colors ${FLAGS} "$@"
 ```
 
-### `mise/tasks/bst-container` (new)
+### `mise/tasks/validate` and `mise/tasks/load-image`
 
-Preserve the existing podman wrapper verbatim, renamed. Useful on systems with
-restricted user namespaces (non-Fedora corporate laptops, restricted WSL).
+Add `--container` and pass it through to each `./mise/tasks/bst` call:
+
+```bash
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+./mise/tasks/bst ${usage_container:+--container} show --deps all stacks/base-system.bst
+```
 
 ### `.gitignore`
 
