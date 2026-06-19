@@ -2,6 +2,9 @@ aliases:
   # file aliases (tarballs, single-file downloads)
   cachyos: https://cdn77.cachyos.org/
   crates: https://static.crates.io/
+  ghostty_deps: https://deps.files.ghostty.org/
+  ghostty_releases: https://release.files.ghostty.org/
+  ziglang: https://ziglang.org/
   freedesktop_files: https://gitlab.freedesktop.org/
   freedesktop_software: https://www.freedesktop.org/software/
   ftp_gnu_org: https://ftp.gnu.org/gnu/

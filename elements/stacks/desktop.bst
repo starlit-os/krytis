@@ -7,6 +7,9 @@ depends:
   # ── Compositor ─────────────────────────────────────────────────────────
   - desktop/niri.bst
 
+  # ── Terminal ────────────────────────────────────────────────────────────
+  - desktop/ghostty.bst
+
   # ── XDG portals ────────────────────────────────────────────────────────
   # xdg-desktop-portal (base daemon) is pulled in transitively.
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst
