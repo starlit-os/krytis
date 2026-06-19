@@ -16,8 +16,14 @@ if [ ! -e "${DISK}" ]; then
 fi
 
 # rootless and rootful podman have separate image stores; copy so bootc can find itself
-echo "==> Copying localhost/krytis:latest to root podman store..."
-podman save --format oci-archive localhost/krytis:latest | sudo podman load
+ROOTLESS_ID=$(podman image inspect --format '{{.Id}}' localhost/krytis:latest 2>/dev/null || true)
+ROOT_ID=$(sudo podman image inspect --format '{{.Id}}' localhost/krytis:latest 2>/dev/null || true)
+if [ -n "${ROOTLESS_ID}" ] && [ "${ROOTLESS_ID}" = "${ROOT_ID}" ]; then
+    echo "==> Root podman store already has the current image, skipping copy."
+else
+    echo "==> Copying localhost/krytis:latest to root podman store..."
+    podman save --format oci-archive localhost/krytis:latest | sudo podman load
+fi
 
 # systemd.firstboot=no is intentionally absent: firstboot runs on every fresh disk install.
 # Re-add once the installer handles first-run setup and the greeter becomes the entry point.
