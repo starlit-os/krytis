@@ -10,6 +10,7 @@ depends:
   - freedesktop-sdk.bst:components/bubblewrap.bst
   - freedesktop-sdk.bst:components/fuse-overlayfs.bst
   - freedesktop-sdk.bst:components/lzip.bst
+  - freedesktop-sdk.bst:components/patch.bst
   # ostree-minimal omitted: core/bootc.bst already brings in the full
   # freedesktop-sdk.bst:components/ostree.bst, which is a superset; adding
   # ostree-minimal causes non-whitelisted overlaps at oci/krytis/runtime.bst.
