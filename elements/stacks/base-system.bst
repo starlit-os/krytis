@@ -57,6 +57,7 @@ depends:
   - freedesktop-sdk.bst:components/dmidecode.bst
 
   # ── Dev tooling ───────────────────────────────────────────
+  - freedesktop-sdk.bst:components/git.bst
   - core/mise.bst
 
   # ── Core utilities ─────────────────────────────────────────────────
