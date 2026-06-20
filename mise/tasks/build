@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="generate-image-version + load-image + lint — full local build pipeline"
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+
+set -euo pipefail
+CONTAINER=${usage_container:+--container}
+
+./mise/tasks/generate-image-version
+./mise/tasks/load-image ${CONTAINER:-}
+./mise/tasks/lint
