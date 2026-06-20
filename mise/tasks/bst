@@ -4,9 +4,11 @@
 #USAGE arg "<args>" var=#true help="bst subcommand and arguments (e.g. build stacks/base-system.bst)"
 
 # BST_FLAGS: appended to default flags; BST_FLAGS_OVERRIDE: replaces all defaults.
+# BST_CACHE_QUOTA: override the local CAS quota (default 40G).
 set -euo pipefail
 
 DEFAULT_FLAGS="-o x86_64_v3 true --no-interactive"
+BST_CACHE_QUOTA="${BST_CACHE_QUOTA:-50G}"
 
 if [ -n "${BST_FLAGS_OVERRIDE:-}" ]; then
     FLAGS="${BST_FLAGS_OVERRIDE}"
@@ -37,7 +39,16 @@ if [ "$CONTAINER" = "true" ]; then
         -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
         -w /src \
         "${BST2_IMAGE}" \
-        bash -c 'bst --colors "$@"' -- ${FLAGS} "$@"
+        bash -c 'mkdir -p /root/.config/buildstream
+printf "cache:\n  quota: %s\n" "$1" > /root/.config/buildstream/user.conf
+shift; bst --colors "$@"' -- "${BST_CACHE_QUOTA}" ${FLAGS} "$@"
+fi
+
+# Native path: write quota to user.conf if not already set.
+USER_CONF="${HOME}/.config/buildstream/user.conf"
+if ! grep -q "quota:" "${USER_CONF}" 2>/dev/null; then
+    mkdir -p "$(dirname "${USER_CONF}")"
+    printf '\ncache:\n  quota: %s\n' "${BST_CACHE_QUOTA}" >> "${USER_CONF}"
 fi
 
 # shellcheck disable=SC2086

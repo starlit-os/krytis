@@ -56,6 +56,15 @@ config:
     - glib-compile-schemas /layer/usr/share/glib-2.0/schemas
 
     - |
+      # Rebuild the shared library linker cache for the sysroot.
+      # Mesa installs libgbm, libEGL, and DRI drivers under
+      # %{libdir}/GL/default/lib — a non-standard path that ldconfig
+      # does not search by default. Without this, any binary linking
+      # against mesa libs (niri, future noctalia-greeter, etc.) fails
+      # at runtime with "cannot open shared object file".
+      ldconfig -r /layer -f /layer/etc/ld.so.conf
+
+    - |
       cd "%{install-root}"
       build-oci <<EOF
       mode: oci

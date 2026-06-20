@@ -336,6 +336,27 @@ config:
     cargo build ...
 ```
 
+**Runtime: mesa libs are not findable by default.** Mesa installs under `%{libdir}/GL/default/lib/` — a path the dynamic linker does not search. Two things are required in the image:
+
+1. Add `freedesktop-sdk.bst:vm/mesa-default.bst` to the desktop stack. This installs `/etc/ld.so.conf.d/00_mesa.conf` pointing at the GL/default path.
+
+2. Run `ldconfig` in `oci/krytis/image.bst` after all packages are staged:
+
+```yaml
+- |
+  ldconfig -r /layer -f /layer/etc/ld.so.conf
+```
+
+Without both, any binary linking against `libgbm`, `libEGL`, etc. fails at runtime with "cannot open shared object file". Mesa's DRI drivers and GBM backend modules have the GL/default prefix baked in at compile time, so `LIBGL_DRIVERS_PATH`/`GBM_BACKENDS_PATH` are not needed separately.
+
+**Cargo features for systemd integration:** Rust binaries that integrate with systemd (socket notification, session management) must include `systemd` in the feature list:
+
+```yaml
+cargo build ... --features "dbus xdp-gnome-screencast systemd"
+```
+
+niri built without `--features systemd` warns at startup and cannot notify systemd of readiness.
+
 Other Rust elements that link against C libraries need the library in both `build-depends` and `depends`:
 
 ```yaml
