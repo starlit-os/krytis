@@ -104,6 +104,7 @@ config:
       "%{install-root}%{sysconfdir}/environment" <<'EOF'
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
+    LIBSEAT_LOGLEVEL=debug
     EOF
 
   - |
