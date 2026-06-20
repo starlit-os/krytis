@@ -196,14 +196,14 @@ System packages required for builds and source tracking live in `[bootstrap.pack
 "apt:patch" = "latest"
 ```
 
-Run locally via the project task:
+Run locally:
 
 ```bash
 mise settings experimental=true   # required once before first invocation
-mise run bootstrap                 # enables experimental, then runs mise bootstrap --yes
+mise bootstrap                     # installs packages and tools, then runs the bootstrap task
 ```
 
-**`mise run bootstrap`, not `mise bootstrap`** — `bootstrap` is a mise built-in keyword; the shorthand would invoke the mise built-in directly rather than the project task.
+**How the bootstrap task fits in:** `mise bootstrap` (the built-in) runs `[bootstrap.packages]` → installs tools → then calls the `bootstrap` task as a post-hook. The task's only job is to set `experimental=true` for subsequent mise invocations. **Never call `mise bootstrap` from inside the `bootstrap` task** — the built-in calls the task, so calling the built-in from the task creates infinite recursion (issue #87).
 
 ### Package manager support
 
