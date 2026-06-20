@@ -121,4 +121,14 @@ config:
     SyncIntervalSec=5s
     EOF
 
+  - |
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{datadir}/wayland-sessions/niri-direct.desktop" <<'EOF'
+    [Desktop Entry]
+    Name=niri (direct)
+    Comment=niri compositor — direct exec, no systemd wrapper (debugging)
+    Exec=niri --session
+    Type=Application
+    EOF
+
   - "%{install-extra}"
