@@ -113,4 +113,12 @@ config:
     XDG_CURRENT_DESKTOP=niri
     EOF
 
+  - |
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{sysconfdir}/systemd/journald.conf.d/10-persist.conf" <<'EOF'
+    [Journal]
+    Storage=persistent
+    SyncIntervalSec=5s
+    EOF
+
   - "%{install-extra}"

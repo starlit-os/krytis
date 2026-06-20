@@ -614,6 +614,22 @@ variables:
     -DBUILD_SHARED_LIBS=ON
 ```
 
+## Journal Persistence Drop-in
+
+Hard resets (power cut, test failure) lose journald's in-memory write buffer when `Storage=auto` (the default). If a journal directory already exists, `auto` IS persistent — but the unflushed buffer is still lost. Shipping a drop-in forces persistence AND frequent syncs so you capture logs from failing boots:
+
+```yaml
+- |
+  install -Dm644 /dev/stdin \
+    "%{install-root}%{sysconfdir}/systemd/journald.conf.d/10-persist.conf" <<'EOF'
+  [Journal]
+  Storage=persistent
+  SyncIntervalSec=5s
+  EOF
+```
+
+Install to `%{sysconfdir}` (→ `/etc/`) not `%{indep-libdir}` (→ `/usr/lib/`) so it applies at runtime without a factory overlay.
+
 ## Option Names: Underscores Only
 
 BST option names only allow alphanumeric characters and underscores. Hyphens silently fail:
