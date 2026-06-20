@@ -553,6 +553,40 @@ Pattern (from zirconium-hawaii `stacks/base-system.bst`):
 
 Always verify the canonical URL when vendoring a source for the first time.
 
+## Commit-SHA Source Pinning (Repos Without Release Tags)
+
+GitHub's `archive/refs/heads/<branch>.tar.gz` regenerates on every push — the sha256 changes each time. Use a full commit SHA in the URL instead:
+
+```yaml
+sources:
+- kind: tar
+  url: github_files:org/repo/archive/<full-40-char-sha>.tar.gz
+  ref: <sha256-of-the-tarball>
+```
+
+When the upstream repo is renamed (e.g. `noctalia-shell` → `noctalia`), GitHub will redirect the old URL but the alias expander won't follow it — update the URL to use the new repo name.
+
+To get the tarball sha256 without BST:
+
+```bash
+curl -sL https://github.com/<org>/<repo>/archive/<sha>.tar.gz | sha256sum
+```
+
+## sdbus-cpp: Required CMake Flags
+
+sdbus-cpp will build and vendor its own copy of libsystemd by default — this conflicts with fdsdk's systemd. Always pass `-DSDBUSCPP_BUILD_LIBSYSTEMD=OFF`:
+
+```yaml
+variables:
+  cmake-local: >-
+    -DSDBUSCPP_BUILD_CODEGEN=OFF
+    -DSDBUSCPP_BUILD_DOCS=OFF
+    -DSDBUSCPP_BUILD_TESTS=OFF
+    -DSDBUSCPP_BUILD_EXAMPLES=OFF
+    -DSDBUSCPP_BUILD_LIBSYSTEMD=OFF   # critical — prevents bundled libsystemd conflict
+    -DBUILD_SHARED_LIBS=ON
+```
+
 ## Option Names: Underscores Only
 
 BST option names only allow alphanumeric characters and underscores. Hyphens silently fail:

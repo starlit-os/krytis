@@ -1,7 +1,7 @@
 kind: stack
 
 # Desktop session stack.
-# Provides: niri compositor + greetd login manager + XDG portals + gnome-keyring.
+# Provides: niri compositor + greetd login manager + noctalia shell + XDG portals + gnome-keyring.
 # Plug into oci/krytis/stack.bst alongside base-system and bootc.
 depends:
   # ── GPU / Mesa ─────────────────────────────────────────────────────────
@@ -15,6 +15,9 @@ depends:
 
   # ── Compositor ─────────────────────────────────────────────────────────
   - desktop/niri.bst
+
+  # ── Shell ───────────────────────────────────────────────────────────────
+  - desktop/noctalia.bst
 
   # ── Terminal ────────────────────────────────────────────────────────────
   - desktop/ghostty.bst
