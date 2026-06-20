@@ -50,6 +50,7 @@ depends:
 
   # ── Firmware ───────────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/fwupd.bst
+  - freedesktop-sdk.bst:components/linux-firmware.bst
   - freedesktop-sdk.bst:components/wireless-regdb-bin.bst
 
   # ── Hardware info ──────────────────────────────────────────────────
