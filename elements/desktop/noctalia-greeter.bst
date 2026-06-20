@@ -1,0 +1,50 @@
+# noctalia-greeter — Quickshell-style login greeter for greetd.
+# Pinned to a specific commit on upstream `main` — no release tags exist.
+# GitHub's archive/refs/heads/main.tar.gz regenerates on every push;
+# always pin to a full commit SHA.
+#
+# The greeter runs inside Cage (kiosk wlroots compositor) via the
+# noctalia-greeter-session wrapper script that greetd calls.
+# gbm.pc and libdrm.pc live in mesa's non-standard GL/default path;
+# the prepend-mesa-env pattern handles PKG_CONFIG_PATH for all three
+# meson stages.
+kind: meson
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
+- freedesktop-sdk.bst:components/pkg-config.bst
+- freedesktop-sdk.bst:components/wayland.bst
+- freedesktop-sdk.bst:components/wayland-protocols.bst
+- freedesktop-sdk.bst:components/scdoc.bst
+- freedesktop-sdk.bst:extensions/mesa/mesa.bst
+- freedesktop-sdk.bst:extensions/mesa/libdrm.bst
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:components/wayland.bst
+- freedesktop-sdk.bst:components/wayland-protocols.bst
+- freedesktop-sdk.bst:components/cairo.bst
+- freedesktop-sdk.bst:components/pango.bst
+- freedesktop-sdk.bst:components/freetype.bst
+- freedesktop-sdk.bst:components/fontconfig.bst
+- freedesktop-sdk.bst:components/libwebp.bst
+- freedesktop-sdk.bst:components/libxkbcommon.bst
+- freedesktop-sdk.bst:components/librsvg.bst
+- freedesktop-sdk.bst:components/glib.bst
+- freedesktop-sdk.bst:components/libepoxy.bst
+- gnome-build-meta.bst:sdk/librsvg.bst
+- freedesktop-sdk.bst:extensions/mesa/mesa.bst
+- desktop/wlroots.bst
+
+variables:
+  mesa-gl-dir: '%{libdir}/GL/default/lib'
+  prepend-mesa-env: |
+    export PKG_CONFIG_PATH="%{mesa-gl-dir}/pkgconfig:${PKG_CONFIG_PATH:-}"; export LIBRARY_PATH="%{mesa-gl-dir}:${LIBRARY_PATH:-}"; export LD_LIBRARY_PATH="%{mesa-gl-dir}:${LD_LIBRARY_PATH:-}"
+  meson: '%{prepend-mesa-env}; meson setup %{conf-root} %{build-dir} %{meson-args}'
+  meson-build: '%{prepend-mesa-env}; ninja -v -j ${JOBS} -C %{build-dir}'
+  meson-install: '%{prepend-mesa-env}; env DESTDIR="%{install-root}" meson install -C %{build-dir} --no-rebuild'
+
+sources:
+- kind: tar
+  url: github_files:noctalia-dev/noctalia-greeter/archive/773e322418f904ffb9f0b1b4d378e7766bc1847e.tar.gz
+  ref: 2a4d62aaeee68036792bd8ad128ef5cd070a04dacd595865e674f84bb83c10d4
