@@ -136,19 +136,21 @@ Resolved in order — use the first that exists, or create the third:
 
 | Scenario | Path |
 |---|---|
-| Issue (top-level) | `<base>/gh<number>-<slug>` |
+| Issue (top-level) | `<base>/<cc-type>/gh<number>-<slug>` |
 | Issue with parent issue | `<base>/gh<parent-number>/<number>-<slug>` |
 | No issue | `<base>/<branch-name>` |
 
-Platform prefixes: `gh` = GitHub · `gl` = GitLab · `bb` = Bitbucket.
+`<cc-type>` is the Conventional Commits type that best describes the work: `fix`, `feat`, `ci`, `chore`, `docs`, `refactor`, etc.
+
+Platform prefix (`gh` = GitHub, `gl` = GitLab, `bb` = Bitbucket) appears in two places: the leaf name of top-level issues (`gh<number>-<slug>`) and the parent grouping directory (`gh<parent-number>/`). It does **not** appear on the leaf name of issues that have a parent.
 
 ### Branch name
 
-Mirrors the worktree leaf name, **without** the platform prefix:
+Mirrors the worktree leaf name, **without** the type prefix directory:
 
 | Scenario | Branch |
 |---|---|
-| Issue | `<number>-<slug>` (e.g. `42-fix-composefs-boot-failure`) |
+| Issue (top-level) | `<number>-<slug>` (e.g. `42-fix-composefs-boot-failure`) |
 | Issue with parent | `<number>-<slug>` — flat, no parent encoding in the branch name |
 | No issue | descriptive name following Conventional Commits style (e.g. `feat/add-greetd-service`) |
 
