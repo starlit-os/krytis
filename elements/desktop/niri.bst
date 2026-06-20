@@ -44,7 +44,7 @@ config:
     export PKG_CONFIG_PATH="%{mesa-gl-dir}/pkgconfig:${PKG_CONFIG_PATH:-}"
     export LIBRARY_PATH="%{mesa-gl-dir}:${LIBRARY_PATH:-}"
     export LD_LIBRARY_PATH="%{mesa-gl-dir}:${LD_LIBRARY_PATH:-}"
-    cargo build --release --frozen --locked --no-default-features --features "dbus xdp-gnome-screencast"
+    cargo build --release --frozen --locked --no-default-features --features "dbus xdp-gnome-screencast systemd"
   install-commands:
   - |
     install -Dm755 target/release/niri "%{install-root}%{bindir}/niri"

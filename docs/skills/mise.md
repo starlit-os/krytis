@@ -278,3 +278,21 @@ mise ERROR Config files in .../mise.toml are not trusted. Trust them with `mise 
 ## Never add loose shell scripts
 
 All development workflows must be `mise run` tasks. No standalone scripts outside `mise/tasks/`.
+
+## BST CAS quota
+
+BST's local CAS has an internal storage quota separate from OS disk space. Hitting it produces:
+
+```
+OutOfSpaceException: Insufficient storage quota
+```
+
+The `mise bst` task (both container and native paths) sets a default quota of 50G via `BST_CACHE_QUOTA`. This matches CI. Override per-run with:
+
+```bash
+BST_CACHE_QUOTA=60G mise load-image --container
+```
+
+For the container path, the quota is written to `/root/.config/buildstream/user.conf` inside the container on each run. For the native path, it is appended to `~/.config/buildstream/user.conf` once (idempotent — skipped if `quota:` already present).
+
+A full fdsdk bootstrap from a cold cache needs ~50G. If the disk itself is low (check `df -h ~/.cache/buildstream`), run `podman system prune --all --force` first — old krytis build images accumulate quickly and can consume hundreds of GB.
