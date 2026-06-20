@@ -419,6 +419,121 @@ bubblewrap + user namespaces work inside a bootc composefs-mounted root without 
 
 In CI, run `mise bootstrap --yes` (with `experimental: true` on the action) before any `bst` invocation, not just build jobs.
 
+## Meson Builds That Need Mesa (prepend-mesa-env Pattern)
+
+mesa installs under `%{libdir}/GL/default` — a non-standard prefix that `pkg-config` and the linker don't search. bst runs each meson stage (`meson setup`, `ninja`, `meson install`) in a **separate `sh -c` process**, so env exports don't persist between stages. Override the three meson stage variables directly:
+
+```yaml
+variables:
+  mesa-gl-dir: '%{libdir}/GL/default/lib'
+  prepend-mesa-env: |
+    export PKG_CONFIG_PATH="%{mesa-gl-dir}/pkgconfig:${PKG_CONFIG_PATH:-}"; export LIBRARY_PATH="%{mesa-gl-dir}:${LIBRARY_PATH:-}"; export LD_LIBRARY_PATH="%{mesa-gl-dir}:${LD_LIBRARY_PATH:-}"
+  meson: '%{prepend-mesa-env}; meson setup %{conf-root} %{build-dir} %{meson-args}'
+  meson-build: '%{prepend-mesa-env}; ninja -v -j ${JOBS} -C %{build-dir}'
+  meson-install: '%{prepend-mesa-env}; env DESTDIR="%{install-root}" meson install -C %{build-dir} --no-rebuild'
+```
+
+Also list `freedesktop-sdk.bst:extensions/mesa/mesa.bst` in BOTH `build-depends` and `depends`. For elements that call `dependency('gbm')` or `dependency('libdrm')`, add `freedesktop-sdk.bst:extensions/mesa/libdrm.bst` to `build-depends` as well — the `.pc` file lives in libdrm's runtime split, and without the explicit dep bst won't stage it. Without libdrm.bst, meson falls through to `subprojects/libdrm.wrap` and fails with `Automatic wrap-based subproject downloading is disabled`.
+
+## wlroots-0.20 Constraints
+
+- `noctalia-greeter`'s `meson.build` uses `dependency('wlroots-0.20')` — an exact pcname match. wlroots 0.21+ would require patching the greeter.
+- Valid meson options in 0.20.1 (from `meson.options`): `examples`, `backends` (choices: `drm`, `libinput`, `x11`, `auto`), `xwayland`, `xcb-errors`, `renderers`, `allocators`, `session`, `color-management`, `libliftoff`. **NOT valid:** `-Dtests` (removed since 0.18), `-Dlibcap-ng` (hard dep), `-Dbackends=wayland` (wayland is not a backend choice).
+- `libxkbcommon.bst` must be in `build-depends` (not just `depends`) because wlroots' meson.build has a subproject wrap fallback for it that fires if the `.pc` isn't staged.
+- Use `freedesktop-sdk.bst:components/libdisplay-info.bst` in `depends` — **not** `gnome-build-meta.bst:core-deps/libdisplay-info.bst`. Both ship the same files; the gnome-build-meta copy causes a non-whitelisted overlap because `niri.bst` already pulls the fdsdk version.
+- For `hwdata`: wlroots' DRM backend needs `hwdata.pc` at configure time, but `gnome-build-meta.bst:core-deps/hwdata.bst` overlaps `pciutils` (which ships `pci.ids` and is already in `base-system.bst`) at runtime. Fix: put `gnome-build-meta.bst:core-deps/hwdata.bst` in **`build-depends` only** — available to meson configure, not staged into the final image.
+
+## greetd: Rust Element Without Upstream Vendored Tarball
+
+greetd does not publish a vendored-dependencies tarball. Use `kind: cargo2` as a source (not element kind) to pre-fetch the crate registry. The element kind is `manual`:
+
+```yaml
+kind: manual
+
+build-depends:
+- freedesktop-sdk.bst:components/rust.bst
+...
+sources:
+- kind: tar
+  url: github_files:kennylevinsen/greetd/archive/refs/tags/0.10.3.tar.gz
+  ref: <sha256>
+- kind: cargo2
+  url: crates:crates
+  ref:
+  - kind: registry
+    name: ...
+```
+
+The `kind: cargo2` source block lists every crate from `Cargo.lock`. After updating greetd, regenerate it with `python3 files/scripts/generate_cargo_sources.py /path/to/Cargo.lock`, then validate SHA lengths:
+
+```bash
+grep -E '^ *sha:' elements/desktop/greetd.bst | awk '{print length($2)}' | sort -u
+# Must output: 64
+```
+
+greetd links libpam via `pam-sys`. Add `linux-pam.bst` to **both** `build-depends` AND `depends` — it transitively provides `linux-pam-base.bst` which supplies `libpam.so` + `libpam_misc.so`.
+
+## Greeter Stack: greetd display-manager Alias
+
+`greetd.service` ships with `Alias=display-manager.service`. Installing greetd creates the `display-manager.service` symlink automatically — no manual masking of other display managers is needed.
+
+## greetd PAM Configuration (fdsdk)
+
+fdsdk does **not** ship `system-local-login` (an Arch Linux convention). It does ship `system-auth` via `linux-pam-base.bst`, but `image.bst` removes it from `usr/share/factory/etc/pam.d/` — so at runtime, `/etc/pam.d/system-auth` won't exist either.
+
+Use a **self-contained PAM config** that references modules directly:
+
+```
+#%PAM-1.0
+# Self-contained: fdsdk does not ship system-local-login or system-auth at
+# runtime (factory copies are stripped in image.bst). Use modules directly.
+
+auth       required     pam_nologin.so
+auth       required     pam_unix.so
+auth       optional     pam_gnome_keyring.so
+
+account    required     pam_nologin.so
+account    required     pam_unix.so
+
+password   required     pam_unix.so sha512 shadow
+-password  optional     pam_gnome_keyring.so use_authtok
+
+session    required     pam_loginuid.so
+session    optional     pam_keyinit.so force revoke
+session    required     pam_limits.so
+session    required     pam_unix.so
+-session   optional     pam_systemd.so
+session    required     pam_env.so
+session    optional     pam_gnome_keyring.so auto_start
+```
+
+`-session optional pam_systemd.so` is critical — this registers the session with logind, which is what grants the compositor DRM/GPU device access. Without it the greeter process can start but will fail to open `/dev/dri/card*`.
+
+**greeter user groups:** The greeter sysuser must be in both `video` and `render` groups. `render` is required for `/dev/dri/renderD*` (the render node); libseat does not handle render nodes, so the group membership is the only path:
+
+```
+u greeter - "greetd greeter user" /var/lib/greetd -
+m greeter video
+m greeter render
+```
+
+**greeter home directory:** `systemd-sysusers` sets the home field in the user record but does NOT create the directory. Add a `tmpfiles.d` entry to create it at boot. Without this, gnome-keyring and anything else that writes to `$HOME` will fail silently:
+
+```
+d /var/lib/greetd 0750 greeter greeter -
+d /var/lib/noctalia-greeter 0755 greeter greeter -
+```
+
+## Upstream Project Renames (2026)
+
+| Project | Old URL | Current URL |
+|---|---|---|
+| cage | `Hjdskes/cage` (sr.ht) | `github_files:cage-kiosk/cage` |
+| wlr-randr | `sr.ht/~emersion/wlr-randr` | `freedesktop_files:emersion/wlr-randr` |
+| noctalia-shell | `noctalia-dev/noctalia-shell` | `github_files:noctalia-dev/noctalia` |
+
+Always verify the canonical URL when vendoring a source for the first time.
+
 ## Option Names: Underscores Only
 
 BST option names only allow alphanumeric characters and underscores. Hyphens silently fail:
