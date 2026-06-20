@@ -524,6 +524,25 @@ d /var/lib/greetd 0750 greeter greeter -
 d /var/lib/noctalia-greeter 0755 greeter greeter -
 ```
 
+## Firmware Elements
+
+`freedesktop-sdk.bst:components/linux-firmware.bst` exists and is directly usable as a junction dep. It sources `linux-firmware.git` from kernel.org, installs the full firmware tree xz-compressed and deduped to `/usr/lib/firmware`, and runs `make install-xz dedup`. No subsetting — ships everything.
+
+**This is not visible in the fdsdk GitLab web search** (indexing gap). Confirm presence by checking the staged junction cache: `.bst/staged-junctions/freedesktop-sdk.bst/*/elements/components/linux-firmware.bst`.
+
+`sof-firmware.bst` also exists alongside it (Intel HDA DSP audio firmware, sourced from thesofproject/sof-bin tarball releases).
+
+Pattern (from zirconium-hawaii `stacks/base-system.bst`):
+```yaml
+# ── Firmware ───────────────────────────────────────────────────────
+- freedesktop-sdk.bst:components/fwupd.bst
+- freedesktop-sdk.bst:components/linux-firmware.bst     # full linux-firmware.git tree
+- freedesktop-sdk.bst:components/sof-firmware.bst       # Intel HDA DSP — skip if AMD-only
+- freedesktop-sdk.bst:components/wireless-regdb-bin.bst
+```
+
+`strip-binaries: ''` is not needed as a local override — the fdsdk element already sets it. Firmware blobs must not be stripped; the fdsdk element handles this.
+
 ## Upstream Project Renames (2026)
 
 | Project | Old URL | Current URL |
