@@ -543,6 +543,33 @@ Pattern (from zirconium-hawaii `stacks/base-system.bst`):
 
 `strip-binaries: ''` is not needed as a local override — the fdsdk element already sets it. Firmware blobs must not be stripped; the fdsdk element handles this.
 
+## User Session: XDG_SESSION_TYPE Must Be Set Before pam_systemd.so
+
+greetd calls `pam_open_session` before forking to exec the user's session command. `niri-session` sets `XDG_SESSION_TYPE=wayland`, but that happens *after* PAM runs — too late for `pam_systemd.so` to register the session as `type=wayland` with logind.
+
+Without `XDG_SESSION_TYPE=wayland` visible to `pam_systemd.so`:
+- logind registers the session as `tty` type
+- libseat asks logind for the seat; logind refuses (tty session can't own DRM)
+- the Wayland compositor blocks in `libseat_open_seat()` indefinitely
+- symptom: screen clears, compositor prints startup warning, then hangs forever
+
+**Fix:** ship `/etc/environment` and place `pam_env.so readenv=1` *before* `pam_systemd.so` in the PAM session stack:
+
+```
+# /etc/environment
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=niri
+```
+
+```
+# /etc/pam.d/greetd (session phase, order matters)
+session    required     pam_env.so readenv=1   ← must come before pam_systemd.so
+session    required     pam_unix.so
+-session   optional     pam_systemd.so         ← now sees XDG_SESSION_TYPE
+```
+
+Also ship `/usr/lib/environment.d/90-krytis-session.conf` with the same vars so `systemd --user` (and any process started via it) inherits them once the user session is running.
+
 ## Upstream Project Renames (2026)
 
 | Project | Old URL | Current URL |

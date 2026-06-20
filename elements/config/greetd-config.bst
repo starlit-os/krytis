@@ -64,9 +64,12 @@ config:
     session    required     pam_loginuid.so
     session    optional     pam_keyinit.so force revoke
     session    required     pam_limits.so
+    # pam_env must run before pam_systemd so that XDG_SESSION_TYPE=wayland
+    # is visible when logind registers the session. Without it, logind sees
+    # a tty-type session, denies the seat to libseat, and the compositor hangs.
+    session    required     pam_env.so readenv=1
     session    required     pam_unix.so
     -session   optional     pam_systemd.so
-    session    required     pam_env.so
     session    optional     pam_gnome_keyring.so auto_start
     EOF
 
@@ -94,6 +97,20 @@ config:
       "%{install-root}%{indep-libdir}/tmpfiles.d/noctalia-greeter.conf" <<'EOF'
     d /var/lib/greetd 0750 greeter greeter -
     d /var/lib/noctalia-greeter 0755 greeter greeter -
+    EOF
+
+  - |
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{sysconfdir}/environment" <<'EOF'
+    XDG_SESSION_TYPE=wayland
+    XDG_CURRENT_DESKTOP=niri
+    EOF
+
+  - |
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf" <<'EOF'
+    XDG_SESSION_TYPE=wayland
+    XDG_CURRENT_DESKTOP=niri
     EOF
 
   - "%{install-extra}"
