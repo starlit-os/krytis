@@ -296,6 +296,19 @@ echo "$TOKEN" | podman login ghcr.io --username "$GH_USER" --password-stdin
 
 The `|| echo "token"` fallback matters in CI where `gh` may not be authenticated — ghcr.io accepts any non-empty username alongside a valid PAT/GITHUB_TOKEN.
 
+**`gh auth token` lacks `write:packages` by default.** Pushing a 4 GB image only to receive a permissions error mid-transfer is expensive. Verify the scope before pushing, skipping the check only when `GITHUB_TOKEN` is already in the environment (CI path — that token is known-good):
+
+```bash
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  SCOPES=$(gh auth status 2>&1 | grep 'Token scopes:' || true)
+  if [[ "$SCOPES" != *"write:packages"* ]]; then
+    echo "ERROR: gh token is missing write:packages scope." >&2
+    echo "Run: gh auth refresh -s write:packages" >&2
+    exit 1
+  fi
+fi
+```
+
 ### File task list (updated)
 
 ```
