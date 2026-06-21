@@ -276,6 +276,7 @@ This is the same pattern used by `freedesktop-sdk.bst:components/openssh.bst` (l
 | Mistake | Fix |
 |---------|-----|
 | Missing `freedesktop-sdk.bst:` junction prefix | Every dep on a fdsdk element must be fully qualified: `freedesktop-sdk.bst:components/foo.bst`. Bare names like `components/foo.bst` silently resolve against the local `elements/` directory and fail at load time with "Could not find element". |
+| Autotools project tries to build man pages (`a2x is missing`) | Add `--disable-man` to `conf-local`. `a2x` (asciidoc) is not in the BST build sandbox. |
 | Missing `strip-binaries: ""` | Required for non-ELF content (fonts, configs, pre-built binaries) |
 | Missing dynamic libs for build tools | If a build tool (e.g. `bsdtar`) links dynamically against compression libs (bzip2, xz, zstd, lz4), each must be an explicit `build-depends` — the sandbox only contains what you declare. Symptom: `error while loading shared libraries: libbz2.so.1` at build time. |
 | Using `/usr/sbin` | Always `/usr/bin` — merged-usr |

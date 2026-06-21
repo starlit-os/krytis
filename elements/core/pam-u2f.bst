@@ -11,7 +11,7 @@ depends:
 - freedesktop-sdk.bst:components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
 
 variables:
-  conf-local: --with-pam-dir=%{libdir}/security
+  conf-local: --with-pam-dir=%{libdir}/security --disable-man
 
 sources:
 - kind: git_repo
