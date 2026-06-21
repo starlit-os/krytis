@@ -7,7 +7,7 @@ kind: manual
 # Per-user mode (no authfile=): pam_u2f reads ~/.config/Yubico/u2f_keys.
 # If that file is absent, pam_u2f returns PAM_USER_UNKNOWN and falls through
 # to pam_unix — safe on fresh installs with no key enrolled.
-# Users enroll keys without root via: mise run enroll-fido2-sudo
+# Users enroll keys without root via: mise run enroll-fido2
 #
 # /etc/pam.d/password-auth content is pinned to fdsdk linux-pam-config 1.7.2.
 # Reverify the base content on junction bumps.
@@ -17,6 +17,11 @@ build-depends:
 
 depends:
 - core/pam-u2f.bst
+
+public:
+  bst:
+    overlap-whitelist:
+    - /etc/pam.d/password-auth
 
 variables:
   strip-binaries: ''
