@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# krytis-diag — collect niri/greetd session failure diagnostics
+#
+# Run from tty2 (Ctrl+Alt+F2) after a failed or hung niri session.
+# Saves output to ~/krytis-diag-YYYYMMDD-HHMMSS.txt and also prints to
+# the terminal.
+#
+# Usage: bash ~/krytis-diag   (no special setup required)
+
+set -uo pipefail
+
+OUTFILE="${HOME}/krytis-diag-$(date +%Y%m%d-%H%M%S).txt"
+exec > >(tee "$OUTFILE") 2>&1
+
+sep() { printf '\n\e[1m=== %s ===\e[0m\n' "$1"; }
+try_sudo() { sudo "$@" 2>/dev/null || echo "(requires sudo — rerun with sudo or as root)"; }
+
+# ── Identity ────────────────────────────────────────────────────────────────
+sep "SYSTEM"
+echo "Date      : $(date)"
+echo "Hostname  : $(hostname)"
+echo "Kernel    : $(uname -r)"
+echo "Boot ID   : $(cat /proc/sys/kernel/random/boot_id)"
+echo "Uptime    : $(uptime -p)"
+
+sep "BOOTC STATUS"
+bootc status 2>/dev/null || echo "(bootc not available)"
+
+# ── GPU / firmware ──────────────────────────────────────────────────────────
+sep "DRM DEVICES"
+ls -la /dev/dri/ 2>/dev/null || echo "(no /dev/dri)"
+
+sep "AMDGPU KERNEL MESSAGES (this boot)"
+dmesg 2>/dev/null \
+  | grep -iE "(amdgpu|Fatal error.*GPU|drm.*error)" \
+  | grep -v "drm_crtc_helper_set_config" \
+  || echo "(none — try: sudo dmesg | grep -i amdgpu)"
+
+sep "FIRMWARE LOAD FAILURES (this boot)"
+dmesg 2>/dev/null | grep -i "firmware.*failed\|no suitable firmware" \
+  || echo "(none)"
+
+# ── Session state ───────────────────────────────────────────────────────────
+sep "LOGIND SESSIONS"
+loginctl list-sessions 2>/dev/null || try_sudo loginctl list-sessions
+
+sep "SYSTEMD-LOGIND SESSION DETAIL"
+loginctl list-sessions --no-legend 2>/dev/null \
+  | awk '{print $1}' \
+  | while read -r sid; do
+      echo "--- session $sid ---"
+      loginctl show-session "$sid" 2>/dev/null | grep -E "^(Id|Name|Type|Class|State|Display|Seat|Active|Remote)=" || true
+    done
+
+# ── greetd ──────────────────────────────────────────────────────────────────
+sep "GREETD SERVICE LOG (this boot)"
+journalctl -u greetd -b --no-pager 2>/dev/null \
+  || try_sudo journalctl -u greetd -b --no-pager
+
+sep "NOCTALIA-GREETER-COMPOSITOR STATUS (this boot)"
+journalctl -b --no-pager 2>/dev/null \
+  | grep -E "(noctalia-greete|ANOM_ABEND.*noctalia|segfault.*noctalia)" \
+  || try_sudo journalctl -b --no-pager \
+  | grep -E "(noctalia-greete|ANOM_ABEND.*noctalia|segfault.*noctalia)" \
+  || echo "(none)"
+
+sep "NOCTALIA-GREETER APP LOG (/var/log/noctalia-greeter.log)"
+if [ -r /var/log/noctalia-greeter.log ]; then
+  cat /var/log/noctalia-greeter.log
+else
+  try_sudo cat /var/log/noctalia-greeter.log
+fi
+
+# ── niri ────────────────────────────────────────────────────────────────────
+sep "NIRI SESSION LOG — system journal (this boot)"
+journalctl -b --no-pager 2>/dev/null \
+  | grep -E "niri" \
+  || try_sudo journalctl -b --no-pager | grep -E "niri" \
+  || echo "(none)"
+
+sep "NIRI SERVICE LOG — user journal (this boot)"
+# Requires an active systemd --user session for uid 1000.
+journalctl --user -u niri -b --no-pager 2>/dev/null \
+  || echo "(user journal not available — niri logs go here when session is active)"
+
+# ── crash dumps ─────────────────────────────────────────────────────────────
+sep "COREDUMPS (recent)"
+coredumpctl list --no-pager 2>/dev/null | tail -10 \
+  || try_sudo coredumpctl list --no-pager | tail -10 \
+  || echo "(none)"
+
+sep "MOST RECENT COREDUMP INFO"
+coredumpctl info --no-pager 2>/dev/null | head -40 \
+  || try_sudo coredumpctl info --no-pager | head -40 \
+  || echo "(none)"
+
+# ── recent system journal tail ──────────────────────────────────────────────
+sep "SYSTEM JOURNAL — last 100 lines (this boot)"
+journalctl -b --no-pager -n 100 2>/dev/null \
+  || try_sudo journalctl -b --no-pager -n 100
+
+printf '\n\e[1mSaved to %s\e[0m\n' "$OUTFILE"
