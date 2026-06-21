@@ -211,6 +211,19 @@ The mise task itself must be idempotent — running it when already up to date m
 
 Add the element name to `workflow_dispatch.inputs.group.options` and add a new job alongside the existing `track-mise` / `track-linux-cachyos` jobs. Use `if: github.event.inputs.group == 'all' || github.event.inputs.group == '<name>' || github.event_name == 'schedule'` so it runs on the daily schedule and can be triggered manually.
 
+### Verifying the CI job before merge
+
+After adding the mise task and CI job on a feature branch, trigger the workflow on that branch to confirm end-to-end behaviour before the PR merges:
+
+```shell
+gh workflow run track-bst-sources.yml --ref <branch> --field group=<name>
+gh run watch <run-id> --exit-status
+```
+
+The job should either create/update a PR (if a new release exists) or print "Already up to date" and exit 0. Offer this verification step to the user when opening a PR that adds a new tracking task.
+
+**ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
+
 ### Systemd service installation
 
 Services need three things:
