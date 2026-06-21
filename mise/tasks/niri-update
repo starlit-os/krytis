@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#MISE description="Update niri element to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/niri.bst"
+REPO="niri-wm/niri"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+CURRENT_VER=$(grep -oP 'refs/tags/v\K[^\s/]+(?=\.tar\.gz)' "${ELEMENT}" | head -1)
+echo "==> Latest: ${LATEST_TAG}  Current: v${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+BASE_URL="https://github.com/${REPO}"
+
+echo "==> Downloading source tarball..."
+curl -sSfL "${BASE_URL}/archive/refs/tags/${LATEST_TAG}.tar.gz" -o "${TMPDIR}/src.tar.gz"
+SRC_SHA=$(sha256sum "${TMPDIR}/src.tar.gz" | awk '{print $1}')
+echo "    sha256=${SRC_SHA}"
+
+echo "==> Downloading vendored-dependencies tarball..."
+curl -sSfL "${BASE_URL}/releases/download/${LATEST_TAG}/niri-${LATEST_VER}-vendored-dependencies.tar.xz" \
+  -o "${TMPDIR}/vnd.tar.xz"
+VND_SHA=$(sha256sum "${TMPDIR}/vnd.tar.xz" | awk '{print $1}')
+echo "    sha256=${VND_SHA}"
+
+echo "==> Extracting Cargo.lock to detect Smithay rev..."
+tar -xzf "${TMPDIR}/src.tar.gz" -C "${TMPDIR}" --wildcards "*/Cargo.lock" 2>/dev/null || true
+CARGO_LOCK=$(find "${TMPDIR}" -name "Cargo.lock" | head -1)
+
+CURRENT_SMITHAY=$(grep -oP '(?<=\?rev=)[^#"]+' "${ELEMENT}" | head -1)
+if [ -n "${CARGO_LOCK:-}" ]; then
+  SMITHAY_REV=$(grep -oP '(?<=\?rev=)[^#]+(?=#)' "${CARGO_LOCK}" | head -1 || true)
+else
+  SMITHAY_REV=""
+fi
+
+# Current SHAs: first ref: is the source tarball, second is the vendored-deps tarball
+mapfile -t CURRENT_SHAS < <(grep '  ref:' "${ELEMENT}" | awk '{print $2}')
+CURRENT_SRC_SHA="${CURRENT_SHAS[0]}"
+CURRENT_VND_SHA="${CURRENT_SHAS[1]}"
+
+echo "==> Updating ${ELEMENT}: v${CURRENT_VER} → ${LATEST_TAG}"
+
+sed -i "s|refs/tags/v${CURRENT_VER}|refs/tags/${LATEST_TAG}|g" "${ELEMENT}"
+sed -i "s|download/v${CURRENT_VER}/niri-${CURRENT_VER}-|download/${LATEST_TAG}/niri-${LATEST_VER}-|g" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SRC_SHA}|ref: ${SRC_SHA}|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_VND_SHA}|ref: ${VND_SHA}|" "${ELEMENT}"
+
+if [ -n "${SMITHAY_REV:-}" ] && [ "${SMITHAY_REV}" != "${CURRENT_SMITHAY}" ]; then
+  echo "==> Smithay rev changed: ${CURRENT_SMITHAY} → ${SMITHAY_REV}"
+  sed -i "s|${CURRENT_SMITHAY}|${SMITHAY_REV}|g" "${ELEMENT}"
+else
+  echo "==> Smithay rev unchanged (${CURRENT_SMITHAY:-unknown})"
+fi
+
+echo "==> Done. Run 'mise run validate' to verify."
