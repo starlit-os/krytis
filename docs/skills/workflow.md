@@ -4,11 +4,19 @@ Reference for setting up worktrees, branches, and following the self-improvement
 
 ## Worktree & Branch Setup
 
-Always create a worktree and branch together before touching any files:
+Always create a worktree before touching any files — including when working on an **existing** branch. Never `git checkout <branch>` in the primary worktree; that switches HEAD away from `main` and defeats the whole point.
 
+**Existing branch (no `-b`):**
+```shell
+git worktree add <worktree-path> <existing-branch>
+```
+
+**New branch:**
 ```shell
 git worktree add -b <branch> <worktree-path>
 ```
+
+The AGENTS.md exception — *"explicit instruction to work on an existing branch"* — means *the branch already exists, so skip `git branch` creation*. It does **not** mean *skip the worktree*. A human saying "check out X and verify it builds" is explicit instruction to use that branch, not to `git checkout` in the primary worktree.
 
 ### Step 1 — resolve the worktree base
 
