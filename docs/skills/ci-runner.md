@@ -131,6 +131,18 @@ Don't rely on `[deps.uv]` auto-run for correctness in CI.
 
 ---
 
+## GitHub Actions: SHA Pinning and Org Allowlist
+
+### SHA pinning — let the linter handle it
+
+Do not manually look up and pin action SHAs when writing a new workflow. Write the version tag (`uses: actions/checkout@v4`) and commit. The linter (`mise lint`) runs `actionlint` which auto-upgrades floating tags to full commit SHAs with a version comment. The pinned SHA lands in the same PR automatically.
+
+### Org allowlist
+
+The `starlit-os` org has an allowlist of permitted external actions. Any `uses: <owner>/<repo>` not already on the list will be blocked at runtime with a permissions error — the workflow job simply won't start.
+
+When adding a new action to any workflow, check whether `<owner>/<repo>` is already allowlisted. If not, prompt the user to add it before the PR is merged. The allowlist is managed in the org's GitHub Actions settings.
+
 ## Workflow Runner Choices
 
 | Workflow | Runner | Rationale |

@@ -2,18 +2,30 @@
 
 Load when writing, editing, or reviewing `.bst` element files, debugging a build failure, or understanding how the OCI image is assembled.
 
+## Running BST: Native vs Container
+
+BST requires host system packages (`patch`, `lzip`, `bubblewrap`, `bzip2`, `xz`, `gzip`). Run natively where these are available — it's faster. On machines where they can't be installed (immutable/image-based systems, locked-down environments), use the `--container` flag:
+
+```shell
+mise validate --container
+mise bst --container build elements/stacks/desktop.bst
+mise load-image --container
+```
+
+The podman container fallback has no host dep requirements beyond podman itself. Without `--container` on a machine that lacks the native deps, BST fails immediately on element graph resolution with "Did not find 'patch' in PATH".
+
 ## Quick Reference
 
 | Goal | Command |
 |------|---------|
-| Validate full element graph (no build) | `mise validate` |
-| Inspect element deps | `mise bst show elements/krytis/<name>.bst` |
-| Build one element | `mise bst build elements/krytis/<name>.bst` |
-| Enter build sandbox | `mise bst shell --build elements/krytis/<name>.bst` |
-| Track a git/tarball ref | `mise bst source track elements/krytis/<name>.bst` |
-| List built element contents | `mise bst artifact list-contents elements/krytis/<name>.bst` |
-| View build log | `mise bst artifact log elements/krytis/<name>.bst` |
-| Delete cached build | `mise bst artifact delete elements/krytis/<name>.bst` |
+| Validate full element graph (no build) | `mise validate [--container]` |
+| Inspect element deps | `mise bst [--container] show elements/krytis/<name>.bst` |
+| Build one element | `mise bst [--container] build elements/krytis/<name>.bst` |
+| Enter build sandbox | `mise bst [--container] shell --build elements/krytis/<name>.bst` |
+| Track a git/tarball ref | `mise bst [--container] source track elements/krytis/<name>.bst` |
+| List built element contents | `mise bst [--container] artifact list-contents elements/krytis/<name>.bst` |
+| View build log | `mise bst [--container] artifact log elements/krytis/<name>.bst` |
+| Delete cached build | `mise bst [--container] artifact delete elements/krytis/<name>.bst` |
 | Full image build | `mise build` |
 
 ## Variables
@@ -648,6 +660,18 @@ Hard resets (power cut, test failure) lose journald's in-memory write buffer whe
 ```
 
 Install to `%{sysconfdir}` (→ `/etc/`) not `%{indep-libdir}` (→ `/usr/lib/`) so it applies at runtime without a factory overlay.
+
+## BST Source Provenance API Warning
+
+During element graph resolution, BST 2 may emit:
+
+```
+Dependency "<element>.bst" from project "freedesktop-sdk" doesn't use the source provenance API
+```
+
+This is **informational only — the build is not affected.** It means an element from the `freedesktop-sdk` junction predates BST 2's source provenance API (the mechanism that records upstream URL/commit/checksum for SBOM generation). As fdsdk updates those elements over time, the warnings disappear on the next junction track. No action needed on the Krytis side.
+
+Relevance: when SBOM generation is implemented (#40), elements emitting this warning will appear as gaps in the SBOM — upstream source info won't be recorded for them. This is a known limitation scoped to junction dependencies.
 
 ## Option Names: Underscores Only
 

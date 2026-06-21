@@ -127,6 +127,22 @@ shell).
 virtual consoles (tty1–tty9). If a debug shell appears on a tty other than ttyS0,
 it will only be visible in the GTK window.
 
+## `podman save` Must Use `--format oci-archive` for bootc
+
+When transferring an image between rootless and rootful podman stores for `bootc install to-disk`, always use:
+
+```bash
+podman save --format oci-archive <image> | sudo podman load
+```
+
+The default `docker-archive` format converts OCI layer media types from `application/vnd.oci.image.layer.v1.tar+gzip` to the Docker equivalent. When bootc processes the image with `--composefs-backend`, the Docker media type causes composefs stream name resolution to return an empty string:
+
+```
+Invalid splitstream content type
+```
+
+`--format oci-archive` preserves the OCI media types and resolves this.
+
 ## Temporary root password for VM testing
 
 The `Containerfile` has a commented line for setting a debug root password:
