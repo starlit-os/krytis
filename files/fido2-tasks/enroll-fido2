@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#MISE description="Enroll a FIDO2 security key for sudo / login (writes to ~/.config/Yubico/u2f_keys)"
+
+set -euo pipefail
+
+AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
+ORIGIN="pam://$(hostname)"
+
+echo "Enrolling FIDO2 key for ${USER} (origin: ${ORIGIN})"
+echo "Touch your security key when it blinks..."
+
+NEW_LINE=$(pamu2fcfg -o "$ORIGIN")
+NEW_CRED="${NEW_LINE#*:}"  # strip "username:" prefix
+
+mkdir -p "$(dirname "$AUTHFILE")"
+touch -a "$AUTHFILE"
+chmod 600 "$AUTHFILE"
+
+if grep -q "^${USER}:" "$AUTHFILE"; then
+  # Multi-key: append new credential to the existing line
+  sed -i "s|^${USER}:.*$|&:${NEW_CRED}|" "$AUTHFILE"
+  KEY_COUNT=$(grep "^${USER}:" "$AUTHFILE" | tr ':' '\n' | tail -n +2 | wc -l)
+  echo "Added key — ${USER} now has ${KEY_COUNT} enrolled key(s)"
+else
+  echo "$NEW_LINE" >> "$AUTHFILE"
+  echo "Enrolled first key for ${USER}"
+fi
+
+echo "Key stored in: ${AUTHFILE}"

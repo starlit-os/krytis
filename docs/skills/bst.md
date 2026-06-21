@@ -82,6 +82,40 @@ The podman container fallback has no host dep requirements beyond podman itself.
 
 Always end `install-commands` with `- "%{install-extra}"`.
 
+## System-wide mise tasks via BST element
+
+Mise tasks shipped in a BST element (not in the repo's `mise/tasks/` directory) should be installed to `/etc/mise/tasks/`. Mise treats `/etc/mise/` as the system config root — scripts there are available to all users on the deployed image without any per-user config.
+
+Pattern (`elements/config/fido2-tasks.bst`):
+
+```yaml
+kind: manual
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- core/mise.bst  # runtime dep — mise must be on the image
+
+variables:
+  strip-binaries: ''
+
+config:
+  strip-commands:
+  - ':'
+  install-commands:
+  - install -Dm755 my-script "%{install-root}%{sysconfdir}/mise/tasks/my-script"
+  - '%{install-extra}'
+
+sources:
+- kind: local
+  path: files/my-tasks
+```
+
+Key points:
+- `depends: core/mise.bst` — scripts are useless without mise; declaring the dep makes it explicit
+- Scripts must be executable (755) and have a `#MISE description="…"` header so `mise tasks` lists them
+- The `local` source path must be relative to the project root (`files/my-tasks/`, not absolute)
+- Use this pattern for user-facing ops tasks shipped in the OCI image (enrollment, diagnostics, etc.)
+
 ## Config-only Elements
 
 Elements that only drop config files (no binaries to build) should use `kind: manual` and suppress the default strip step:

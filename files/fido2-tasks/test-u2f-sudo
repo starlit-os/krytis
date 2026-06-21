@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="Verify pam_u2f is wired and prompt a live sudo escalation to test it"
+
+set -euo pipefail
+
+PAM_FILE="/etc/pam.d/password-auth"
+MODULE="pam_u2f.so"
+PAM_DIR="/usr/lib/security"
+
+echo "=== PAM config ==="
+if grep -q "$MODULE" "$PAM_FILE" 2>/dev/null; then
+  echo "  ok  ${MODULE} found in ${PAM_FILE}"
+  grep "$MODULE" "$PAM_FILE" | sed 's/^/      /'
+else
+  echo "  FAIL  ${MODULE} not in ${PAM_FILE}" >&2
+  echo "        Is config/u2f-config.bst installed in the image?" >&2
+  exit 1
+fi
+
+echo ""
+echo "=== Module on disk ==="
+if [[ -f "${PAM_DIR}/${MODULE}" ]]; then
+  echo "  ok  ${PAM_DIR}/${MODULE}"
+else
+  echo "  FAIL  ${PAM_DIR}/${MODULE} not found" >&2
+  echo "        Is core/pam-u2f installed in the image?" >&2
+  exit 1
+fi
+
+echo ""
+echo "=== Live sudo test ==="
+echo "  Running: sudo -k true"
+echo "  Touch your FIDO2 key if prompted..."
+sudo -k true && echo "  ok  sudo succeeded" || { echo "  FAIL  sudo returned $?" >&2; exit 1; }
