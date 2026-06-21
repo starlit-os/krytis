@@ -55,6 +55,33 @@ Example: `Add git to base-system` → `add-git-to-base-system`
 
 The ≤ 5-word issue title constraint means no truncation is needed.
 
+## Cleaning Up Merged Worktrees and Branches
+
+After a PR is merged:
+
+```shell
+git worktree remove <worktree-path>   # may need --force (see below)
+git branch -D <branch>                # -D required — see below
+```
+
+**`git branch -d` fails on rebased+merged branches.** When a branch was rebased before merging, the local tip SHA differs from the merge commit on main. Git considers the branch "not fully merged" even though the PR is closed. Always use `-D` after confirming the PR is merged on GitHub.
+
+**`include/image-version.yml` is always locally modified.** `mise generate-image-version` writes a timestamp and commit SHA into this file. Any worktree that ran a build command will have it dirty, causing `git worktree remove` to refuse. Use `--force`. It is safe — the file is fully generated and has no unrecoverable content.
+
+## Opening Pull Requests
+
+Always run `gh pr create` from inside the feature branch worktree, not from the main repo directory:
+
+```shell
+# ❌ fails — gh detects main as both head and base
+gh pr create --title "..."
+
+# ✅ correct — cd into the worktree first
+cd <worktree-path> && gh pr create --title "..."
+```
+
+Running from the main repo dir produces: `head branch "main" is the same as base branch "main"`.
+
 ## Self-Improvement Loop
 
 Before committing — when you hit a non-obvious pattern, workaround, or convention:

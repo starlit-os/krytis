@@ -2,18 +2,30 @@
 
 Load when writing, editing, or reviewing `.bst` element files, debugging a build failure, or understanding how the OCI image is assembled.
 
+## Local BST Requires `--container`
+
+This machine lacks native BST host deps (`patch`, `lzip`, `bubblewrap`, etc.) — they cannot be installed on an image-based system. **Always append `--container` to every local BST invocation:**
+
+```shell
+mise validate --container
+mise bst --container build elements/stacks/desktop.bst
+mise load-image --container
+```
+
+Without it, BST fails immediately on element graph resolution with "Did not find 'patch' in PATH". Tracked in issue #48.
+
 ## Quick Reference
 
 | Goal | Command |
 |------|---------|
-| Validate full element graph (no build) | `mise validate` |
-| Inspect element deps | `mise bst show elements/krytis/<name>.bst` |
-| Build one element | `mise bst build elements/krytis/<name>.bst` |
-| Enter build sandbox | `mise bst shell --build elements/krytis/<name>.bst` |
-| Track a git/tarball ref | `mise bst source track elements/krytis/<name>.bst` |
-| List built element contents | `mise bst artifact list-contents elements/krytis/<name>.bst` |
-| View build log | `mise bst artifact log elements/krytis/<name>.bst` |
-| Delete cached build | `mise bst artifact delete elements/krytis/<name>.bst` |
+| Validate full element graph (no build) | `mise validate --container` |
+| Inspect element deps | `mise bst --container show elements/krytis/<name>.bst` |
+| Build one element | `mise bst --container build elements/krytis/<name>.bst` |
+| Enter build sandbox | `mise bst --container shell --build elements/krytis/<name>.bst` |
+| Track a git/tarball ref | `mise bst --container source track elements/krytis/<name>.bst` |
+| List built element contents | `mise bst --container artifact list-contents elements/krytis/<name>.bst` |
+| View build log | `mise bst --container artifact log elements/krytis/<name>.bst` |
+| Delete cached build | `mise bst --container artifact delete elements/krytis/<name>.bst` |
 | Full image build | `mise build` |
 
 ## Variables
@@ -648,6 +660,18 @@ Hard resets (power cut, test failure) lose journald's in-memory write buffer whe
 ```
 
 Install to `%{sysconfdir}` (→ `/etc/`) not `%{indep-libdir}` (→ `/usr/lib/`) so it applies at runtime without a factory overlay.
+
+## BST Source Provenance API Warning
+
+During element graph resolution, BST 2 may emit:
+
+```
+Dependency "<element>.bst" from project "freedesktop-sdk" doesn't use the source provenance API
+```
+
+This is **informational only — the build is not affected.** It means an element from the `freedesktop-sdk` junction predates BST 2's source provenance API (the mechanism that records upstream URL/commit/checksum for SBOM generation). As fdsdk updates those elements over time, the warnings disappear on the next junction track. No action needed on the Krytis side.
+
+Relevance: when SBOM generation is implemented (#40), elements emitting this warning will appear as gaps in the SBOM — upstream source info won't be recorded for them. This is a known limitation scoped to junction dependencies.
 
 ## Option Names: Underscores Only
 
