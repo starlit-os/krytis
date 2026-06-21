@@ -1,14 +1,14 @@
 kind: autotools
 
 build-depends:
-- public-stacks/buildsystem-autotools.bst
-- components/libfido2.bst
-- components/linux-pam.bst
-- components/openssl.bst
+- freedesktop-sdk.bst:public-stacks/buildsystem-autotools.bst
+- freedesktop-sdk.bst:components/libfido2.bst
+- freedesktop-sdk.bst:components/linux-pam.bst
+- freedesktop-sdk.bst:components/openssl.bst
 
 depends:
-- public-stacks/runtime-minimal.bst
-- components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
 
 variables:
   conf-local: --with-pam-dir=%{libdir}/security
