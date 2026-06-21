@@ -360,6 +360,25 @@ sources:
 
 The vendored tarball extracts into `vendor/` inside the source directory. Check the upstream Cargo.lock for `git+` entries — each one needs its own `[source."git+..."]` stanza in `.cargo/config.toml`.
 
+#### Git dep stanzas drift between releases (niri / Smithay)
+
+When a project's `Cargo.lock` pins a dependency via `git+https://` (e.g. niri pinning Smithay at a specific rev), the rev appears **twice** in the BST element's `build-commands` heredoc — once in the TOML section key and once in the `rev =` value:
+
+```toml
+[source."git+https://github.com/Smithay/smithay.git?rev=<sha>"]
+git = "https://github.com/Smithay/smithay.git"
+rev = "<sha>"
+replace-with = "vendored-sources"
+```
+
+This rev can change between upstream releases. If you bump the version manually (without using `mise run niri-update`), extract the new `Cargo.lock` from the source tarball and grep for the Smithay rev:
+
+```bash
+tar -xzf src.tar.gz --wildcards "*/Cargo.lock" -O | grep -oP '(?<=\?rev=)[^#]+'
+```
+
+Update both occurrences in the element. `mise run niri-update` does this automatically.
+
 ### C library deps and Mesa
 
 C libraries needed at runtime go in `depends` — BST stages `depends` items at build time too, so headers and pkgconfig files are available to the compiler. Mesa is an exception: always list it in **both** `build-depends` and `depends`:
