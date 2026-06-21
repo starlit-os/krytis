@@ -13,6 +13,13 @@
 # Force pixman explicitly so the greeter works on both simpledrm and amdgpu.
 # WLR_NO_HARDWARE_CURSORS=1: required when pixman renderer is active — the
 # pixman path has no KMS cursor plane support.
+#
+# IMPORTANT: these must be set in greetd config.toml's command line, NOT via
+# a systemd drop-in Environment=. greetd constructs a clean PAM environment
+# for the greeter child session and does not propagate its own systemd service
+# environment to child processes. env(1) in the command line is the only
+# reliable path to reach noctalia-greeter-compositor.
+#
 # Track hardware-accelerated greeter rendering in #95 (parent: #94).
 #
 # This is a config-only element with no binaries to strip. The default
@@ -70,7 +77,7 @@ config:
     vt = 1
 
     [default_session]
-    command = "noctalia-greeter-session"
+    command = "env WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 noctalia-greeter-session"
     user = "greeter"
     EOF
 
@@ -87,13 +94,6 @@ config:
       "%{install-root}%{indep-libdir}/tmpfiles.d/noctalia-greeter.conf" <<'EOF'
     d /var/lib/greetd 0750 greeter greeter -
     d /var/lib/noctalia-greeter 0755 greeter greeter -
-    EOF
-
-  - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/systemd/system/greetd.service.d/wlr-renderer.conf" <<'EOF'
-    [Service]
-    Environment=WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1
     EOF
 
   - "%{install-extra}"

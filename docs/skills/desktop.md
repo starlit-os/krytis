@@ -58,24 +58,25 @@ The ICD JSON is in the non-standard mesa path; the Vulkan loader does not search
 Fix: set `VK_ICD_FILENAMES` (or `VK_DRIVER_FILES`) to the radv ICD JSON path, or install the
 ICD JSON to `/usr/share/vulkan/icd.d/`. Tracked in #95 (wlroots Vulkan), #96 (Zink), parent #94.
 
-## Greeter Service Drop-in Pattern
+## Passing Environment Variables to the Greeter Compositor
 
-Add per-service environment overrides in `config/greetd-config.bst`:
+**Do NOT use a systemd `Environment=` drop-in on `greetd.service` to pass env vars to the compositor.**
 
-```bst
-- |
-  install -Dm644 /dev/stdin \
-    "%{install-root}%{sysconfdir}/systemd/system/greetd.service.d/<name>.conf" <<'EOF'
-  [Service]
-  Environment=VAR=value
-  EOF
+greetd constructs a clean PAM environment for the greeter child session — it does not inherit
+its own systemd service environment into child processes. A drop-in that sets `WLR_RENDERER=pixman`
+on greetd.service has no effect on `noctalia-greeter-compositor`. This was confirmed empirically:
+the drop-in was present and the compositor still failed with the same renderer error.
+
+**Correct approach:** prefix the command in `greetd config.toml` with `env VAR=val`:
+
+```toml
+[default_session]
+command = "env WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 noctalia-greeter-session"
+user = "greeter"
 ```
 
-Current active drop-in — `wlr-renderer.conf`:
-```ini
-[Service]
-Environment=WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1
-```
+The `env` call runs before the compositor inherits the environment, so the vars are always present
+regardless of PAM env construction.
 
 `WLR_NO_HARDWARE_CURSORS=1` is required when pixman is active: the pixman path has no KMS
 cursor plane support and will otherwise log cursor errors and potentially crash.
