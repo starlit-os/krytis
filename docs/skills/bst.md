@@ -226,7 +226,7 @@ The job should either create/update a PR (if a new release exists) or print "Alr
 
 ### Systemd service installation
 
-Services need three things:
+**System services** need three things:
 
 | What | Path | Notes |
 |------|------|-------|
@@ -234,7 +234,28 @@ Services need three things:
 | Preset file | `%{indep-libdir}/systemd/system-preset/80-<name>.preset` | Content: `enable <name>.service` |
 | Binaries | `%{bindir}` | Never `/usr/sbin` — freedesktop-sdk uses merged-usr |
 
+**User services** (session-scoped, run as the logged-in user):
+
+| What | Path |
+|------|------|
+| Service file | `%{indep-libdir}/systemd/user/<name>.service` |
+| Preset file | `%{indep-libdir}/systemd/user-preset/80-<name>.preset` |
+
 Enable services via preset files. Never `systemctl enable` in install-commands.
+
+### gnome-build-meta `kind: cargo` only installs the binary
+
+The gnome-build-meta `kind: cargo` element kind runs `cargo install --path . --root %{prefix}`. It installs **only the compiled binary** — it does not install any other upstream files (service files, man pages, data files in `resources/`, etc.).
+
+If an upstream Rust project ships a service file or config alongside the binary, you must install those files in a separate `config/<name>.bst` element.
+
+**Example:** `gnome-build-meta.bst:sdk/xwayland-satellite.bst` installs `/usr/bin/xwayland-satellite` only. The upstream `resources/xwayland-satellite.service` is NOT installed. Additionally, that upstream service file hardcodes `/usr/local/bin/xwayland-satellite` — wrong for fdsdk installs. The companion `config/xwayland-satellite.bst` ships a corrected copy pointing to `/usr/bin/xwayland-satellite`.
+
+### Vulkan ICD discovery with fdsdk mesa
+
+fdsdk mesa installs Vulkan ICDs at `%{libdir}/GL/vulkan/icd.d/` (non-standard prefix). The Vulkan loader searches `$XDG_DATA_DIRS/vulkan/icd.d/` and `/usr/share/vulkan/icd.d/` — neither of which is the fdsdk path.
+
+**Fix:** add `freedesktop-sdk.bst:components/compat-vulkan-link.bst` to the desktop stack. It is a `kind: stack` element with integration-commands that symlink `/usr/share/vulkan/icd.d` → the fdsdk path. Required for Zink (OpenGL-over-Vulkan), direct Vulkan apps, and Flatpak apps that use the host Vulkan driver (e.g. Steam, games, legacy GL apps via Zink).
 
 ### Common mistakes
 

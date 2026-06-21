@@ -36,5 +36,22 @@ depends:
   # available system-wide without a post-boot manual setup step.
   - gnome-build-meta.bst:gnomeos-deps/flathub-config.bst
 
+  # ── X11 compatibility ──────────────────────────────────────────────────
+  # xwayland.bst: Xwayland server binary.
+  # xwayland-satellite: rootless XWayland manager for Niri — starts XWayland
+  # on demand when an X11 client connects and sets DISPLAY in the session.
+  # config/xwayland-satellite.bst: corrected service file + preset (gnome-build-meta
+  # cargo kind only installs the binary, not the upstream resources/ service file).
+  - freedesktop-sdk.bst:components/xwayland.bst
+  - gnome-build-meta.bst:sdk/xwayland-satellite.bst
+  - config/xwayland-satellite.bst
+
+  # ── Vulkan ICD discovery ────────────────────────────────────────────────
+  # fdsdk mesa installs ICDs under /usr/lib/.../GL/vulkan/icd.d/ which the
+  # Vulkan loader does not search. compat-vulkan-link symlinks that path to
+  # /usr/share/vulkan/icd.d/ so radv/lvp/etc. are discoverable. Required by
+  # Zink (OpenGL-over-Vulkan) and any direct Vulkan app. Closes #94 partial.
+  - freedesktop-sdk.bst:components/compat-vulkan-link.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
