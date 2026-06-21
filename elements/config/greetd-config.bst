@@ -6,6 +6,15 @@
 # greetd.service ships Alias=display-manager.service — installing greetd
 # automatically creates the display-manager symlink; no masking needed.
 #
+# WLR_RENDERER=pixman: wlroots' GLES2 renderer fails on real AMD hardware
+# because EGL cannot find the radeonsi DRI driver through glvnd when the
+# compositor has a real render node (amdgpu/renderD128). simpledrm worked
+# previously because it has no render node, so wlroots auto-selected pixman.
+# Force pixman explicitly so the greeter works on both simpledrm and amdgpu.
+# WLR_NO_HARDWARE_CURSORS=1: required when pixman renderer is active — the
+# pixman path has no KMS cursor plane support.
+# Track hardware-accelerated greeter rendering in #95 (parent: #94).
+#
 # This is a config-only element with no binaries to strip. The default
 # buildsystem-make strip-commands call freedesktop-sdk-stripper, which is
 # not in runtime-minimal. Override strip-commands with a no-op.
@@ -78,6 +87,13 @@ config:
       "%{install-root}%{indep-libdir}/tmpfiles.d/noctalia-greeter.conf" <<'EOF'
     d /var/lib/greetd 0750 greeter greeter -
     d /var/lib/noctalia-greeter 0755 greeter greeter -
+    EOF
+
+  - |
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{sysconfdir}/systemd/system/greetd.service.d/wlr-renderer.conf" <<'EOF'
+    [Service]
+    Environment=WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1
     EOF
 
   - "%{install-extra}"

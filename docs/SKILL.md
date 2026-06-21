@@ -11,7 +11,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § BST Weak-Key Caching Bug |
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
-| Work with greetd / cage / noctalia-greeter | *(written during implementation — see B4/B5)* |
+| Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
