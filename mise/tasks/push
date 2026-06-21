@@ -17,6 +17,17 @@ fi
 TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
 GH_USER=$(gh api user --jq .login 2>/dev/null || echo "token")
 
+# Verify write:packages scope before attempting a 4GB push.
+# gh auth token won't have it by default — run: gh auth refresh -s write:packages
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  SCOPES=$(gh auth status 2>&1 | grep 'Token scopes:' || true)
+  if [[ "$SCOPES" != *"write:packages"* ]]; then
+    echo "==> ERROR: gh token is missing write:packages scope." >&2
+    echo "    Run: gh auth refresh -s write:packages" >&2
+    exit 1
+  fi
+fi
+
 echo "==> Logging in to ghcr.io as ${GH_USER}..."
 echo "$TOKEN" | podman login ghcr.io --username "$GH_USER" --password-stdin
 
