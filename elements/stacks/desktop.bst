@@ -30,5 +30,11 @@ depends:
   # ── Credentials ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gnome-keyring.bst
 
+  # ── Flatpak ────────────────────────────────────────────────────────────
+  # flatpak binary is already present transitively via xdg-desktop-portal.
+  # This adds the Flathub remote to /usr/share/flatpak/remotes.d/ so it is
+  # available system-wide without a post-boot manual setup step.
+  - gnome-build-meta.bst:gnomeos-deps/flathub-config.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

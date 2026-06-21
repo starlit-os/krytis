@@ -570,6 +570,25 @@ session    required     pam_unix.so
 
 Also ship `/usr/lib/environment.d/90-krytis-session.conf` with the same vars so `systemd --user` (and any process started via it) inherits them once the user session is running.
 
+## Flatpak: Transitive Presence and Flathub Config
+
+`freedesktop-sdk.bst:components/flatpak.bst` is **already in the image as a transitive dependency** — do not add it explicitly:
+
+```
+stacks/desktop.bst
+  → gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst (or -gnome)
+    → freedesktop-sdk.bst:components/xdg-desktop-portal.bst
+      → (runtime-depends) freedesktop-sdk.bst:components/flatpak.bst
+```
+
+To pre-configure the Flathub remote system-wide, add to `stacks/desktop.bst`:
+
+```yaml
+- gnome-build-meta.bst:gnomeos-deps/flathub-config.bst
+```
+
+This installs the `.flatpakrepo` file to `/usr/share/flatpak/remotes.d/` — the correct location for bootc (immutable `/usr` tree, not `/etc`). The alternative `freedesktop-sdk.bst:vm/config/flathub.bst` installs to `/etc/flatpak/remotes.d/` which is less appropriate for an immutable image.
+
 ## Upstream Project Renames (2026)
 
 | Project | Old URL | Current URL |
