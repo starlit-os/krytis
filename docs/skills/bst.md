@@ -257,6 +257,20 @@ fdsdk mesa installs Vulkan ICDs at `%{libdir}/GL/vulkan/icd.d/` (non-standard pr
 
 **Fix:** add `freedesktop-sdk.bst:components/compat-vulkan-link.bst` to the desktop stack. It is a `kind: stack` element with integration-commands that symlink `/usr/share/vulkan/icd.d` → the fdsdk path. Required for Zink (OpenGL-over-Vulkan), direct Vulkan apps, and Flatpak apps that use the host Vulkan driver (e.g. Steam, games, legacy GL apps via Zink).
 
+### libfido2 libudev runtime dependency
+
+libfido2 ≥ 1.10 has a hard `libudev` dependency that the fdsdk `components/libfido2.bst` element does **not** propagate. Any local element that `build-depends` on `libfido2` must add `components/systemd-libs.bst` to its runtime `depends:` explicitly, or the module will fail to load at runtime with a missing `libudev.so` error.
+
+```yaml
+build-depends:
+- components/libfido2.bst
+
+depends:
+- components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
+```
+
+This is the same pattern used by `freedesktop-sdk.bst:components/openssh.bst` (line 12). It applies to any element that links against libfido2 — `pam-u2f`, security key middleware, etc.
+
 ### Common mistakes
 
 | Mistake | Fix |
