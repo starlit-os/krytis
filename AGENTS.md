@@ -108,6 +108,12 @@ Non-compliance = automatic rejection.
 
 **Mise task integrity:** All maintenance tasks must be `mise` tasks. No loose shell commands. If a task isn't covered by an existing task, add one alongside your change. Every agent action must be replicable by a human via `mise <task>`. Do not rename existing tasks without explicit human approval.
 
+**Update path gate:** Before opening a PR that adds a new element, confirm one of:
+- (a) The source is `git_repo` with a `track:` glob **and** the element is listed in the `track` matrix in `.github/workflows/track-bst-sources.yml`.
+- (b) A `<name>-update` mise task exists **and** a corresponding CI job in `track-bst-sources.yml` follows the `track-mise` pattern.
+
+`bst source track` is a no-op on `kind: tar` and `kind: remote` sources — elements using these source kinds silently fall out of the automated update loop unless option (b) is in place. See `docs/skills/bst.md` § Element update path.
+
 **Agents MUST NOT push directly to `main`.** All changes via PR from a feature branch.
 
 ---

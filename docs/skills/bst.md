@@ -184,6 +184,45 @@ rm -rf "$OUTDIR"   # clean up when done
 4. Run `mise validate` (validates the full element graph)
 5. Run `mise bst build elements/krytis/<name>.bst`
 6. Run `mise build` for a full image build
+7. **Wire up an update path** — see § Element update path below
+
+## Element Update Path
+
+Every element must have a defined update path. **`bst source track` is a no-op on `kind: tar` and `kind: remote` sources** — these source kinds don't have a tracking ref BST can follow. Without an explicit update path the element silently drifts out of the automated update loop.
+
+| Source kind | Update mechanism |
+|---|---|
+| `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
+| `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
+
+### track-mise pattern for tarball-pinned elements
+
+The `track-mise` job in `track-bst-sources.yml` is the reference. Key steps:
+
+1. Read the current version from the element file.
+2. Run `mise run <name>-update` — the task fetches the latest release, downloads tarballs, computes SHA256, and rewrites the element in place.
+3. Check `git diff` — skip the PR if nothing changed.
+4. Read the new version.
+5. Create or update the `auto/track-<name>` PR using `gh pr create`/`gh pr edit`.
+
+The mise task itself must be idempotent — running it when already up to date must print "Already up to date" and exit 0 without modifying any files.
+
+### Wiring the CI job
+
+Add the element name to `workflow_dispatch.inputs.group.options` and add a new job alongside the existing `track-mise` / `track-linux-cachyos` jobs. Use `if: github.event.inputs.group == 'all' || github.event.inputs.group == '<name>' || github.event_name == 'schedule'` so it runs on the daily schedule and can be triggered manually.
+
+### Verifying the CI job before merge
+
+After adding the mise task and CI job on a feature branch, trigger the workflow on that branch to confirm end-to-end behaviour before the PR merges:
+
+```shell
+gh workflow run track-bst-sources.yml --ref <branch> --field group=<name>
+gh run watch <run-id> --exit-status
+```
+
+The job should either create/update a PR (if a new release exists) or print "Already up to date" and exit 0. Offer this verification step to the user when opening a PR that adds a new tracking task.
+
+**ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
 
 ### Systemd service installation
 
