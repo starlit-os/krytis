@@ -543,6 +543,33 @@ Pattern (from zirconium-hawaii `stacks/base-system.bst`):
 
 `strip-binaries: ''` is not needed as a local override — the fdsdk element already sets it. Firmware blobs must not be stripped; the fdsdk element handles this.
 
+## User Session: XDG_SESSION_TYPE Must Be Set Before pam_systemd.so
+
+greetd calls `pam_open_session` before forking to exec the user's session command. `niri-session` sets `XDG_SESSION_TYPE=wayland`, but that happens *after* PAM runs — too late for `pam_systemd.so` to register the session as `type=wayland` with logind.
+
+Without `XDG_SESSION_TYPE=wayland` visible to `pam_systemd.so`:
+- logind registers the session as `tty` type
+- libseat asks logind for the seat; logind refuses (tty session can't own DRM)
+- the Wayland compositor blocks in `libseat_open_seat()` indefinitely
+- symptom: screen clears, compositor prints startup warning, then hangs forever
+
+**Fix:** ship `/etc/environment` and place `pam_env.so readenv=1` *before* `pam_systemd.so` in the PAM session stack:
+
+```
+# /etc/environment
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=niri
+```
+
+```
+# /etc/pam.d/greetd (session phase, order matters)
+session    required     pam_env.so readenv=1   ← must come before pam_systemd.so
+session    required     pam_unix.so
+-session   optional     pam_systemd.so         ← now sees XDG_SESSION_TYPE
+```
+
+Also ship `/usr/lib/environment.d/90-krytis-session.conf` with the same vars so `systemd --user` (and any process started via it) inherits them once the user session is running.
+
 ## Upstream Project Renames (2026)
 
 | Project | Old URL | Current URL |
@@ -552,6 +579,56 @@ Pattern (from zirconium-hawaii `stacks/base-system.bst`):
 | noctalia-shell | `noctalia-dev/noctalia-shell` | `github_files:noctalia-dev/noctalia` |
 
 Always verify the canonical URL when vendoring a source for the first time.
+
+## Commit-SHA Source Pinning (Repos Without Release Tags)
+
+GitHub's `archive/refs/heads/<branch>.tar.gz` regenerates on every push — the sha256 changes each time. Use a full commit SHA in the URL instead:
+
+```yaml
+sources:
+- kind: tar
+  url: github_files:org/repo/archive/<full-40-char-sha>.tar.gz
+  ref: <sha256-of-the-tarball>
+```
+
+When the upstream repo is renamed (e.g. `noctalia-shell` → `noctalia`), GitHub will redirect the old URL but the alias expander won't follow it — update the URL to use the new repo name.
+
+To get the tarball sha256 without BST:
+
+```bash
+curl -sL https://github.com/<org>/<repo>/archive/<sha>.tar.gz | sha256sum
+```
+
+## sdbus-cpp: Required CMake Flags
+
+sdbus-cpp will build and vendor its own copy of libsystemd by default — this conflicts with fdsdk's systemd. Always pass `-DSDBUSCPP_BUILD_LIBSYSTEMD=OFF`:
+
+```yaml
+variables:
+  cmake-local: >-
+    -DSDBUSCPP_BUILD_CODEGEN=OFF
+    -DSDBUSCPP_BUILD_DOCS=OFF
+    -DSDBUSCPP_BUILD_TESTS=OFF
+    -DSDBUSCPP_BUILD_EXAMPLES=OFF
+    -DSDBUSCPP_BUILD_LIBSYSTEMD=OFF   # critical — prevents bundled libsystemd conflict
+    -DBUILD_SHARED_LIBS=ON
+```
+
+## Journal Persistence Drop-in
+
+Hard resets (power cut, test failure) lose journald's in-memory write buffer when `Storage=auto` (the default). If a journal directory already exists, `auto` IS persistent — but the unflushed buffer is still lost. Shipping a drop-in forces persistence AND frequent syncs so you capture logs from failing boots:
+
+```yaml
+- |
+  install -Dm644 /dev/stdin \
+    "%{install-root}%{sysconfdir}/systemd/journald.conf.d/10-persist.conf" <<'EOF'
+  [Journal]
+  Storage=persistent
+  SyncIntervalSec=5s
+  EOF
+```
+
+Install to `%{sysconfdir}` (→ `/etc/`) not `%{indep-libdir}` (→ `/usr/lib/`) so it applies at runtime without a factory overlay.
 
 ## Option Names: Underscores Only
 
