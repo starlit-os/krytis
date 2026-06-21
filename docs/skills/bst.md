@@ -2,9 +2,9 @@
 
 Load when writing, editing, or reviewing `.bst` element files, debugging a build failure, or understanding how the OCI image is assembled.
 
-## Local BST Requires `--container`
+## Running BST: Native vs Container
 
-This machine lacks native BST host deps (`patch`, `lzip`, `bubblewrap`, etc.) — they cannot be installed on an image-based system. **Always append `--container` to every local BST invocation:**
+BST requires host system packages (`patch`, `lzip`, `bubblewrap`, `bzip2`, `xz`, `gzip`). Run natively where these are available — it's faster. On machines where they can't be installed (immutable/image-based systems, locked-down environments), use the `--container` flag:
 
 ```shell
 mise validate --container
@@ -12,20 +12,20 @@ mise bst --container build elements/stacks/desktop.bst
 mise load-image --container
 ```
 
-Without it, BST fails immediately on element graph resolution with "Did not find 'patch' in PATH". Tracked in issue #48.
+The podman container fallback has no host dep requirements beyond podman itself. Without `--container` on a machine that lacks the native deps, BST fails immediately on element graph resolution with "Did not find 'patch' in PATH".
 
 ## Quick Reference
 
 | Goal | Command |
 |------|---------|
-| Validate full element graph (no build) | `mise validate --container` |
-| Inspect element deps | `mise bst --container show elements/krytis/<name>.bst` |
-| Build one element | `mise bst --container build elements/krytis/<name>.bst` |
-| Enter build sandbox | `mise bst --container shell --build elements/krytis/<name>.bst` |
-| Track a git/tarball ref | `mise bst --container source track elements/krytis/<name>.bst` |
-| List built element contents | `mise bst --container artifact list-contents elements/krytis/<name>.bst` |
-| View build log | `mise bst --container artifact log elements/krytis/<name>.bst` |
-| Delete cached build | `mise bst --container artifact delete elements/krytis/<name>.bst` |
+| Validate full element graph (no build) | `mise validate [--container]` |
+| Inspect element deps | `mise bst [--container] show elements/krytis/<name>.bst` |
+| Build one element | `mise bst [--container] build elements/krytis/<name>.bst` |
+| Enter build sandbox | `mise bst [--container] shell --build elements/krytis/<name>.bst` |
+| Track a git/tarball ref | `mise bst [--container] source track elements/krytis/<name>.bst` |
+| List built element contents | `mise bst [--container] artifact list-contents elements/krytis/<name>.bst` |
+| View build log | `mise bst [--container] artifact log elements/krytis/<name>.bst` |
+| Delete cached build | `mise bst [--container] artifact delete elements/krytis/<name>.bst` |
 | Full image build | `mise build` |
 
 ## Variables
