@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#MISE description="Push krytis image to ghcr.io/starlit-os/krytis — run mise build first"
+#USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path to push to"
+
+set -euo pipefail
+
+REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
+VERSION=$(grep '^image-version:' include/image-version.yml | awk '{print $2}' | tr -d "'")
+
+if [[ -z "$VERSION" ]]; then
+  echo "==> ERROR: include/image-version.yml missing or has no image-version — run mise build first" >&2
+  exit 1
+fi
+
+# GITHUB_TOKEN is injected by mise hook-env (OAuth) or by CI. Fall back to gh auth token
+# for local dev where mise OAuth is not configured. See mise.jdx.dev/dev-tools/github-tokens.html
+TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+GH_USER=$(gh api user --jq .login 2>/dev/null || echo "token")
+
+echo "==> Logging in to ghcr.io as ${GH_USER}..."
+echo "$TOKEN" | podman login ghcr.io --username "$GH_USER" --password-stdin
+
+echo "==> Tagging localhost/krytis:latest → ${REGISTRY}:${VERSION} and ${REGISTRY}:latest..."
+podman tag localhost/krytis:latest "${REGISTRY}:${VERSION}"
+podman tag localhost/krytis:latest "${REGISTRY}:latest"
+
+echo "==> Pushing ${REGISTRY}:${VERSION}..."
+podman push "${REGISTRY}:${VERSION}"
+
+echo "==> Pushing ${REGISTRY}:latest..."
+podman push "${REGISTRY}:latest"
+
+echo "==> Done: pushed ${REGISTRY}:${VERSION} and ${REGISTRY}:latest"

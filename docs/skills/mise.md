@@ -275,6 +275,43 @@ mise ERROR Config files in .../mise.toml are not trusted. Trust them with `mise 
 
 **Fix:** run `mise trust` once in the worktree root before any `mise run` invocation.
 
+## Pushing the image to ghcr.io
+
+`mise push` tags `localhost/krytis:latest` (produced by `mise lint`) to `ghcr.io/starlit-os/krytis:<version>` and `:latest`, then pushes both. Run `mise build` first.
+
+```bash
+mise push                                       # push to default registry
+mise push --registry ghcr.io/my-fork/krytis    # override target
+```
+
+### GitHub token auth for podman login
+
+`GITHUB_TOKEN` is the canonical source — mise injects it automatically via `hook-env` when OAuth is configured (see [mise.jdx.dev/dev-tools/github-tokens.html](https://mise.jdx.dev/dev-tools/github-tokens.html)), and CI (GitHub Actions) also sets it. Fall back to `gh auth token` for local dev where mise OAuth is not configured:
+
+```bash
+TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+GH_USER=$(gh api user --jq .login 2>/dev/null || echo "token")
+echo "$TOKEN" | podman login ghcr.io --username "$GH_USER" --password-stdin
+```
+
+The `|| echo "token"` fallback matters in CI where `gh` may not be authenticated — ghcr.io accepts any non-empty username alongside a valid PAT/GITHUB_TOKEN.
+
+### File task list (updated)
+
+```
+mise/tasks/
+├── bst
+├── validate
+├── generate-image-version
+├── load-image
+├── lint
+├── push                     # tag + push to ghcr.io/starlit-os/krytis
+├── generate-disk
+├── boot-vm
+├── kernel-update
+└── mise-update
+```
+
 ## Never add loose shell scripts
 
 All development workflows must be `mise run` tasks. No standalone scripts outside `mise/tasks/`.
