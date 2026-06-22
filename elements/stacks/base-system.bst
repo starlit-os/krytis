@@ -47,6 +47,9 @@ depends:
   - freedesktop-sdk.bst:components/libfido2.bst
   - freedesktop-sdk.bst:components/ccid.bst
   - freedesktop-sdk.bst:components/pcsc-lite.bst
+  # pam_u2f.so module + PAM config wiring password-auth for sudo/login/screensaver.
+  # Depends on #69 (core/pam-u2f.bst) — ensure that PR merges before this one.
+  - config/u2f-config.bst
 
   # ── Firmware ───────────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/fwupd.bst

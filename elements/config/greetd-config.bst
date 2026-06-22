@@ -35,6 +35,7 @@ depends:
 - desktop/noctalia-greeter.bst
 - desktop/cage.bst
 - desktop/wlr-randr.bst
+- core/pam-u2f.bst
 
 variables:
   strip-binaries: ''
@@ -48,10 +49,12 @@ config:
     install -Dm644 /dev/stdin \
       "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
     #%PAM-1.0
-    # Self-contained: fdsdk does not ship system-local-login or system-auth at
-    # runtime (factory copies are stripped in image.bst). Use modules directly.
+    # Self-contained: greetd has session-specific auth requirements that differ
+    # from system-auth (pam_nologin, gnome-keyring). pam_u2f is inserted before
+    # pam_unix so a enrolled FIDO2 key is tried first; absent file falls through.
 
     auth       required     pam_nologin.so
+    auth       sufficient   pam_u2f.so cue pinverification
     auth       required     pam_unix.so
     auth       optional     pam_gnome_keyring.so
 
