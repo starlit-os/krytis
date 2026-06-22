@@ -152,6 +152,17 @@ install-commands:
 
 Arch-neutrality: handle via `(?)` source conditionals at the source level — the install commands don't need to vary by arch once the single top-level dir is stripped.
 
+**XCursor theme tarballs** strip to `{cursors/, index.theme, ...}` at root — the original theme dir name is gone. Recreate it explicitly at the install destination:
+
+```yaml
+install-commands:
+- |
+  install -d "%{install-root}%{datadir}/icons/theme-name/"
+  cp -r cursors "%{install-root}%{datadir}/icons/theme-name/"
+  install -Dm644 index.theme "%{install-root}%{datadir}/icons/theme-name/index.theme"
+- "%{install-extra}"
+```
+
 Exception: `base-dir: ""` opts out of the strip (files extract as-is with their original directory structure). See `symbols-nerd-font.bst` for an example where the tarball already has files at root level.
 
 Do **not** add `findutils` as a workaround — it would pull unnecessary build-time deps into a minimal element.

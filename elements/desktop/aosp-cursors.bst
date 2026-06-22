@@ -16,6 +16,7 @@ config:
   - ":"
   install-commands:
   - |
-    install -d "%{install-root}%{datadir}/icons/"
-    cp -r aosp-cursors "%{install-root}%{datadir}/icons/"
+    install -d "%{install-root}%{datadir}/icons/aosp-cursors/"
+    cp -r cursors "%{install-root}%{datadir}/icons/aosp-cursors/"
+    install -Dm644 index.theme "%{install-root}%{datadir}/icons/aosp-cursors/index.theme"
   - "%{install-extra}"
