@@ -954,8 +954,8 @@ Set the active cursor theme in niri via the `cursor { }` block in `config.kdl`:
 
 ```kdl
 cursor {
-    theme "<theme-name>"
-    size 24
+    xcursor-theme "<theme-name>"
+    xcursor-size 24
 }
 ```
 
