@@ -295,6 +295,24 @@ rm -rf "$OUTDIR"   # clean up when done
 6. Run `mise build` for a full image build
 7. **Wire up an update path** — see § Element update path below
 
+### Adding a gnome-build-meta junction element
+
+If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is needed — reference it directly in the stack:
+
+```yaml
+- gnome-build-meta.bst:core/nautilus.bst
+```
+
+**Update path is already covered** by the `track-core-junctions` CI job, which tracks both `gnome-build-meta.bst` and `freedesktop-sdk.bst` atomically. No separate mise task or CI job needed.
+
+**Namespace layout in gnome-build-meta:**
+- `core/` — end-user GNOME apps (nautilus, gnome-text-editor, etc.)
+- `core-deps/` — libraries and runtime deps (xdg-desktop-portal-gtk, libportal, etc.)
+- `sdk/` — developer/toolchain elements (xwayland-satellite, blueprint-compiler, etc.)
+- `gnomeos-deps/` — OS-level config (flathub-config, etc.)
+
+Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
+
 ## Element Update Path
 
 Every element must have a defined update path. **`bst source track` is a no-op on `kind: tar` and `kind: remote` sources** — these source kinds don't have a tracking ref BST can follow. Without an explicit update path the element silently drifts out of the automated update loop.

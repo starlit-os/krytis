@@ -107,6 +107,27 @@ bootc constructs the BLS (Boot Loader Specification) entry title from os-release
 
 Result: boot entry shows `StarlitOS Krytis (25.08.202606201613)`.
 
+## niri Keybind Pattern
+
+Keybinds in `files/niri/config.kdl` follow this form:
+
+```kdl
+Mod+X hotkey-overlay-title="Label: binary" { spawn "binary"; }
+```
+
+- `Mod+X` — modifier + key (Mod = Super on TTY, Alt in nested session)
+- `hotkey-overlay-title=` — label shown in the `Mod+?` overlay; format `"Verb a Thing: binary-name"`
+- `{ spawn "binary"; }` — launches the binary; use `spawn-sh "..."` for shell pipelines
+
+Standard binds already in `files/niri/config.kdl`:
+
+| Bind | Action |
+|---|---|
+| `Mod+T` | ghostty (terminal) |
+| `Mod+D` | fuzzel (launcher) |
+| `Mod+E` | nautilus (file manager) |
+| `Super+Alt+L` | swaylock (screen lock) |
+
 ## xdg-desktop-portal Backend Routing for niri
 
 `XDG_CURRENT_DESKTOP=niri` is already set in `/etc/environment`, but xdg-desktop-portal also needs a portal configuration file to know which backend to use for each interface. Without this file the daemon cannot resolve a backend and default-app lookups (e.g. opening a URL) fail silently.
