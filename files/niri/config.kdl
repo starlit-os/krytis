@@ -70,8 +70,8 @@ input {
 }
 
 cursor {
-    theme "aosp-cursors"
-    size 24
+    xcursor-theme "aosp-cursors"
+    xcursor-size 24
 }
 
 // You can configure outputs by their name, which you can find
