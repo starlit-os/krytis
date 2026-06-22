@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#MISE description="Show enrolled FIDO2 keys for sudo/login and LUKS slots"
+
+set -euo pipefail
+
+AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
+
+echo "=== sudo / PAM keys (${AUTHFILE}) ==="
+if [[ -s "$AUTHFILE" ]]; then
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// /}" ]] && continue
+    USERNAME="${line%%:*}"
+    NUM_KEYS=$(tr ':' '\n' <<< "$line" | tail -n +2 | wc -l)
+    echo "  ${USERNAME}: ${NUM_KEYS} key(s)"
+  done < "$AUTHFILE"
+else
+  echo "  (no keys enrolled — run: mise fido2:enroll)"
+fi
+
+echo ""
+echo "=== LUKS FIDO2 slots ==="
+if [[ ! -f /etc/crypttab ]]; then
+  echo "  (no /etc/crypttab)"
+  exit 0
+fi
+
+FOUND=false
+while IFS= read -r line; do
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
+  [[ -z "${line// /}" ]] && continue
+  DEVICE=$(awk '{print $2}' <<< "$line")
+  if cryptsetup isLuks "$DEVICE" 2>/dev/null; then
+    FOUND=true
+    echo "  ${DEVICE}:"
+    systemd-cryptenroll "$DEVICE" 2>/dev/null | sed 's/^/    /' || true
+  fi
+done < /etc/crypttab
+
+$FOUND || echo "  (no LUKS devices in /etc/crypttab)"

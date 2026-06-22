@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#MISE description="Enroll a FIDO2 security key for sudo / login (writes to ~/.config/Yubico/u2f_keys)"
+
+set -euo pipefail
+
+AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
+ORIGIN="pam://$(hostname)"
+
+gum style \
+  --foreground 212 --border-foreground 212 --border rounded \
+  --align center --padding "0 2" --margin "1 0" \
+  "FIDO2 Key Enrollment" \
+  "$(gum style --foreground 240 "user: ${USER}  ·  origin: ${ORIGIN}")"
+
+gum style --foreground 240 --italic \
+  "  No PIN yet? Set one first: ykman fido access change-pin"
+echo ""
+
+# If credentials exist, ask whether to add another key or replace all.
+# We cannot detect which physical key is plugged in without a live assertion.
+if [[ -s "$AUTHFILE" ]] && grep -q "^${USER}:" "$AUTHFILE"; then
+  KEY_COUNT=$(grep "^${USER}:" "$AUTHFILE" | tr ':' '\n' | tail -n +2 | wc -l)
+  ACTION=$(gum choose \
+    --header "$(gum style --foreground 220 "${KEY_COUNT} credential(s) already enrolled for ${USER}.")" \
+    --header.margin "0 2" \
+    --item.margin "0 2" \
+    --cursor.margin "0 2" \
+    "Add another key" \
+    "Replace all")
+  case "$ACTION" in
+    "Replace all")
+      sed -i "/^${USER}:/d" "$AUTHFILE"
+      gum style --foreground 240 "  Removed existing credentials."
+      echo ""
+      ;;
+    "Add another key")
+      ;;
+    *)
+      gum style --foreground 240 "Aborted."
+      exit 0
+      ;;
+  esac
+fi
+
+# Detect capabilities
+DEVICE=$(fido2-token -L 2>/dev/null | awk '{print $1}' | tr -d ':' | head -1)
+ENROLL_FLAGS=()
+if [[ -n "$DEVICE" ]]; then
+  INFO=$(gum spin --spinner dot --title "Detecting key capabilities..." -- \
+    sh -c "fido2-token -I '$DEVICE' 2>/dev/null"; echo)
+  OPTIONS=$(grep "^options:" <<< "$INFO" || true)
+  UV_RETRIES=$(grep "^uv retries:" <<< "$INFO" | awk '{print $NF}')
+
+  grep -qw "clientPin" <<< "$OPTIONS" && ENROLL_FLAGS+=(-N)
+  [[ -n "$UV_RETRIES" && "$UV_RETRIES" != "undefined" ]] && ENROLL_FLAGS+=(-V)
+
+  _yn() { [[ "$1" == "yes" ]] \
+    && gum style --foreground 2 "yes" \
+    || gum style --foreground 240 "no"; }
+  PIN_CAP=$(grep -qw clientPin <<< "$OPTIONS" && echo yes || echo no)
+  UV_CAP=$([[ -n "$UV_RETRIES" && "$UV_RETRIES" != "undefined" ]] && echo yes || echo no)
+
+  echo "  PIN (clientPin): $(_yn "$PIN_CAP")    UV (biometric): $(_yn "$UV_CAP")    flags: $(gum style --foreground 212 -- "${ENROLL_FLAGS[*]:-none}")"
+else
+  gum style --foreground 240 "  fido2-token not found — falling back to -N"
+  ENROLL_FLAGS=(-N)
+fi
+echo ""
+
+gum style --foreground 220 --bold "  Touch your key when it blinks..."
+gum style --foreground 240 "  (You will be asked for your PIN first)"
+echo ""
+
+# Flags chosen from detected capabilities above.
+# -N / --pin-verification: require PIN during authentication (clientPin keys).
+# -V / --user-verification: require built-in UV (biometric keys).
+NEW_LINE=$(pamu2fcfg -o "$ORIGIN" "${ENROLL_FLAGS[@]}")
+NEW_CRED="${NEW_LINE#*:}"  # strip "username:" prefix
+
+mkdir -p "$(dirname "$AUTHFILE")"
+touch -a "$AUTHFILE"
+chmod 600 "$AUTHFILE"
+
+if grep -q "^${USER}:" "$AUTHFILE"; then
+  sed -i "s|^${USER}:.*$|&:${NEW_CRED}|" "$AUTHFILE"
+  KEY_COUNT=$(grep "^${USER}:" "$AUTHFILE" | tr ':' '\n' | tail -n +2 | wc -l)
+  echo ""
+  gum style --foreground 2 "  ✓ Key added — ${USER} now has ${KEY_COUNT} enrolled key(s)"
+else
+  echo "$NEW_LINE" >> "$AUTHFILE"
+  echo ""
+  gum style --foreground 2 "  ✓ First key enrolled for ${USER}"
+fi
+
+gum style --foreground 240 "  Stored in: ${AUTHFILE}"
+echo ""

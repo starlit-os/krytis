@@ -35,6 +35,7 @@ The podman container fallback has no host dep requirements beyond podman itself.
 | `%{install-root}` | Staging directory | Always prefix install paths with this |
 | `%{prefix}` | `/usr` | |
 | `%{bindir}` | `/usr/bin` | |
+| `%{libdir}` | `/usr/lib/x86_64-linux-gnu` | **Multiarch path** — not `/usr/lib`. Use for `.so` files and PAM modules |
 | `%{indep-libdir}` | `/usr/lib` | Use for systemd units, presets, sysusers, tmpfiles |
 | `%{datadir}` | `/usr/share` | |
 | `%{sysconfdir}` | `/etc` | Avoid — prefer `/usr/lib` paths for image content |
@@ -82,6 +83,58 @@ The podman container fallback has no host dep requirements beyond podman itself.
 
 Always end `install-commands` with `- "%{install-extra}"`.
 
+## System-wide mise tasks via BST element
+
+**File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly in `/etc/mise/config.toml` using `[tasks.*]` TOML blocks pointing to the script files. Ship both: the scripts (for execution) and `config.toml` (for discovery).
+
+Use quoted keys for namespace separators: `[tasks."fido2:enroll"]`.
+
+Pattern (`elements/config/fido2-tasks.bst` + `files/fido2-tasks/config.toml`):
+
+**BST element:**
+```yaml
+kind: manual
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- core/mise.bst  # runtime dep — mise must be on the image
+
+variables:
+  strip-binaries: ''
+
+config:
+  strip-commands:
+  - ':'
+  install-commands:
+  - |
+    for script in enroll enroll-luks status test-sudo; do
+      install -Dm755 "fido2/${script}" \
+        "%{install-root}%{sysconfdir}/mise/tasks/fido2/${script}"
+    done
+    install -Dm644 config.toml \
+      "%{install-root}%{sysconfdir}/mise/config.toml"
+  - '%{install-extra}'
+
+sources:
+- kind: local
+  path: files/fido2-tasks
+```
+
+**`files/fido2-tasks/config.toml`:**
+```toml
+# Tasks must be declared here — file-task scanning only applies to project configs.
+
+[tasks."fido2:enroll"]
+run = "/etc/mise/tasks/fido2/enroll"
+description = "Enroll a FIDO2 security key for sudo / login"
+```
+
+Key points:
+- `depends: core/mise.bst` — scripts are useless without mise; declaring the dep makes it explicit
+- Scripts must be executable (755) and have a `#MISE description="…"` header so `mise tasks` lists them
+- The `local` source path must be relative to the project root (`files/my-tasks/`, not absolute)
+- Use this pattern for user-facing ops tasks shipped in the OCI image (enrollment, diagnostics, etc.)
+
 ## Config-only Elements
 
 Elements that only drop config files (no binaries to build) should use `kind: manual` and suppress the default strip step:
@@ -118,6 +171,26 @@ When overriding PAM config files, verify which file each service actually reads 
 
 To add a PAM module to sudo: override `system-auth`, not `password-auth`.
 To add a PAM module to greetd: edit `config/greetd-config.bst` directly and add `core/pam-u2f.bst` (or the relevant module) to its `depends:`.
+
+### pam_u2f pinverification: enrollment and PAM config must match
+
+`pinverification` in the PAM config line (`pam_u2f.so cue pinverification`) only works if the credential was enrolled with the correct pamu2fcfg flags. The PAM config and enrollment flags are coupled:
+
+| pamu2fcfg flag | Meaning | Credential flag in u2f_keys |
+|---|---|---|
+| `-N` / `--pin-verification` | Require PIN (CTAP2 clientPin) | `+pinverification` |
+| `-V` / `--user-verification` | Require built-in UV (biometric) | `+userverification` |
+| `-P` / `--no-user-presence` | **Allow without touch** — opposite of what you want |
+
+**`-P` is a trap**: it means `--no-user-presence`, not pin. Using `-P` silently creates a weaker credential (no touch required) and the PIN prompt never appears.
+
+Detect which flags to use from `fido2-token -I <device>`:
+- `clientPin` in the `options:` line → use `-N`
+- `uv retries:` is not `undefined` → device has biometric UV → also use `-V`
+
+YubiKey 5 uses clientPin (PIN entered on host, not on device) → `-N` only. `-V` fails with "does not support built-in user verification" on these keys.
+
+The `fido2:enroll` script detects capabilities automatically. If PAM config uses `pinverification`, enrollment must use `-N`. Users must re-enroll after changing flags; old credentials with empty flags won't prompt for PIN.
 
 ## OCI Assembly Pipeline
 
