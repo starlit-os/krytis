@@ -42,7 +42,7 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/system-auth" <<'EOF'
     auth        required      pam_env.so
     -auth       sufficient    pam_systemd_home.so
-    auth        sufficient    pam_u2f.so cue
+    auth        sufficient    pam_u2f.so cue pinverification
     auth        sufficient    pam_unix.so try_first_pass nullok_secure
     auth        required      pam_deny.so
 
@@ -67,7 +67,7 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/password-auth" <<'EOF'
     auth        required      pam_env.so
     -auth       sufficient    pam_systemd_home.so
-    auth        sufficient    pam_u2f.so cue
+    auth        sufficient    pam_u2f.so cue pinverification
     auth        sufficient    pam_unix.so try_first_pass nullok_secure
     auth        required      pam_deny.so
 

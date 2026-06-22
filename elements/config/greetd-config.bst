@@ -54,7 +54,7 @@ config:
     # pam_unix so a enrolled FIDO2 key is tried first; absent file falls through.
 
     auth       required     pam_nologin.so
-    auth       sufficient   pam_u2f.so cue
+    auth       sufficient   pam_u2f.so cue pinverification
     auth       required     pam_unix.so
     auth       optional     pam_gnome_keyring.so
 
