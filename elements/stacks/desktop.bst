@@ -62,5 +62,8 @@ depends:
   # terminals (ghostty) and UI components that reference nerd font codepoints.
   - desktop/symbols-nerd-font.bst
 
+  # ── Cursor theme ───────────────────────────────────────────────────────
+  - desktop/aosp-cursors.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

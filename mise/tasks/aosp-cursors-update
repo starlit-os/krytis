@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="Update aosp-cursors element to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/aosp-cursors.bst"
+REPO="Tech-Tac/aosp-cursors"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_TAG=$(grep -oP 'download/\K[^/]+(?=/aosp-cursors-linux-)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_TAG}"
+
+if [ "${LATEST_TAG}" = "${CURRENT_TAG}" ]; then
+  echo "==> Already up to date (${CURRENT_TAG})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+TARBALL="aosp-cursors-linux-${LATEST_TAG}.tar.xz"
+URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${TARBALL}"
+
+echo "==> Downloading ${TARBALL}..."
+curl -sSfL "${URL}" -o "${TMPDIR}/${TARBALL}"
+NEW_SHA=$(sha256sum "${TMPDIR}/${TARBALL}" | awk '{print $1}')
+echo "    sha256=${NEW_SHA}"
+
+CURRENT_SHA=$(grep '  ref:' "${ELEMENT}" | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_TAG} → ${LATEST_TAG}"
+sed -i "s|download/${CURRENT_TAG}/aosp-cursors-linux-${CURRENT_TAG}|download/${LATEST_TAG}/aosp-cursors-linux-${LATEST_TAG}|g" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."

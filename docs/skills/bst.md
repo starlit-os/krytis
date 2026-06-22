@@ -910,3 +910,42 @@ options:
   my_arch:
     type: arch
 ```
+
+## XCursor Themes
+
+XCursor theme tarballs typically extract to `<theme-name>/` with a `cursors/` subdirectory and an `index.theme` file. Install by copying the theme directory into `/usr/share/icons/`:
+
+```yaml
+kind: manual
+
+sources:
+- kind: tar
+  url: github_files:owner/repo/releases/download/<tag>/<theme>-linux-<tag>.tar.xz
+  ref: <sha256>
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  strip-binaries: ""
+
+config:
+  strip-commands:
+  - ":"
+  install-commands:
+  - |
+    install -d "%{install-root}%{datadir}/icons/"
+    cp -r <theme-dir> "%{install-root}%{datadir}/icons/"
+  - "%{install-extra}"
+```
+
+Set the active cursor theme in niri via the `cursor { }` block in `config.kdl`:
+
+```kdl
+cursor {
+    theme "<theme-name>"
+    size 24
+}
+```
+
+`strip-binaries: ""` is required — cursor files are binary data and must not be stripped.
