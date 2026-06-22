@@ -2,8 +2,8 @@ kind: manual
 
 # Prebuilt gum binary (https://github.com/charmbracelet/gum).
 # Used by system-wide enrollment scripts (fido2-tasks.bst) for interactive
-# confirmations. Tarball structure: gum_<ver>_Linux_<arch>/gum — use find
-# so the install command is arch-neutral.
+# confirmations. BST strips the single top-level dir by default, so gum and
+# completions/ land at staging root — install by direct path.
 # Pin updates via mise run gum-update / track-gum CI job.
 
 build-depends:
@@ -27,8 +27,8 @@ config:
   - ':'
 
   install-commands:
-  - find . -maxdepth 2 -name gum -type f -exec install -Dm755 '{}' "%{install-root}%{bindir}/gum" \;
-  - find . -maxdepth 3 -name gum.bash -exec install -Dm644 '{}' "%{install-root}%{sysconfdir}/bash_completion.d/gum" \;
-  - find . -maxdepth 3 -name gum.fish -exec install -Dm644 '{}' "%{install-root}%{datadir}/fish/vendor_completions.d/gum.fish" \;
-  - find . -maxdepth 3 -name gum.zsh  -exec install -Dm644 '{}' "%{install-root}%{datadir}/zsh/vendor-completions/_gum" \;
+  - install -Dm755 gum "%{install-root}%{bindir}/gum"
+  - install -Dm644 completions/gum.bash "%{install-root}%{sysconfdir}/bash_completion.d/gum"
+  - install -Dm644 completions/gum.fish "%{install-root}%{datadir}/fish/vendor_completions.d/gum.fish"
+  - install -Dm644 completions/gum.zsh  "%{install-root}%{datadir}/zsh/vendor-completions/_gum"
   - "%{install-extra}"
