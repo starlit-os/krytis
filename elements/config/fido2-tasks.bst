@@ -8,6 +8,7 @@ kind: manual
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 - core/mise.bst
+- core/gum.bst
 
 variables:
   strip-binaries: ''

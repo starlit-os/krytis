@@ -7,8 +7,24 @@ AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
 ORIGIN="pam://$(hostname)"
 
 echo "Enrolling FIDO2 key for ${USER} (origin: ${ORIGIN})"
-echo "You will be asked for your FIDO2 PIN, then touch the key when it blinks..."
 echo "(If your key has no PIN yet, set one first with: ykman fido access change-pin)"
+
+# Detect if this physical key is already enrolled: pamu2fcfg -t verifies the
+# key against all existing credentials in the authfile (requires one touch).
+if [[ -s "$AUTHFILE" ]]; then
+  echo "Checking existing credentials — touch your key if it blinks..."
+  if pamu2fcfg -o "$ORIGIN" -t 2>/dev/null; then
+    if ! gum confirm "This key is already enrolled. Replace it?"; then
+      echo "Aborted."
+      exit 0
+    fi
+    # Remove all credentials for this user; re-enroll below with fresh -P cred.
+    sed -i "/^${USER}:/d" "$AUTHFILE"
+    echo "Removed existing credentials for ${USER}."
+  fi
+fi
+
+echo "Touch your key when it blinks (you will be asked for your PIN first)..."
 
 # -P: enroll with pin-verification required — must match the pinverification
 # option in /etc/pam.d/system-auth and /etc/pam.d/greetd.
