@@ -174,9 +174,23 @@ To add a PAM module to greetd: edit `config/greetd-config.bst` directly and add 
 
 ### pam_u2f pinverification: enrollment and PAM config must match
 
-`pinverification` in the PAM config line (`pam_u2f.so cue pinverification`) only works if the credential was **enrolled with `-P`** (`pamu2fcfg -o <origin> -P`). A credential enrolled without `-P` records `+presence` in `~/.config/Yubico/u2f_keys` — pam_u2f will not request a PIN even if the PAM config says `pinverification`, and auth silently falls through to pam_unix.
+`pinverification` in the PAM config line (`pam_u2f.so cue pinverification`) only works if the credential was enrolled with the correct pamu2fcfg flags. The PAM config and enrollment flags are coupled:
 
-The `fido2:enroll` script (`files/fido2-tasks/fido2/enroll`) must always pass `-P` to match the PAM config. If you change one, change the other. Users must re-enroll after adding `-P`; the old `+presence`-only credential won't start prompting for PIN.
+| pamu2fcfg flag | Meaning | Credential flag in u2f_keys |
+|---|---|---|
+| `-N` / `--pin-verification` | Require PIN (CTAP2 clientPin) | `+pinverification` |
+| `-V` / `--user-verification` | Require built-in UV (biometric) | `+userverification` |
+| `-P` / `--no-user-presence` | **Allow without touch** — opposite of what you want |
+
+**`-P` is a trap**: it means `--no-user-presence`, not pin. Using `-P` silently creates a weaker credential (no touch required) and the PIN prompt never appears.
+
+Detect which flags to use from `fido2-token -I <device>`:
+- `clientPin` in the `options:` line → use `-N`
+- `uv retries:` is not `undefined` → device has biometric UV → also use `-V`
+
+YubiKey 5 uses clientPin (PIN entered on host, not on device) → `-N` only. `-V` fails with "does not support built-in user verification" on these keys.
+
+The `fido2:enroll` script detects capabilities automatically. If PAM config uses `pinverification`, enrollment must use `-N`. Users must re-enroll after changing flags; old credentials with empty flags won't prompt for PIN.
 
 ## OCI Assembly Pipeline
 
