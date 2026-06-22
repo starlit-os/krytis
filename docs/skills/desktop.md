@@ -87,6 +87,26 @@ niri uses **smithay** (pure Rust), not wlroots. Its rendering stack handles EGL/
 differently — smithay falls back more gracefully, which is why niri works from a TTY on amdgpu
 even when wlroots-based compositors (noctalia-greeter-compositor) fail.
 
+## bootc BLS Entry Title and os-release Fields
+
+bootc constructs the BLS (Boot Loader Specification) entry title from os-release. Key fields:
+
+| Field | Effect |
+|---|---|
+| `PRETTY_NAME` | Base display name in the boot menu |
+| `VERSION_ID` | Appended as `(VERSION_ID)` in the boot title |
+| `IMAGE_VERSION` | If set, bootc uses this for the version segment instead of the conf filename |
+
+**Pitfall:** If `VERSION_ID` equals the codename (e.g. `"Krytis"`) and `PRETTY_NAME` already includes that name (e.g. `"StarlitOS Krytis"`), the entry shows `StarlitOS Krytis (Krytis)` — redundant. Without `IMAGE_VERSION`, the BLS conf filename leaks into the title as a third segment.
+
+**Fix pattern** (in `elements/core/os-release.bst`):
+- Set `VERSION_ID` to `%{image-version}` (e.g. `25.08.202606201613`) — a real version number
+- Set `IMAGE_VERSION` to the same value so bootc has an explicit version field
+- Make `PRETTY_NAME` static (e.g. `"StarlitOS Krytis"`) so the codename is preserved in the human display name independent of `VERSION_ID`
+- Keep the codename in `VERSION` for human-readable context (e.g. `"25.08.202606201613 (Krytis Edition)"`)
+
+Result: boot entry shows `StarlitOS Krytis (25.08.202606201613)`.
+
 ## Diagnostic Commands (run on the booted image)
 
 ```bash
