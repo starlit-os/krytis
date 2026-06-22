@@ -877,6 +877,24 @@ This is **informational only — the build is not affected.** It means an elemen
 
 Relevance: when SBOM generation is implemented (#40), elements emitting this warning will appear as gaps in the SBOM — upstream source info won't be recorded for them. This is a known limitation scoped to junction dependencies.
 
+## Font Installation Pattern
+
+Fonts are non-ELF content — always set `strip-binaries: ""` and override `strip-commands: [":"]`.
+
+Install paths:
+- TTF/OTF files → `%{install-root}%{datadir}/fonts/<family-name>/`
+- Fontconfig conf → `%{install-root}%{datadir}/fontconfig/conf.avail/` (fontconfig picks it up from there; no need to symlink into `conf.d/`)
+
+**`base-dir: ""`** is required for tarballs that have no top-level wrapping directory (files extract directly into the source directory). Example: Nerd Fonts `NerdFontsSymbolsOnly.tar.xz` extracts `SymbolsNerdFont-Regular.ttf` at the root level rather than inside `NerdFontsSymbolsOnly/`. Without `base-dir: ""`, BST expects a single wrapping directory and errors if it doesn't find one.
+
+```yaml
+sources:
+- kind: tar
+  url: github_files:ryanoasis/nerd-fonts/releases/download/v3.4.0/NerdFontsSymbolsOnly.tar.xz
+  base-dir: ""   # no wrapping dir in this tarball
+  ref: <sha256>
+```
+
 ## Option Names: Underscores Only
 
 BST option names only allow alphanumeric characters and underscores. Hyphens silently fail:

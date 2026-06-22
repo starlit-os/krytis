@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#MISE description="Update symbols-nerd-font element to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/symbols-nerd-font.bst"
+REPO="ryanoasis/nerd-fonts"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_VER=$(grep -oP 'download/v\K[^/]+(?=/NerdFontsSymbolsOnly)' "${ELEMENT}" | head -1)
+echo "==> Current: v${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+TARBALL="NerdFontsSymbolsOnly.tar.xz"
+URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${TARBALL}"
+
+echo "==> Downloading ${TARBALL}..."
+curl -sSfL "${URL}" -o "${TMPDIR}/${TARBALL}"
+NEW_SHA=$(sha256sum "${TMPDIR}/${TARBALL}" | awk '{print $1}')
+echo "    sha256=${NEW_SHA}"
+
+CURRENT_SHA=$(grep '  ref:' "${ELEMENT}" | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: v${CURRENT_VER} → ${LATEST_TAG}"
+sed -i "s|download/v${CURRENT_VER}/NerdFontsSymbolsOnly|download/${LATEST_TAG}/NerdFontsSymbolsOnly|g" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."

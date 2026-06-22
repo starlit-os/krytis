@@ -57,5 +57,10 @@ depends:
   # Zink (OpenGL-over-Vulkan) and any direct Vulkan app. Closes #94 partial.
   - freedesktop-sdk.bst:components/compat-vulkan-link.bst
 
+  # ── Fonts ──────────────────────────────────────────────────────────────
+  # Symbols Nerd Font: symbols-only variant providing icon glyphs used by
+  # terminals (ghostty) and UI components that reference nerd font codepoints.
+  - desktop/symbols-nerd-font.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
