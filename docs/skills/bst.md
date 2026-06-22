@@ -104,6 +104,21 @@ config:
 
 The `strip-commands: [":"]` is required — the default strip invokes `freedesktop-sdk-stripper` which is not present in `runtime-minimal`.
 
+## PAM file routing in fdsdk
+
+When overriding PAM config files, verify which file each service actually reads — not all services use the same include target:
+
+| Service | PAM file used | Source |
+|---------|--------------|--------|
+| `sudo` | `/etc/pam.d/system-auth` | fdsdk `sudo.bst`: `auth include system-auth` |
+| `sshd` | `/etc/pam.d/password-auth` | fdsdk `linux-pam.bst` default |
+| `greetd` | `/etc/pam.d/greetd` | `config/greetd-config.bst` (self-contained) |
+
+**`image.bst` strips factory copies, not runtime files.** It removes `/usr/share/factory/etc/pam.d/{other,system-auth}` — the deploy-time `/etc/pam.d/system-auth` is unaffected and present at runtime. Overriding it via an element with `overlap-whitelist` works.
+
+To add a PAM module to sudo: override `system-auth`, not `password-auth`.
+To add a PAM module to greetd: edit `config/greetd-config.bst` directly and add `core/pam-u2f.bst` (or the relevant module) to its `depends:`.
+
 ## OCI Assembly Pipeline
 
 Krytis image assembly flows through three element kinds:
