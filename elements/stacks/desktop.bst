@@ -34,6 +34,9 @@ depends:
   # ── Credentials ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gnome-keyring.bst
 
+  # ── Files ───────────────────────────────────────────────────────────────
+  - gnome-build-meta.bst:core/nautilus.bst
+
   # ── Flatpak ────────────────────────────────────────────────────────────
   # flatpak binary is already present transitively via xdg-desktop-portal.
   # This adds the Flathub remote to /usr/share/flatpak/remotes.d/ so it is
