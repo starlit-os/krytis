@@ -5,7 +5,6 @@ set -euo pipefail
 
 PAM_FILE="/etc/pam.d/password-auth"
 MODULE="pam_u2f.so"
-PAM_DIR="/usr/lib/security"
 
 echo "=== PAM config ==="
 if grep -q "$MODULE" "$PAM_FILE" 2>/dev/null; then
@@ -19,10 +18,13 @@ fi
 
 echo ""
 echo "=== Module on disk ==="
-if [[ -f "${PAM_DIR}/${MODULE}" ]]; then
-  echo "  ok  ${PAM_DIR}/${MODULE}"
+# pam_u2f installs to %{libdir}/security, which is the multiarch path
+# (e.g. /usr/lib/x86_64-linux-gnu/security) — don't hardcode /usr/lib/security.
+MODULE_PATH=$(find /usr/lib -name "$MODULE" 2>/dev/null | head -1)
+if [[ -n "$MODULE_PATH" ]]; then
+  echo "  ok  ${MODULE_PATH}"
 else
-  echo "  FAIL  ${PAM_DIR}/${MODULE} not found" >&2
+  echo "  FAIL  ${MODULE} not found under /usr/lib" >&2
   echo "        Is core/pam-u2f installed in the image?" >&2
   exit 1
 fi
