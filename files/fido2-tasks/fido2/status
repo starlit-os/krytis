@@ -15,7 +15,7 @@ if [[ -s "$AUTHFILE" ]]; then
     echo "  ${USERNAME}: ${NUM_KEYS} key(s)"
   done < "$AUTHFILE"
 else
-  echo "  (no keys enrolled — run: mise run enroll-fido2)"
+  echo "  (no keys enrolled — run: mise fido2:enroll)"
 fi
 
 echo ""

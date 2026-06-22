@@ -1,0 +1,2 @@
+# System-wide mise configuration.
+# This file's presence enables task discovery from /etc/mise/tasks/.

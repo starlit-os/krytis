@@ -1,9 +1,9 @@
 kind: manual
 
-# Ships FIDO2 enrollment and status scripts to /etc/mise/tasks/ so they are
-# available system-wide via `mise run <task>` on the deployed image.
-# /etc/mise/tasks/ is mise's system config root — scripts there are visible to
-# all users without any per-user config.
+# Ships FIDO2 enrollment and status scripts to /etc/mise/tasks/fido2/ so they
+# are available system-wide as `mise fido2:*` on the deployed image.
+# /etc/mise/config.toml must exist for mise to discover system tasks at all;
+# it is installed alongside the scripts.
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
@@ -18,10 +18,12 @@ config:
 
   install-commands:
   - |
-    for script in enroll-fido2 enroll-fido2-luks status-u2f test-u2f-sudo; do
-      install -Dm755 "${script}" \
-        "%{install-root}%{sysconfdir}/mise/tasks/${script}"
+    for script in enroll enroll-luks status test-sudo; do
+      install -Dm755 "fido2/${script}" \
+        "%{install-root}%{sysconfdir}/mise/tasks/fido2/${script}"
     done
+    install -Dm644 config.toml \
+      "%{install-root}%{sysconfdir}/mise/config.toml"
   - '%{install-extra}'
 
 sources:

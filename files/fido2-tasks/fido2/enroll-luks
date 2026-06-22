@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
-  echo "This task enrolls a LUKS token — run as root: sudo mise run enroll-fido2-luks" >&2
+  echo "This task enrolls a LUKS token — run as root: sudo mise fido2:enroll-luks" >&2
   exit 1
 fi
 
@@ -44,4 +44,4 @@ fi
 
 echo "Touch your security key when it blinks..."
 systemd-cryptenroll --fido2-device=auto "$DEVICE"
-echo "Enrolled. Verify with: mise run status-u2f"
+echo "Enrolled. Verify with: mise fido2:status"

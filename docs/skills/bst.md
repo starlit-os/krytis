@@ -84,7 +84,9 @@ Always end `install-commands` with `- "%{install-extra}"`.
 
 ## System-wide mise tasks via BST element
 
-Mise tasks shipped in a BST element (not in the repo's `mise/tasks/` directory) should be installed to `/etc/mise/tasks/`. Mise treats `/etc/mise/` as the system config root — scripts there are available to all users on the deployed image without any per-user config.
+Mise tasks shipped in a BST element (not in the repo's `mise/tasks/` directory) should be installed to `/etc/mise/tasks/`. **`/etc/mise/config.toml` must also exist** — mise only scans `/etc/mise/tasks/` if the system config file is present. Without it, tasks are invisible to users unless they `cd /etc/mise` first.
+
+Use subdirectories for namespacing: `tasks/fido2/enroll` → `mise fido2:enroll`.
 
 Pattern (`elements/config/fido2-tasks.bst`):
 
@@ -102,7 +104,13 @@ config:
   strip-commands:
   - ':'
   install-commands:
-  - install -Dm755 my-script "%{install-root}%{sysconfdir}/mise/tasks/my-script"
+  - |
+    for script in enroll enroll-luks status test-sudo; do
+      install -Dm755 "fido2/${script}" \
+        "%{install-root}%{sysconfdir}/mise/tasks/fido2/${script}"
+    done
+    install -Dm644 config.toml \
+      "%{install-root}%{sysconfdir}/mise/config.toml"
   - '%{install-extra}'
 
 sources:
