@@ -135,6 +135,27 @@ Key points:
 - The `local` source path must be relative to the project root (`files/my-tasks/`, not absolute)
 - Use this pattern for user-facing ops tasks shipped in the OCI image (enrollment, diagnostics, etc.)
 
+## Prebuilt Binary Elements — Sandbox Tool Availability
+
+`runtime-minimal.bst` provides a shell and `install`, but **not** `find`, `grep`, `sed`, or other GNU coreutils/findutils. Prebuilt binary elements that use these tools in `install-commands` will fail with `command not found` (exitcode 127).
+
+Fix: use direct paths. BST's `kind: tar` source **strips the single top-level directory by default** (same as `tar --strip-components=1`). Files from `name_ver_arch/{binary,completions/}` land directly at the staging root. So `binary` is at `./binary`, not `./name_ver_arch/binary`.
+
+```yaml
+install-commands:
+- install -Dm755 binary "%{install-root}%{bindir}/binary"
+- install -Dm644 completions/tool.bash "%{install-root}%{sysconfdir}/bash_completion.d/tool"
+- install -Dm644 completions/tool.fish "%{install-root}%{datadir}/fish/vendor_completions.d/tool.fish"
+- install -Dm644 completions/tool.zsh  "%{install-root}%{datadir}/zsh/vendor-completions/_tool"
+- "%{install-extra}"
+```
+
+Arch-neutrality: handle via `(?)` source conditionals at the source level — the install commands don't need to vary by arch once the single top-level dir is stripped.
+
+Exception: `base-dir: ""` opts out of the strip (files extract as-is with their original directory structure). See `symbols-nerd-font.bst` for an example where the tarball already has files at root level.
+
+Do **not** add `findutils` as a workaround — it would pull unnecessary build-time deps into a minimal element.
+
 ## Config-only Elements
 
 Elements that only drop config files (no binaries to build) should use `kind: manual` and suppress the default strip step:
