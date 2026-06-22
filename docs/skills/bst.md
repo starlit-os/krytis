@@ -35,6 +35,7 @@ The podman container fallback has no host dep requirements beyond podman itself.
 | `%{install-root}` | Staging directory | Always prefix install paths with this |
 | `%{prefix}` | `/usr` | |
 | `%{bindir}` | `/usr/bin` | |
+| `%{libdir}` | `/usr/lib/x86_64-linux-gnu` | **Multiarch path** — not `/usr/lib`. Use for `.so` files and PAM modules |
 | `%{indep-libdir}` | `/usr/lib` | Use for systemd units, presets, sysusers, tmpfiles |
 | `%{datadir}` | `/usr/share` | |
 | `%{sysconfdir}` | `/etc` | Avoid — prefer `/usr/lib` paths for image content |
