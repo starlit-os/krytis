@@ -107,6 +107,22 @@ bootc constructs the BLS (Boot Loader Specification) entry title from os-release
 
 Result: boot entry shows `StarlitOS Krytis (25.08.202606201613)`.
 
+## xdg-desktop-portal Backend Routing for niri
+
+`XDG_CURRENT_DESKTOP=niri` is already set in `/etc/environment`, but xdg-desktop-portal also needs a portal configuration file to know which backend to use for each interface. Without this file the daemon cannot resolve a backend and default-app lookups (e.g. opening a URL) fail silently.
+
+Ship `/usr/share/xdg-desktop-portal/portals/niri.portal` (see `config/xdg-portals.bst`):
+
+```ini
+[preferred]
+default=gnome;gtk
+org.freedesktop.impl.portal.Settings=gnome
+org.freedesktop.impl.portal.Wallpaper=gnome
+org.freedesktop.impl.portal.Screenshot=gnome
+```
+
+This routes gnome-specific interfaces to `xdg-desktop-portal-gnome` and everything else to gnome/gtk in preference order. Both backends are already in `stacks/desktop.bst`; this file activates the routing.
+
 ## Diagnostic Commands (run on the booted image)
 
 ```bash

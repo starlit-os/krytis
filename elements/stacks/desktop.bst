@@ -26,6 +26,10 @@ depends:
   # xdg-desktop-portal (base daemon) is pulled in transitively.
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gnome.bst
+  # niri.portal: routes portal interface requests to gnome/gtk backends
+  # when XDG_CURRENT_DESKTOP=niri; without this file xdg-desktop-portal
+  # cannot resolve the correct backend and default app lookups fail.
+  - config/xdg-portals.bst
 
   # ── Credentials ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gnome-keyring.bst
