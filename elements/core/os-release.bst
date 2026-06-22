@@ -16,8 +16,8 @@ environment:
   SUPPORT_URL: "https://github.com/starlit-os/krytis/issues"
   DOCUMENTATION_URL: "https://github.com/starlit-os/krytis"
   ID: "krytis"
-  VERSION_ID: "Krytis"
-  VERSION: "%{freedesktop-sdk-flatpak-branch}"
+  VERSION_ID: "%{image-version}"
+  VERSION: "%{image-version} (Krytis Edition)"
 
 config:
   build-commands:
@@ -25,10 +25,11 @@ config:
   - |
     cat > "%{install-root}%{indep-libdir}/os-release" <<EOF
     NAME="${NAME}"
-    PRETTY_NAME="${NAME} ${VERSION_ID}"
+    PRETTY_NAME="StarlitOS Krytis"
     VERSION="${VERSION}"
     VERSION_ID="${VERSION_ID}"
-    BASE_OS_NAME="Freedesktop SDK ${VERSION}"
+    IMAGE_VERSION="${VERSION_ID}"
+    BASE_OS_NAME="Freedesktop SDK %{freedesktop-sdk-flatpak-branch}"
     ID="${ID}"
     ID_LIKE="org.freedesktop.platform"
     CPE_NAME="cpe:/o:starlit-os:krytis"
