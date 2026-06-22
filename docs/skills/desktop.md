@@ -128,6 +128,23 @@ Standard binds already in `files/niri/config.kdl`:
 | `Mod+E` | nautilus (file manager) |
 | `Super+Alt+L` | swaylock (screen lock) |
 
+## Validating niri Config Changes
+
+When editing `files/niri/config.kdl`, validate before committing. If niri is available on the current machine:
+
+```bash
+niri validate --config files/niri/config.kdl
+```
+
+If the file needs to be in a specific location (e.g. testing on the booted image), write to a temp file first:
+
+```bash
+cp files/niri/config.kdl /tmp/niri-test.kdl
+niri validate --config /tmp/niri-test.kdl
+```
+
+`niri validate` catches unknown node names, type errors, and structural mistakes. Common mistake: `theme`/`size` inside `cursor { }` — correct names are `xcursor-theme`/`xcursor-size`.
+
 ## xdg-desktop-portal Backend Routing for niri
 
 `XDG_CURRENT_DESKTOP=niri` is already set in `/etc/environment`, but xdg-desktop-portal also needs a portal configuration file to know which backend to use for each interface. Without this file the daemon cannot resolve a backend and default-app lookups (e.g. opening a URL) fail silently.
