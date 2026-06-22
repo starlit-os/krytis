@@ -172,6 +172,12 @@ When overriding PAM config files, verify which file each service actually reads 
 To add a PAM module to sudo: override `system-auth`, not `password-auth`.
 To add a PAM module to greetd: edit `config/greetd-config.bst` directly and add `core/pam-u2f.bst` (or the relevant module) to its `depends:`.
 
+### pam_u2f pinverification: enrollment and PAM config must match
+
+`pinverification` in the PAM config line (`pam_u2f.so cue pinverification`) only works if the credential was **enrolled with `-P`** (`pamu2fcfg -o <origin> -P`). A credential enrolled without `-P` records `+presence` in `~/.config/Yubico/u2f_keys` — pam_u2f will not request a PIN even if the PAM config says `pinverification`, and auth silently falls through to pam_unix.
+
+The `fido2:enroll` script (`files/fido2-tasks/fido2/enroll`) must always pass `-P` to match the PAM config. If you change one, change the other. Users must re-enroll after adding `-P`; the old `+presence`-only credential won't start prompting for PIN.
+
 ## OCI Assembly Pipeline
 
 Krytis image assembly flows through three element kinds:

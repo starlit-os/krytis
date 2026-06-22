@@ -7,9 +7,12 @@ AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
 ORIGIN="pam://$(hostname)"
 
 echo "Enrolling FIDO2 key for ${USER} (origin: ${ORIGIN})"
-echo "Touch your security key when it blinks..."
+echo "You will be asked for your FIDO2 PIN, then touch the key when it blinks..."
+echo "(If your key has no PIN yet, set one first with: ykman fido access change-pin)"
 
-NEW_LINE=$(pamu2fcfg -o "$ORIGIN")
+# -P: enroll with pin-verification required — must match the pinverification
+# option in /etc/pam.d/system-auth and /etc/pam.d/greetd.
+NEW_LINE=$(pamu2fcfg -o "$ORIGIN" -P)
 NEW_CRED="${NEW_LINE#*:}"  # strip "username:" prefix
 
 mkdir -p "$(dirname "$AUTHFILE")"
