@@ -5,6 +5,11 @@ sources:
   url: github_files:ryanoasis/nerd-fonts/releases/download/v3.4.0/NerdFontsSymbolsOnly.tar.xz
   base-dir: ""
   ref: 7f8c090da3b0eaa7108646bf34cbbb6ed13d5358a72460522108b06c7ecd716a
+# Local fontconfig conf overrides the simpler upstream version from the tarball.
+# Provides <alias> rules that make Symbols Nerd Font a fallback for all
+# common monospace families so glyphs render without per-user configuration.
+- kind: local
+  path: files/fontconfig
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
