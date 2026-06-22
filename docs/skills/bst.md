@@ -928,3 +928,41 @@ options:
   my_arch:
     type: arch
 ```
+
+## Fontconfig Cache Must Be Baked into the Image
+
+Fontconfig does not auto-generate its cache on a bootc image. After installing font elements, `fc-list` returns nothing and apps can't find fonts until `fc-cache` is run manually. Fix: run `fc-cache` in `integration-commands` on the OCI stack element, which executes in the fully-staged image context where `fc-cache` is available:
+
+```yaml
+# elements/oci/krytis/stack.bst
+public:
+  bst:
+    integration-commands:
+      - fc-cache -f /usr/share/fonts/
+```
+
+Discovered by symptom: font file present at `/usr/share/fonts/…` on booted image, but `fc-list | grep <family>` returned nothing until `sudo fc-cache -f` was run manually.
+
+## XCursor Themes
+
+XCursor theme tarballs strip the single top-level `<theme-name>/` directory (BST default `kind: tar` behavior), leaving `cursors/` and `index.theme` at the staging root. The original theme dir name is gone — recreate it explicitly at the install destination:
+
+```yaml
+install-commands:
+- |
+  install -d "%{install-root}%{datadir}/icons/<theme-name>/"
+  cp -r cursors "%{install-root}%{datadir}/icons/<theme-name>/"
+  install -Dm644 index.theme "%{install-root}%{datadir}/icons/<theme-name>/index.theme"
+- "%{install-extra}"
+```
+
+`strip-binaries: ""` is required — cursor files are binary data and must not be stripped.
+
+Set the active cursor theme in niri via the `cursor { }` block in `config.kdl`. Node names are `xcursor-theme` and `xcursor-size` — not `theme` and `size` (those cause `niri validate` to fail with "unexpected node"):
+
+```kdl
+cursor {
+    xcursor-theme "<theme-name>"
+    xcursor-size 24
+}
+```
