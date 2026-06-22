@@ -156,6 +156,50 @@ Exception: `base-dir: ""` opts out of the strip (files extract as-is with their 
 
 Do **not** add `findutils` as a workaround — it would pull unnecessary build-time deps into a minimal element.
 
+### gum (charmbracelet) — known-working install pattern
+
+gum releases multi-file tarballs (`gum_VER_Linux_ARCH.tar.gz`) that contain the binary, completions, man pages, and a licence. Arch-conditional source block + direct install paths:
+
+```yaml
+kind: manual
+build-depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+variables:
+  strip-binaries: ''
+sources:
+- kind: tar
+  (?):
+  - arch == "x86_64":
+      url: github_files:charmbracelet/gum/releases/download/vVER/gum_VER_Linux_x86_64.tar.gz
+      ref: <sha256>
+  - arch == "aarch64":
+      url: github_files:charmbracelet/gum/releases/download/vVER/gum_VER_Linux_arm64.tar.gz
+      ref: <sha256>
+config:
+  strip-commands:
+  - ':'
+  install-commands:
+  - install -Dm755 gum "%{install-root}%{bindir}/gum"
+  - install -Dm644 completions/gum.bash "%{install-root}%{sysconfdir}/bash_completion.d/gum"
+  - install -Dm644 completions/gum.fish "%{install-root}%{datadir}/fish/vendor_completions.d/gum.fish"
+  - install -Dm644 completions/gum.zsh  "%{install-root}%{datadir}/zsh/vendor-completions/_gum"
+  - "%{install-extra}"
+```
+
+`strip-binaries: ''` suppresses BST's default strip pass — gum is a pre-compiled Go binary, stripping it produces an unusable binary.
+
+**`gum style` with flag-like arguments:** when the text argument starts with `-`, gum parses it as its own flag and errors. Use `--` to terminate flag parsing:
+
+```bash
+# ❌ fails when VAR expands to e.g. "-N"
+gum style --foreground 212 "${VAR}"
+
+# ✅
+gum style --foreground 212 -- "${VAR}"
+```
+
+**`gum choose` margin flags** are per-item-type (`--header.margin`, `--item.margin`, `--cursor.margin`), not a single `--margin`. All three must be set to get consistent padding.
+
 ## Config-only Elements
 
 Elements that only drop config files (no binaries to build) should use `kind: manual` and suppress the default strip step:
@@ -210,6 +254,31 @@ Detect which flags to use from `fido2-token -I <device>`:
 - `uv retries:` is not `undefined` → device has biometric UV → also use `-V`
 
 YubiKey 5 uses clientPin (PIN entered on host, not on device) → `-N` only. `-V` fails with "does not support built-in user verification" on these keys.
+
+**`fido2-token -L` output has a trailing `:` on device paths** (e.g. `/dev/hidraw3:`). Strip it before passing to `-I`:
+
+```bash
+DEVICE=$(fido2-token -L | head -1 | tr -d ':')
+fido2-token -I "$DEVICE"
+```
+
+Passing the raw `-L` output to `-I` fails silently — `$INFO` is empty, capability detection returns wrong results.
+
+**`fido2-token -I` options format**: capabilities are on one line as a comma-separated list, not as individual `key: true` entries:
+
+```
+options: rk, up, noplat, noalwaysUv, credMgmt, authnrCfg, clientPin, largeBlobs
+uv retries: undefined
+```
+
+Parse with:
+```bash
+INFO=$(fido2-token -I "$DEVICE" 2>/dev/null)
+OPTIONS=$(echo "$INFO" | grep "^options:")
+echo "$OPTIONS" | grep -qw "clientPin" && ENROLL_FLAGS+=(-N)
+UV_RETRIES=$(echo "$INFO" | grep "^uv retries:" | awk '{print $NF}')
+[[ "$UV_RETRIES" != "undefined" ]] && ENROLL_FLAGS+=(-V)
+```
 
 The `fido2:enroll` script detects capabilities automatically. If PAM config uses `pinverification`, enrollment must use `-N`. Users must re-enroll after changing flags; old credentials with empty flags won't prompt for PIN.
 

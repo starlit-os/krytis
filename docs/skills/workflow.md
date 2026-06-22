@@ -90,6 +90,16 @@ cd <worktree-path> && gh pr create --title "..."
 
 Running from the main repo dir produces: `head branch "main" is the same as base branch "main"`.
 
+## Testing Scripts Shipped in the Image
+
+Rebuilding the OCI image to test a script change takes significant time. For scripts shipped via BST elements (e.g. `files/fido2-tasks/fido2/enroll`), iterate locally first:
+
+1. Write the script to `~/.mise/tasks/<path>` with a `-local` suffix (e.g. `~/.mise/tasks/fido2/enroll-local`).
+2. Run it directly against the live system — no image rebuild needed.
+3. Once confirmed working, copy back to `files/` in the element and commit.
+
+The `-local` suffix distinguishes the test copy from the system version (which has no suffix). Never commit the `-local` copy to the element.
+
 ## Self-Improvement Loop
 
 Before committing — when you hit a non-obvious pattern, workaround, or convention:
