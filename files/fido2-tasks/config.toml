@@ -1,2 +1,19 @@
-# System-wide mise configuration.
-# This file's presence enables task discovery from /etc/mise/tasks/.
+# System-wide mise configuration for Krytis.
+# Tasks must be declared here — mise's file-task directory scanning only
+# applies to project configs, not the system config at /etc/mise/config.toml.
+
+[tasks."fido2:enroll"]
+run = "/etc/mise/tasks/fido2/enroll"
+description = "Enroll a FIDO2 security key for sudo / login"
+
+[tasks."fido2:enroll-luks"]
+run = "/etc/mise/tasks/fido2/enroll-luks"
+description = "Enroll a FIDO2 key as a LUKS2 unlock factor via systemd-cryptenroll"
+
+[tasks."fido2:status"]
+run = "/etc/mise/tasks/fido2/status"
+description = "Show enrolled FIDO2 keys for sudo/login and LUKS slots"
+
+[tasks."fido2:test-sudo"]
+run = "/etc/mise/tasks/fido2/test-sudo"
+description = "Verify pam_u2f is wired and prompt a live sudo escalation to test it"

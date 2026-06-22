@@ -85,12 +85,13 @@ Always end `install-commands` with `- "%{install-extra}"`.
 
 ## System-wide mise tasks via BST element
 
-Mise tasks shipped in a BST element (not in the repo's `mise/tasks/` directory) should be installed to `/etc/mise/tasks/`. **`/etc/mise/config.toml` must also exist** — mise only scans `/etc/mise/tasks/` if the system config file is present. Without it, tasks are invisible to users unless they `cd /etc/mise` first.
+**File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly in `/etc/mise/config.toml` using `[tasks.*]` TOML blocks pointing to the script files. Ship both: the scripts (for execution) and `config.toml` (for discovery).
 
-Use subdirectories for namespacing: `tasks/fido2/enroll` → `mise fido2:enroll`.
+Use quoted keys for namespace separators: `[tasks."fido2:enroll"]`.
 
-Pattern (`elements/config/fido2-tasks.bst`):
+Pattern (`elements/config/fido2-tasks.bst` + `files/fido2-tasks/config.toml`):
 
+**BST element:**
 ```yaml
 kind: manual
 
@@ -116,7 +117,16 @@ config:
 
 sources:
 - kind: local
-  path: files/my-tasks
+  path: files/fido2-tasks
+```
+
+**`files/fido2-tasks/config.toml`:**
+```toml
+# Tasks must be declared here — file-task scanning only applies to project configs.
+
+[tasks."fido2:enroll"]
+run = "/etc/mise/tasks/fido2/enroll"
+description = "Enroll a FIDO2 security key for sudo / login"
 ```
 
 Key points:
