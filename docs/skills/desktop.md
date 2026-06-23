@@ -79,9 +79,11 @@ to build-depends. `vulkan-icd-loader` is also a runtime depend (provides libvulk
 With radv discoverable via `compat-vulkan-link` and wlroots compiled with Vulkan, the renderer works:
 
 - `WLR_RENDERER=vulkan` — wlroots uses the Vulkan backend (radv) instead of GLES2/pixman.
-- `MESA_LOADER_DRIVER_OVERRIDE=zink` — GL/GLES2 calls in the greeter client go through
-  Zink → radv, bypassing the broken radeonsi glvnd path.
 - `WLR_NO_HARDWARE_CURSORS=1` is **not** needed with the Vulkan renderer (required for pixman only).
+- Do **not** set `MESA_LOADER_DRIVER_OVERRIDE=zink` in the greetd command. The compositor uses
+  Vulkan directly; Zink is a GL driver and irrelevant. More critically, the greeter PAM session
+  inherits `/etc/environment` via `pam_env`, so any GL env override set there (or passed via
+  `env` in config.toml) also reaches the greeter client GTK app.
 - `pixman` is **not** a valid `-Drenderers` value in wlroots 0.20.1 — allowed values are `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
 - `gles2` should **not** be listed: `egl.pc` is not in the pkgconfig search path in the BST build sandbox, so explicit `gles2` errors out. With `auto` it was silently skipped. gles2 also fails at runtime on amdgpu anyway (glvnd can't find radeonsi via fdsdk's non-standard prefix).
 
@@ -118,8 +120,16 @@ Set in both `/etc/environment` (pam_env reads it → all sessions including gree
 | `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
 | `SDL_VIDEODRIVER` | `wayland` | SDL2 apps use Wayland backend instead of X11 |
 
-These are set in `config/greetd-config.bst`. `GDK_BACKEND=wayland` is not set explicitly — GTK4
-already prefers Wayland when `XDG_SESSION_TYPE=wayland` is present.
+These are set in `config/greetd-config.bst` **only in `environment.d`**, NOT in `/etc/environment`.
+
+`/etc/environment` is read by `pam_env.so readenv=1` in the greetd PAM stack, so toolkit hints
+there reach the greeter client GTK app. This caused `GSK_RENDERER=vulkan` to make the noctalia-
+greeter window render black (GTK Vulkan GSK renderer failed silently). Toolkit hints belong only
+in `/usr/lib/environment.d/` which is read by the systemd user manager, not by the greeter PAM
+session.
+
+`GDK_BACKEND=wayland` is not set explicitly — GTK4 already prefers Wayland when
+`XDG_SESSION_TYPE=wayland` is present.
 
 ## niri vs wlroots
 

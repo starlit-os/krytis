@@ -8,9 +8,12 @@
 #
 # WLR_RENDERER=vulkan: use wlroots Vulkan renderer on real AMD hardware (radv
 # via compat-vulkan-link which symlinks the fdsdk ICD to /usr/share/vulkan/icd.d/).
-# MESA_LOADER_DRIVER_OVERRIDE=zink: route GL/GLES2 calls in the greeter client
-# through Zink → radv, bypassing the radeonsi glvnd path that fails with fdsdk's
-# non-standard mesa prefix. Closes #96 (parent: #94).
+# The wlroots Vulkan renderer uses Vulkan directly — GL/GLES2 env overrides
+# (MESA_LOADER_DRIVER_OVERRIDE=zink) must NOT be set here: the greeter PAM
+# session inherits /etc/environment via pam_env, so toolkit vars set there
+# also reach the greeter client (noctalia-greeter, a GTK app). GSK_RENDERER
+# and SDL env hints belong only in environment.d (user systemd sessions).
+# Closes #96 (parent: #94).
 #
 # IMPORTANT: these must be set in greetd config.toml's command line, NOT via
 # a systemd drop-in Environment=. greetd constructs a clean PAM environment
@@ -79,7 +82,7 @@ config:
     vt = 1
 
     [default_session]
-    command = "env WLR_RENDERER=vulkan MESA_LOADER_DRIVER_OVERRIDE=zink noctalia-greeter-session"
+    command = "env WLR_RENDERER=vulkan noctalia-greeter-session"
     user = "greeter"
     EOF
 
@@ -104,8 +107,6 @@ config:
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
     LIBSEAT_LOGLEVEL=debug
-    GSK_RENDERER=vulkan
-    SDL_VIDEODRIVER=wayland
     EOF
 
   - |
