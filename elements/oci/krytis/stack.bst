@@ -3,6 +3,7 @@ kind: stack
 depends:
   - stacks/base-system.bst
   - stacks/bootc.bst
+  - stacks/codecs.bst
   - stacks/desktop.bst
   - stacks/dev-tools.bst
   - core/linux-cachyos.bst
