@@ -40,23 +40,65 @@ wlroots picks a renderer at startup based on the DRM backend's render node:
 | simpledrm (early boot / efifb) | none | **pixman** (software) | No render node → `wlr_backend_get_drm_fd` returns -1 → pixman chosen automatically |
 | amdgpu / real GPU | `/dev/dri/renderD128` | GLES2 attempted, then Vulkan | Fails if neither renderer can initialise — **no pixman fallback** in this path |
 
-**Force pixman when needed** via a systemd drop-in (see below). pixman uses DRM dumb buffers
-as its allocator, which work on all drivers including amdgpu.
+pixman uses DRM dumb buffers as its allocator; works on all drivers including amdgpu.
 
 ### GLES2 on amdgpu fails with fdsdk mesa
 
-wlroots attempts GLES2 via EGL with the render node fd. This requires the glvnd EGL dispatch to
-route the call to `libEGL_mesa.so.0` and for MESA-LOADER to find `radeonsi_dri.so`. With fdsdk's
-non-standard mesa prefix, this path currently fails (root cause unresolved as of 2026-06-21 —
-see issue #95 / parent #94). The fix in use is `WLR_RENDERER=pixman`.
+wlroots GLES2 requires glvnd to find `libEGL_mesa.so.0` and MESA-LOADER to find `radeonsi_dri.so`.
+With fdsdk's non-standard mesa prefix this path fails. Use `WLR_RENDERER=vulkan` or fall back to
+`WLR_RENDERER=pixman` if Vulkan is unavailable.
 
-### Vulkan path not yet verified
+### Vulkan ICD discovery: compat-vulkan-link
 
-Both `WLR_RENDERER=vulkan` (wlroots Vulkan renderer) and `MESA_LOADER_DRIVER_OVERRIDE=zink`
-(OpenGL via Vulkan/radv) require the radv Vulkan ICD to be discoverable by the Vulkan loader.
-The ICD JSON is in the non-standard mesa path; the Vulkan loader does not search it by default.
-Fix: set `VK_ICD_FILENAMES` (or `VK_DRIVER_FILES`) to the radv ICD JSON path, or install the
-ICD JSON to `/usr/share/vulkan/icd.d/`. Tracked in #95 (wlroots Vulkan), #96 (Zink), parent #94.
+`freedesktop-sdk.bst:components/compat-vulkan-link.bst` (in `stacks/desktop.bst`) is a stack
+element whose integration commands symlink the fdsdk ICD directories into standard Vulkan loader
+search paths:
+
+```
+/usr/share/vulkan/icd.d/          → /usr/lib/x86_64-linux-gnu/GL/vulkan/icd.d/
+/usr/share/vulkan/explicit_layer.d → /usr/lib/x86_64-linux-gnu/GL/vulkan/explicit_layer.d/
+/usr/share/vulkan/implicit_layer.d → /usr/lib/x86_64-linux-gnu/GL/vulkan/implicit_layer.d/
+```
+
+The Vulkan loader searches `/usr/share/vulkan/icd.d/` by default, so `VK_ICD_FILENAMES` is
+**not** needed after this element is present. Closes the ICD discovery gap (#94).
+
+### wlroots Vulkan renderer — compiled in but NOT used for the greeter
+
+`desktop/wlroots.bst` compiles the Vulkan renderer (`-Drenderers=vulkan`) with:
+- build-depends: `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, `components/glslang.bst`
+- runtime depend: `components/vulkan-icd-loader.bst` (provides libvulkan.so)
+
+Build notes:
+- `pixman` is **not** a valid `-Drenderers` value in 0.20.1 — allowed: `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
+- `gles2` must **not** be listed: `egl.pc` is absent from the pkgconfig path in the BST build sandbox, causing an error. With `auto` it was silently skipped.
+
+**The Vulkan renderer cannot be used for the greeter compositor on displays wider than 2560px.**
+
+wlroots Vulkan renderer has a DMA-BUF import size limit of **2560x2560 pixels** (AMD DCC tiling
+modifier constraint). On a 3440x1440 display:
+
+```
+[ERROR] DMA-BUF is too large to import (3440x1440 > 2560x2560)
+[ERROR] failed to enable output DP-1
+```
+
+The compositor silently falls back to the next connected output (DP-2 at 1920x1200), leaving
+the primary monitor blank. The wlroots Vulkan renderer also self-reports as experimental:
+`"The vulkan renderer is only experimental and not expected to be ready for daily use"`
+
+**Conclusion:** use `WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1` for the greeter compositor.
+Pixman uses DRM dumb buffers with no size constraint and works reliably on all outputs.
+
+A potential workaround is `WLR_VK_NO_MODIFIERS=1` (forces linear buffers, removing the modifier
+size constraint) but this is untested and pixman is adequate for a login greeter.
+
+Do **not** set `MESA_LOADER_DRIVER_OVERRIDE=zink` in the greetd command: the greeter PAM session
+inherits `/etc/environment` via `pam_env`, so GL env overrides also reach the noctalia-greeter
+GTK client and cause its UI to render black (GTK Vulkan GSK renderer fails silently).
+
+Toolkit env hints (`GSK_RENDERER`, `SDL_VIDEODRIVER`) belong only in `environment.d` (user
+systemd sessions), not in `/etc/environment` (which is read by the greeter PAM session too).
 
 ## Passing Environment Variables to the Greeter Compositor
 
@@ -78,8 +120,29 @@ user = "greeter"
 The `env` call runs before the compositor inherits the environment, so the vars are always present
 regardless of PAM env construction.
 
-`WLR_NO_HARDWARE_CURSORS=1` is required when pixman is active: the pixman path has no KMS
-cursor plane support and will otherwise log cursor errors and potentially crash.
+`WLR_NO_HARDWARE_CURSORS=1` is required when pixman is active — pixman has no KMS cursor plane
+support and will otherwise log cursor errors and potentially crash.
+
+## Toolkit Vulkan / Wayland Environment (#97)
+
+Set in both `/etc/environment` (pam_env reads it → all sessions including greeter) and
+`/usr/lib/environment.d/90-krytis-session.conf` (systemd reads it → user session units):
+
+| Variable | Value | Effect |
+|---|---|---|
+| `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
+| `SDL_VIDEODRIVER` | `wayland` | SDL2 apps use Wayland backend instead of X11 |
+
+These are set in `config/greetd-config.bst` **only in `environment.d`**, NOT in `/etc/environment`.
+
+`/etc/environment` is read by `pam_env.so readenv=1` in the greetd PAM stack, so toolkit hints
+there reach the greeter client GTK app. This caused `GSK_RENDERER=vulkan` to make the noctalia-
+greeter window render black (GTK Vulkan GSK renderer failed silently). Toolkit hints belong only
+in `/usr/lib/environment.d/` which is read by the systemd user manager, not by the greeter PAM
+session.
+
+`GDK_BACKEND=wayland` is not set explicitly — GTK4 already prefers Wayland when
+`XDG_SESSION_TYPE=wayland` is present.
 
 ## niri vs wlroots
 
@@ -178,6 +241,12 @@ cat /var/log/noctalia-greeter.log
 systemctl show greetd.service | grep Environment
 journalctl -u greetd --boot
 
-# Check Vulkan ICD files (for radv)
+# Verify Vulkan ICD symlink is in place (compat-vulkan-link)
+ls -la /usr/share/vulkan/icd.d/
+
+# Check Vulkan ICD files (original fdsdk path)
 find /usr/lib -name '*radeon*icd*.json' 2>/dev/null
+
+# Verify session environment vars are set
+grep -E 'GSK_RENDERER|SDL_VIDEODRIVER|MESA_LOADER' /etc/environment
 ```

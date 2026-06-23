@@ -6,21 +6,20 @@
 # greetd.service ships Alias=display-manager.service — installing greetd
 # automatically creates the display-manager symlink; no masking needed.
 #
-# WLR_RENDERER=pixman: wlroots' GLES2 renderer fails on real AMD hardware
-# because EGL cannot find the radeonsi DRI driver through glvnd when the
-# compositor has a real render node (amdgpu/renderD128). simpledrm worked
-# previously because it has no render node, so wlroots auto-selected pixman.
-# Force pixman explicitly so the greeter works on both simpledrm and amdgpu.
-# WLR_NO_HARDWARE_CURSORS=1: required when pixman renderer is active — the
-# pixman path has no KMS cursor plane support.
+# WLR_RENDERER=pixman: wlroots Vulkan renderer is compiled in (desktop/wlroots.bst
+# uses -Drenderers=vulkan) but CANNOT be used for the greeter compositor:
+# it has a DMA-BUF import size limit of 2560x2560 pixels (AMD DCC tiling
+# modifier constraint), which blocks 3440x1440 ultrawides. The wlroots Vulkan
+# renderer is also explicitly "experimental and not expected to be ready for
+# daily use" per its own startup log.
+# WLR_NO_HARDWARE_CURSORS=1: required with pixman — no KMS cursor plane support.
+# See #96 (parent: #94) for the investigation history.
 #
 # IMPORTANT: these must be set in greetd config.toml's command line, NOT via
 # a systemd drop-in Environment=. greetd constructs a clean PAM environment
 # for the greeter child session and does not propagate its own systemd service
 # environment to child processes. env(1) in the command line is the only
 # reliable path to reach noctalia-greeter-compositor.
-#
-# Track hardware-accelerated greeter rendering in #95 (parent: #94).
 #
 # This is a config-only element with no binaries to strip. The default
 # buildsystem-make strip-commands call freedesktop-sdk-stripper, which is
@@ -115,6 +114,8 @@ config:
       "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf" <<'EOF'
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
+    GSK_RENDERER=vulkan
+    SDL_VIDEODRIVER=wayland
     EOF
 
   - |
