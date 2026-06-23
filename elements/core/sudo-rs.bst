@@ -6,6 +6,10 @@ public:
     - /usr/bin/sudo
     - /usr/bin/sudoedit
     - /usr/lib/debug/usr/bin/sudo.debug
+  initial-script:
+    script: |
+      #!/bin/bash
+      chmod 4755 "${1}/usr/bin/sudo"
 
 build-depends:
 - freedesktop-sdk.bst:components/rust.bst
@@ -21,7 +25,7 @@ config:
   - cargo build --release
 
   install-commands:
-  - install -Dm4755 target/release/sudo "%{install-root}/usr/bin/sudo"
+  - install -Dm755 target/release/sudo "%{install-root}/usr/bin/sudo"
   - ln -sr "%{install-root}/usr/bin/sudo" "%{install-root}/usr/bin/sudoedit"
 
 sources:

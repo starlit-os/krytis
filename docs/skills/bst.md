@@ -1049,12 +1049,24 @@ Key patterns (matched from `dakota/elements/bluefin/sudo-rs.bst`):
 - **`kind: make`** not `kind: manual`
 - **No `--locked`** on `cargo build --release`
 - **No `pkg-config`** in build-depends — PAM found without it
-- **Setuid via `install -Dm4755`** in install-commands — no `initial-script` needed
+- **Setuid via `initial-script`** — BST strips setuid bits from artifacts; `install -Dm4755` in `install-commands` does NOT survive. Use `install -Dm755` to install the binary, then set `public.initial-script` to run `chmod 4755` on the assembled sysroot (see pattern below)
 - **`sudoedit` is a symlink** to `sudo` (`ln -sr ... sudo sudoedit`)
 - **`overlap-whitelist`**: `/usr/bin/sudo`, `/usr/bin/sudoedit`, `/usr/lib/debug/usr/bin/sudo.debug`
 - **PAM linking**: `linux-pam.bst` must appear in BOTH `build-depends` (linker) AND `depends` (runtime)
 - **`vm/config/sudo.bst` stays**: installs `sudoers.d/wheel`; no change to `base-system.bst` needed
 - **No visudo**: sudo-rs doesn't ship it; omit without replacement
 - Upstream URL: `github:trifectatechfoundation/sudo-rs.git` (org was renamed from `memorysafety`)
+
+Setuid pattern (applies to any element needing a setuid binary):
+
+```yaml
+public:
+  initial-script:
+    script: |
+      #!/bin/bash
+      chmod 4755 "${1}/usr/bin/sudo"
+```
+
+The `${1}` argument is the assembled sysroot path. `image.bst` runs `prepare-image.sh --initscripts /initial_scripts` which executes these scripts under `fakecap` LD_PRELOAD so the chmod is recorded in `/fakecap` and applied to the OCI layer.
 
 > **Security Gate**: this overrides privilege escalation. Open as draft PR and flag for human review before merge.
