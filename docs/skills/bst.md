@@ -1035,3 +1035,26 @@ cursor {
     xcursor-size 24
 }
 ```
+
+## Junction override: sudo-rs replacing fdsdk sudo
+
+`components/sudo.bst` in fdsdk can be overridden to point at `core/sudo-rs.bst`. Add to `elements/freedesktop-sdk.bst` `config.overrides`:
+
+```yaml
+components/sudo.bst: core/sudo-rs.bst
+```
+
+Key patterns (matched from `dakota/elements/bluefin/sudo-rs.bst`):
+
+- **`kind: make`** not `kind: manual`
+- **No `--locked`** on `cargo build --release`
+- **No `pkg-config`** in build-depends — PAM found without it
+- **Setuid via `install -Dm4755`** in install-commands — no `initial-script` needed
+- **`sudoedit` is a symlink** to `sudo` (`ln -sr ... sudo sudoedit`)
+- **`overlap-whitelist`**: `/usr/bin/sudo`, `/usr/bin/sudoedit`, `/usr/lib/debug/usr/bin/sudo.debug`
+- **PAM linking**: `linux-pam.bst` must appear in BOTH `build-depends` (linker) AND `depends` (runtime)
+- **`vm/config/sudo.bst` stays**: installs `sudoers.d/wheel`; no change to `base-system.bst` needed
+- **No visudo**: sudo-rs doesn't ship it; omit without replacement
+- Upstream URL: `github:trifectatechfoundation/sudo-rs.git` (org was renamed from `memorysafety`)
+
+> **Security Gate**: this overrides privilege escalation. Open as draft PR and flag for human review before merge.

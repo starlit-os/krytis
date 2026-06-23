@@ -48,3 +48,4 @@ config:
     components/systemd-libs.bst: gnome-build-meta.bst:core-deps/systemd-libs.bst
     components/geoclue-base.bst: gnome-build-meta.bst:gnomeos-deps/geoclue-base.bst
     components/frei0r.bst: overrides/frei0r.bst
+    components/sudo.bst: core/sudo-rs.bst

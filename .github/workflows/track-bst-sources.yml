@@ -625,6 +625,10 @@ jobs:
             element: core/pam-u2f.bst
             branch: auto/track-pam-u2f
             title: "chore(deps): update pam-u2f"
+          - group: manual-merge
+            element: core/sudo-rs.bst
+            branch: auto/track-sudo-rs
+            title: "chore(deps): update sudo-rs"
 
     steps:
       - name: Checkout repository
