@@ -128,6 +128,10 @@ Standard binds already in `files/niri/config.kdl`:
 | `Mod+E` | nautilus (file manager) |
 | `Super+Alt+L` | swaylock (screen lock) |
 
+## Cursor Theme
+
+Krytis uses `xcursor-theme "Adwaita"` (size 24) set in the top-level `cursor { }` block in `files/niri/config.kdl`. No extra element is needed — `gnome-build-meta.bst:core/nautilus.bst` already pulls `sdk/adwaita-icon-theme.bst` transitively. Verify with `grep -r "adwaita-icon-theme" <gnome-build-meta-staged>/elements/core/nautilus.bst`.
+
 ## Validating niri Config Changes
 
 When editing `files/niri/config.kdl`, validate before committing. If niri is available on the current machine:
