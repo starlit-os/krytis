@@ -72,7 +72,7 @@ the meson build, setting `WLR_RENDERER=vulkan` produces:
 [ERROR] Cannot create Vulkan renderer: disabled at compile-time
 ```
 
-`desktop/wlroots.bst` must explicitly set `-Drenderers=gles2,pixman,vulkan` and add
+`desktop/wlroots.bst` must explicitly set `-Drenderers=vulkan` and add
 `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, and `components/glslang.bst`
 to build-depends. `vulkan-icd-loader` is also a runtime depend (provides libvulkan.so).
 
@@ -82,6 +82,8 @@ With radv discoverable via `compat-vulkan-link` and wlroots compiled with Vulkan
 - `MESA_LOADER_DRIVER_OVERRIDE=zink` — GL/GLES2 calls in the greeter client go through
   Zink → radv, bypassing the broken radeonsi glvnd path.
 - `WLR_NO_HARDWARE_CURSORS=1` is **not** needed with the Vulkan renderer (required for pixman only).
+- `pixman` is **not** a valid `-Drenderers` value in wlroots 0.20.1 — allowed values are `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
+- `gles2` should **not** be listed: `egl.pc` is not in the pkgconfig search path in the BST build sandbox, so explicit `gles2` errors out. With `auto` it was silently skipped. gles2 also fails at runtime on amdgpu anyway (glvnd can't find radeonsi via fdsdk's non-standard prefix).
 
 ## Passing Environment Variables to the Greeter Compositor
 

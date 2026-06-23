@@ -74,10 +74,16 @@ variables:
   # Vulkan renderer requires vulkan-headers + vulkan-icd-loader + glslang
   # (glslang compiles GLSL shaders to SPIR-V at build time). Default build
   # omits vulkan — must be listed explicitly in -Drenderers.
+  # pixman is NOT a valid -Drenderers value in 0.20.1 (allowed: auto, gles2,
+  # vulkan) — pixman renderer is always compiled in unconditionally.
+  # gles2 is NOT listed: with auto it was silently skipped because egl.pc is
+  # not in the pkgconfig search path in the build sandbox. gles2 also fails
+  # at runtime on amdgpu (glvnd can't find radeonsi through fdsdk's non-standard
+  # mesa prefix), so omitting it is correct for this image.
   meson-local: >-
     -Dexamples=false
     -Dbackends=libinput,drm,x11
-    -Drenderers=gles2,pixman,vulkan
+    -Drenderers=vulkan
 
 sources:
 - kind: tar
