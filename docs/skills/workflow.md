@@ -78,6 +78,15 @@ git branch -D <branch>                # -D required — see below
 
 ## Opening Pull Requests
 
+**PR body must contain `Closes #<issue>`** to create the GitHub PR→issue link. The commit message alone is not enough — GitHub only auto-closes and links the issue when the keyword appears in the PR body. Always include it as the first line of the PR body:
+
+```
+Closes #NNN
+
+## Summary
+...
+```
+
 Always run `gh pr create` from inside the feature branch worktree, not from the main repo directory:
 
 ```shell
