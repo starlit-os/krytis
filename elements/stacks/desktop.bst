@@ -64,6 +64,8 @@ depends:
   # Symbols Nerd Font: symbols-only variant providing icon glyphs used by
   # terminals (ghostty) and UI components that reference nerd font codepoints.
   - desktop/symbols-nerd-font.bst
+  # Noto Color Emoji: color emoji font for broad Unicode emoji coverage.
+  - freedesktop-sdk.bst:components/noto-emoji.bst
 
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
