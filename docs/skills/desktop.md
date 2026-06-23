@@ -40,23 +40,37 @@ wlroots picks a renderer at startup based on the DRM backend's render node:
 | simpledrm (early boot / efifb) | none | **pixman** (software) | No render node → `wlr_backend_get_drm_fd` returns -1 → pixman chosen automatically |
 | amdgpu / real GPU | `/dev/dri/renderD128` | GLES2 attempted, then Vulkan | Fails if neither renderer can initialise — **no pixman fallback** in this path |
 
-**Force pixman when needed** via a systemd drop-in (see below). pixman uses DRM dumb buffers
-as its allocator, which work on all drivers including amdgpu.
+pixman uses DRM dumb buffers as its allocator; works on all drivers including amdgpu.
 
 ### GLES2 on amdgpu fails with fdsdk mesa
 
-wlroots attempts GLES2 via EGL with the render node fd. This requires the glvnd EGL dispatch to
-route the call to `libEGL_mesa.so.0` and for MESA-LOADER to find `radeonsi_dri.so`. With fdsdk's
-non-standard mesa prefix, this path currently fails (root cause unresolved as of 2026-06-21 —
-see issue #95 / parent #94). The fix in use is `WLR_RENDERER=pixman`.
+wlroots GLES2 requires glvnd to find `libEGL_mesa.so.0` and MESA-LOADER to find `radeonsi_dri.so`.
+With fdsdk's non-standard mesa prefix this path fails. Use `WLR_RENDERER=vulkan` or fall back to
+`WLR_RENDERER=pixman` if Vulkan is unavailable.
 
-### Vulkan path not yet verified
+### Vulkan ICD discovery: compat-vulkan-link
 
-Both `WLR_RENDERER=vulkan` (wlroots Vulkan renderer) and `MESA_LOADER_DRIVER_OVERRIDE=zink`
-(OpenGL via Vulkan/radv) require the radv Vulkan ICD to be discoverable by the Vulkan loader.
-The ICD JSON is in the non-standard mesa path; the Vulkan loader does not search it by default.
-Fix: set `VK_ICD_FILENAMES` (or `VK_DRIVER_FILES`) to the radv ICD JSON path, or install the
-ICD JSON to `/usr/share/vulkan/icd.d/`. Tracked in #95 (wlroots Vulkan), #96 (Zink), parent #94.
+`freedesktop-sdk.bst:components/compat-vulkan-link.bst` (in `stacks/desktop.bst`) is a stack
+element whose integration commands symlink the fdsdk ICD directories into standard Vulkan loader
+search paths:
+
+```
+/usr/share/vulkan/icd.d/          → /usr/lib/x86_64-linux-gnu/GL/vulkan/icd.d/
+/usr/share/vulkan/explicit_layer.d → /usr/lib/x86_64-linux-gnu/GL/vulkan/explicit_layer.d/
+/usr/share/vulkan/implicit_layer.d → /usr/lib/x86_64-linux-gnu/GL/vulkan/implicit_layer.d/
+```
+
+The Vulkan loader searches `/usr/share/vulkan/icd.d/` by default, so `VK_ICD_FILENAMES` is
+**not** needed after this element is present. Closes the ICD discovery gap (#94).
+
+### Greeter Vulkan renderer (WLR_RENDERER=vulkan)
+
+With radv discoverable via `compat-vulkan-link`, the wlroots Vulkan renderer works on amdgpu:
+
+- `WLR_RENDERER=vulkan` — wlroots uses the Vulkan backend (radv) instead of GLES2/pixman.
+- `MESA_LOADER_DRIVER_OVERRIDE=zink` — GL/GLES2 calls in the greeter client go through
+  Zink → radv, bypassing the broken radeonsi glvnd path.
+- `WLR_NO_HARDWARE_CURSORS=1` is **not** needed with the Vulkan renderer (required for pixman only).
 
 ## Passing Environment Variables to the Greeter Compositor
 
@@ -71,15 +85,28 @@ the drop-in was present and the compositor still failed with the same renderer e
 
 ```toml
 [default_session]
-command = "env WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 noctalia-greeter-session"
+command = "env WLR_RENDERER=vulkan MESA_LOADER_DRIVER_OVERRIDE=zink noctalia-greeter-session"
 user = "greeter"
 ```
 
 The `env` call runs before the compositor inherits the environment, so the vars are always present
 regardless of PAM env construction.
 
-`WLR_NO_HARDWARE_CURSORS=1` is required when pixman is active: the pixman path has no KMS
-cursor plane support and will otherwise log cursor errors and potentially crash.
+`WLR_NO_HARDWARE_CURSORS=1` was required when pixman was active (pixman has no KMS cursor plane
+support). It is not needed with `WLR_RENDERER=vulkan`.
+
+## Toolkit Vulkan / Wayland Environment (#97)
+
+Set in both `/etc/environment` (pam_env reads it → all sessions including greeter) and
+`/usr/lib/environment.d/90-krytis-session.conf` (systemd reads it → user session units):
+
+| Variable | Value | Effect |
+|---|---|---|
+| `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
+| `SDL_VIDEODRIVER` | `wayland` | SDL2 apps use Wayland backend instead of X11 |
+
+These are set in `config/greetd-config.bst`. `GDK_BACKEND=wayland` is not set explicitly — GTK4
+already prefers Wayland when `XDG_SESSION_TYPE=wayland` is present.
 
 ## niri vs wlroots
 
@@ -174,6 +201,12 @@ cat /var/log/noctalia-greeter.log
 systemctl show greetd.service | grep Environment
 journalctl -u greetd --boot
 
-# Check Vulkan ICD files (for radv)
+# Verify Vulkan ICD symlink is in place (compat-vulkan-link)
+ls -la /usr/share/vulkan/icd.d/
+
+# Check Vulkan ICD files (original fdsdk path)
 find /usr/lib -name '*radeon*icd*.json' 2>/dev/null
+
+# Verify session environment vars are set
+grep -E 'GSK_RENDERER|SDL_VIDEODRIVER|MESA_LOADER' /etc/environment
 ```
