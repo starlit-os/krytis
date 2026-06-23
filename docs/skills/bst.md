@@ -703,6 +703,28 @@ This tells BST these junctions are intentionally shared/internal so the multiple
 
 bubblewrap + user namespaces work inside a bootc composefs-mounted root without any sysctl override. Verified by running `mise load-image --container` inside a booted Krytis VM. No `kernel.unprivileged_userns_clone` drop-in is needed.
 
+## Additive Rust replacements: overlap-whitelist
+
+When a new element installs files to paths already owned by an upstream element (e.g. uutils-coreutils overwriting GNU coreutils bins), BST errors at assembly time unless every overlapping path appears in `overlap-whitelist`.
+
+```yaml
+public:
+  bst:
+    overlap-whitelist:
+    - /usr/bin/[
+    - /usr/bin/cat
+    - /usr/bin/ls
+    # ... one entry per file that overlaps
+```
+
+**uutils-coreutils pattern** (additive, not a junction override): fdsdk has no `components/coreutils.bst` — only a bootstrap-chain `bootstrap/coreutils.bst` that cannot be overridden. uutils is added as a new `elements/core/uutils-coreutils.bst` that layers on top.
+
+- Multicall binary installed at `/usr/bin/uutils-coreutils`.
+- Two symlinks per utility: `uutils-<prog>` (always) and `<prog>` (plain-name, for replacing the GNU bin) — except **cp, mv, rm** which stay on GNU due to unresolved TOCTOU issues (projectbluefin/common#290).
+- `overlap-whitelist` must list every plain-name symlink that collides; cp/mv/rm are excluded from symlinks AND from the whitelist.
+- Build flags: `--features feat_os_unix --no-default-features` (no `--locked`; uses `cargo2` source for offline crate registry).
+- Update path: `kind: git_repo` with `track:` glob → option A (no mise update task or CI override needed beyond the `track:` matrix entry in `track-bst-sources.yml`).
+
 ## System Tool Requirements for `bst source track`
 
 `bst source track` initialises the full BST platform at startup — including `buildbox-run`, which checks for `bwrap` unconditionally even though source tracking never runs a build sandbox. Additionally, BST resolves the complete element graph before tracking, which validates all declared tool binaries (`lzip`, `xz-utils`, `bzip2`, `gzip`, `patch`, etc.) against `PATH`.

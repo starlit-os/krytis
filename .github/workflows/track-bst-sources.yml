@@ -629,6 +629,10 @@ jobs:
             element: core/sudo-rs.bst
             branch: auto/track-sudo-rs
             title: "chore(deps): update sudo-rs"
+          - group: manual-merge
+            element: core/uutils-coreutils.bst
+            branch: auto/track-uutils-coreutils
+            title: "chore(deps): update uutils-coreutils"
 
     steps:
       - name: Checkout repository
