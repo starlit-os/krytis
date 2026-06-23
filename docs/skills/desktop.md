@@ -63,29 +63,42 @@ search paths:
 The Vulkan loader searches `/usr/share/vulkan/icd.d/` by default, so `VK_ICD_FILENAMES` is
 **not** needed after this element is present. Closes the ICD discovery gap (#94).
 
-### Greeter Vulkan renderer (WLR_RENDERER=vulkan)
+### wlroots Vulkan renderer — compiled in but NOT used for the greeter
 
-**wlroots does not compile the Vulkan renderer by default.** Without `-Drenderers=...,vulkan` in
-the meson build, setting `WLR_RENDERER=vulkan` produces:
+`desktop/wlroots.bst` compiles the Vulkan renderer (`-Drenderers=vulkan`) with:
+- build-depends: `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, `components/glslang.bst`
+- runtime depend: `components/vulkan-icd-loader.bst` (provides libvulkan.so)
+
+Build notes:
+- `pixman` is **not** a valid `-Drenderers` value in 0.20.1 — allowed: `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
+- `gles2` must **not** be listed: `egl.pc` is absent from the pkgconfig path in the BST build sandbox, causing an error. With `auto` it was silently skipped.
+
+**The Vulkan renderer cannot be used for the greeter compositor on displays wider than 2560px.**
+
+wlroots Vulkan renderer has a DMA-BUF import size limit of **2560x2560 pixels** (AMD DCC tiling
+modifier constraint). On a 3440x1440 display:
 
 ```
-[ERROR] Cannot create Vulkan renderer: disabled at compile-time
+[ERROR] DMA-BUF is too large to import (3440x1440 > 2560x2560)
+[ERROR] failed to enable output DP-1
 ```
 
-`desktop/wlroots.bst` must explicitly set `-Drenderers=vulkan` and add
-`components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, and `components/glslang.bst`
-to build-depends. `vulkan-icd-loader` is also a runtime depend (provides libvulkan.so).
+The compositor silently falls back to the next connected output (DP-2 at 1920x1200), leaving
+the primary monitor blank. The wlroots Vulkan renderer also self-reports as experimental:
+`"The vulkan renderer is only experimental and not expected to be ready for daily use"`
 
-With radv discoverable via `compat-vulkan-link` and wlroots compiled with Vulkan, the renderer works:
+**Conclusion:** use `WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1` for the greeter compositor.
+Pixman uses DRM dumb buffers with no size constraint and works reliably on all outputs.
 
-- `WLR_RENDERER=vulkan` — wlroots uses the Vulkan backend (radv) instead of GLES2/pixman.
-- `WLR_NO_HARDWARE_CURSORS=1` is **not** needed with the Vulkan renderer (required for pixman only).
-- Do **not** set `MESA_LOADER_DRIVER_OVERRIDE=zink` in the greetd command. The compositor uses
-  Vulkan directly; Zink is a GL driver and irrelevant. More critically, the greeter PAM session
-  inherits `/etc/environment` via `pam_env`, so any GL env override set there (or passed via
-  `env` in config.toml) also reaches the greeter client GTK app.
-- `pixman` is **not** a valid `-Drenderers` value in wlroots 0.20.1 — allowed values are `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
-- `gles2` should **not** be listed: `egl.pc` is not in the pkgconfig search path in the BST build sandbox, so explicit `gles2` errors out. With `auto` it was silently skipped. gles2 also fails at runtime on amdgpu anyway (glvnd can't find radeonsi via fdsdk's non-standard prefix).
+A potential workaround is `WLR_VK_NO_MODIFIERS=1` (forces linear buffers, removing the modifier
+size constraint) but this is untested and pixman is adequate for a login greeter.
+
+Do **not** set `MESA_LOADER_DRIVER_OVERRIDE=zink` in the greetd command: the greeter PAM session
+inherits `/etc/environment` via `pam_env`, so GL env overrides also reach the noctalia-greeter
+GTK client and cause its UI to render black (GTK Vulkan GSK renderer fails silently).
+
+Toolkit env hints (`GSK_RENDERER`, `SDL_VIDEODRIVER`) belong only in `environment.d` (user
+systemd sessions), not in `/etc/environment` (which is read by the greeter PAM session too).
 
 ## Passing Environment Variables to the Greeter Compositor
 
@@ -100,15 +113,15 @@ the drop-in was present and the compositor still failed with the same renderer e
 
 ```toml
 [default_session]
-command = "env WLR_RENDERER=vulkan MESA_LOADER_DRIVER_OVERRIDE=zink noctalia-greeter-session"
+command = "env WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 noctalia-greeter-session"
 user = "greeter"
 ```
 
 The `env` call runs before the compositor inherits the environment, so the vars are always present
 regardless of PAM env construction.
 
-`WLR_NO_HARDWARE_CURSORS=1` was required when pixman was active (pixman has no KMS cursor plane
-support). It is not needed with `WLR_RENDERER=vulkan`.
+`WLR_NO_HARDWARE_CURSORS=1` is required when pixman is active — pixman has no KMS cursor plane
+support and will otherwise log cursor errors and potentially crash.
 
 ## Toolkit Vulkan / Wayland Environment (#97)
 

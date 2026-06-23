@@ -6,14 +6,14 @@
 # greetd.service ships Alias=display-manager.service — installing greetd
 # automatically creates the display-manager symlink; no masking needed.
 #
-# WLR_RENDERER=vulkan: use wlroots Vulkan renderer on real AMD hardware (radv
-# via compat-vulkan-link which symlinks the fdsdk ICD to /usr/share/vulkan/icd.d/).
-# The wlroots Vulkan renderer uses Vulkan directly — GL/GLES2 env overrides
-# (MESA_LOADER_DRIVER_OVERRIDE=zink) must NOT be set here: the greeter PAM
-# session inherits /etc/environment via pam_env, so toolkit vars set there
-# also reach the greeter client (noctalia-greeter, a GTK app). GSK_RENDERER
-# and SDL env hints belong only in environment.d (user systemd sessions).
-# Closes #96 (parent: #94).
+# WLR_RENDERER=pixman: wlroots Vulkan renderer is compiled in (desktop/wlroots.bst
+# uses -Drenderers=vulkan) but CANNOT be used for the greeter compositor:
+# it has a DMA-BUF import size limit of 2560x2560 pixels (AMD DCC tiling
+# modifier constraint), which blocks 3440x1440 ultrawides. The wlroots Vulkan
+# renderer is also explicitly "experimental and not expected to be ready for
+# daily use" per its own startup log.
+# WLR_NO_HARDWARE_CURSORS=1: required with pixman — no KMS cursor plane support.
+# See #96 (parent: #94) for the investigation history.
 #
 # IMPORTANT: these must be set in greetd config.toml's command line, NOT via
 # a systemd drop-in Environment=. greetd constructs a clean PAM environment
@@ -82,7 +82,7 @@ config:
     vt = 1
 
     [default_session]
-    command = "env WLR_RENDERER=vulkan noctalia-greeter-session"
+    command = "env WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 noctalia-greeter-session"
     user = "greeter"
     EOF
 
