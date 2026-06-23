@@ -49,4 +49,11 @@ config:
       command -v mise >/dev/null 2>&1 && mise activate fish --shims | source
     end
     EOF
+  - |
+    # Fish completions. mise is a musl static binary so it runs in the BST
+    # sandbox during install. vendor_completions.d is auto-loaded by fish for
+    # all users without touching $XDG_CONFIG_HOME.
+    chmod +x mise
+    mkdir -p "%{install-root}%{datadir}/fish/vendor_completions.d"
+    ./mise completions fish > "%{install-root}%{datadir}/fish/vendor_completions.d/mise.fish"
   - "%{install-extra}"
