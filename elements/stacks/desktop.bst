@@ -67,5 +67,21 @@ depends:
   # Noto Color Emoji: color emoji font for broad Unicode emoji coverage.
   - freedesktop-sdk.bst:components/noto-emoji.bst
 
+  # ── Camera ─────────────────────────────────────────────────────────────
+  # libcamera: camera abstraction library (UVC, IPU3, etc.).
+  # pipewire-daemon: includes spa-0.2/libcamera (built with -Dlibcamera=enabled),
+  #   which is the PipeWire libcamera source node; apps access cameras via the
+  #   PipeWire/WirePlumber graph and the xdg-desktop-portal camera portal.
+  # wireplumber: session/policy manager — required for pipewire-daemon to route
+  #   streams between sources (libcamera) and sinks (apps/portal).
+  # vm/config/pipewire: installs the user-preset that enables pipewire.socket
+  #   and pipewire-pulse.socket on first login.
+  # Note: v4l2loopback (virtual V4L2 device kernel module) is out-of-tree and
+  #   requires a prebuilt CachyOS package vendor (see issue #86).
+  - freedesktop-sdk.bst:components/libcamera.bst
+  - freedesktop-sdk.bst:components/pipewire-daemon.bst
+  - freedesktop-sdk.bst:components/wireplumber.bst
+  - freedesktop-sdk.bst:vm/config/pipewire.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

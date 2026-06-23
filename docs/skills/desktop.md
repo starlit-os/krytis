@@ -228,6 +228,33 @@ org.freedesktop.impl.portal.Screenshot=gnome
 
 This routes gnome-specific interfaces to `xdg-desktop-portal-gnome` and everything else to gnome/gtk in preference order. Both backends are already in `stacks/desktop.bst`; this file activates the routing.
 
+## Camera Stack
+
+libcamera + PipeWire + WirePlumber are wired in `stacks/desktop.bst`. Key facts:
+
+- `freedesktop-sdk.bst:components/pipewire-daemon.bst` is built with `-Dlibcamera=enabled` inside
+  `pipewire-base.bst`, so the `spa-0.2/libcamera` SPA node ships with the daemon — no separate
+  "pipewire-libcamera" element exists; it is part of the daemon split-rules.
+- `freedesktop-sdk.bst:vm/config/pipewire.bst` installs the user-preset enabling `pipewire.socket`
+  and `pipewire-pulse.socket`; without it the daemon does not start on login.
+- `wireplumber.bst` is the required session manager — pipewire-daemon alone does not route streams.
+- The xdg-desktop-portal camera portal is built into `xdg-desktop-portal` base (already in stack);
+  no separate portal element needed.
+- **v4l2loopback** (virtual V4L2 device kernel module) is out-of-tree. It requires a prebuilt
+  CachyOS package vendored like `core/linux-cachyos.bst`. Not yet implemented (see issue #86).
+
+Diagnostic:
+```bash
+# Verify PipeWire is running
+systemctl --user status pipewire.socket pipewire.service wireplumber.service
+
+# List camera devices seen by libcamera
+cam --list
+
+# Check spa-0.2/libcamera plugin is present
+find /usr/lib -path '*/spa-0.2/libcamera*'
+```
+
 ## Diagnostic Commands (run on the booted image)
 
 ```bash
