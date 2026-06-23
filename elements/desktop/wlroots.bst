@@ -27,6 +27,12 @@ build-depends:
 # gnome-build-meta:core-deps/hwdata.bst overlaps pciutils (in base-system)
 # at runtime. Build-depends only keeps it out of the final image staging.
 - gnome-build-meta.bst:core-deps/hwdata.bst
+# Vulkan renderer: vulkan-headers for Vulkan API, glslang to compile GLSL
+# shaders to SPIR-V at build time. vulkan-icd-loader provides libvulkan.so
+# for linking; it is also a runtime dep (wlroots Vulkan backend dlopen's it).
+- freedesktop-sdk.bst:components/vulkan-headers.bst
+- freedesktop-sdk.bst:components/vulkan-icd-loader.bst
+- freedesktop-sdk.bst:components/glslang.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
@@ -48,6 +54,7 @@ depends:
 - freedesktop-sdk.bst:components/xcb-util-keysyms.bst
 - freedesktop-sdk.bst:components/xcb-util-renderutil.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
+- freedesktop-sdk.bst:components/vulkan-icd-loader.bst
 
 variables:
   # Mesa installs under %{libdir}/GL/default — a non-standard prefix.
@@ -64,9 +71,13 @@ variables:
   # renderers, allocators, session, color-management, libliftoff.
   # NOT valid: -Dtests (removed since 0.18), -Dlibcap-ng (hard dep),
   # -Dbackends=wayland (wayland is not a wlroots backend choice).
+  # Vulkan renderer requires vulkan-headers + vulkan-icd-loader + glslang
+  # (glslang compiles GLSL shaders to SPIR-V at build time). Default build
+  # omits vulkan — must be listed explicitly in -Drenderers.
   meson-local: >-
     -Dexamples=false
     -Dbackends=libinput,drm,x11
+    -Drenderers=gles2,pixman,vulkan
 
 sources:
 - kind: tar

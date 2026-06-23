@@ -65,7 +65,18 @@ The Vulkan loader searches `/usr/share/vulkan/icd.d/` by default, so `VK_ICD_FIL
 
 ### Greeter Vulkan renderer (WLR_RENDERER=vulkan)
 
-With radv discoverable via `compat-vulkan-link`, the wlroots Vulkan renderer works on amdgpu:
+**wlroots does not compile the Vulkan renderer by default.** Without `-Drenderers=...,vulkan` in
+the meson build, setting `WLR_RENDERER=vulkan` produces:
+
+```
+[ERROR] Cannot create Vulkan renderer: disabled at compile-time
+```
+
+`desktop/wlroots.bst` must explicitly set `-Drenderers=gles2,pixman,vulkan` and add
+`components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, and `components/glslang.bst`
+to build-depends. `vulkan-icd-loader` is also a runtime depend (provides libvulkan.so).
+
+With radv discoverable via `compat-vulkan-link` and wlroots compiled with Vulkan, the renderer works:
 
 - `WLR_RENDERER=vulkan` — wlroots uses the Vulkan backend (radv) instead of GLES2/pixman.
 - `MESA_LOADER_DRIVER_OVERRIDE=zink` — GL/GLES2 calls in the greeter client go through
