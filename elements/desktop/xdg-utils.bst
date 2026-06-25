@@ -19,7 +19,7 @@ config:
   # scripts/ and fails trying to build HTML docs (xmlto/xsltproc absent).
   build-commands: []
   install-commands:
-  - make -j1 DESTDIR="%{install-root}" install-exec
+  - make -j1 -C scripts DESTDIR="%{install-root}" install-exec
 
 sources:
 - kind: git_repo
