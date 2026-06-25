@@ -1035,3 +1035,40 @@ cursor {
     xcursor-size 24
 }
 ```
+
+## Junction override: sudo-rs replacing fdsdk sudo
+
+`components/sudo.bst` in fdsdk can be overridden to point at `core/sudo-rs.bst`. Add to `elements/freedesktop-sdk.bst` `config.overrides`:
+
+```yaml
+components/sudo.bst: core/sudo-rs.bst
+```
+
+Key patterns (matched from `dakota/elements/bluefin/sudo-rs.bst`):
+
+- **`kind: make`** not `kind: manual`
+- **No `--locked`** on `cargo build --release`
+- **No `pkg-config`** in build-depends — PAM found without it
+- **Setuid via `initial-script`** — BST strips setuid bits from artifacts; `install -Dm4755` in `install-commands` does NOT survive. Use `install -Dm755` to install the binary, then set `public.initial-script` to run `chmod 4755` on the assembled sysroot (see pattern below)
+- **`sudoedit` is a symlink** to `sudo` (`ln -sr ... sudo sudoedit`)
+- **`overlap-whitelist`**: `/usr/bin/sudo`, `/usr/bin/sudoedit`, `/usr/lib/debug/usr/bin/sudo.debug`
+- **PAM linking**: `linux-pam.bst` must appear in BOTH `build-depends` (linker) AND `depends` (runtime)
+- **`vm/config/sudo.bst` stays**: installs `sudoers.d/wheel`; no change to `base-system.bst` needed
+- **Must install `/etc/sudoers`**: overriding `components/sudo.bst` drops the sudoers file that GNU sudo's `make install` creates. sudo-rs requires it to exist (no fallback). Install with `#includedir /etc/sudoers.d` content, mode 0440.
+- **Must install `/etc/pam.d/sudo`**: same override drops fdsdk's `pam.conf`. Install with `include system-auth` (which `config/u2f-config.bst` provides via `pam_u2f` → `pam_unix` chain).
+- **No visudo**: sudo-rs doesn't ship it; omit without replacement
+- Upstream URL: `github:trifectatechfoundation/sudo-rs.git` (org was renamed from `memorysafety`)
+
+Setuid pattern (applies to any element needing a setuid binary):
+
+```yaml
+public:
+  initial-script:
+    script: |
+      #!/bin/bash
+      chmod 4755 "${1}/usr/bin/sudo"
+```
+
+The `${1}` argument is the assembled sysroot path. `image.bst` runs `prepare-image.sh --initscripts /initial_scripts` which executes these scripts under `fakecap` LD_PRELOAD so the chmod is recorded in `/fakecap` and applied to the OCI layer.
+
+> **Security Gate**: this overrides privilege escalation. Open as draft PR and flag for human review before merge.
