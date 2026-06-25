@@ -109,6 +109,41 @@ Rebuilding the OCI image to test a script change takes significant time. For scr
 
 The `-local` suffix distinguishes the test copy from the system version (which has no suffix). Never commit the `-local` copy to the element.
 
+## Referencing Sister Projects (Dakota, Zirconium Hawaii)
+
+Two sibling projects are used as references for element patterns. Locate them by checking sibling directories first (same parent as this repo). If not found, ask the user where they are.
+
+```shell
+# Get sibling dirs — adjust the parent path to wherever this repo lives
+ls "$(git rev-parse --show-toplevel)/.."
+```
+
+Look for `dakota` and `zirconium-hawaii` (or similar names) in that listing. Don't assume a path — verify it exists before reading from it.
+
+### Dakota — layers on a bluefin OCI base (RPM)
+
+Dakota's BST elements run on top of a pre-built bluefin OCI image. That base ships files from RPMs — `/etc/sudoers`, `/etc/pam.d/sudo`, pre-configured `/etc`, standard FHS layout from Fedora packages.
+
+**Dakota elements only install the delta.** If a file already exists in the bluefin base, the Dakota element won't touch it.
+
+**Krytis builds from scratch.** fdsdk provides no RPM base. If a component needs a config file, sudoers entry, PAM config, or any file the C reference implementation installs via `make install` — our element or override must install it explicitly. Overriding `components/sudo.bst` drops GNU sudo's `make install` output including `/etc/sudoers` and `/etc/pam.d/sudo`; a Dakota element for the same override doesn't reinstall those because bluefin already has them.
+
+**Verification checklist when porting from Dakota:**
+
+1. Read the element code — but also check what the *base image* contributes.
+2. Ask: "Does this element assume any config file, PAM stack entry, or `/etc` content that bluefin's RPMs install?" If yes, Krytis must install it explicitly.
+3. Run `mise lint` and attempt a build before concluding the port is complete.
+
+### Zirconium Hawaii — closer analog to Krytis
+
+Zirconium Hawaii also builds from fdsdk with no RPM base. It is a **better reference than Dakota** when both have an element, because it faces the same constraints Krytis does. See `docs/skills/zirconium-hawaii.md`.
+
+### Always read their skills docs too
+
+When referencing Dakota or Zirconium Hawaii, read `docs/skills/` in the sibling repo — not just the element file. Context that isn't in the element (what the base image provides, known workarounds, build quirks) lives there.
+
+**Don't read only the `.bst` file.** The element captures what the author needed to add on top of their environment. The skills docs capture what that environment provides implicitly.
+
 ## Self-Improvement Loop
 
 Before committing — when you hit a non-obvious pattern, workaround, or convention:
@@ -119,5 +154,7 @@ Before committing — when you hit a non-obvious pattern, workaround, or convent
 4. Commit them together.
 
 The skill file update must be in the same commit as the change that produced the learning. A follow-up commit is a failure of the loop.
+
+**Standalone skill updates** (not tied to any element change) still require a branch and PR — never commit directly to `main`. Create a no-issue worktree (`<base>/docs/<slug>`) and open a PR the same as any other change.
 
 See `AGENTS.md` § Self-improvement loop for the full mandate and `/skills-check` for a compliance self-diagnosis.
