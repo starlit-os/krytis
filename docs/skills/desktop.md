@@ -322,3 +322,23 @@ find /usr/lib -name '*radeon*icd*.json' 2>/dev/null
 # Verify session environment vars are set
 grep -E 'GSK_RENDERER|SDL_VIDEODRIVER|MESA_LOADER' /etc/environment
 ```
+
+## xdg-utils / xdg-open
+
+`xdg-utils` is not in fdsdk — no `xdg-open` binary exists in the image by default. Apps that call `xdg-open` to open URLs (e.g. ghostty clicking a link) will silently fail.
+
+**Fix:** `elements/desktop/xdg-utils.bst` — autotools element from `freedesktop:xdg/xdg-utils.git`, installs via `make install-exec` (skips man page generation, which requires `xmlto`/`xsltproc`).
+
+Key element overrides needed because xdg-utils has no C code:
+```yaml
+variables:
+  conf-link-args: ""   # --enable-shared/--disable-static not accepted by configure
+  build-dir: ""        # xdg-utils configure does not support out-of-tree builds
+config:
+  install-commands:
+  - make -j1 DESTDIR="%{install-root}" install-exec
+```
+
+xdg-utils v1.2.x uses `org.freedesktop.portal.OpenURI` (via `gdbus`) to open URLs on Wayland. Requires `glib` as runtime dep for `gdbus`.
+
+**Tag format in repo:** `v*.*.*` (not `xdg-utils-*.*.*` as one might expect).

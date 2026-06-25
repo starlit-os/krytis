@@ -88,5 +88,10 @@ depends:
   - freedesktop-sdk.bst:components/wireplumber.bst
   - freedesktop-sdk.bst:vm/config/pipewire.bst
 
+  # ── XDG utilities ──────────────────────────────────────────────────────
+  # xdg-open: opens URLs/files via xdg-desktop-portal (org.freedesktop.portal.OpenURI).
+  # Required for ghostty URL links and any app that calls xdg-open.
+  - desktop/xdg-utils.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

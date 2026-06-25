@@ -633,6 +633,10 @@ jobs:
             element: core/uutils-coreutils.bst
             branch: auto/track-uutils-coreutils
             title: "chore(deps): update uutils-coreutils"
+          - group: manual-merge
+            element: desktop/xdg-utils.bst
+            branch: auto/track-xdg-utils
+            title: "chore(deps): update xdg-utils"
 
     steps:
       - name: Checkout repository
