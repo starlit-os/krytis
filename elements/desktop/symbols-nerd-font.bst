@@ -30,4 +30,8 @@ config:
   - |
     install -Dm644 10-nerd-font-symbols.conf \
       "%{install-root}%{datadir}/fontconfig/conf.avail/10-nerd-font-symbols.conf"
+  - |
+    mkdir -p "%{install-root}%{sysconfdir}/fonts/conf.d"
+    ln -s "%{datadir}/fontconfig/conf.avail/10-nerd-font-symbols.conf" \
+      "%{install-root}%{sysconfdir}/fonts/conf.d/10-nerd-font-symbols.conf"
   - "%{install-extra}"

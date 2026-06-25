@@ -255,6 +255,27 @@ cam --list
 find /usr/lib -path '*/spa-0.2/libcamera*'
 ```
 
+## Fontconfig: conf.avail vs conf.d
+
+`fontconfig` only loads conf files that are either **directly in** `/etc/fonts/conf.d/` or **symlinked there**. Files in `conf.avail/` are inert until activated.
+
+`symbols-nerd-font.bst` installs the alias conf to both:
+- `/usr/share/fontconfig/conf.avail/10-nerd-font-symbols.conf` (canonical location)
+- `/etc/fonts/conf.d/10-nerd-font-symbols.conf` → symlink to the above (activates it)
+
+**Pitfall:** Installing only to `conf.avail` means all `<alias>` rules (including the Symbols Nerd Font fallback for MonoLisaCode and all other families) are silently ignored. Nerd Font glyphs render as `?` even though the font and config are both present.
+
+**Pattern for any new fontconfig conf in a BST element:**
+```yaml
+- |
+    install -Dm644 my.conf \
+      "%{install-root}%{datadir}/fontconfig/conf.avail/my.conf"
+- |
+    mkdir -p "%{install-root}%{sysconfdir}/fonts/conf.d"
+    ln -s "%{datadir}/fontconfig/conf.avail/my.conf" \
+      "%{install-root}%{sysconfdir}/fonts/conf.d/my.conf"
+```
+
 ## Diagnostic Commands (run on the booted image)
 
 ```bash
