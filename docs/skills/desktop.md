@@ -361,3 +361,15 @@ config:
 xdg-utils v1.2.x uses `org.freedesktop.portal.OpenURI` (via `gdbus`) to open URLs on Wayland. Requires `glib` as runtime dep for `gdbus`.
 
 **Tag format in repo:** `v*.*.*` (not `xdg-utils-*.*.*` as one might expect).
+
+## Locale Data
+
+`config/locale-data.bst` (kind: script) replaces `freedesktop-sdk.bst:components/locales.bst` in `stacks/base-system.bst`. It generates only the locales Krytis needs instead of the full glibc SUPPORTED list (~400+ entries).
+
+Current locales: `en_US.UTF-8`, `sv_SE.UTF-8`.
+
+**`en_SE.UTF-8` is blocked on fdsdk glibc bump.** `en_SE` was added in glibc 2.43; fdsdk tracks `release/2.42/master`. Add `en_SE` to `locale-data.bst` once fdsdk bumps to 2.43+.
+
+The `locale` split is not excluded by `oci/krytis/runtime.bst` (only `devel`/`debug`/`static-blocklist` are stripped), so locale archives in `/usr/lib/locale/` land in the image.
+
+Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.
