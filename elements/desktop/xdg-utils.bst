@@ -15,11 +15,13 @@ variables:
   build-dir: ""
 
 config:
-  # Shell scripts need no compilation; skip bare `make` which recurses into
-  # scripts/ and fails trying to build HTML docs (xmlto/xsltproc absent).
-  build-commands: []
+  # Build only the scripts/ subdir (generates shell scripts from .in templates).
+  # Skips html/man targets which require xmlto/xsltproc.
+  # install silently skips man pages if absent (if/fi guard in Makefile.in).
+  build-commands:
+  - make -j1 -C scripts scripts
   install-commands:
-  - make -j1 -C scripts DESTDIR="%{install-root}" install-exec
+  - make -j1 -C scripts DESTDIR="%{install-root}" install
 
 sources:
 - kind: git_repo
