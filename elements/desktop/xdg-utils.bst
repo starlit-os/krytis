@@ -15,11 +15,19 @@ variables:
   build-dir: ""
 
 config:
-  # Build only the scripts/ subdir (generates shell scripts from .in templates).
-  # Skips html/man targets which require xmlto/xsltproc.
-  # install silently skips man pages if absent (if/fi guard in Makefile.in).
+  # generate-help-script.awk reads each script's .txt (produced by xmlto) for
+  # the one-line synopsis used in --help output.  Rather than pulling in a full
+  # text-browser toolchain (xmlto + docbook-xml + docbook-xsl + lynx), generate
+  # minimal stub .txt files before building.  Scripts are fully functional;
+  # --help just shows "xdg-<name>" as the synopsis.
   build-commands:
-  - make -j1 -C scripts scripts
+  - |
+    cd scripts
+    for xml in desc/*.xml; do
+      base=$(basename "$xml" .xml)
+      printf 'Name\n\n%s\n\nDescription\n' "$base" > "$base.txt"
+    done
+    make -j1 scripts
   install-commands:
   - make -j1 -C scripts DESTDIR="%{install-root}" install
 
