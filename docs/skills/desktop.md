@@ -131,7 +131,6 @@ Set in both `/etc/environment` (pam_env reads it → all sessions including gree
 | Variable | Value | Effect |
 |---|---|---|
 | `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
-| `SDL_VIDEODRIVER` | `wayland` | SDL2 apps use Wayland backend instead of X11 |
 
 These are set in `config/greetd-config.bst` **only in `environment.d`**, NOT in `/etc/environment`.
 

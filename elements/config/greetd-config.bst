@@ -115,7 +115,6 @@ config:
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
     GSK_RENDERER=vulkan
-    SDL_VIDEODRIVER=wayland
     EOF
 
   - |
