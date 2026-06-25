@@ -42,7 +42,7 @@ config:
     eval "$(mise activate zsh)"
     EOF
   - |
-    install -Dm644 /dev/stdin "%{install-root}%{datadir}/fish/vendor_conf.d/mise.fish" <<'EOF'
+    install -Dm644 /dev/stdin "%{install-root}%{datadir}/fish/vendor_conf.d/01-mise.fish" <<'EOF'
     if status is-interactive
       command -v mise >/dev/null 2>&1 && mise activate fish | source
     else
