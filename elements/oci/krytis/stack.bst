@@ -39,7 +39,3 @@ public:
       # "uninitialized" triggers ConditionFirstBoot=yes for systemd-firstboot.service.
       # An empty file does not.
       - printf 'uninitialized\n' > /etc/machine-id
-
-      # Bake fontconfig cache into image so fc-list works without running
-      # fc-cache after boot.
-      - fc-cache -f /usr/share/fonts/

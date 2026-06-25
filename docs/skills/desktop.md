@@ -254,6 +254,31 @@ cam --list
 find /usr/lib -path '*/spa-0.2/libcamera*'
 ```
 
+## Fontconfig: fc-cache in the OCI Build
+
+**Do NOT run `fc-cache` in `stack.bst` integration commands.**
+
+BST integration commands in a `kind: stack` element run when the stack is staged inside a compose element (e.g., `runtime.bst`). In practice, fc-cache invoked there produces an incomplete cache — some font directories are missed. Root cause is timing/ordering of when font artifacts are fully staged vs. when integration commands fire.
+
+**Correct approach:** run `fc-cache` in `oci/krytis/image.bst` (kind: script), after all other sysroot operations, using `FONTCONFIG_SYSROOT` to target the assembled layer:
+
+```yaml
+# In build-depends:
+- freedesktop-sdk.bst:components/fontconfig.bst
+
+# In commands (after ldconfig):
+- FONTCONFIG_SYSROOT=/layer fc-cache -f
+```
+
+`FONTCONFIG_SYSROOT` makes fc-cache:
+1. Read `/layer/etc/fonts/fonts.conf` (not the build host's)
+2. Scan `/layer/usr/share/fonts/` and all subdirs
+3. Write cache to `/layer/usr/lib/fontconfig/cache/`
+
+Requires fontconfig ≥ 2.13.95. fdsdk ships 2.14+ so this is safe.
+
+**Symptom of the broken approach:** fonts present at `/usr/share/fonts/{dejavu,Adwaita}/` but absent from `fc-list` and font pickers on first boot. Manual `fc-cache` on the booted image appears to fix it — but `/usr` is immutable in bootc, so fontconfig falls back to writing the user cache at `~/.cache/fontconfig/` instead.
+
 ## Fontconfig: conf.avail vs conf.d
 
 `fontconfig` only loads conf files that are either **directly in** `/etc/fonts/conf.d/` or **symlinked there**. Files in `conf.avail/` are inert until activated.

@@ -4,6 +4,7 @@ build-depends:
   - freedesktop-sdk.bst:components/fakecap.bst
   - freedesktop-sdk.bst:components/oci-builder.bst
   - freedesktop-sdk.bst:components/glib.bst
+  - freedesktop-sdk.bst:components/fontconfig.bst
   - freedesktop-sdk.bst:vm/prepare-image.bst
   - oci/krytis/init-scripts.bst
   - filename: oci/krytis/filesystem.bst
@@ -63,6 +64,15 @@ config:
       # against mesa libs (niri, future noctalia-greeter, etc.) fails
       # at runtime with "cannot open shared object file".
       ldconfig -r /layer -f /layer/etc/ld.so.conf
+
+    - |
+      # Bake fontconfig cache into image so fc-list and font selectors work
+      # on first boot without requiring manual fc-cache.
+      # FONTCONFIG_SYSROOT makes fc-cache read /layer/etc/fonts/fonts.conf,
+      # scan /layer/usr/share/fonts/, and write to /layer/usr/lib/fontconfig/cache/.
+      # Running here (not in stack.bst integration commands) ensures all font
+      # files are present in the assembled sysroot before the cache is built.
+      FONTCONFIG_SYSROOT=/layer fc-cache -f
 
     - |
       cd "%{install-root}"
