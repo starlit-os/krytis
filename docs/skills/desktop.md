@@ -323,6 +323,25 @@ find /usr/lib -name '*radeon*icd*.json' 2>/dev/null
 grep -E 'GSK_RENDERER|SDL_VIDEODRIVER|MESA_LOADER' /etc/environment
 ```
 
+## Dead Keys / Compose Sequences in GTK4 Apps
+
+**Symptom:** dead key + space does not produce the character (e.g. `dead_grave` + space → nothing, or the compose sequence is ignored).
+
+**Root cause:** GTK4 on Wayland defaults to the IBus input method module. With IBus absent, the IM module initialization fails silently and compose sequences are never processed.
+
+**Fix:** set `GTK_IM_MODULE=simple` in niri's `environment` block (`files/niri/config.kdl`). The `simple` IM module uses GDK's built-in xkbcommon compose handling, which correctly processes compose tables from `/usr/share/X11/locale/<locale>/Compose`.
+
+```kdl
+environment {
+    GTK_IM_MODULE "simple"
+    // ... other vars
+}
+```
+
+This variable is passed to all niri child processes (ghostty, nautilus, etc.).
+
+**Note:** the compose table lookup uses `LANG` / `LC_CTYPE`. `en_US.UTF-8/Compose` has 258 `dead_grave` entries; `C/Compose` has 0 — so if LANG is unset, compose still won't work even with `GTK_IM_MODULE=simple`. Ensure LANG is set system-wide (e.g. via `/etc/locale.conf` or `environment.d`).
+
 ## xdg-utils / xdg-open
 
 `xdg-utils` is not in fdsdk — no `xdg-open` binary exists in the image by default. Apps that call `xdg-open` to open URLs (e.g. ghostty clicking a link) will silently fail.
