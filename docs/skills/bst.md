@@ -1054,6 +1054,8 @@ Key patterns (matched from `dakota/elements/bluefin/sudo-rs.bst`):
 - **`overlap-whitelist`**: `/usr/bin/sudo`, `/usr/bin/sudoedit`, `/usr/lib/debug/usr/bin/sudo.debug`
 - **PAM linking**: `linux-pam.bst` must appear in BOTH `build-depends` (linker) AND `depends` (runtime)
 - **`vm/config/sudo.bst` stays**: installs `sudoers.d/wheel`; no change to `base-system.bst` needed
+- **Must install `/etc/sudoers`**: overriding `components/sudo.bst` drops the sudoers file that GNU sudo's `make install` creates. sudo-rs requires it to exist (no fallback). Install with `#includedir /etc/sudoers.d` content, mode 0440.
+- **Must install `/etc/pam.d/sudo`**: same override drops fdsdk's `pam.conf`. Install with `include system-auth` (which `config/u2f-config.bst` provides via `pam_u2f` → `pam_unix` chain).
 - **No visudo**: sudo-rs doesn't ship it; omit without replacement
 - Upstream URL: `github:trifectatechfoundation/sudo-rs.git` (org was renamed from `memorysafety`)
 

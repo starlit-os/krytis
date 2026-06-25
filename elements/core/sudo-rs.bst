@@ -27,6 +27,20 @@ config:
   install-commands:
   - install -Dm755 target/release/sudo "%{install-root}/usr/bin/sudo"
   - ln -sr "%{install-root}/usr/bin/sudo" "%{install-root}/usr/bin/sudoedit"
+  - |
+    install -Dm440 /dev/stdin \
+      "%{install-root}/etc/sudoers" <<'EOF'
+    #includedir /etc/sudoers.d
+    EOF
+  - |
+    install -Dm644 /dev/stdin \
+      "%{install-root}/etc/pam.d/sudo" <<'EOF'
+    auth            sufficient      pam_rootok.so
+    auth            include         system-auth
+    account         include         system-auth
+    password        include         system-auth
+    session         include         system-auth
+    EOF
 
 sources:
 - kind: git_repo
