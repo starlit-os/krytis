@@ -66,6 +66,11 @@ depends:
   - desktop/symbols-nerd-font.bst
   # Noto Color Emoji: color emoji font for broad Unicode emoji coverage.
   - freedesktop-sdk.bst:components/noto-emoji.bst
+  # DejaVu: broad Unicode coverage fallback (Dingbats U+2700–U+27BF, geometric
+  # shapes, etc.) — fills gaps in MonoLisaCode outside Nerd Font PUA ranges.
+  - freedesktop-sdk.bst:components/dejavu-fonts.bst
+  # Adwaita fonts: GNOME system UI font.
+  - gnome-build-meta.bst:sdk/adwaita-fonts.bst
 
   # ── Camera ─────────────────────────────────────────────────────────────
   # libcamera: camera abstraction library (UVC, IPU3, etc.).
