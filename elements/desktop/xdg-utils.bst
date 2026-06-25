@@ -15,8 +15,10 @@ variables:
   build-dir: ""
 
 config:
+  # Shell scripts need no compilation; skip bare `make` which recurses into
+  # scripts/ and fails trying to build HTML docs (xmlto/xsltproc absent).
+  build-commands: []
   install-commands:
-    # install-exec skips man page generation (requires xmlto/xsltproc)
   - make -j1 DESTDIR="%{install-root}" install-exec
 
 sources:
