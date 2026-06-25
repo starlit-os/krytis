@@ -68,6 +68,7 @@ depends:
   - config/fido2-tasks.bst
 
   # ── Core utilities ─────────────────────────────────────────────────
+  - core/uutils-coreutils.bst
   - freedesktop-sdk.bst:components/procps.bst
   - freedesktop-sdk.bst:components/tzdata.bst
   - freedesktop-sdk.bst:components/findutils.bst
