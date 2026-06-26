@@ -1102,42 +1102,46 @@ The `${1}` argument is the assembled sysroot path. `image.bst` runs `prepare-ima
 
 > **Security Gate**: this overrides privilege escalation. Open as draft PR and flag for human review before merge.
 
-## build-depends File Extraction Pattern
+## `kind: compose` Stages Build-Deps of Composed Elements
 
-When an upstream element builds a superset of what you need (e.g. a full mesa build with all video codecs) but cannot be used as a runtime dep alongside its base element (due to `fatal-warnings: overlaps`), use it as `build-depends` and extract only the specific files you want:
+**Critical:** BST 2's `kind: compose` element stages ALL deps (`--deps all`) of the elements being composed — including transitive build-deps. This means: if any element in the composed stack has `build-depends: X`, then `X` is staged in the compose sandbox alongside runtime deps.
 
-```yaml
-kind: manual
+**Consequence for overlapping element pairs (e.g. `mesa.bst` + `mesa-extra.bst`):**
 
-build-depends:
-  - upstream-expensive.bst   # staged at / in sandbox; NOT a runtime dep of the image
+If element B has `build-depends: mesa-extra.bst`, and B is in the stack that `runtime.bst` composes, then `mesa-extra.bst` appears at compose time alongside `mesa.bst`. Both provide the full mesa tree → `fatal-warnings: overlaps` fires. No `overlap-whitelist` can resolve this because `mesa.bst` itself has no whitelist and it cannot be modified (upstream).
 
-variables:
-  strip-binaries: ''
-
-config:
-  strip-commands:
-    - ':'
-
-  install-commands:
-    - |
-      for f in /path/to/files/*_drv_video.so; do
-        [ -f "$f" ] || continue
-        install -Dm755 "$f" "%{install-root}$f"
-      done
-
-public:
-  bst:
-    overlap-whitelist:
-      - '/path/to/files/*_drv_video.so'
+**Diagnosis:**
+```shell
+bst show --deps all oci/krytis/runtime.bst | grep mesa-extra
+# If mesa-extra appears here while also being a build-dep of something else, the compose will fail
 ```
 
-Why this works:
-- `build-depends` stages the dep in the build sandbox but does NOT include it in the image's runtime dep graph — no overlap with the dep's base element at assembly time.
-- The `manual` element's artifact contains ONLY the extracted files; `overlap-whitelist` handles the conflict with the base element's version of those same files.
-- Update path: the extracted files track the upstream junction ref automatically — no separate source or mise task needed.
+**Solution:** avoid `build-depends: mesa-extra.bst` entirely — use a junction override instead (see below).
 
-**Applied in:** `elements/desktop/mesa-codecs.bst` — extracts `*_drv_video.so` from `extensions/mesa/mesa-extra.bst` (video_codecs: all) to replace the `all_free` versions from base `mesa.bst`. Closes #158.
+## Junction Override Pattern (replacing a sub-project element)
+
+When a junction element (e.g. `extensions/mesa/mesa.bst`) provides the wrong build variant (wrong flags), override it entirely in the junction config rather than adding a second dep that overlaps with it:
+
+```yaml
+# elements/freedesktop-sdk.bst
+config:
+  overrides:
+    extensions/mesa/mesa.bst: desktop/my-variant.bst
+```
+
+`my-variant.bst` is a krytis-local element with identical sources, deps, and build config to the original — only the variable that differs is changed (`video_codecs: all` in the mesa case).
+
+**Cache hit potential:** BST 2 computes artifact cache keys from the RESOLVED element state (variables, config, sources, dep cache keys) — not the raw YAML or element file path. If your local element resolves to the same configuration as the upstream element, BST reuses the remote-cached artifact without rebuilding.
+
+Requirements for cache hit:
+- Sources: same refs (git SHA, tarball SHA)
+- Build-deps: resolve to the same artifacts (reference fdsdk deps through the junction)
+- Variables: same resolved values (hardcode arch-specific values if needed)
+- Config: same install-commands
+
+**Applied in:** `elements/desktop/mesa-all-codecs.bst` overrides `extensions/mesa/mesa.bst` with `video_codecs: all`, providing H.264/H.265 VA-API support via a single mesa replacing the all_free base. Closes #158. See `docs/skills/desktop.md` § AMD VA-API H.264 Decode.
+
+**Limitation:** The local override element CANNOT use `(@):` to include YAML files from the sub-project — includes are resolved within the current project only. All configuration must be inlined.
 
 ## fdsdk `stripdir-suffix` is Debug-Symbol-Only
 

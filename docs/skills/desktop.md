@@ -414,49 +414,40 @@ Ported from zirconium-hawaii. Key facts:
 - `gstreamer-plugins-base.bst` is already a transitive dep of many gnome-build-meta elements;
   adding it explicitly here is harmless and makes the stack self-documenting.
 
-## AMD VA-API H.264 Decode — mesa-codecs.bst Pattern
+## AMD VA-API H.264 Decode — Junction Override Pattern
 
 **Problem:** fdsdk's `extensions/mesa/mesa.bst` builds with `video_codecs: all_free` — `radeonsi_drv_video.so` has no H.264/H.265 decode support. `mesa-extra.bst` builds with `video_codecs: all` but cannot coexist with `mesa.bst` as a runtime dep (BST `fatal-warnings: overlaps` fires because both provide the full mesa library tree).
 
 fdsdk has `platform-vaapi-intel` and `platform-vaapi-nvidia` extensions but **no `platform-vaapi-amd`** — there is no upstream fdsdk element that provides AMD VA-API hardware decode.
 
-**Diagnosis commands (on booted image):**
-```bash
-# Confirm H.264 VA-API element absent
-gst-inspect-1.0 va | grep vah264dec
+**Why `build-depends: mesa-extra.bst` doesn't work:**
 
-# Confirm radeonsi built without H.264
-strings /usr/lib/x86_64-linux-gnu/GL/default/lib/dri/radeonsi_drv_video.so | grep VAProfileH264
-```
+BST 2's `kind: compose` stages ALL deps (`--deps all`) of its `build-depends`, including transitive build-deps. Any element with `build-depends: mesa-extra.bst` causes `mesa-extra.bst` to appear alongside `mesa.bst` at compose time — both providing the full mesa file tree — which triggers `fatal-warnings: overlaps`. There is no whitelist that can resolve this because `mesa.bst` itself has no `overlap-whitelist`.
 
-**Fix — `elements/desktop/mesa-codecs.bst`:**
-
-Use `mesa-extra.bst` as a `build-depends` (not runtime). Extracts only `*_drv_video.so` from the staged build-dep and installs them with `overlap-whitelist`, replacing the `all_free` versions from `mesa.bst` in the composed image:
+**Fix — junction override in `elements/freedesktop-sdk.bst`:**
 
 ```yaml
-kind: manual
-build-depends:
-  - freedesktop-sdk.bst:extensions/mesa/mesa-extra.bst
-variables:
-  dri-dir: "%{libdir}/GL/default/lib/dri"
 config:
-  install-commands:
-    - |
-      for f in "%{dri-dir}"/*_drv_video.so; do
-        [ -f "$f" ] || continue
-        install -Dm755 "$f" "%{install-root}$f"
-      done
-public:
-  bst:
-    overlap-whitelist:
-      - '/usr/lib/x86_64-linux-gnu/GL/default/lib/dri/*_drv_video.so'
+  overrides:
+    extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst
 ```
 
+`desktop/mesa-all-codecs.bst` is a standalone `kind: meson` element with sources and build config mirroring `mesa-extra.bst` exactly (same fdsdk deps, same meson flags, `video_codecs: all`). It replaces `mesa.bst` across the entire junction dep graph — one mesa in the image, no overlap.
+
 Key facts:
-- `build-depends` keeps `mesa-extra.bst` out of the image's runtime dep graph — no overlap with `mesa.bst` at image assembly time.
-- Our element provides ONLY the video driver files; `overlap-whitelist` covers the conflict with `mesa.bst`'s version of those same files.
-- Update path: tied to the `freedesktop-sdk.bst` junction ref — no separate source tracking needed.
-- `mesa-extra.bst` may not be in the local artifact cache; BST will pull from gbm.gnome.org / cache.projectbluefin.io on first build.
+- Since sources, deps, and meson config match `mesa-extra.bst` exactly, BST should reuse the remote-cached artifact (same resolved configuration → same cache key).
+- Junction overrides replace the upstream element everywhere it appears in the dep graph: `vm/mesa-default.bst` and anything else that depends on `extensions/mesa/mesa.bst`.
+- krytis is x86_64_v3-only so arch-conditional variables are hardcoded (no conditional expressions).
+- Update path: tied to the `freedesktop-sdk.bst` junction ref — when the junction bumps, sync the mesa git ref and crate refs in `mesa-all-codecs.bst` to match `mesa-sources.yml` in the new fdsdk tag.
+
+**Diagnosis commands (on booted image):**
+```bash
+# Confirm H.264 VA-API element present
+gst-inspect-1.0 va | grep vah264dec
+
+# Confirm radeonsi built with H.264
+strings /usr/lib/x86_64-linux-gnu/GL/default/lib/dri/radeonsi_drv_video.so | grep VAProfileH264
+```
 
 **Verification (on booted image):**
 ```bash

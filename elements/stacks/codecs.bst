@@ -28,11 +28,5 @@ depends:
   # ── VAAPI — Intel hardware video acceleration ───────────────────────────
   - freedesktop-sdk.bst:extensions/platform-vaapi-intel/intel-media-driver.bst
 
-  # ── VAAPI — AMD hardware video acceleration (H.264 / H.265) ────────────
-  # fdsdk has no platform-vaapi-amd extension. mesa-codecs.bst builds mesa
-  # with video_codecs: all and installs the gallium VA-API drivers
-  # (radeonsi_drv_video.so etc.) over the all_free base mesa. Closes #158.
-  - desktop/mesa-codecs.bst
-
   # ── Thumbnailing ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gst-thumbnailers.bst
