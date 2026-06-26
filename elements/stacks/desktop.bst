@@ -36,6 +36,11 @@ depends:
 
   # ── Files ───────────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/nautilus.bst
+  # gvfs-daemon: GIO volume monitor runtime plugins via D-Bus. Without it Nautilus
+  # has no volume monitor (gvfs-udisks2-volume-monitor) so non-boot disks do not
+  # appear in the sidebar, and trash:// and network mounts (SMB/NFS/SFTP) are broken.
+  # gvfs-daemon depends on udisks2, so this covers both. Closes #157.
+  - gnome-build-meta.bst:core/gvfs-daemon.bst
 
   # ── Flatpak ────────────────────────────────────────────────────────────
   # flatpak binary is already present transitively via xdg-desktop-portal.

@@ -397,6 +397,21 @@ If noctalia adds cava as a dependency or it is otherwise needed, element notes:
 - SDL2 and ncurses are not in fdsdk; default terminal-escape-code output works without them
 - See also: #164 (sdl2-compat investigation)
 
+## gvfs / Volume Monitor
+
+`gnome-build-meta.bst:core/gvfs-daemon.bst` is included in `stacks/desktop.bst`. GIO discovers volume monitors as runtime D-Bus services — not build-time Nautilus deps.
+
+Without gvfs-daemon: non-boot disks absent from Nautilus sidebar, `trash://` broken, network mounts (SMB/NFS/SFTP) unavailable.
+
+`gvfs-daemon.bst` depends on `udisks2` — no separate udisks2 entry needed. Dep surface: samba, libgphoto2, libmtp, avahi, openssh, libbluray, libcdio-paranoia, libimobiledevice, libnfs, gnome-online-accounts, fuse3, polkit.
+
+Verify on booted image:
+```bash
+systemctl --user status gvfs-udisks2-volume-monitor.service
+udisksctl status
+gio info trash://
+```
+
 Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.
 
 ## Codec Stack
