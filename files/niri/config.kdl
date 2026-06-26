@@ -267,6 +267,22 @@ layout {
     }
 }
 
+environment {
+    MOZ_ENABLE_WAYLAND "1"
+    XDG_SESSION_TYPE "wayland"
+    XDG_CURRENT_DESKTOP "niri"
+    XDG_SESSION_DESKTOP "niri"
+    MOZ_DBUS_REMOTE "1"
+    GDK_BACKEND "wayland"
+    GTK_IM_MODULE "simple"
+    QT_AUTO_SCREEN_SCALE_FACTOR "1"
+    QT_WAYLAND_FORCE_DPI "physical"
+    EGL_PLATFORM "wayland"
+    CLUTTER_BACKEND "wayland"
+    _JAVA_AWT_WM_NONREPARENTING "1"
+    ELECTRON_OZONE_PLATFORM_HINT "auto"
+}
+
 // Add lines like this to spawn processes at startup.
 // Note that running niri as a session supports xdg-desktop-autostart,
 // which may be more convenient to use.

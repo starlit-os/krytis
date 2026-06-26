@@ -66,6 +66,11 @@ depends:
   - desktop/symbols-nerd-font.bst
   # Noto Color Emoji: color emoji font for broad Unicode emoji coverage.
   - freedesktop-sdk.bst:components/noto-emoji.bst
+  # DejaVu: broad Unicode coverage fallback (Dingbats U+2700–U+27BF, geometric
+  # shapes, etc.) — fills gaps in MonoLisaCode outside Nerd Font PUA ranges.
+  - freedesktop-sdk.bst:components/dejavu-fonts.bst
+  # Adwaita fonts: GNOME system UI font.
+  - gnome-build-meta.bst:sdk/adwaita-fonts.bst
 
   # ── Camera ─────────────────────────────────────────────────────────────
   # libcamera: camera abstraction library (UVC, IPU3, etc.).
@@ -82,6 +87,11 @@ depends:
   - freedesktop-sdk.bst:components/pipewire-daemon.bst
   - freedesktop-sdk.bst:components/wireplumber.bst
   - freedesktop-sdk.bst:vm/config/pipewire.bst
+
+  # ── XDG utilities ──────────────────────────────────────────────────────
+  # xdg-open: opens URLs/files via xdg-desktop-portal (org.freedesktop.portal.OpenURI).
+  # Required for ghostty URL links and any app that calls xdg-open.
+  - desktop/xdg-utils.bst
 
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

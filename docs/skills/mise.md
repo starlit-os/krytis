@@ -346,3 +346,18 @@ BST_CACHE_QUOTA=60G mise load-image --container
 For the container path, the quota is written to `/root/.config/buildstream/user.conf` inside the container on each run. For the native path, it is appended to `~/.config/buildstream/user.conf` once (idempotent — skipped if `quota:` already present).
 
 A full fdsdk bootstrap from a cold cache needs ~50G. If the disk itself is low (check `df -h ~/.cache/buildstream`), run `podman system prune --all --force` first — old krytis build images accumulate quickly and can consume hundreds of GB.
+
+## Fish vendor_conf.d load order
+
+Fish loads files in `vendor_conf.d` (and `conf.d`) **alphabetically**. Tools that depend on mise being activated must come after mise's own activation script.
+
+The mise fish integration installs as `vendor_conf.d/mise.fish`. Any conf file that needs mise on `$PATH` must sort **after** `mise.fish` alphabetically. Use a numeric prefix to guarantee order:
+
+```
+vendor_conf.d/01-mise.fish   ← mise activation
+vendor_conf.d/some-tool.fish ← loads after, mise already active
+```
+
+`elements/core/mise.bst` installs mise's fish integration to `vendor_conf.d/01-mise.fish` so any tool conf sorting after `01-` sees a fully initialised mise environment.
+
+**Known limitation:** fish [#8553](https://github.com/fish-shell/fish-shell/issues/8553) — `vendor_conf.d` load order is not guaranteed to be stable across all fish versions. The numeric prefix is a best-effort workaround; no complete fix available until upstream resolves this.

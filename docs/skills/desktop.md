@@ -131,7 +131,6 @@ Set in both `/etc/environment` (pam_env reads it → all sessions including gree
 | Variable | Value | Effect |
 |---|---|---|
 | `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
-| `SDL_VIDEODRIVER` | `wayland` | SDL2 apps use Wayland backend instead of X11 |
 
 These are set in `config/greetd-config.bst` **only in `environment.d`**, NOT in `/etc/environment`.
 
@@ -143,6 +142,8 @@ session.
 
 `GDK_BACKEND=wayland` is not set explicitly — GTK4 already prefers Wayland when
 `XDG_SESSION_TYPE=wayland` is present.
+
+**Do not set `SDL_VIDEODRIVER=wayland`** in `environment.d` or `/etc/environment`. SDL2 apps break when this is forced: SDL2's own Wayland auto-detection (`SDL_VIDEODRIVER` unset) is more reliable than overriding it unconditionally. Setting it caused regressions in SDL2 apps that need fallback paths.
 
 ## niri vs wlroots
 
@@ -255,6 +256,52 @@ cam --list
 find /usr/lib -path '*/spa-0.2/libcamera*'
 ```
 
+## Fontconfig: fc-cache in the OCI Build
+
+**Do NOT run `fc-cache` in `stack.bst` integration commands.**
+
+BST integration commands in a `kind: stack` element run when the stack is staged inside a compose element (e.g., `runtime.bst`). In practice, fc-cache invoked there produces an incomplete cache — some font directories are missed. Root cause is timing/ordering of when font artifacts are fully staged vs. when integration commands fire.
+
+**Correct approach:** run `fc-cache` in `oci/krytis/image.bst` (kind: script), after all other sysroot operations, using `FONTCONFIG_SYSROOT` to target the assembled layer:
+
+```yaml
+# In build-depends:
+- freedesktop-sdk.bst:components/fontconfig.bst
+
+# In commands (after ldconfig):
+- FONTCONFIG_SYSROOT=/layer fc-cache -f
+```
+
+`FONTCONFIG_SYSROOT` makes fc-cache:
+1. Read `/layer/etc/fonts/fonts.conf` (not the build host's)
+2. Scan `/layer/usr/share/fonts/` and all subdirs
+3. Write cache to `/layer/usr/lib/fontconfig/cache/`
+
+Requires fontconfig ≥ 2.13.95. fdsdk ships 2.14+ so this is safe.
+
+**Symptom of the broken approach:** fonts present at `/usr/share/fonts/{dejavu,Adwaita}/` but absent from `fc-list` and font pickers on first boot. Manual `fc-cache` on the booted image appears to fix it — but `/usr` is immutable in bootc, so fontconfig falls back to writing the user cache at `~/.cache/fontconfig/` instead.
+
+## Fontconfig: conf.avail vs conf.d
+
+`fontconfig` only loads conf files that are either **directly in** `/etc/fonts/conf.d/` or **symlinked there**. Files in `conf.avail/` are inert until activated.
+
+`symbols-nerd-font.bst` installs the alias conf to both:
+- `/usr/share/fontconfig/conf.avail/10-nerd-font-symbols.conf` (canonical location)
+- `/etc/fonts/conf.d/10-nerd-font-symbols.conf` → symlink to the above (activates it)
+
+**Pitfall:** Installing only to `conf.avail` means all `<alias>` rules (including the Symbols Nerd Font fallback for MonoLisaCode and all other families) are silently ignored. Nerd Font glyphs render as `?` even though the font and config are both present.
+
+**Pattern for any new fontconfig conf in a BST element:**
+```yaml
+- |
+    install -Dm644 my.conf \
+      "%{install-root}%{datadir}/fontconfig/conf.avail/my.conf"
+- |
+    mkdir -p "%{install-root}%{sysconfdir}/fonts/conf.d"
+    ln -s "%{datadir}/fontconfig/conf.avail/my.conf" \
+      "%{install-root}%{sysconfdir}/fonts/conf.d/my.conf"
+```
+
 ## Diagnostic Commands (run on the booted image)
 
 ```bash
@@ -277,3 +324,66 @@ find /usr/lib -name '*radeon*icd*.json' 2>/dev/null
 # Verify session environment vars are set
 grep -E 'GSK_RENDERER|SDL_VIDEODRIVER|MESA_LOADER' /etc/environment
 ```
+
+## Dead Keys / Compose Sequences in GTK4 Apps
+
+**Symptom:** dead key + space does not produce the character (e.g. `dead_grave` + space → nothing, or the compose sequence is ignored).
+
+**Root cause:** GTK4 on Wayland defaults to the IBus input method module. With IBus absent, the IM module initialization fails silently and compose sequences are never processed.
+
+**Fix:** set `GTK_IM_MODULE=simple` in niri's `environment` block (`files/niri/config.kdl`). The `simple` IM module uses GDK's built-in xkbcommon compose handling, which correctly processes compose tables from `/usr/share/X11/locale/<locale>/Compose`.
+
+```kdl
+environment {
+    GTK_IM_MODULE "simple"
+    // ... other vars
+}
+```
+
+This variable is passed to all niri child processes (ghostty, nautilus, etc.).
+
+**Note:** the compose table lookup uses `LANG` / `LC_CTYPE`. `en_US.UTF-8/Compose` has 258 `dead_grave` entries; `C/Compose` has 0 — so if LANG is unset, compose still won't work even with `GTK_IM_MODULE=simple`. Ensure LANG is set system-wide (e.g. via `/etc/locale.conf` or `environment.d`).
+
+## xdg-utils / xdg-open
+
+`xdg-utils` is not in fdsdk — no `xdg-open` binary exists in the image by default. Apps that call `xdg-open` to open URLs (e.g. ghostty clicking a link) will silently fail.
+
+**Fix:** `elements/desktop/xdg-utils.bst` — autotools element from `freedesktop:xdg/xdg-utils.git`.
+
+Key element overrides:
+```yaml
+variables:
+  conf-link-args: ""  # no C code — shared/static lib flags not accepted by configure
+  build-dir: ""       # out-of-tree builds not supported by xdg-utils configure
+config:
+  build-commands:
+  - |
+    cd scripts
+    for xml in desc/*.xml; do
+      base=$(basename "$xml" .xml)
+      printf 'Name\n\n%s\n\nDescription\n' "$base" > "$base.txt"
+    done
+    make -j1 scripts
+  install-commands:
+  - make -j1 -C scripts DESTDIR="%{install-root}" install
+```
+
+**Why not `make install` at top level?** Top-level `make` builds HTML/man docs requiring `xmlto`/`xsltproc` (absent from fdsdk). Top-level `make install` also has no `install-exec` target — `scripts/Makefile.in` is hand-written with only `install`/`uninstall`. Installing from `-C scripts` skips all doc targets; the `install` target guards absent man pages with `if [ -f $x ]`.
+
+**Why stub `.txt` files?** `generate-help-script.awk` reads each script's `.txt` (produced by `xmlto txt desc/*.xml`) for the one-line synopsis in `--help` output. Without `.txt` files, `make scripts` fails. Stubbing them with `printf 'Name\n\n%s\n\nDescription\n' "$base"` satisfies the prerequisite — scripts are fully functional; `--help` just shows the script name as synopsis instead of the docbook description. Avoids pulling in xmlto + docbook-xml + docbook-xsl + lynx (no text browser exists in fdsdk).
+
+xdg-utils v1.2.x uses `org.freedesktop.portal.OpenURI` (via `gdbus`) to open URLs on Wayland. Requires `glib` as runtime dep for `gdbus`.
+
+**Tag format in repo:** `v*.*.*` (not `xdg-utils-*.*.*` as one might expect).
+
+## Locale Data
+
+`config/locale-data.bst` (kind: script) replaces `freedesktop-sdk.bst:components/locales.bst` in `stacks/base-system.bst`. It generates only the locales Krytis needs instead of the full glibc SUPPORTED list (~400+ entries).
+
+Current locales: `sv_SE.UTF-8`. `en_US.UTF-8` and `C.UTF-8` are already generated by `freedesktop-sdk.bst:components/utf-locale.bst` (which is part of `runtime-minimal.bst`). Do **not** re-generate them in `locale-data.bst` — BST will raise an overlap error at compose time.
+
+**`en_SE.UTF-8` is blocked on fdsdk glibc bump.** `en_SE` was added in glibc 2.43; fdsdk tracks `release/2.42/master`. Add `en_SE` to `locale-data.bst` once fdsdk bumps to 2.43+.
+
+The `locale` split is not excluded by `oci/krytis/runtime.bst` (only `devel`/`debug`/`static-blocklist` are stripped), so locale archives in `/usr/lib/locale/` land in the image.
+
+Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.
