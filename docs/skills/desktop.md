@@ -386,4 +386,15 @@ Current locales: `sv_SE.UTF-8`. `en_US.UTF-8` and `C.UTF-8` are already generate
 
 The `locale` split is not excluded by `oci/krytis/runtime.bst` (only `devel`/`debug`/`static-blocklist` are stripped), so locale archives in `/usr/lib/locale/` land in the image.
 
+## cava (Audio Visualizer) — not currently in stack
+
+cava is not packaged in fdsdk or gnome-build-meta (confirmed 2026-06-26). cava is **not** a noctalia dependency (checked noctalia `meson.build` at `78e528ba` — no reference).
+
+If noctalia adds cava as a dependency or it is otherwise needed, element notes:
+- Upstream: `github:karlstav/cava.git`, bare semver tags (`1.0.0`, no `v` prefix), track glob `[0-9]*`
+- Build system: autotools from git — needs `autoreconf -fiv` before `configure` (no pre-generated script in repo)
+- Deps: FFTW (`fftw.bst`), PipeWire (`pipewire.bst`), ALSA (`alsa-lib.bst`); all present in fdsdk
+- SDL2 and ncurses are not in fdsdk; default terminal-escape-code output works without them
+- See also: #164 (sdl2-compat investigation)
+
 Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.

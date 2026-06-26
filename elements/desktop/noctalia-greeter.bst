@@ -46,5 +46,5 @@ variables:
 
 sources:
 - kind: tar
-  url: github_files:noctalia-dev/noctalia-greeter/archive/773e322418f904ffb9f0b1b4d378e7766bc1847e.tar.gz
-  ref: 2a4d62aaeee68036792bd8ad128ef5cd070a04dacd595865e674f84bb83c10d4
+  url: github_files:noctalia-dev/noctalia-greeter/archive/ff35479bc920469fe371611915d7b20624237672.tar.gz
+  ref: 1dc779954cf4dc03645d16ddd4049992dab9c140030be50aae945ac7f1ba7bc9
