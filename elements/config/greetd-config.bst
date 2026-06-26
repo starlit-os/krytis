@@ -106,6 +106,18 @@ config:
       "%{install-root}%{sysconfdir}/environment" <<'EOF'
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
+    XDG_SESSION_DESKTOP=niri
+    GSK_RENDERER=vulkan
+    GDK_BACKEND=wayland
+    EGL_PLATFORM=wayland
+    CLUTTER_BACKEND=wayland
+    MOZ_ENABLE_WAYLAND=1
+    MOZ_DBUS_REMOTE=1
+    GTK_IM_MODULE=simple
+    QT_AUTO_SCREEN_SCALE_FACTOR=1
+    QT_WAYLAND_FORCE_DPI=physical
+    ELECTRON_OZONE_PLATFORM_HINT=auto
+    _JAVA_AWT_WM_NONREPARENTING=1
     LIBSEAT_LOGLEVEL=debug
     EOF
 
@@ -114,7 +126,19 @@ config:
       "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf" <<'EOF'
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
+    XDG_SESSION_DESKTOP=niri
     GSK_RENDERER=vulkan
+    GDK_BACKEND=wayland
+    EGL_PLATFORM=wayland
+    CLUTTER_BACKEND=wayland
+    MOZ_ENABLE_WAYLAND=1
+    MOZ_DBUS_REMOTE=1
+    GTK_IM_MODULE=simple
+    QT_AUTO_SCREEN_SCALE_FACTOR=1
+    QT_WAYLAND_FORCE_DPI=physical
+    ELECTRON_OZONE_PLATFORM_HINT=auto
+    _JAVA_AWT_WM_NONREPARENTING=1
+    LIBSEAT_LOGLEVEL=debug
     EOF
 
   - |
