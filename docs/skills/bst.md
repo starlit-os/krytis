@@ -717,6 +717,13 @@ public:
     # ... one entry per file that overlaps
 ```
 
+**Glob patterns work** in `overlap-whitelist` — `*` and `**` are both supported:
+```yaml
+overlap-whitelist:
+  - '/usr/lib/x86_64-linux-gnu/GL/default/lib/dri/*_drv_video.so'  # all VA-API drivers
+  - '**/*'  # used in oci/krytis/runtime.bst to whitelist all compose output
+```
+
 **uutils-coreutils pattern** (additive, not a junction override): fdsdk has no `components/coreutils.bst` — only a bootstrap-chain `bootstrap/coreutils.bst` that cannot be overridden. uutils is added as a new `elements/core/uutils-coreutils.bst` that layers on top.
 
 - Multicall binary installed at `/usr/bin/uutils-coreutils`.
@@ -1094,3 +1101,57 @@ public:
 The `${1}` argument is the assembled sysroot path. `image.bst` runs `prepare-image.sh --initscripts /initial_scripts` which executes these scripts under `fakecap` LD_PRELOAD so the chmod is recorded in `/fakecap` and applied to the OCI layer.
 
 > **Security Gate**: this overrides privilege escalation. Open as draft PR and flag for human review before merge.
+
+## build-depends File Extraction Pattern
+
+When an upstream element builds a superset of what you need (e.g. a full mesa build with all video codecs) but cannot be used as a runtime dep alongside its base element (due to `fatal-warnings: overlaps`), use it as `build-depends` and extract only the specific files you want:
+
+```yaml
+kind: manual
+
+build-depends:
+  - upstream-expensive.bst   # staged at / in sandbox; NOT a runtime dep of the image
+
+variables:
+  strip-binaries: ''
+
+config:
+  strip-commands:
+    - ':'
+
+  install-commands:
+    - |
+      for f in /path/to/files/*_drv_video.so; do
+        [ -f "$f" ] || continue
+        install -Dm755 "$f" "%{install-root}$f"
+      done
+
+public:
+  bst:
+    overlap-whitelist:
+      - '/path/to/files/*_drv_video.so'
+```
+
+Why this works:
+- `build-depends` stages the dep in the build sandbox but does NOT include it in the image's runtime dep graph — no overlap with the dep's base element at assembly time.
+- The `manual` element's artifact contains ONLY the extracted files; `overlap-whitelist` handles the conflict with the base element's version of those same files.
+- Update path: the extracted files track the upstream junction ref automatically — no separate source or mise task needed.
+
+**Applied in:** `elements/desktop/mesa-codecs.bst` — extracts `*_drv_video.so` from `extensions/mesa/mesa-extra.bst` (video_codecs: all) to replace the `all_free` versions from base `mesa.bst`. Closes #158.
+
+## fdsdk `stripdir-suffix` is Debug-Symbol-Only
+
+`stripdir-suffix` in fdsdk elements (e.g. `extensions/mesa/mesa-extra.bst`) is passed to `freedesktop-sdk-stripper` — a custom ELF debug symbol stripper/organiser. It controls where per-element debug info is placed under `/usr/lib/debug/`. **It does NOT remove duplicate runtime files from BST artifacts.**
+
+The comment "Allows file deduplication between the two extensions" refers to Flatpak RUNTIME behavior (where the extension overlay mechanism handles deduplication), not to anything BST does at build time. `mesa-extra.bst`'s artifact contains `radeonsi_drv_video.so` just like the base `mesa.bst` — both provide the full mesa tree. Including both as runtime deps in one bootc image triggers `fatal-warnings: overlaps` and fails the build.
+
+## `mise trust` Required on New Worktrees
+
+New worktrees created with `git worktree add` are not automatically trusted by mise. Running any `mise` task from a new worktree without first trusting will fail:
+
+```
+mise ERROR Config files in .../mise.toml are not trusted.
+Trust them with `mise trust`.
+```
+
+Run `mise trust` once in the new worktree directory before any `mise validate`, `mise bst`, etc.
