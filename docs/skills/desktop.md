@@ -440,17 +440,24 @@ Key facts:
 - krytis is x86_64_v3-only so arch-conditional variables are hardcoded (no conditional expressions).
 - Update path: tied to the `freedesktop-sdk.bst` junction ref — when the junction bumps, sync the mesa git ref and crate refs in `mesa-all-codecs.bst` to match `mesa-sources.yml` in the new fdsdk tag.
 
-**Diagnosis commands (on booted image):**
-```bash
-# Confirm H.264 VA-API element present
-gst-inspect-1.0 va | grep vah264dec
-
-# Confirm radeonsi built with H.264
-strings /usr/lib/x86_64-linux-gnu/GL/default/lib/dri/radeonsi_drv_video.so | grep VAProfileH264
-```
-
 **Verification (on booted image):**
 ```bash
-gst-inspect-1.0 va | grep vah264dec   # hardware decode element present
-gst-play-1.0 /path/to/test.mp4        # end-to-end H.264 playback
+# 1. Confirm GStreamer VA-API H.264 decode element present
+gst-inspect-1.0 va | grep vah264dec
+# expect: vah264dec: VA-API H.264 Decoder in AMD Radeon RX 7800 XT
+
+# 2. Generate a test H.264 file (libx264 not in image; use h264_vaapi encoder)
+ffmpeg -vaapi_device /dev/dri/renderD128 \
+  -f lavfi -i testsrc=duration=5:size=640x480:rate=30 \
+  -vf 'format=nv12,hwupload' \
+  -c:v h264_vaapi /tmp/test.mp4
+
+# 3. Decode via VA-API and confirm no errors
+gst-launch-1.0 filesrc location=/tmp/test.mp4 ! qtdemux ! h264parse ! vah264dec ! fakesink
+# expect: pipeline reaches EOS, context shows AMD device, no fallback errors
 ```
+
+Notes:
+- `strings ... | grep VAProfileH264` is unreliable — VA-API profiles are enum integers, not string literals in the `.so`. Skip it.
+- `vainfo` is not in the image (`libva-utils` not packaged). `gst-inspect-1.0 va` is sufficient.
+- `libx264` encoder not in ffmpeg build; use `h264_vaapi` to generate test clips on the device.
