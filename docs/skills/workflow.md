@@ -76,6 +76,15 @@ git branch -D <branch>                # -D required — see below
 
 **`include/image-version.yml` is always locally modified.** `mise generate-image-version` writes a timestamp and commit SHA into this file. Any worktree that ran a build command will have it dirty, causing `git worktree remove` to refuse. Use `--force`. It is safe — the file is fully generated and has no unrecoverable content.
 
+**Remove empty parent directories after worktree removal.** Worktrees under `<cc-type>/` (e.g. `feat/`, `chore/`, `fix/`) or `gh<number>/` parent dirs leave those directories behind when the last child worktree is removed. They must be cleaned up manually:
+
+```shell
+# After removing worktrees, prune any empty parent dirs:
+find krytis.worktrees -mindepth 1 -maxdepth 1 -type d -empty -delete
+```
+
+`rmdir` also works for individual dirs. Check with `ls krytis.worktrees/` first to confirm which are empty.
+
 ## Opening Pull Requests
 
 **PR body must contain `Closes #<issue>`** to create the GitHub PR→issue link. The commit message alone is not enough — GitHub only auto-closes and links the issue when the keyword appears in the PR body. Always include it as the first line of the PR body:
