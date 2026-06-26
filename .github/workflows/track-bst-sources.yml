@@ -637,6 +637,10 @@ jobs:
             element: desktop/xdg-utils.bst
             branch: auto/track-xdg-utils
             title: "chore(deps): update xdg-utils"
+          - group: manual-merge
+            element: desktop/oo7.bst
+            branch: auto/track-oo7
+            title: "chore(deps): update oo7"
 
     steps:
       - name: Checkout repository

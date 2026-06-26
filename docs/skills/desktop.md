@@ -386,6 +386,30 @@ Current locales: `sv_SE.UTF-8`. `en_US.UTF-8` and `C.UTF-8` are already generate
 
 The `locale` split is not excluded by `oci/krytis/runtime.bst` (only `devel`/`debug`/`static-blocklist` are stripped), so locale archives in `/usr/lib/locale/` land in the image.
 
+## oo7 Secret Service Daemon
+
+`desktop/oo7.bst` replaces `gnome-build-meta.bst:core/gnome-keyring.bst`. Implements `org.freedesktop.secrets` in full. Repo: `linux-credentials/oo7`, track glob `[0-9]*`.
+
+**Build structure:** two separate meson sub-projects in one cargo workspace:
+- `server/` → `oo7-daemon` + `oo7-daemon-login` binaries (libexecdir)
+- `pam/` → `pam_oo7.so` (libdir/security)
+
+Each sub-project's `src/meson.build` calls `cargo build` via `custom_target`. The cargo2 source vendors the entire workspace dep tree from the root `Cargo.toml`.
+
+**D-Bus activation:** meson installs `dbus-org.freedesktop.secrets.service` as a symlink to `oo7-daemon.service` in `systemduserunitdir` — no separate D-Bus `.service` file needed.
+
+**PAM integration:** three lines in `config/greetd-config.bst` use `pam_oo7.so` instead of `pam_gnome_keyring.so`. The `auto_start` flag is fully supported (confirmed in `pam/src/lib.rs`).
+
+**Meson flags used:**
+- Server: `-Dsystemd=enabled -Dsystemduserunitdir=%{indep-libdir}/systemd/user -Ddbus_service_dir=%{datadir}/dbus-1/services`
+- PAM: `-Dpam_moduledir=%{libdir}/security`
+
+**Verify on booted image:**
+```bash
+systemctl --user status oo7-daemon.service
+busctl --user introspect org.freedesktop.secrets /org/freedesktop/secrets
+```
+
 ## cava (Audio Visualizer) — not currently in stack
 
 cava is not packaged in fdsdk or gnome-build-meta (confirmed 2026-06-26). cava is **not** a noctalia dependency (checked noctalia `meson.build` at `78e528ba` — no reference).

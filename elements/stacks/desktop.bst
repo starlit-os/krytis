@@ -32,7 +32,10 @@ depends:
   - config/xdg-portals.bst
 
   # ── Credentials ────────────────────────────────────────────────────────
-  - gnome-build-meta.bst:core/gnome-keyring.bst
+  # oo7: memory-safe Secret Service daemon (org.freedesktop.secrets) + pam_oo7.so.
+  # Replaces gnome-keyring. D-Bus session activation via systemd symlink.
+  # pam_oo7.so is wired into greetd's PAM stack in config/greetd-config.bst.
+  - desktop/oo7.bst
 
   # ── Files ───────────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/nautilus.bst

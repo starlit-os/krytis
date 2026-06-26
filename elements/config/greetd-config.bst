@@ -49,19 +49,19 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
     #%PAM-1.0
     # Self-contained: greetd has session-specific auth requirements that differ
-    # from system-auth (pam_nologin, gnome-keyring). pam_u2f is inserted before
+    # from system-auth (pam_nologin, oo7). pam_u2f is inserted before
     # pam_unix so a enrolled FIDO2 key is tried first; absent file falls through.
 
     auth       required     pam_nologin.so
     auth       sufficient   pam_u2f.so cue pinverification
     auth       required     pam_unix.so
-    auth       optional     pam_gnome_keyring.so
+    auth       optional     pam_oo7.so
 
     account    required     pam_nologin.so
     account    required     pam_unix.so
 
     password   required     pam_unix.so sha512 shadow
-    -password  optional     pam_gnome_keyring.so use_authtok
+    -password  optional     pam_oo7.so use_authtok
 
     session    required     pam_loginuid.so
     session    optional     pam_keyinit.so force revoke
@@ -72,7 +72,7 @@ config:
     session    required     pam_env.so readenv=1
     session    required     pam_unix.so
     -session   optional     pam_systemd.so
-    session    optional     pam_gnome_keyring.so auto_start
+    session    optional     pam_oo7.so auto_start
     EOF
 
   - |
