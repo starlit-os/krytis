@@ -386,14 +386,15 @@ Current locales: `sv_SE.UTF-8`. `en_US.UTF-8` and `C.UTF-8` are already generate
 
 The `locale` split is not excluded by `oci/krytis/runtime.bst` (only `devel`/`debug`/`static-blocklist` are stripped), so locale archives in `/usr/lib/locale/` land in the image.
 
-## cava (Audio Visualizer)
+## cava (Audio Visualizer) — not currently in stack
 
-`desktop/cava.bst` is a `git_repo` element tracking the `[0-9]*` tag glob (upstream uses bare semver tags like `1.0.0`, no `v` prefix). In the CI track matrix it is grouped under `manual-merge`.
+cava is not packaged in fdsdk or gnome-build-meta (confirmed 2026-06-26). cava is **not** a noctalia dependency (checked noctalia `meson.build` at `78e528ba` — no reference).
 
-cava uses autotools from source. The git checkout has no pre-generated `configure`, so the element adds `autoreconf -fiv` as the first configure-command before invoking `%{conf-cmd}`.
-
-Audio backends enabled at build time: PipeWire (`libpipewire-0.3`) and ALSA (`libasound`). Neither SDL2 nor ncurses are present in fdsdk, so the default terminal-escape-code output method is used.
-
-cava is **not** a noctalia dependency (checked `meson.build` at `78e528ba`); it is a standalone user-facing binary added to `stacks/desktop.bst`.
+If noctalia adds cava as a dependency or it is otherwise needed, element notes:
+- Upstream: `github:karlstav/cava.git`, bare semver tags (`1.0.0`, no `v` prefix), track glob `[0-9]*`
+- Build system: autotools from git — needs `autoreconf -fiv` before `configure` (no pre-generated script in repo)
+- Deps: FFTW (`fftw.bst`), PipeWire (`pipewire.bst`), ALSA (`alsa-lib.bst`); all present in fdsdk
+- SDL2 and ncurses are not in fdsdk; default terminal-escape-code output works without them
+- See also: #164 (sdl2-compat investigation)
 
 Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.
