@@ -637,10 +637,6 @@ jobs:
             element: desktop/xdg-utils.bst
             branch: auto/track-xdg-utils
             title: "chore(deps): update xdg-utils"
-          - group: manual-merge
-            element: desktop/cava.bst
-            branch: auto/track-cava
-            title: "chore(deps): update cava"
 
     steps:
       - name: Checkout repository
