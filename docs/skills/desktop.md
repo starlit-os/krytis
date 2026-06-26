@@ -413,3 +413,51 @@ Ported from zirconium-hawaii. Key facts:
 - `gst-thumbnailers.bst` is from gnome-build-meta, not fdsdk.
 - `gstreamer-plugins-base.bst` is already a transitive dep of many gnome-build-meta elements;
   adding it explicitly here is harmless and makes the stack self-documenting.
+
+## AMD VA-API H.264 Decode — Junction Override Pattern
+
+**Problem:** fdsdk's `extensions/mesa/mesa.bst` builds with `video_codecs: all_free` — `radeonsi_drv_video.so` has no H.264/H.265 decode support. `mesa-extra.bst` builds with `video_codecs: all` but cannot coexist with `mesa.bst` as a runtime dep (BST `fatal-warnings: overlaps` fires because both provide the full mesa library tree).
+
+fdsdk has `platform-vaapi-intel` and `platform-vaapi-nvidia` extensions but **no `platform-vaapi-amd`** — there is no upstream fdsdk element that provides AMD VA-API hardware decode.
+
+**Why `build-depends: mesa-extra.bst` doesn't work:**
+
+BST 2's `kind: compose` stages ALL deps (`--deps all`) of its `build-depends`, including transitive build-deps. Any element with `build-depends: mesa-extra.bst` causes `mesa-extra.bst` to appear alongside `mesa.bst` at compose time — both providing the full mesa file tree — which triggers `fatal-warnings: overlaps`. There is no whitelist that can resolve this because `mesa.bst` itself has no `overlap-whitelist`.
+
+**Fix — junction override in `elements/freedesktop-sdk.bst`:**
+
+```yaml
+config:
+  overrides:
+    extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst
+```
+
+`desktop/mesa-all-codecs.bst` is a standalone `kind: meson` element with sources and build config mirroring `mesa-extra.bst` exactly (same fdsdk deps, same meson flags, `video_codecs: all`). It replaces `mesa.bst` across the entire junction dep graph — one mesa in the image, no overlap.
+
+Key facts:
+- Since sources, deps, and meson config match `mesa-extra.bst` exactly, BST should reuse the remote-cached artifact (same resolved configuration → same cache key).
+- Junction overrides replace the upstream element everywhere it appears in the dep graph: `vm/mesa-default.bst` and anything else that depends on `extensions/mesa/mesa.bst`.
+- krytis is x86_64_v3-only so arch-conditional variables are hardcoded (no conditional expressions).
+- Update path: tied to the `freedesktop-sdk.bst` junction ref — when the junction bumps, sync the mesa git ref and crate refs in `mesa-all-codecs.bst` to match `mesa-sources.yml` in the new fdsdk tag.
+
+**Verification (on booted image):**
+```bash
+# 1. Confirm GStreamer VA-API H.264 decode element present
+gst-inspect-1.0 va | grep vah264dec
+# expect: vah264dec: VA-API H.264 Decoder in AMD Radeon RX 7800 XT
+
+# 2. Generate a test H.264 file (libx264 not in image; use h264_vaapi encoder)
+ffmpeg -vaapi_device /dev/dri/renderD128 \
+  -f lavfi -i testsrc=duration=5:size=640x480:rate=30 \
+  -vf 'format=nv12,hwupload' \
+  -c:v h264_vaapi /tmp/test.mp4
+
+# 3. Decode via VA-API and confirm no errors
+gst-launch-1.0 filesrc location=/tmp/test.mp4 ! qtdemux ! h264parse ! vah264dec ! fakesink
+# expect: pipeline reaches EOS, context shows AMD device, no fallback errors
+```
+
+Notes:
+- `strings ... | grep VAProfileH264` is unreliable — VA-API profiles are enum integers, not string literals in the `.so`. Skip it.
+- `vainfo` is not in the image (`libva-utils` not packaged). `gst-inspect-1.0 va` is sufficient.
+- `libx264` encoder not in ffmpeg build; use `h264_vaapi` to generate test clips on the device.

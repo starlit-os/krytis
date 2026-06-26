@@ -717,6 +717,13 @@ public:
     # ... one entry per file that overlaps
 ```
 
+**Glob patterns work** in `overlap-whitelist` — `*` and `**` are both supported:
+```yaml
+overlap-whitelist:
+  - '/usr/lib/x86_64-linux-gnu/GL/default/lib/dri/*_drv_video.so'  # all VA-API drivers
+  - '**/*'  # used in oci/krytis/runtime.bst to whitelist all compose output
+```
+
 **uutils-coreutils pattern** (additive, not a junction override): fdsdk has no `components/coreutils.bst` — only a bootstrap-chain `bootstrap/coreutils.bst` that cannot be overridden. uutils is added as a new `elements/core/uutils-coreutils.bst` that layers on top.
 
 - Multicall binary installed at `/usr/bin/uutils-coreutils`.
@@ -1094,3 +1101,61 @@ public:
 The `${1}` argument is the assembled sysroot path. `image.bst` runs `prepare-image.sh --initscripts /initial_scripts` which executes these scripts under `fakecap` LD_PRELOAD so the chmod is recorded in `/fakecap` and applied to the OCI layer.
 
 > **Security Gate**: this overrides privilege escalation. Open as draft PR and flag for human review before merge.
+
+## `kind: compose` Stages Build-Deps of Composed Elements
+
+**Critical:** BST 2's `kind: compose` element stages ALL deps (`--deps all`) of the elements being composed — including transitive build-deps. This means: if any element in the composed stack has `build-depends: X`, then `X` is staged in the compose sandbox alongside runtime deps.
+
+**Consequence for overlapping element pairs (e.g. `mesa.bst` + `mesa-extra.bst`):**
+
+If element B has `build-depends: mesa-extra.bst`, and B is in the stack that `runtime.bst` composes, then `mesa-extra.bst` appears at compose time alongside `mesa.bst`. Both provide the full mesa tree → `fatal-warnings: overlaps` fires. No `overlap-whitelist` can resolve this because `mesa.bst` itself has no whitelist and it cannot be modified (upstream).
+
+**Diagnosis:**
+```shell
+bst show --deps all oci/krytis/runtime.bst | grep mesa-extra
+# If mesa-extra appears here while also being a build-dep of something else, the compose will fail
+```
+
+**Solution:** avoid `build-depends: mesa-extra.bst` entirely — use a junction override instead (see below).
+
+## Junction Override Pattern (replacing a sub-project element)
+
+When a junction element (e.g. `extensions/mesa/mesa.bst`) provides the wrong build variant (wrong flags), override it entirely in the junction config rather than adding a second dep that overlaps with it:
+
+```yaml
+# elements/freedesktop-sdk.bst
+config:
+  overrides:
+    extensions/mesa/mesa.bst: desktop/my-variant.bst
+```
+
+`my-variant.bst` is a krytis-local element with identical sources, deps, and build config to the original — only the variable that differs is changed (`video_codecs: all` in the mesa case).
+
+**Cache hit potential:** BST 2 computes artifact cache keys from the RESOLVED element state (variables, config, sources, dep cache keys) — not the raw YAML or element file path. If your local element resolves to the same configuration as the upstream element, BST reuses the remote-cached artifact without rebuilding.
+
+Requirements for cache hit:
+- Sources: same refs (git SHA, tarball SHA)
+- Build-deps: resolve to the same artifacts (reference fdsdk deps through the junction)
+- Variables: same resolved values (hardcode arch-specific values if needed)
+- Config: same install-commands
+
+**Applied in:** `elements/desktop/mesa-all-codecs.bst` overrides `extensions/mesa/mesa.bst` with `video_codecs: all`, providing H.264/H.265 VA-API support via a single mesa replacing the all_free base. Closes #158. See `docs/skills/desktop.md` § AMD VA-API H.264 Decode.
+
+**Limitation:** The local override element CANNOT use `(@):` to include YAML files from the sub-project — includes are resolved within the current project only. All configuration must be inlined.
+
+## fdsdk `stripdir-suffix` is Debug-Symbol-Only
+
+`stripdir-suffix` in fdsdk elements (e.g. `extensions/mesa/mesa-extra.bst`) is passed to `freedesktop-sdk-stripper` — a custom ELF debug symbol stripper/organiser. It controls where per-element debug info is placed under `/usr/lib/debug/`. **It does NOT remove duplicate runtime files from BST artifacts.**
+
+The comment "Allows file deduplication between the two extensions" refers to Flatpak RUNTIME behavior (where the extension overlay mechanism handles deduplication), not to anything BST does at build time. `mesa-extra.bst`'s artifact contains `radeonsi_drv_video.so` just like the base `mesa.bst` — both provide the full mesa tree. Including both as runtime deps in one bootc image triggers `fatal-warnings: overlaps` and fails the build.
+
+## `mise trust` Required on New Worktrees
+
+New worktrees created with `git worktree add` are not automatically trusted by mise. Running any `mise` task from a new worktree without first trusting will fail:
+
+```
+mise ERROR Config files in .../mise.toml are not trusted.
+Trust them with `mise trust`.
+```
+
+Run `mise trust` once in the new worktree directory before any `mise validate`, `mise bst`, etc.

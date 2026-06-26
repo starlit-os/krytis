@@ -49,3 +49,4 @@ config:
     components/geoclue-base.bst: gnome-build-meta.bst:gnomeos-deps/geoclue-base.bst
     components/frei0r.bst: overrides/frei0r.bst
     components/sudo.bst: core/sudo-rs.bst
+    extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst
