@@ -27,14 +27,14 @@ config:
       -Dsystemd=enabled \
       -Dsystemduserunitdir=%{indep-libdir}/systemd/user \
       -Ddbus_service_dir=%{datadir}/dbus-1/services
-    ninja -v -j${JOBS} -C server/_build
+    ninja -v -j$(nproc) -C server/_build
   - |
     meson setup pam/_build pam \
       --prefix=%{prefix} \
       --libdir=%{libdir} \
       -Dprofile=default \
       -Dpam_moduledir=%{libdir}/security
-    ninja -v -j${JOBS} -C pam/_build
+    ninja -v -j$(nproc) -C pam/_build
 
   install-commands:
   - DESTDIR=%{install-root} ninja -C server/_build install
