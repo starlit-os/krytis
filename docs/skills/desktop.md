@@ -413,3 +413,53 @@ Ported from zirconium-hawaii. Key facts:
 - `gst-thumbnailers.bst` is from gnome-build-meta, not fdsdk.
 - `gstreamer-plugins-base.bst` is already a transitive dep of many gnome-build-meta elements;
   adding it explicitly here is harmless and makes the stack self-documenting.
+
+## AMD VA-API H.264 Decode — mesa-codecs.bst Pattern
+
+**Problem:** fdsdk's `extensions/mesa/mesa.bst` builds with `video_codecs: all_free` — `radeonsi_drv_video.so` has no H.264/H.265 decode support. `mesa-extra.bst` builds with `video_codecs: all` but cannot coexist with `mesa.bst` as a runtime dep (BST `fatal-warnings: overlaps` fires because both provide the full mesa library tree).
+
+fdsdk has `platform-vaapi-intel` and `platform-vaapi-nvidia` extensions but **no `platform-vaapi-amd`** — there is no upstream fdsdk element that provides AMD VA-API hardware decode.
+
+**Diagnosis commands (on booted image):**
+```bash
+# Confirm H.264 VA-API element absent
+gst-inspect-1.0 va | grep vah264dec
+
+# Confirm radeonsi built without H.264
+strings /usr/lib/x86_64-linux-gnu/GL/default/lib/dri/radeonsi_drv_video.so | grep VAProfileH264
+```
+
+**Fix — `elements/desktop/mesa-codecs.bst`:**
+
+Use `mesa-extra.bst` as a `build-depends` (not runtime). Extracts only `*_drv_video.so` from the staged build-dep and installs them with `overlap-whitelist`, replacing the `all_free` versions from `mesa.bst` in the composed image:
+
+```yaml
+kind: manual
+build-depends:
+  - freedesktop-sdk.bst:extensions/mesa/mesa-extra.bst
+variables:
+  dri-dir: "%{libdir}/GL/default/lib/dri"
+config:
+  install-commands:
+    - |
+      for f in "%{dri-dir}"/*_drv_video.so; do
+        [ -f "$f" ] || continue
+        install -Dm755 "$f" "%{install-root}$f"
+      done
+public:
+  bst:
+    overlap-whitelist:
+      - '/usr/lib/x86_64-linux-gnu/GL/default/lib/dri/*_drv_video.so'
+```
+
+Key facts:
+- `build-depends` keeps `mesa-extra.bst` out of the image's runtime dep graph — no overlap with `mesa.bst` at image assembly time.
+- Our element provides ONLY the video driver files; `overlap-whitelist` covers the conflict with `mesa.bst`'s version of those same files.
+- Update path: tied to the `freedesktop-sdk.bst` junction ref — no separate source tracking needed.
+- `mesa-extra.bst` may not be in the local artifact cache; BST will pull from gbm.gnome.org / cache.projectbluefin.io on first build.
+
+**Verification (on booted image):**
+```bash
+gst-inspect-1.0 va | grep vah264dec   # hardware decode element present
+gst-play-1.0 /path/to/test.mp4        # end-to-end H.264 playback
+```
