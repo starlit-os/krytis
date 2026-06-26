@@ -200,6 +200,22 @@ gum style --foreground 212 -- "${VAR}"
 
 **`gum choose` margin flags** are per-item-type (`--header.margin`, `--item.margin`, `--cursor.margin`), not a single `--margin`. All three must be set to get consistent padding.
 
+## Job Parallelism in kind: manual
+
+`kind: manual` build sandboxes do **not** have the `JOBS` environment variable set. Only BST's meson/cmake buildsystem plugins inject `JOBS`. Using `${JOBS}` in a manual element's `build-commands` produces an empty argument → `ninja: fatal: invalid -j parameter`.
+
+Use `$(nproc)` instead:
+
+```yaml
+config:
+  build-commands:
+  - |
+    meson setup _build . --prefix=%{prefix}
+    ninja -v -j$(nproc) -C _build
+```
+
+Do **not** use `${JOBS}` or `%{max-jobs}` (no such BST variable exists in manual context).
+
 ## Config-only Elements
 
 Elements that only drop config files (no binaries to build) should use `kind: manual` and suppress the default strip step:
