@@ -143,6 +143,8 @@ session.
 `GDK_BACKEND=wayland` is not set explicitly — GTK4 already prefers Wayland when
 `XDG_SESSION_TYPE=wayland` is present.
 
+**Do not set `SDL_VIDEODRIVER=wayland`** in `environment.d` or `/etc/environment`. SDL2 apps break when this is forced: SDL2's own Wayland auto-detection (`SDL_VIDEODRIVER` unset) is more reliable than overriding it unconditionally. Setting it caused regressions in SDL2 apps that need fallback paths.
+
 ## niri vs wlroots
 
 niri uses **smithay** (pure Rust), not wlroots. Its rendering stack handles EGL/GPU failures
@@ -346,17 +348,29 @@ This variable is passed to all niri child processes (ghostty, nautilus, etc.).
 
 `xdg-utils` is not in fdsdk — no `xdg-open` binary exists in the image by default. Apps that call `xdg-open` to open URLs (e.g. ghostty clicking a link) will silently fail.
 
-**Fix:** `elements/desktop/xdg-utils.bst` — autotools element from `freedesktop:xdg/xdg-utils.git`, installs via `make install-exec` (skips man page generation, which requires `xmlto`/`xsltproc`).
+**Fix:** `elements/desktop/xdg-utils.bst` — autotools element from `freedesktop:xdg/xdg-utils.git`.
 
-Key element overrides needed because xdg-utils has no C code:
+Key element overrides:
 ```yaml
 variables:
-  conf-link-args: ""   # --enable-shared/--disable-static not accepted by configure
-  build-dir: ""        # xdg-utils configure does not support out-of-tree builds
+  conf-link-args: ""  # no C code — shared/static lib flags not accepted by configure
+  build-dir: ""       # out-of-tree builds not supported by xdg-utils configure
 config:
+  build-commands:
+  - |
+    cd scripts
+    for xml in desc/*.xml; do
+      base=$(basename "$xml" .xml)
+      printf 'Name\n\n%s\n\nDescription\n' "$base" > "$base.txt"
+    done
+    make -j1 scripts
   install-commands:
-  - make -j1 DESTDIR="%{install-root}" install-exec
+  - make -j1 -C scripts DESTDIR="%{install-root}" install
 ```
+
+**Why not `make install` at top level?** Top-level `make` builds HTML/man docs requiring `xmlto`/`xsltproc` (absent from fdsdk). Top-level `make install` also has no `install-exec` target — `scripts/Makefile.in` is hand-written with only `install`/`uninstall`. Installing from `-C scripts` skips all doc targets; the `install` target guards absent man pages with `if [ -f $x ]`.
+
+**Why stub `.txt` files?** `generate-help-script.awk` reads each script's `.txt` (produced by `xmlto txt desc/*.xml`) for the one-line synopsis in `--help` output. Without `.txt` files, `make scripts` fails. Stubbing them with `printf 'Name\n\n%s\n\nDescription\n' "$base"` satisfies the prerequisite — scripts are fully functional; `--help` just shows the script name as synopsis instead of the docbook description. Avoids pulling in xmlto + docbook-xml + docbook-xsl + lynx (no text browser exists in fdsdk).
 
 xdg-utils v1.2.x uses `org.freedesktop.portal.OpenURI` (via `gdbus`) to open URLs on Wayland. Requires `glib` as runtime dep for `gdbus`.
 
