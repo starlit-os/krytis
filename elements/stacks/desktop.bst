@@ -93,5 +93,10 @@ depends:
   # Required for ghostty URL links and any app that calls xdg-open.
   - desktop/xdg-utils.bst
 
+  # ── Audio visualizer ───────────────────────────────────────────────────
+  # cava: terminal audio visualizer. PipeWire + ALSA backends; default output
+  # uses terminal escape codes (no SDL2/ncurses — not in fdsdk). Closes #163.
+  - desktop/cava.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

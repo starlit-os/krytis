@@ -386,4 +386,14 @@ Current locales: `sv_SE.UTF-8`. `en_US.UTF-8` and `C.UTF-8` are already generate
 
 The `locale` split is not excluded by `oci/krytis/runtime.bst` (only `devel`/`debug`/`static-blocklist` are stripped), so locale archives in `/usr/lib/locale/` land in the image.
 
+## cava (Audio Visualizer)
+
+`desktop/cava.bst` is a `git_repo` element tracking the `[0-9]*` tag glob (upstream uses bare semver tags like `1.0.0`, no `v` prefix). In the CI track matrix it is grouped under `manual-merge`.
+
+cava uses autotools from source. The git checkout has no pre-generated `configure`, so the element adds `autoreconf -fiv` as the first configure-command before invoking `%{conf-cmd}`.
+
+Audio backends enabled at build time: PipeWire (`libpipewire-0.3`) and ALSA (`libasound`). Neither SDL2 nor ncurses are present in fdsdk, so the default terminal-escape-code output method is used.
+
+cava is **not** a noctalia dependency (checked `meson.build` at `78e528ba`); it is a standalone user-facing binary added to `stacks/desktop.bst`.
+
 Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.

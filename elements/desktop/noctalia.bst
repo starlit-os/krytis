@@ -19,8 +19,8 @@ depends:
 # Note: repo was renamed from noctalia-shell to noctalia as of 2026.
 sources:
 - kind: tar
-  url: github_files:noctalia-dev/noctalia/archive/e61abbfb8892bfaf8e5b8f56f4f964e7862cc27f.tar.gz
-  ref: 6294472bcd2b53a16c3dd55365a5db173e32658e3e8425b64780470de2114954
+  url: github_files:noctalia-dev/noctalia/archive/78e528ba61704226208c06a6aea5f5971c5347d5.tar.gz
+  ref: 894c98d1db7bcabc380679f4ddc201673fc69e7707a6d3bd444d57458a6b10a7
 
 variables:
   meson-local: >-
