@@ -398,3 +398,18 @@ If noctalia adds cava as a dependency or it is otherwise needed, element notes:
 - See also: #164 (sdl2-compat investigation)
 
 Note: glibc locale archives (`/usr/lib/locale/`) are distinct from X11 compose tables (`/usr/share/X11/locale/`). xkbcommon uses the X11 path for dead-key compose — glibc locale availability does not affect compose table lookup.
+
+## Codec Stack
+
+`stacks/codecs.bst` is a separate stack wired into `oci/krytis/stack.bst` alongside `stacks/desktop.bst`.
+Ported from zirconium-hawaii. Key facts:
+
+- `freedesktop-sdk.bst:extensions/codecs-extra/*` live under `extensions/`, not `components/` — these
+  contain patent-encumbered codecs (H.264 via x264, HEVC via libheif, etc.).
+- `extensions/platform-vaapi-intel/intel-media-driver.bst` is x86_64-only; safe because krytis
+  is x86_64_v3-only. Do not add this to an aarch64 build without an arch guard.
+- `gstreamer-plugins-ugly-x264.bst` and `codecs-extra/ffmpeg.bst` are the codec-extra overlays that
+  extend the base gstreamer-plugins-ugly and ffmpeg with encumbered codecs.
+- `gst-thumbnailers.bst` is from gnome-build-meta, not fdsdk.
+- `gstreamer-plugins-base.bst` is already a transitive dep of many gnome-build-meta elements;
+  adding it explicitly here is harmless and makes the stack self-documenting.
