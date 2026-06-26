@@ -79,11 +79,14 @@ git branch -D <branch>                # -D required — see below
 **Remove empty parent directories after worktree removal.** Worktrees under `<cc-type>/` (e.g. `feat/`, `chore/`, `fix/`) or `gh<number>/` parent dirs leave those directories behind when the last child worktree is removed. They must be cleaned up manually:
 
 ```shell
-# After removing worktrees, prune any empty parent dirs:
+# Prune stale git registry entries (worktrees deleted from disk without git worktree remove):
+git worktree prune
+
+# Remove empty parent dirs left behind:
 find krytis.worktrees -mindepth 1 -maxdepth 1 -type d -empty -delete
 ```
 
-`rmdir` also works for individual dirs. Check with `ls krytis.worktrees/` first to confirm which are empty.
+`git worktree list` shows `prunable` next to stale entries — run `prune` first, then check for empty dirs. `rmdir` also works for individual dirs.
 
 ## Opening Pull Requests
 
