@@ -442,6 +442,7 @@ config:
 ```
 
 - `ar x` goes in `build-commands` (has `build-depends`); `cp`/`ln`/`install` go in `install-commands` (has `depends` only — `runtime-minimal` provides `cp`/`ln`/`install`).
+- **`%{install-root}` subdirs do NOT pre-exist.** `cp -a usr/lib/proton-pass "%{install-root}%{indep-libdir}/"` fails because `/buildstream-install/usr/lib/` was never created. Use `cp -a usr "%{install-root}/"` to copy the whole extracted tree at once (same pattern as `linux-cachyos.bst`).
 - `strip-binaries: ''` required — pre-built ELFs must not be stripped.
 - Update path: `kind: remote` + mise update task + CI job (same as other tarball-pinned elements).
 
