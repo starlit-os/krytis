@@ -128,5 +128,9 @@ depends:
   # Ported from CachyOS-Settings (udev rules, modprobe.d, modules-load.d, tmpfiles.d).
   - config/desktop-udev.bst
 
+  # ── Apps ───────────────────────────────────────────────────────────────
+  # Proton Pass: password manager desktop app (bundled Electron, x86_64 only).
+  - desktop/proton-pass.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

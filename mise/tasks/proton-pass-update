@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="Update proton-pass element to the latest stable release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/proton-pass.bst"
+API_URL="https://proton.me/download/PassDesktop/linux/x64/version.json"
+
+echo "==> Fetching latest Proton Pass release..."
+LATEST_VER=$(curl -s "$API_URL" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+releases = [r for r in data['Releases'] if r['CategoryName'] == 'Stable']
+print(releases[0]['Version'])
+")
+
+echo "==> Latest: ${LATEST_VER}"
+
+CURRENT_VER=$(grep -oP 'proton-pass_\K[^_]+(?=_amd64)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+DEB_URL="https://proton.me/download/pass/linux/proton-pass_${LATEST_VER}_amd64.deb"
+DEB_FILE="${TMPDIR}/proton-pass_${LATEST_VER}_amd64.deb"
+
+echo "==> Downloading ${DEB_URL}..."
+curl -sSL "$DEB_URL" -o "$DEB_FILE"
+SHA256=$(sha256sum "$DEB_FILE" | awk '{print $1}')
+echo "    sha256=${SHA256}"
+
+CURRENT_SHA=$(grep -oP 'ref: \K\S+' "${ELEMENT}" | head -1)
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+
+sed -i "s|proton-pass_${CURRENT_VER}_amd64|proton-pass_${LATEST_VER}_amd64|g" "${ELEMENT}"
+sed -i "s|version: \"${CURRENT_VER}\"|version: \"${LATEST_VER}\"|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${SHA256}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."
