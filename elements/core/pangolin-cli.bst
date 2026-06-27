@@ -25,9 +25,6 @@ sources:
       url: github_files:fosrl/cli/releases/download/0.10.2/pangolin-cli_linux_arm64
       ref: 632ad698bc973fa6a2cfa38e95f380fa6da596bab9f4b04029cfdfadd6a1ce71
 
-- kind: local
-  path: files/pangolin-cli
-
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
