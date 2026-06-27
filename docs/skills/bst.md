@@ -1155,6 +1155,29 @@ Requirements for cache hit:
 
 **Limitation:** The local override element CANNOT use `(@):` to include YAML files from the sub-project — includes are resolved within the current project only. All configuration must be inlined.
 
+### fdsdk codecs-extra: linker path, not a rebuild
+
+fdsdk's base ffmpeg (`components/ffmpeg.bst`) has H.264 decode disabled. The codecs-extra extension (`extensions/codecs-extra/ffmpeg.bst`) has it enabled, but installs to a non-standard prefix (`/usr/lib/%{gcc_triplet}/codecs-extra/lib/`). Without an explicit ldconfig entry, the dynamic linker finds only the base libavcodec (at the default search path) and `avdec_h264` is never registered.
+
+**Do NOT try to rebuild gst-libav against codecs-extra/ffmpeg.** Rebuilding has two unsolved problems: the override element cannot use cross-junction `(@):` includes, and at runtime the linker still resolves libavcodec.so.61 to the base path (ldconfig wins over RPATH in stripped production builds).
+
+**Correct approach**: add the codecs-extra lib path to ld.so.conf.d in a `config/` element. gst-libav discovers codecs at plugin-init time via `av_codec_iterate()`. When codecs-extra/libavcodec.so.61 loads instead of the base build, `avdec_h264` is registered without any gst-libav rebuild.
+
+```yaml
+# elements/config/codecs-extra-ldconfig.bst
+kind: manual
+config:
+  install-commands:
+  - |
+    install -Dm644 /dev/stdin \
+        "%{install-root}/etc/ld.so.conf.d/codecs-extra.conf" <<'EOF'
+    /usr/lib/%{gcc_triplet}/codecs-extra/lib
+    EOF
+  - "%{install-extra}"
+```
+
+Add this element to `elements/stacks/codecs.bst`. ld.so.conf.d entries are processed before default search paths by ldconfig, so codecs-extra/libavcodec takes precedence over the base build. Applied in `elements/config/codecs-extra-ldconfig.bst`. Closes #184.
+
 ## fdsdk `stripdir-suffix` is Debug-Symbol-Only
 
 `stripdir-suffix` in fdsdk elements (e.g. `extensions/mesa/mesa-extra.bst`) is passed to `freedesktop-sdk-stripper` — a custom ELF debug symbol stripper/organiser. It controls where per-element debug info is placed under `/usr/lib/debug/`. **It does NOT remove duplicate runtime files from BST artifacts.**

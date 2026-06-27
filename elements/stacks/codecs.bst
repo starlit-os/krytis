@@ -30,3 +30,8 @@ depends:
 
   # ── Thumbnailing ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gst-thumbnailers.bst
+
+  # ── Codec-extra linker path ─────────────────────────────────────────────
+  # Exposes codecs-extra/libavcodec.so.61 (H.264 enabled) to the dynamic
+  # linker so gst-libav registers avdec_h264 without a rebuild.
+  - config/codecs-extra-ldconfig.bst
