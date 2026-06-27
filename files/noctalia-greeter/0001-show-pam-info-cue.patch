@@ -6,7 +6,7 @@
    const std::string actualStatus = m_status;
    m_statusLabel->setText("Xy");
    m_statusLabel->measure(*renderer);
-@@ -1238,8 +1238,9 @@ bool GreeterSurface::driveAuthConversation(std::optional<GreetdAuthMessage> pend
+@@ -1238,8 +1238,10 @@ bool GreeterSurface::driveAuthConversation(std::optional<GreetdAuthMessage> pend
      if (authMsg.type == GreetdAuthMessageType::Info || authMsg.type == GreetdAuthMessageType::Error) {
 -      if (authMsg.type == GreetdAuthMessageType::Error) {
 -        updateStatus(authMsg.message, true);
@@ -17,10 +17,11 @@
 +      if (isError) {
 +        clearPasswordInput();
 +      }
++      commitImmediateFrame(true);
        pending = m_greetdClient->postAuthData("");
        if (m_greetdClient->lastError()) {
          onAuthError(*m_greetdClient->lastError());
-@@ -1367,10 +1368,10 @@ void GreeterSurface::onAuthError(const GreetdError& error) {
+@@ -1367,10 +1369,10 @@ void GreeterSurface::onAuthError(const GreetdError& error) {
  void GreeterSurface::updateStatus(const std::string& text, bool isError) {
    if (!isError) {
 -    m_status.clear();
