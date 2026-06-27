@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="Update pangolin-cli element to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/core/pangolin-cli.bst"
+REPO="fosrl/cli"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_VER=$(grep -oP 'pangolin-cli_linux_amd64\K' "${ELEMENT}" || grep -oP '/\K[^/]+(?=/pangolin-cli_linux)' "${ELEMENT}" | head -1)
+CURRENT_VER=$(grep -oP 'download/\K[^/]+(?=/pangolin-cli_linux_amd64)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_TAG}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+AMD64_FILE="pangolin-cli_linux_amd64"
+ARM64_FILE="pangolin-cli_linux_arm64"
+BASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}"
+
+echo "==> Downloading ${AMD64_FILE}..."
+curl -sSL "${BASE_URL}/${AMD64_FILE}" -o "${TMPDIR}/${AMD64_FILE}"
+AMD64_SHA=$(sha256sum "${TMPDIR}/${AMD64_FILE}" | awk '{print $1}')
+echo "    sha256=${AMD64_SHA}"
+
+echo "==> Downloading ${ARM64_FILE}..."
+curl -sSL "${BASE_URL}/${ARM64_FILE}" -o "${TMPDIR}/${ARM64_FILE}"
+ARM64_SHA=$(sha256sum "${TMPDIR}/${ARM64_FILE}" | awk '{print $1}')
+echo "    sha256=${ARM64_SHA}"
+
+CURRENT_AMD64_SHA=$(grep -A2 'x86_64' "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+CURRENT_ARM64_SHA=$(grep -A2 'aarch64' "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_TAG}"
+
+sed -i "s|/download/${CURRENT_VER}/|/download/${LATEST_TAG}/|g" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_AMD64_SHA}|ref: ${AMD64_SHA}|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_ARM64_SHA}|ref: ${ARM64_SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."

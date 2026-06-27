@@ -420,6 +420,27 @@ The job should either create/update a PR (if a new release exists) or print "Alr
 
 **ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
 
+### Raw binary elements (`kind: remote` + `filename`)
+
+For pre-built raw binaries (not tarballs) use `kind: remote`. The `filename:` key controls the staged filename — place it at the source level, *outside* the arch-conditional block, so `install-commands` can reference a stable name regardless of arch:
+
+```yaml
+sources:
+- kind: remote
+  filename: pangolin-cli          # stable name used in install-commands
+  (?):
+  - arch == "x86_64":
+      url: github_files:owner/repo/releases/download/0.10.2/tool_linux_amd64
+      ref: <sha256>
+  - arch == "aarch64":
+      url: github_files:owner/repo/releases/download/0.10.2/tool_linux_arm64
+      ref: <sha256>
+```
+
+Then in `config.install-commands`: `install -Dm755 pangolin-cli "%{install-root}%{bindir}/tool"`.
+
+**`kind: remote` vs `kind: tar`**: use `remote` when the release asset is a raw ELF (e.g. `pangolin-cli_linux_amd64`), `tar` when it's a `.tar.gz`/`.tar.xz` (e.g. gum, mise). Both are no-ops for `bst source track`; both require a mise update task and CI job.
+
 ### Systemd service installation
 
 **System services** need three things:
@@ -429,6 +450,23 @@ The job should either create/update a PR (if a new release exists) or print "Alr
 | Service file | `%{indep-libdir}/systemd/system/<name>.service` | Fix `/usr/sbin` → `/usr/bin`; remove `EnvironmentFile=/etc/default/` lines |
 | Preset file | `%{indep-libdir}/systemd/system-preset/80-<name>.preset` | Content: `enable <name>.service` |
 | Binaries | `%{bindir}` | Never `/usr/sbin` — freedesktop-sdk uses merged-usr |
+
+#### Optional services gated on user-supplied credentials
+
+For services that require runtime credentials (API keys, client secrets) that must **not** be baked into the OCI image, combine `ConditionPathExists=` with `EnvironmentFile=`:
+
+```ini
+[Unit]
+ConditionPathExists=/etc/tool/credentials
+
+[Service]
+EnvironmentFile=/etc/tool/credentials
+ExecStart=/usr/bin/tool --id ${TOOL_CLIENT_ID} --secret ${TOOL_SECRET}
+```
+
+This makes the service a no-op (no error) if the credentials file is absent, so the binary can be shipped unconditionally and the preset can enable the service unconditionally. Users drop their credentials file and rebase to activate the service.
+
+The credentials file lives at `/etc/tool/credentials` (not `/etc/default/`) and is **not** installed by the BST element — it is provisioned at runtime, outside the OCI image.
 
 **User services** (session-scoped, run as the logged-in user):
 
