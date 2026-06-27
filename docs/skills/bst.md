@@ -782,6 +782,20 @@ overlap-whitelist:
 - Build flags: `--features feat_os_unix --no-default-features` (no `--locked`; uses `cargo2` source for offline crate registry).
 - Update path: `kind: git_repo` with `track:` glob → option A (no mise update task or CI override needed beyond the `track:` matrix entry in `track-bst-sources.yml`).
 
+## `kind: local` source becomes dangling when directory is emptied
+
+Git does not track empty directories. If the last file inside a `files/<name>/` directory is deleted, the directory itself disappears from the working tree. Any element with `- kind: local / path: files/<name>` will then fail at element resolution with:
+
+```
+Specified path 'files/<name>' does not exist
+```
+
+BST validates `kind: local` paths at resolution time (before any build), so the failure blocks the entire pipeline — not just the affected element.
+
+**Fix:** remove the `kind: local` source block from the element when you delete the last file it referenced. Don't leave the stale source entry expecting git to preserve an empty directory.
+
+**How it happened (#198):** `ebfb813` deleted `files/pangolin-cli/pangolin-cli.service` (the only file in that directory). The `kind: local` source in `core/pangolin-cli.bst` was not cleaned up, breaking all full-image builds on `main` until #198 landed.
+
 ## System Tool Requirements for `bst source track`
 
 `bst source track` initialises the full BST platform at startup — including `buildbox-run`, which checks for `bwrap` unconditionally even though source tracking never runs a build sandbox. Additionally, BST resolves the complete element graph before tracking, which validates all declared tool binaries (`lzip`, `xz-utils`, `bzip2`, `gzip`, `patch`, etc.) against `PATH`.
