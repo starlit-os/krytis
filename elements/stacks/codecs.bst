@@ -35,3 +35,8 @@ depends:
   # Exposes codecs-extra/libavcodec.so.61 (H.264 enabled) to the dynamic
   # linker so gst-libav registers avdec_h264 without a rebuild.
   - config/codecs-extra-ldconfig.bst
+
+  # ── VA-API diagnostics ─────────────────────────────────────────────────
+  # vainfo: queries the VA-API driver for supported profiles and entrypoints.
+  # Useful for verifying hardware decode support on a booted image. Closes #183.
+  - desktop/vainfo.bst

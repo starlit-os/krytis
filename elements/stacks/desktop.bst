@@ -97,6 +97,15 @@ depends:
   # xdg-open: opens URLs/files via xdg-desktop-portal (org.freedesktop.portal.OpenURI).
   # Required for ghostty URL links and any app that calls xdg-open.
   - desktop/xdg-utils.bst
+  # xdg-terminal-exec: XDG terminal execution spec — allows apps and the desktop
+  # to open a terminal without hardcoding a specific emulator. Closes #171.
+  - desktop/xdg-terminal-exec.bst
+
+  # ── Monitor control ────────────────────────────────────────────────────
+  # ddcutil: reads and writes monitor settings (brightness, contrast, colour
+  # temperature) via DDC/CI over I2C. Includes i2c-tools for bus access.
+  # Closes #177.
+  - desktop/ddcutil.bst
 
   # ── Boot splash ────────────────────────────────────────────────────────
   # plymouth: graphical boot splash between firmware hand-off and greetd.

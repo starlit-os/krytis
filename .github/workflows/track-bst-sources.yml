@@ -639,6 +639,22 @@ jobs:
             element: desktop/xdg-utils.bst
             branch: auto/track-xdg-utils
             title: "chore(deps): update xdg-utils"
+          - group: manual-merge
+            element: desktop/vainfo.bst
+            branch: auto/track-vainfo
+            title: "chore(deps): update vainfo"
+          - group: manual-merge
+            element: desktop/xdg-terminal-exec.bst
+            branch: auto/track-xdg-terminal-exec
+            title: "chore(deps): update xdg-terminal-exec"
+          - group: manual-merge
+            element: desktop/ddcutil.bst
+            branch: auto/track-ddcutil
+            title: "chore(deps): update ddcutil"
+          - group: manual-merge
+            element: deps/i2c-tools.bst
+            branch: auto/track-i2c-tools
+            title: "chore(deps): update i2c-tools"
 
     steps:
       - name: Checkout repository

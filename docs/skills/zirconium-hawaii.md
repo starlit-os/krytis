@@ -127,3 +127,30 @@ Without `--composefs-backend`, bootc takes the traditional ostree path and requi
 ## Referencing This Project
 
 When borrowing an element or pattern, copy from `../zirconium-hawaii/elements/` and adapt — don't symlink or junction into zirconium-hawaii from Krytis. Both projects maintain independent BST artifact caches and element trees.
+
+## Porting Elements with Local Files
+
+When a zirconium-hawaii element has a `kind: local` source referencing `files/<name>/`, port those files alongside the element:
+
+- Create `files/<name>/` in krytis with the same contents
+- The `local` source `path:` is relative to the project root, so `path: files/i2c-tools` maps to `<krytis-root>/files/i2c-tools/`
+
+Example: `deps/i2c-tools.bst` brings three files — `45-i2c-tools.rules` (udev), `i2c-tools.conf` (modules-load.d), `i2c-tools.sysusers` (sysusers.d).
+
+## ddcutil X11 Dependencies
+
+ddcutil links against X11 at build time if `xorg-lib-x11`, `xorg-lib-xext`, and `xorg-lib-xrandr` are present. On a pure Wayland image these are already available transitively via xwayland. The krytis port includes them explicitly (matching zirconium-hawaii); an `--disable-x11` configure pass could drop them if X11 is confirmed unused at runtime.
+
+## xdg-terminal-exec Install Quirk
+
+The upstream `make install` installs `xdg-terminals.list` to `%{datadir}/xdg-terminal-exec/`. This file is a user-editable priority list for terminal emulators — it must live in `%{docdir}/xdg-terminal-exec/` (documentation, not program data) so it is not overwritten on image updates. Move it immediately after `make install`:
+
+```yaml
+config:
+  install-commands:
+  - |
+    make %{make-install-args}
+    mkdir -p "%{install-root}%{docdir}/xdg-terminal-exec"
+    mv "%{install-root}%{datadir}/xdg-terminal-exec/xdg-terminals.list" \
+       "%{install-root}%{docdir}/xdg-terminal-exec"
+```
