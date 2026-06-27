@@ -1153,7 +1153,25 @@ Requirements for cache hit:
 
 **Applied in:** `elements/desktop/mesa-all-codecs.bst` overrides `extensions/mesa/mesa.bst` with `video_codecs: all`, providing H.264/H.265 VA-API support via a single mesa replacing the all_free base. Closes #158. See `docs/skills/desktop.md` § AMD VA-API H.264 Decode.
 
+**Applied in:** `elements/overrides/gstreamer-libav.bst` overrides `components/gstreamer-libav.bst` to build against `extensions/codecs-extra/ffmpeg.bst` instead of `components/ffmpeg.bst`, enabling `avdec_h264` for software H.264 decode in `gst-video-thumbnailer`. Closes #184.
+
 **Limitation:** The local override element CANNOT use `(@):` to include YAML files from the sub-project — includes are resolved within the current project only. All configuration must be inlined.
+
+### Overriding a gstreamer plugin to use codecs-extra ffmpeg
+
+The codecs-extra ffmpeg installs to a non-standard prefix (`/usr/lib/%{gcc_triplet}/codecs-extra/`). An override element that build-depends on it must extend `PKG_CONFIG_PATH` so meson can locate the libraries at configure time:
+
+```yaml
+build-depends:
+- freedesktop-sdk.bst:extensions/codecs-extra/ffmpeg.bst
+
+environment:
+  PKG_CONFIG_PATH: "/usr/lib/%{gcc_triplet}/codecs-extra/lib/pkgconfig:%{libdir}/pkgconfig:%{datadir}/pkgconfig"
+```
+
+The codecs stack (`elements/stacks/codecs.bst`) already pulls `extensions/codecs-extra/ffmpeg.bst` as a runtime dep, so the libraries are present in the OCI image — the override only needs codecs-extra as a `build-depends`.
+
+fdsdk `patches/gstreamer` (patch_queue) and the associated install-commands that verify patched .so files are omitted from overrides — they reference fdsdk-internal paths that cannot be resolved from a krytis override element.
 
 ## fdsdk `stripdir-suffix` is Debug-Symbol-Only
 
