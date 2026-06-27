@@ -420,6 +420,35 @@ The job should either create/update a PR (if a new release exists) or print "Alr
 
 **ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
 
+### .deb extraction in BST sandbox
+
+`.deb` files are `ar` archives containing `control.tar.xz` and `data.tar.xz`. BST has no native `.deb` source kind. Extract manually in `build-commands`:
+
+```yaml
+build-depends:
+- freedesktop-sdk.bst:components/binutils.bst  # ar
+- freedesktop-sdk.bst:components/tar.bst       # tar with xz
+
+config:
+  build-commands:
+  - ar x proton-pass.deb data.tar.xz
+  - tar -xJf data.tar.xz
+
+  install-commands:
+  - cp -a usr/lib/proton-pass "%{install-root}%{indep-libdir}/"
+  - ln -s '%{indep-libdir}/proton-pass/Proton Pass' "%{install-root}%{bindir}/proton-pass"
+  - install -Dm644 usr/share/applications/proton-pass.desktop "%{install-root}%{datadir}/applications/proton-pass.desktop"
+  - "%{install-extra}"
+```
+
+- `ar x` goes in `build-commands` (has `build-depends`); `cp`/`ln`/`install` go in `install-commands` (has `depends` only — `runtime-minimal` provides `cp`/`ln`/`install`).
+- `strip-binaries: ''` required — pre-built ELFs must not be stripped.
+- Update path: `kind: remote` + mise update task + CI job (same as other tarball-pinned elements).
+
+**Bundled Electron apps (e.g. Proton Pass):** ship the `.deb`'s bundled Electron as-is — `resourcesPath` is already correct inside `usr/lib/<app>/`. No ASAR patching needed. System Electron is only needed when stripping the bundled one.
+
+**Version discovery (Proton apps):** `https://proton.me/download/PassDesktop/linux/x64/version.json` returns `{"Releases": [{"CategoryName": "Stable", "Version": "X.Y.Z", ...}]}`. Parse with Python: `[r for r in data['Releases'] if r['CategoryName'] == 'Stable'][0]['Version']`.
+
 ### Raw binary elements (`kind: remote` + `filename`)
 
 For pre-built raw binaries (not tarballs) use `kind: remote`. The `filename:` key controls the staged filename — place it at the source level, *outside* the arch-conditional block, so `install-commands` can reference a stable name regardless of arch:
