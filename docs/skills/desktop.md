@@ -302,6 +302,22 @@ Requires fontconfig ≥ 2.13.95. fdsdk ships 2.14+ so this is safe.
       "%{install-root}%{sysconfdir}/fonts/conf.d/my.conf"
 ```
 
+### Variable font families have distinct fontconfig family names
+
+A variable-weight font (`MonoLisaCode Variable`) registers under a **different family name** from its static-weight counterparts (`MonoLisaCode`, `MonoLisaCode Bold`, etc.). Each distinct family name needs its own `<alias>` block in the Nerd Font fallback conf.
+
+Without a separate alias for `MonoLisaCode Variable`, Nerd Font glyphs render as `?` when the terminal is configured to use the variable family — even though the alias for `MonoLisaCode` exists and the font itself is present.
+
+Add one `<alias>` block per distinct family name:
+```xml
+<alias binding="same">
+  <family>MonoLisaCode Variable</family>
+  <prefer><family>Symbols Nerd Font Mono</family></prefer>
+</alias>
+```
+
+The variable family name can be found with `fc-list | grep -i "monolisa"` on the booted image.
+
 ## Diagnostic Commands (run on the booted image)
 
 ```bash
