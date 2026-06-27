@@ -1153,25 +1153,30 @@ Requirements for cache hit:
 
 **Applied in:** `elements/desktop/mesa-all-codecs.bst` overrides `extensions/mesa/mesa.bst` with `video_codecs: all`, providing H.264/H.265 VA-API support via a single mesa replacing the all_free base. Closes #158. See `docs/skills/desktop.md` § AMD VA-API H.264 Decode.
 
-**Applied in:** `elements/overrides/gstreamer-libav.bst` overrides `components/gstreamer-libav.bst` to build against `extensions/codecs-extra/ffmpeg.bst` instead of `components/ffmpeg.bst`, enabling `avdec_h264` for software H.264 decode in `gst-video-thumbnailer`. Closes #184.
-
 **Limitation:** The local override element CANNOT use `(@):` to include YAML files from the sub-project — includes are resolved within the current project only. All configuration must be inlined.
 
-### Overriding a gstreamer plugin to use codecs-extra ffmpeg
+### fdsdk codecs-extra: linker path, not a rebuild
 
-The codecs-extra ffmpeg installs to a non-standard prefix (`/usr/lib/%{gcc_triplet}/codecs-extra/`). An override element that build-depends on it must extend `PKG_CONFIG_PATH` so meson can locate the libraries at configure time:
+fdsdk's base ffmpeg (`components/ffmpeg.bst`) has H.264 decode disabled. The codecs-extra extension (`extensions/codecs-extra/ffmpeg.bst`) has it enabled, but installs to a non-standard prefix (`/usr/lib/%{gcc_triplet}/codecs-extra/lib/`). Without an explicit ldconfig entry, the dynamic linker finds only the base libavcodec (at the default search path) and `avdec_h264` is never registered.
+
+**Do NOT try to rebuild gst-libav against codecs-extra/ffmpeg.** Rebuilding has two unsolved problems: the override element cannot use cross-junction `(@):` includes, and at runtime the linker still resolves libavcodec.so.61 to the base path (ldconfig wins over RPATH in stripped production builds).
+
+**Correct approach**: add the codecs-extra lib path to ld.so.conf.d in a `config/` element. gst-libav discovers codecs at plugin-init time via `av_codec_iterate()`. When codecs-extra/libavcodec.so.61 loads instead of the base build, `avdec_h264` is registered without any gst-libav rebuild.
 
 ```yaml
-build-depends:
-- freedesktop-sdk.bst:extensions/codecs-extra/ffmpeg.bst
-
-environment:
-  PKG_CONFIG_PATH: "/usr/lib/%{gcc_triplet}/codecs-extra/lib/pkgconfig:%{libdir}/pkgconfig:%{datadir}/pkgconfig"
+# elements/config/codecs-extra-ldconfig.bst
+kind: manual
+config:
+  install-commands:
+  - |
+    install -Dm644 /dev/stdin \
+        "%{install-root}/etc/ld.so.conf.d/codecs-extra.conf" <<'EOF'
+    /usr/lib/%{gcc_triplet}/codecs-extra/lib
+    EOF
+  - "%{install-extra}"
 ```
 
-The codecs stack (`elements/stacks/codecs.bst`) already pulls `extensions/codecs-extra/ffmpeg.bst` as a runtime dep, so the libraries are present in the OCI image — the override only needs codecs-extra as a `build-depends`.
-
-fdsdk `patches/gstreamer` (patch_queue) and the associated install-commands that verify patched .so files are omitted from overrides — they reference fdsdk-internal paths that cannot be resolved from a krytis override element.
+Add this element to `elements/stacks/codecs.bst`. ld.so.conf.d entries are processed before default search paths by ldconfig, so codecs-extra/libavcodec takes precedence over the base build. Applied in `elements/config/codecs-extra-ldconfig.bst`. Closes #184.
 
 ## fdsdk `stripdir-suffix` is Debug-Symbol-Only
 
