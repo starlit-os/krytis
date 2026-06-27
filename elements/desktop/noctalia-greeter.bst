@@ -3,6 +3,9 @@
 # GitHub's archive/refs/heads/main.tar.gz regenerates on every push;
 # always pin to a full commit SHA.
 #
+# Currently pinned to kitten-lily/noctalia-greeter fix/show-pam-text-info-cue
+# pending upstream merge of the PAM_TEXT_INFO cue fix into noctalia-dev/main.
+#
 # The greeter runs inside Cage (kiosk wlroots compositor) via the
 # noctalia-greeter-session wrapper script that greetd calls.
 # gbm.pc and libdrm.pc live in mesa's non-standard GL/default path;
@@ -46,7 +49,5 @@ variables:
 
 sources:
 - kind: tar
-  url: github_files:noctalia-dev/noctalia-greeter/archive/ff35479bc920469fe371611915d7b20624237672.tar.gz
-  ref: 1dc779954cf4dc03645d16ddd4049992dab9c140030be50aae945ac7f1ba7bc9
-- kind: patch
-  path: files/noctalia-greeter/0001-show-pam-info-cue.patch
+  url: github_files:kitten-lily/noctalia-greeter/archive/e39ae7ff055c801876b15a815f1bc350733cf87c.tar.gz
+  ref: 4f4e32dc49aae753a358bb123d71c53b6e352fb0130dfba641710304669a38ad
