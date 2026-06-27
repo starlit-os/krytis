@@ -1,0 +1,19 @@
+[Unit]
+Description=Pangolin CLI
+Documentation=https://docs.pangolin.net/manage/clients/install-client
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/pangolin/credentials
+
+[Service]
+EnvironmentFile=/etc/pangolin/credentials
+ExecStart=/usr/bin/pangolin up \
+    --id ${PANGOLIN_CLIENT_ID} \
+    --secret ${PANGOLIN_CLIENT_SECRET} \
+    --endpoint ${PANGOLIN_ENDPOINT} \
+    --attach
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -27,6 +27,7 @@ depends:
   - freedesktop-sdk.bst:components/openssh.bst
   - freedesktop-sdk.bst:components/openssh-systemd.bst
   - freedesktop-sdk.bst:components/wpa-supplicant.bst
+  - core/pangolin-cli.bst
 
   # ── Network config ─────────────────────────────────────────────────
   - freedesktop-sdk.bst:vm/config/networkd.bst
