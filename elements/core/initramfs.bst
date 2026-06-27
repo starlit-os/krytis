@@ -7,6 +7,10 @@ build-depends:
   - stacks/bootc.bst
   - core/os-release.bst
   - core/linux-cachyos.bst
+  # Plymouth must be staged here so dracut's plymouth module can find
+  # the binary and libraries when building the initramfs. The plymouth
+  # dracut module is enabled via 30-bootcrew-bootc-container-build.conf.
+  - freedesktop-sdk.bst:components/plymouth.bst
 
 variables:
   uuidnamespace: 042dab3d-c024-448b-a70e-927daef22a59
@@ -40,7 +44,7 @@ config:
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-fix-bootc-module.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-fix-bootc-module.conf"
 
-      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc "\n' \
+      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth "\n' \
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf"
 

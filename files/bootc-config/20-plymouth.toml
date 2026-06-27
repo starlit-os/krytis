@@ -1,0 +1,3 @@
+# Suppress kernel messages during boot and enable Plymouth splash.
+# Applied by bootc at deploy time via /usr/lib/bootc/kargs.d/.
+kargs = ["quiet", "splash"]

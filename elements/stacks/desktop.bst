@@ -98,5 +98,12 @@ depends:
   # Required for ghostty URL links and any app that calls xdg-open.
   - desktop/xdg-utils.bst
 
+  # ── Boot splash ────────────────────────────────────────────────────────
+  # plymouth: graphical boot splash between firmware hand-off and greetd.
+  # plymouth-quit.service depends on display-manager.service; greetd ships
+  # Alias=display-manager.service so the quit ordering is automatic.
+  # kargs (quiet splash) are baked via config/bootc.bst kargs.d. Closes #100.
+  - freedesktop-sdk.bst:components/plymouth.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst

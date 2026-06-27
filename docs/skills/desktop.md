@@ -476,3 +476,30 @@ Notes:
 - `strings ... | grep VAProfileH264` is unreliable — VA-API profiles are enum integers, not string literals in the `.so`. Skip it.
 - `vainfo` is not in the image (`libva-utils` not packaged). `gst-inspect-1.0 va` is sufficient.
 - `libx264` encoder not in ffmpeg build; use `h264_vaapi` to generate test clips on the device.
+
+## Plymouth Boot Splash
+
+Plymouth is sourced from `freedesktop-sdk.bst:components/plymouth.bst` (also exists in `gnome-build-meta.bst:core-deps/plymouth.bst` — fdsdk was chosen to stay within the existing dep graph).
+
+### Three integration points
+
+**1. Runtime binary** — `freedesktop-sdk.bst:components/plymouth.bst` in `stacks/desktop.bst`. Provides `plymouthd`, `plymouth`, and systemd units. `plymouth-quit.service` has `After=display-manager.service`; greetd ships `Alias=display-manager.service`, so quit ordering is automatic.
+
+**2. Initramfs** — `freedesktop-sdk.bst:components/plymouth.bst` is also a build-dep of `core/initramfs.bst`. This stages Plymouth's binary and dracut module into the BST sandbox so dracut can include it. The dracut conf (`30-bootcrew-bootc-container-build.conf`) adds `plymouth` to `add_dracutmodules`.
+
+**3. Kernel args** — `files/bootc-config/20-plymouth.toml` ships `kargs = ["quiet", "splash"]` to `/usr/lib/bootc/kargs.d/`. bootc applies these at deploy time. `quiet` suppresses kernel log messages; `splash` activates the Plymouth splash on the kernel cmdline.
+
+### Pitfall: Plymouth must appear in both build-depends AND depends
+
+`core/initramfs.bst` lists Plymouth as a **build-dep** (staged into sandbox for dracut). `stacks/desktop.bst` lists Plymouth as a **runtime dep** (installed into the image for `plymouthd` and the systemd units). Listing it only in one place leaves either the initramfs splash or the post-switch-root quit service broken.
+
+### Verification (on booted image)
+
+```bash
+# Plymouth units present
+systemctl status plymouth-start.service plymouth-quit.service
+# Kernel args applied by bootc
+cat /proc/cmdline | grep -o 'quiet\|splash'
+# dracut module was included
+lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep plymouth
+```
