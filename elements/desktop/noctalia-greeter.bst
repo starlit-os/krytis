@@ -48,3 +48,5 @@ sources:
 - kind: tar
   url: github_files:noctalia-dev/noctalia-greeter/archive/ff35479bc920469fe371611915d7b20624237672.tar.gz
   ref: 1dc779954cf4dc03645d16ddd4049992dab9c140030be50aae945ac7f1ba7bc9
+- kind: patch
+  path: files/noctalia-greeter/0001-show-pam-info-cue.patch
