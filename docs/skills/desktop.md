@@ -125,23 +125,35 @@ support and will otherwise log cursor errors and potentially crash.
 
 ## Toolkit Vulkan / Wayland Environment (#97)
 
-Set in both `/etc/environment` (pam_env reads it → all sessions including greeter) and
-`/usr/lib/environment.d/90-krytis-session.conf` (systemd reads it → user session units):
+### Two-layer environment strategy
+
+Toolkit hints go in **`environment.d/`** only, never `/etc/environment`:
+
+- `/etc/environment` is read by `pam_env.so readenv=1` in the greetd PAM stack — vars there reach the greeter GTK client. `GSK_RENDERER=vulkan` there caused the noctalia-greeter window to render black (GTK Vulkan GSK renderer failed silently).
+- `/usr/lib/environment.d/90-krytis-session.conf` is read by the systemd user manager at user session start — safe for toolkit hints.
+
+**Why not rely on niri's `environment {}` block alone?** niri's environment block fires after the compositor starts. systemd user services launched before niri (`xdg-desktop-portal`, `pipewire`, D-Bus activated services) do not inherit it. `environment.d/` is set at user manager startup, before any service starts, so it covers the full session.
+
+`niri-session` also calls `systemctl --user import-environment` which propagates the PAM environment into the user session — but this fires at the same time as niri startup, too late for early services.
+
+### Variables in `environment.d/90-krytis-session.conf`
 
 | Variable | Value | Effect |
 |---|---|---|
+| `XDG_SESSION_TYPE` | `wayland` | Also in `/etc/environment` — logind/pam_systemd critical |
+| `XDG_CURRENT_DESKTOP` | `niri` | Also in `/etc/environment` — desktop identification |
+| `XDG_SESSION_DESKTOP` | `niri` | Session desktop for xdg-desktop-portal backend selection |
 | `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
-
-These are set in `config/greetd-config.bst` **only in `environment.d`**, NOT in `/etc/environment`.
-
-`/etc/environment` is read by `pam_env.so readenv=1` in the greetd PAM stack, so toolkit hints
-there reach the greeter client GTK app. This caused `GSK_RENDERER=vulkan` to make the noctalia-
-greeter window render black (GTK Vulkan GSK renderer failed silently). Toolkit hints belong only
-in `/usr/lib/environment.d/` which is read by the systemd user manager, not by the greeter PAM
-session.
-
-`GDK_BACKEND=wayland` is not set explicitly — GTK4 already prefers Wayland when
-`XDG_SESSION_TYPE=wayland` is present.
+| `GDK_BACKEND` | `wayland` | Forces GDK Wayland backend for GTK3 apps (GTK4 auto-detects) |
+| `EGL_PLATFORM` | `wayland` | EGL platform hint for Wayland |
+| `CLUTTER_BACKEND` | `wayland` | Clutter backend for GNOME apps |
+| `MOZ_ENABLE_WAYLAND` | `1` | Firefox/Thunderbird native Wayland |
+| `MOZ_DBUS_REMOTE` | `1` | Firefox D-Bus remote control on Wayland |
+| `GTK_IM_MODULE` | `simple` | Compose sequences — see Dead Keys section; also set in niri config.kdl for belt-and-suspenders |
+| `QT_AUTO_SCREEN_SCALE_FACTOR` | `1` | Qt HiDPI scaling |
+| `QT_WAYLAND_FORCE_DPI` | `physical` | Qt DPI from physical display |
+| `ELECTRON_OZONE_PLATFORM_HINT` | `auto` | Electron native Wayland via ozone |
+| `_JAVA_AWT_WM_NONREPARENTING` | `1` | Java AWT apps render correctly on Wayland |
 
 **Do not set `SDL_VIDEODRIVER=wayland`** in `environment.d` or `/etc/environment`. SDL2 apps break when this is forced: SDL2's own Wayland auto-detection (`SDL_VIDEODRIVER` unset) is more reliable than overriding it unconditionally. Setting it caused regressions in SDL2 apps that need fallback paths.
 
