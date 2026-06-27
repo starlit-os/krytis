@@ -513,6 +513,8 @@ Rules go in `/usr/lib/udev/rules.d/` (not `/etc/udev/rules.d/` — the latter is
 
 **Codeberg tarball sources:** Codeberg serves release tarballs at `https://codeberg.org/<user>/<repo>/archive/<tag>.tar.gz`. Add `codeberg_files: https://codeberg.org/` to `include/aliases.yml` file aliases (distinct from the `codeberg:` git alias which already exists) and use `codeberg_files:<user>/<repo>/archive/<tag>.tar.gz` in `kind: tar` sources. Update path via mise task + CI job (`track-mise` pattern) — `bst source track` is a no-op on `kind: tar`.
 
+**Desktop performance config element pattern (`config/desktop-udev.bst`):** A single `kind: manual` element with a `kind: local` source can install across multiple `/usr/lib/` subdirectories (udev/rules.d, modprobe.d, modules-load.d, tmpfiles.d) using a glob loop in `install-commands`. Use `strip-binaries: ""` since no binaries. Keep files under `files/<element-name>/` mirroring the target subdirectory structure. CachyOS-Settings (`github.com/CachyOS/CachyOS-Settings`) is a reference for performance udev rules: IO schedulers, audio PM, SATA link power, THP tmpfiles, amdgpu modprobe, ntsync modules-load. Omit: `30-zram.rules` (conflicts with `zram-generator`), `85-iw-regulatory.rules` (needs extra service), `69-hdparm.rules` (hdparm not in fdsdk), NVIDIA rules.
+
 ### Vulkan ICD discovery with fdsdk mesa
 
 fdsdk mesa installs Vulkan ICDs at `%{libdir}/GL/vulkan/icd.d/` (non-standard prefix). The Vulkan loader searches `$XDG_DATA_DIRS/vulkan/icd.d/` and `/usr/share/vulkan/icd.d/` — neither of which is the fdsdk path.

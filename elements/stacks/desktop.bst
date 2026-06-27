@@ -114,5 +114,10 @@ depends:
   # steam-devices (no rule overlap). Closes #186.
   - desktop/game-devices-udev.bst
 
+  # ── System performance tuning ──────────────────────────────────────────
+  # IO schedulers, audio PM, SATA link power, THP, amdgpu modprobe, ntsync.
+  # Ported from CachyOS-Settings (udev rules, modprobe.d, modules-load.d, tmpfiles.d).
+  - config/desktop-udev.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
