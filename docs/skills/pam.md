@@ -39,6 +39,22 @@ Upstream bug: passing the wrong property key to `CreateCollection` causes an `un
 Correct key: `org.freedesktop.Secret.Collection.Label` (capital S, singular Secret)  
 Wrong key: `org.freedesktop.secrets.collection.Label` (lowercase, plural) → panic
 
+## noctalia-greeter: PAM_TEXT_INFO (FIDO2 cue) display
+
+`driveAuthConversation` in `greeter_surface.cpp` ACKs `Info` messages with an empty response but did not call `updateStatus` for them — the "Please touch your security key" cue was silently dropped. The fix (krytis patch `files/noctalia-greeter/0001-show-pam-info-cue.patch`) adds:
+- `updateStatus(authMsg.message, isError)` for both Info and Error messages.
+- `layoutScene`: `hasStatus = !m_status.empty()` (was `m_statusIsError && …`).
+- `updateStatus(text, false)`: store `text` instead of clearing (empty string still hides the block).
+- `commitImmediateFrame(true)` before `postAuthData("")`: `postAuthData` blocks in `::recv()` while PAM waits for hardware touch; the Wayland event loop cannot run during the block so `requestLayout()` never fires. `commitImmediateFrame(true)` forces `renderNow()` → `eglSwapBuffers()` → `flush()` synchronously before the recv. Same pattern as `tryAuthenticate()` before its blocking calls.
+
+Upstream PR pending for noctalia-greeter #133. Remove the patch once merged and bumped.
+
+## noctalia polkit agent: FIDO2 works out of the box
+
+Noctalia ships its own polkit agent (`src/dbus/polkit/`). The `show-info` signal (from `PAM_TEXT_INFO`) is wired to `showInfoCallback → setSupplementary(text, false)`, which `polkit_panel.cpp` displays in `promptLabel` when no input is required. Multi-round (PIN prompt) is handled via the `request` signal → `handleRequest` → input field shown. No krytis config change needed for polkit FIDO2. Verified by code audit against polkit `9e4894c` and noctalia `78e528b` (issue #137).
+
+**PAM chain**: `polkit-1` → `system-auth` → `pam_u2f.so`. The polkit meson.build defaults to `system-auth` for non-SUSE/non-BSD Linux builds.
+
 ## PAM file path in Freedesktop SDK
 
 fdsdk uses an arch-specific libdir: `/usr/lib/x86_64-linux-gnu`. PAM modules must be installed to `/usr/lib/x86_64-linux-gnu/security/`. In BST variables: `pam_moduledir=%{libdir}/security`.
