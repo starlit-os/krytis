@@ -484,6 +484,18 @@ This is the same pattern used by `freedesktop-sdk.bst:components/openssh.bst` (l
 | Adding `ostree-minimal.bst` when `ostree.bst` is already in the image | Causes non-whitelisted overlaps at `oci/krytis/runtime.bst` — `ostree.bst` (pulled in by `core/bootc.bst`) is a superset; omit `ostree-minimal.bst` entirely |
 | `touch /etc/machine-id` doesn't trigger first boot | `ConditionFirstBoot=yes` (used by `systemd-firstboot.service`) requires `/etc/machine-id` to contain the literal string `uninitialized\n`, not an empty file. Use `printf 'uninitialized\n' > /etc/machine-id` in the OCI stack integration-commands. |
 
+## Job Parallelism in `kind: manual`
+
+`kind: manual` build sandboxes do NOT have the `JOBS` environment variable set. Only BST's meson/cmake buildsystem plugins inject `JOBS`. Use `$(nproc)` instead.
+
+```yaml
+build-commands:
+- ninja -v -j$(nproc) -C _build   # correct
+# ninja -v -j${JOBS} -C _build    # WRONG — ${JOBS} is empty, ninja exits with "invalid -j parameter"
+```
+
+Do NOT use `${JOBS}`, `%{max-jobs}`, or `$JOBS` in `kind: manual` elements.
+
 ## Rust / Cargo Projects
 
 ### Strategy A: cargo2 source (live Cargo.lock)
