@@ -485,6 +485,36 @@ If an upstream Rust project ships a service file or config alongside the binary,
 
 **Example:** `gnome-build-meta.bst:sdk/xwayland-satellite.bst` installs `/usr/bin/xwayland-satellite` only. The upstream `resources/xwayland-satellite.service` is NOT installed. Additionally, that upstream service file hardcodes `/usr/local/bin/xwayland-satellite` — wrong for fdsdk installs. The companion `config/xwayland-satellite.bst` ships a corrected copy pointing to `/usr/bin/xwayland-satellite`.
 
+### udev rules elements
+
+Install udev rules via a `kind: manual` element with a `local` source pointing to a `files/udev/` directory. Set `strip-binaries: ""` to suppress the stripper (no binaries to strip).
+
+```yaml
+kind: manual
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  strip-binaries: ""
+
+config:
+  install-commands:
+  - install -Dm644 <name>.rules "%{install-root}/usr/lib/udev/rules.d/<name>.rules"
+
+sources:
+- kind: local
+  path: files/udev
+```
+
+Rules go in `/usr/lib/udev/rules.d/` (not `/etc/udev/rules.d/` — the latter is for admin overrides). Wire the element into `stacks/base-system.bst`.
+
+**Hiding composefs erofs loop devices from UDisks/Nautilus:** `core/composefs-loop-udisks-ignore.bst` installs `90-hide-composefs-loop.rules`. Matches `KERNEL=="loop*"` + `ENV{ID_FS_TYPE}=="erofs"` and sets `ENV{UDISKS_IGNORE}="1"`. The `ATTR{loop/backing_file}` glob approach is intentionally avoided — fnmatch `*` does not cross `/` separators, so `/composefs/objects/<2-char>/<hash>` paths would not match. Pattern sourced from dakota.
+
+**Codeberg tarball sources:** Codeberg serves release tarballs at `https://codeberg.org/<user>/<repo>/archive/<tag>.tar.gz`. Add `codeberg_files: https://codeberg.org/` to `include/aliases.yml` file aliases (distinct from the `codeberg:` git alias which already exists) and use `codeberg_files:<user>/<repo>/archive/<tag>.tar.gz` in `kind: tar` sources. Update path via mise task + CI job (`track-mise` pattern) — `bst source track` is a no-op on `kind: tar`.
+
+**Desktop performance config element pattern (`config/desktop-udev.bst`):** A single `kind: manual` element with a `kind: local` source can install across multiple `/usr/lib/` subdirectories (udev/rules.d, modprobe.d, modules-load.d, tmpfiles.d) using a glob loop in `install-commands`. Use `strip-binaries: ""` since no binaries. Keep files under `files/<element-name>/` mirroring the target subdirectory structure. CachyOS-Settings (`github.com/CachyOS/CachyOS-Settings`) is a reference for performance udev rules: IO schedulers, audio PM, SATA link power, THP tmpfiles, amdgpu modprobe, ntsync modules-load. Omit: `30-zram.rules` (conflicts with `zram-generator`), `85-iw-regulatory.rules` (needs extra service), `69-hdparm.rules` (hdparm not in fdsdk), NVIDIA rules.
+
 ### Vulkan ICD discovery with fdsdk mesa
 
 fdsdk mesa installs Vulkan ICDs at `%{libdir}/GL/vulkan/icd.d/` (non-standard prefix). The Vulkan loader searches `$XDG_DATA_DIRS/vulkan/icd.d/` and `/usr/share/vulkan/icd.d/` — neither of which is the fdsdk path.
@@ -781,6 +811,20 @@ overlap-whitelist:
 - `overlap-whitelist` must list every plain-name symlink that collides; cp/mv/rm are excluded from symlinks AND from the whitelist.
 - Build flags: `--features feat_os_unix --no-default-features` (no `--locked`; uses `cargo2` source for offline crate registry).
 - Update path: `kind: git_repo` with `track:` glob → option A (no mise update task or CI override needed beyond the `track:` matrix entry in `track-bst-sources.yml`).
+
+## `kind: local` source becomes dangling when directory is emptied
+
+Git does not track empty directories. If the last file inside a `files/<name>/` directory is deleted, the directory itself disappears from the working tree. Any element with `- kind: local / path: files/<name>` will then fail at element resolution with:
+
+```
+Specified path 'files/<name>' does not exist
+```
+
+BST validates `kind: local` paths at resolution time (before any build), so the failure blocks the entire pipeline — not just the affected element.
+
+**Fix:** remove the `kind: local` source block from the element when you delete the last file it referenced. Don't leave the stale source entry expecting git to preserve an empty directory.
+
+**How it happened (#198):** `ebfb813` deleted `files/pangolin-cli/pangolin-cli.service` (the only file in that directory). The `kind: local` source in `core/pangolin-cli.bst` was not cleaned up, breaking all full-image builds on `main` until #198 landed.
 
 ## System Tool Requirements for `bst source track`
 

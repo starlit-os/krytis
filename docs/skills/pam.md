@@ -45,6 +45,7 @@ Wrong key: `org.freedesktop.secrets.collection.Label` (lowercase, plural) → pa
 - `updateStatus(authMsg.message, isError)` for both Info and Error messages.
 - `layoutScene`: `hasStatus = !m_status.empty()` (was `m_statusIsError && …`).
 - `updateStatus(text, false)`: store `text` instead of clearing (empty string still hides the block).
+- `commitImmediateFrame(true)` before `postAuthData("")`: `postAuthData` blocks in `::recv()` while PAM waits for hardware touch; the Wayland event loop cannot run during the block so `requestLayout()` never fires. `commitImmediateFrame(true)` forces `renderNow()` → `eglSwapBuffers()` → `flush()` synchronously before the recv. Same pattern as `tryAuthenticate()` before its blocking calls.
 
 Upstream PR pending for noctalia-greeter #133. Remove the patch once merged and bumped.
 

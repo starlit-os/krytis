@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#MISE description="Update game-devices-udev element to the latest Codeberg release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/game-devices-udev.bst"
+API="https://codeberg.org/api/v1/repos/fabiscafe/game-devices-udev/releases?limit=1"
+
+echo "==> Fetching latest game-devices-udev release..."
+LATEST_TAG=$(curl -sf "$API" | jq -r '.[0].tag_name')
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_VER=$(grep -oP 'archive/\K[^/]+(?=\.tar\.gz)' "$ELEMENT" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_TAG}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+TARBALL_URL="https://codeberg.org/fabiscafe/game-devices-udev/archive/${LATEST_TAG}.tar.gz"
+echo "==> Downloading ${TARBALL_URL}..."
+curl -sSfL "$TARBALL_URL" -o "$TMPDIR/src.tar.gz"
+NEW_SHA=$(sha256sum "$TMPDIR/src.tar.gz" | awk '{print $1}')
+echo "    sha256=${NEW_SHA}"
+
+CURRENT_SHA=$(grep 'ref:' "$ELEMENT" | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_TAG}"
+sed -i "s|archive/${CURRENT_VER}\.tar\.gz|archive/${LATEST_TAG}.tar.gz|" "$ELEMENT"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "$ELEMENT"
+
+echo "==> Done. Run 'mise run validate' to verify."
