@@ -40,6 +40,8 @@ depends:
   - freedesktop-sdk.bst:components/xfsprogs.bst
   - freedesktop-sdk.bst:components/erofs-utils.bst
   - freedesktop-sdk.bst:components/dosfstools.bst
+  # composefs loop device filter: hides erofs loop mounts from UDisks/Nautilus.
+  - core/composefs-loop-udisks-ignore.bst
 
   # ── Security / TPM / FIDO2 ─────────────────────────────────────────
   - freedesktop-sdk.bst:components/tpm2-tss.bst

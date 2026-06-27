@@ -485,6 +485,32 @@ If an upstream Rust project ships a service file or config alongside the binary,
 
 **Example:** `gnome-build-meta.bst:sdk/xwayland-satellite.bst` installs `/usr/bin/xwayland-satellite` only. The upstream `resources/xwayland-satellite.service` is NOT installed. Additionally, that upstream service file hardcodes `/usr/local/bin/xwayland-satellite` — wrong for fdsdk installs. The companion `config/xwayland-satellite.bst` ships a corrected copy pointing to `/usr/bin/xwayland-satellite`.
 
+### udev rules elements
+
+Install udev rules via a `kind: manual` element with a `local` source pointing to a `files/udev/` directory. Set `strip-binaries: ""` to suppress the stripper (no binaries to strip).
+
+```yaml
+kind: manual
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  strip-binaries: ""
+
+config:
+  install-commands:
+  - install -Dm644 <name>.rules "%{install-root}/usr/lib/udev/rules.d/<name>.rules"
+
+sources:
+- kind: local
+  path: files/udev
+```
+
+Rules go in `/usr/lib/udev/rules.d/` (not `/etc/udev/rules.d/` — the latter is for admin overrides). Wire the element into `stacks/base-system.bst`.
+
+**Hiding composefs erofs loop devices from UDisks/Nautilus:** `core/composefs-loop-udisks-ignore.bst` installs `90-hide-composefs-loop.rules`. Matches `KERNEL=="loop*"` + `ENV{ID_FS_TYPE}=="erofs"` and sets `ENV{UDISKS_IGNORE}="1"`. The `ATTR{loop/backing_file}` glob approach is intentionally avoided — fnmatch `*` does not cross `/` separators, so `/composefs/objects/<2-char>/<hash>` paths would not match. Pattern sourced from dakota.
+
 ### Vulkan ICD discovery with fdsdk mesa
 
 fdsdk mesa installs Vulkan ICDs at `%{libdir}/GL/vulkan/icd.d/` (non-standard prefix). The Vulkan loader searches `$XDG_DATA_DIRS/vulkan/icd.d/` and `/usr/share/vulkan/icd.d/` — neither of which is the fdsdk path.
