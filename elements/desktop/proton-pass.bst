@@ -26,12 +26,7 @@ config:
   - tar -xJf data.tar.xz
 
   install-commands:
-  - cp -a usr/lib/proton-pass "%{install-root}%{indep-libdir}/"
-  - |
-    install -d "%{install-root}%{bindir}"
-    ln -s '%{indep-libdir}/proton-pass/Proton Pass' "%{install-root}%{bindir}/proton-pass"
-  - install -Dm644 usr/share/applications/proton-pass.desktop "%{install-root}%{datadir}/applications/proton-pass.desktop"
-  - install -Dm644 usr/share/pixmaps/proton-pass.png "%{install-root}%{datadir}/pixmaps/proton-pass.png"
+  - cp -a usr "%{install-root}/"
   - "%{install-extra}"
 
 sources:
