@@ -105,5 +105,14 @@ depends:
   # kargs (quiet splash) are baked via config/bootc.bst kargs.d. Closes #100.
   - freedesktop-sdk.bst:components/plymouth.bst
 
+  # ── Input devices ──────────────────────────────────────────────────────
+  # steam-devices: Valve gaming controllers (Steam Controller, Index, Deck,
+  # DualShock 4/5, Xbox, etc.) — udev rules granting user access.
+  - freedesktop-sdk.bst:components/steam-devices.bst
+  # game-devices-udev: broader set — Sony, Microsoft, Nintendo, 8BitDo, Razer,
+  # HTC (Vive), Logitech, Thrustmaster, VKB, and others. Coexists with
+  # steam-devices (no rule overlap). Closes #186.
+  - desktop/game-devices-udev.bst
+
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
