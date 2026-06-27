@@ -2,8 +2,8 @@ kind: manual
 
 # Prebuilt pangolin-cli binary (https://github.com/fosrl/cli).
 # Pangolin is a reverse proxy / VPN client (newt-compatible).
-# The systemd service only starts when /etc/pangolin/credentials exists
-# (ConditionPathExists), so the binary is safe to ship unconditionally.
+# Ships binary only — no systemd service or preset. Users configure and
+# run pangolin manually or via their own units with /etc/pangolin/credentials.
 #
 # Credentials file format (/etc/pangolin/credentials — not in OCI image):
 #   PANGOLIN_CLIENT_ID=<id>
@@ -37,9 +37,3 @@ variables:
 config:
   install-commands:
   - install -Dm755 pangolin-cli "%{install-root}%{bindir}/pangolin"
-  - install -Dm644 pangolin-cli.service "%{install-root}%{indep-libdir}/systemd/system/pangolin-cli.service"
-  - |
-    install -Dm644 /dev/stdin \
-        "%{install-root}%{indep-libdir}/systemd/system-preset/80-pangolin-cli.preset" <<'EOF'
-    enable pangolin-cli.service
-    EOF
