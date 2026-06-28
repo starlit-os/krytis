@@ -531,3 +531,16 @@ cat /proc/cmdline | grep -o 'quiet\|splash'
 # dracut module was included
 lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep plymouth
 ```
+
+---
+
+## AccountsService / D-Bus-activated gnome-build-meta daemons
+
+`gnome-build-meta.bst:core-deps/accountsservice.bst` provides the `org.freedesktop.Accounts` D-Bus interface. noctalia-greeter queries it to load per-user avatar paths (`IconFile` property → `/var/lib/AccountsService/icons/<username>`).
+
+Pattern for gnome-build-meta D-Bus-activated services:
+- **No systemd preset** — `Type=dbus` in the service file; D-Bus activates the daemon on first call. No `system-preset` drop-in needed.
+- **No config element** — upstream meson build installs `tmpfiles.d/accountsservice.conf` (creates `/var/lib/AccountsService/` and `/var/lib/AccountsService/icons/`), the D-Bus policy config, and the `.service` activation file. Nothing to patch or override.
+- **No new tracking** — versioned by the `gnome-build-meta.bst` junction, updated by the `track-core-junctions` CI job. Do not add a matrix entry to `track-bst-sources.yml`.
+
+Reference: `elements/stacks/desktop.bst`. Closes #182.

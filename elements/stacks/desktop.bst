@@ -34,6 +34,13 @@ depends:
   # ── Credentials ────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/gnome-keyring.bst
 
+  # ── User accounts ──────────────────────────────────────────────────────
+  # accounts-daemon: AccountsService D-Bus daemon. noctalia-greeter queries
+  # org.freedesktop.Accounts for user avatar paths (IconFile property).
+  # Without it the greeter falls back to the generic person glyph. D-Bus
+  # activated — no systemd preset needed. Closes #182.
+  - gnome-build-meta.bst:core-deps/accountsservice.bst
+
   # ── Files ───────────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/nautilus.bst
   # gvfs-daemon: GIO volume monitor runtime plugins via D-Bus. Without it Nautilus
