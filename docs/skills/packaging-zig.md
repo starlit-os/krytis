@@ -65,16 +65,13 @@ config:
         zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep" || true
       done
 
-    # Stage 3: Place git deps manually (see lesson below)
+    # Stage 3: Populate git deps from local Gitea commit tarballs via zig fetch
+    # (see lesson: "git deps and zig fetch" below)
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-      place_git_dep() {
-        local tarball="$1" zig_hash="$2"
-        local dest="$ZIG_GLOBAL_CACHE_DIR/p/$zig_hash"
-        mkdir -p "$dest"
-        tar xf "$tarball" --strip-components=1 -C "$dest"
-      }
-      place_git_dep "zig-deps-git/<commit-sha>.tar.gz" "<zig-content-hash>"
+      for dep in zig-deps-git/*.tar.gz; do
+        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
+      done
 
   install-commands:
     - |
@@ -101,12 +98,30 @@ config:
 
 ## Lessons
 
-### git deps cannot be resolved by `zig fetch` — manual cache placement required
+### git deps: use `zig fetch <local-tarball>`, not manual cache placement
 
-Dependencies declared as `git+https://...` in `build.zig.zon` cannot be fetched by
-`zig fetch` from a tarball. Download the commit tarball (e.g., GitHub archive), stage under
-`zig-deps-git/`, and extract into the Zig cache at the exact content-hash path the build
-expects. The expected hash is the `hash:` field in `build.zig.zon` for that dep.
+**Zig 0.16.0**: For `git+https://` deps, Zig 0.16.0 ignores content placed manually in
+`p/<hash>/` and attempts a live network fetch regardless. Only entries written by `zig fetch`
+itself are recognised. Use `zig fetch --global-cache-dir <dir> <local-tarball>` to populate
+the cache — `zig fetch` handles the correct 0.16.0 cache format and metadata internally.
+
+If the Gitea commit archive contains the same content as a `git clone` of that commit (it
+should, since Gitea uses `git archive` internally), the content hash `zig fetch` computes will
+match the hash in `build.zig.zon` for the corresponding `git+https://` dep and `zig build`
+will resolve the dependency from cache.
+
+**Symptom if hashes DO mismatch**: `zig build` will report a hash mismatch (not
+NameServerFailure). That means the Gitea archive content differs from what `zig fetch
+git+https://` would produce. In that case, patch `build.zig.zon` to use `https://` URLs
+pointing at the Gitea archive, with the hash that `zig fetch` output.
+
+**Zig 0.15.x and earlier**: The `place_git_dep` function (extract tarball into `p/<hash>/`)
+did work in 0.15.x. The behaviour change is a 0.16.0 regression/redesign. Do not use
+`place_git_dep` for packages built with Zig 0.16.0+.
+
+`tar.bst` and `gzip.bst` are NOT needed in build-depends when using `zig fetch` (Zig handles
+decompression internally). They are only needed if using the system `tar` command directly
+(e.g., the old `place_git_dep` pattern).
 
 ### Use `DESTDIR + --prefix /usr`, not `--prefix %{install-root}/usr`
 
@@ -155,21 +170,21 @@ install-commands:
 Ghostty's debug info is intentionally retained (for crash reporting). Set `strip-binaries: ""`
 to opt out of BST's default strip step.
 
-### `tar` and `gzip` must be in `build-depends`
+### `tar` and `gzip` in build-depends
 
-The `place_git_dep` helper calls `tar xf` and implicitly decompresses `.tar.gz` via gzip. Neither
-`tar` nor `gzip` is available in the BST sandbox by default. Add both explicitly:
+Only needed if you use the system `tar` binary directly (e.g., the old `place_git_dep` pattern
+for Zig 0.15.x). If using `zig fetch <tarball>` (correct pattern for 0.16.0), these are NOT
+required — Zig decompresses tarballs internally.
+
+If you do need them (0.15.x compat or other shell tar usage), add:
 
 ```yaml
 build-depends:
-  - desktop/zig.bst          # or zig-0.16.bst
   - freedesktop-sdk.bst:components/tar.bst
   - freedesktop-sdk.bst:components/gzip.bst
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 ```
 
-Symptom of missing these: `sh: line N: tar: command not found` at exit code 127 during
-`place_git_dep`.
+Symptom of missing: `sh: line N: tar: command not found` at exit code 127.
 
 ### Zig version splits: use a separate element when minimum_zig_version conflicts
 

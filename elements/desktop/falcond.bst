@@ -11,8 +11,6 @@ variables:
 
 build-depends:
   - desktop/zig-0.16.bst
-  - freedesktop-sdk.bst:components/tar.bst
-  - freedesktop-sdk.bst:components/gzip.bst
   - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
 depends:
@@ -24,7 +22,9 @@ sources:
     url: pikaos_files:general-packages/falcond/archive/v2.0.9.tar.gz
     ref: aee3bf2a7e0f129e9e34e93f3d436535a11d1148a0ef2107cf739c48ca66fea2
 
-  # Zig git deps (git+https:// — cannot use zig fetch, placed manually into Zig cache)
+  # Zig git deps — staged as Gitea commit archives; populated into the Zig cache via
+  # `zig fetch <local-tarball>` (see build-commands). zig fetch handles the 0.16.0 cache
+  # format correctly; manual place_git_dep does not work in 0.16.0 for git+https:// deps.
   # otter_conf v0.11.25 @ 8cf5df2117daba9b3af87cdedf3f92aa24a5f40e
   - kind: remote
     url: pikaos_files:otter-shell/otter-conf/archive/8cf5df2117daba9b3af87cdedf3f92aa24a5f40e.tar.gz
@@ -45,36 +45,20 @@ sources:
 
 config:
   build-commands:
-    # Stage 1: Set up Zig cache
+    # Populate Zig global cache from local Gitea commit archives using `zig fetch`.
+    # In Zig 0.16.0, git+https:// deps are always re-fetched via network regardless of
+    # what is placed in p/<hash>/ manually. Only `zig fetch <tarball>` produces a cache
+    # entry that zig build recognises as satisfying a git dep. If the Gitea archive
+    # content matches the git tree (it should, since Gitea uses git-archive internally),
+    # the content hash zig fetch computes will match the hash in build.zig.zon.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
-      mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p"
-
-    # Stage 2: Place all pika-os git deps into Zig cache at their content-hash paths.
-    # git+https:// deps cannot be fetched by zig fetch from a tarball; extract manually.
-    # Hash values come from build.zig.zon .dependencies[*].hash fields.
-    - |
-      export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-
-      place_git_dep() {
-        local tarball="$1" zig_hash="$2"
-        local dest="$ZIG_GLOBAL_CACHE_DIR/p/$zig_hash"
-        mkdir -p "$dest"
-        tar xf "$tarball" --strip-components=1 -C "$dest"
-      }
-
-      place_git_dep \
-        "zig-deps-git/8cf5df2117daba9b3af87cdedf3f92aa24a5f40e.tar.gz" \
-        "otter_conf-1.11.25-d7vdxExeAgDhUBW5RuaeGgpYbxLTtsBTMmSI_1wMoZer"
-
-      place_git_dep \
-        "zig-deps-git/c018c37f32873eb93603a93450e101064de1ded6.tar.gz" \
-        "otter_desktop-0.11.25-nwUfzR_gMAAgl_0gKsnjpPiOOkEfVxTP8eL4_3kow8uQ"
-
-      place_git_dep \
-        "zig-deps-git/de2219f05c41a180bce304cf377a2983c303e870.tar.gz" \
-        "otter_utils-0.11.25-DYWsuzmFAQD_zzQrRwYPYvnchY1lLp8rJoUjZwtED1Wx"
+      mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+      for dep in zig-deps-git/*.tar.gz; do
+        echo "zig fetch: $dep"
+        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
+      done
 
   install-commands:
     # Build: source lives in the falcond/ subdir of the repo root
