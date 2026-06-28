@@ -656,3 +656,19 @@ pika-os git deps.
 Runtime: requires `power-profiles-daemon` (or `tuned-ppd`). Do NOT run alongside gamemode —
 they conflict. SCX scheduler binaries (`scx_lavd`, `scx_bpfland`) are optional; falcond
 feature-detects them and degrades gracefully if absent. Closes #221.
+
+## Kernel Tuning — config/desktop-udev.bst
+
+`config/desktop-udev.bst` installs kernel configuration files from `files/desktop-tweaks/`. It covers:
+
+| Directory | Install path | Purpose |
+|---|---|---|
+| `udev/` | `/usr/lib/udev/rules.d/` | Audio PM, HPET perms, SATA link power, I/O schedulers |
+| `modprobe.d/` | `/usr/lib/modprobe.d/` | amdgpu force-load for GCN 1.0+ |
+| `modules-load.d/` | `/usr/lib/modules-load.d/` | ntsync autoload |
+| `tmpfiles.d/` | `/usr/lib/tmpfiles.d/` | THP tuning |
+| `sysctl.d/` | `/usr/lib/sysctl.d/` | Kernel parameter overrides |
+
+**CachyOS sysctl overrides.** CachyOS ships a hardened kernel with `kernel.unprivileged_userns_clone=0`. This disables the sandbox in Flatpak apps (bubblewrap) and Chromium/Electron. `files/desktop-tweaks/sysctl.d/99-userns.conf` re-enables it. The pattern for any future CachyOS sysctl override is the same: add a `.conf` file under `files/desktop-tweaks/sysctl.d/` and it is installed automatically by the loop in `desktop-udev.bst` — except the current element installs `sysctl.d/99-userns.conf` explicitly (no glob loop yet). Add a glob loop if a second sysctl file is needed.
+
+Reference: `elements/config/desktop-udev.bst`. Closes #224.

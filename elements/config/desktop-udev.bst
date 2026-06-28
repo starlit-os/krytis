@@ -22,6 +22,9 @@ kind: manual
 #   thp.conf          — THP defrag=defer+madvise (improves tcmalloc/jemalloc perf)
 #   thp-shrinker.conf — THP shrinker max_ptes_none=409 (kernel ≥6.12; reduces OOM risk)
 #   amd-pstate-epp.conf — set EPP=balance_performance for amd-pstate-epp driver. Closes #220.
+#
+# sysctl.d (usr/lib/sysctl.d/):
+#   99-userns.conf — kernel.unprivileged_userns_clone=1 (re-enables Flatpak/bubblewrap sandbox)
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
@@ -41,6 +44,7 @@ config:
     for f in tmpfiles.d/*.conf; do
       install -Dm644 "$f" "%{install-root}/usr/lib/tmpfiles.d/$(basename "$f")"
     done
+  - install -Dm644 sysctl.d/99-userns.conf "%{install-root}/usr/lib/sysctl.d/99-userns.conf"
 
 sources:
 - kind: local
