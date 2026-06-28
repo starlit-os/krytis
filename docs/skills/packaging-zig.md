@@ -154,3 +154,36 @@ install-commands:
 
 Ghostty's debug info is intentionally retained (for crash reporting). Set `strip-binaries: ""`
 to opt out of BST's default strip step.
+
+### `tar` and `gzip` must be in `build-depends`
+
+The `place_git_dep` helper calls `tar xf` and implicitly decompresses `.tar.gz` via gzip. Neither
+`tar` nor `gzip` is available in the BST sandbox by default. Add both explicitly:
+
+```yaml
+build-depends:
+  - desktop/zig.bst          # or zig-0.16.bst
+  - freedesktop-sdk.bst:components/tar.bst
+  - freedesktop-sdk.bst:components/gzip.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+```
+
+Symptom of missing these: `sh: line N: tar: command not found` at exit code 127 during
+`place_git_dep`.
+
+### Zig version splits: use a separate element when minimum_zig_version conflicts
+
+If one package (e.g., ghostty) requires Zig 0.15.x and another (e.g., falcond) requires
+`minimum_zig_version = "0.16.0"`, do NOT upgrade the shared `zig.bst` — Zig is not
+backwards-compatible across minor versions and cache hash formats change. Instead:
+
+1. Keep `zig.bst` at the version used by the majority / most stable package.
+2. Create `zig-0.16.bst` (or `zig-<version>.bst`) mirroring `zig.bst` at the new version.
+3. Have the new package reference the versioned element.
+4. Drop the versioned element once the other packages have caught up.
+
+Zig 0.16.0 changed how `zig build` extracts packages: deps are now placed into a project-local
+`zig-pkg/` directory. The global cache `p/<hash>/` placement approach used for 0.15.x still
+works for `zig fetch` (HTTP deps) but transitive git deps from within those packages get
+re-fetched live via `git+https://`, which fails in the network-isolated BST sandbox. Packages
+packaged against 0.15.x need updating before they can build under 0.16.x.

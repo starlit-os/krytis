@@ -10,7 +10,9 @@ variables:
   strip-binaries: ""
 
 build-depends:
-  - desktop/zig.bst
+  - desktop/zig-0.16.bst
+  - freedesktop-sdk.bst:components/tar.bst
+  - freedesktop-sdk.bst:components/gzip.bst
   - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
 depends:
