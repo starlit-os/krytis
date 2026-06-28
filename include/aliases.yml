@@ -4,6 +4,7 @@ aliases:
   crates: https://static.crates.io/
   ghostty_deps: https://deps.files.ghostty.org/
   ghostty_releases: https://release.files.ghostty.org/
+  pikaos_files: https://git.pika-os.com/
   ziglang: https://ziglang.org/
   freedesktop_files: https://gitlab.freedesktop.org/
   freedesktop_software: https://www.freedesktop.org/software/

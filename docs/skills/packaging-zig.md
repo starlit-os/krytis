@@ -123,6 +123,33 @@ ghostty_releases: https://release.files.ghostty.org/
 ziglang: https://ziglang.org/
 ```
 
+### pika-os git deps (falcond pattern)
+
+falcond's `build.zig.zon` deps are all `git+https://git.pika-os.com/...` — no CDN tarballs. All go
+in `zig-deps-git/` (not `zig-deps/`), placed manually via `place_git_dep`. Add the alias:
+
+```yaml
+pikaos_files: https://git.pika-os.com/
+```
+
+Archive URL from Gitea: `pikaos_files:<org>/<repo>/archive/<commit-sha>.tar.gz`
+
+The `place_git_dep` function is the same as for GitHub git deps (strip-components=1 into
+`$ZIG_GLOBAL_CACHE_DIR/p/<zig-hash>/`). Hash values come from the `.hash` field in `build.zig.zon`.
+
+### Source lives in a subdirectory — cd before zig build
+
+If the repo root contains the source in a subdirectory (e.g. `falcond/build.zig`), prefix the
+build command with `cd <subdir>`. All commands in a BST `|` block run in the same shell, so `cd`
+persists for subsequent lines within that block.
+
+```yaml
+install-commands:
+  - |
+    cd falcond
+    DESTDIR="%{install-root}" zig build --prefix /usr ...
+```
+
 ### `strip-binaries: ""` disables the default strip pass
 
 Ghostty's debug info is intentionally retained (for crash reporting). Set `strip-binaries: ""`

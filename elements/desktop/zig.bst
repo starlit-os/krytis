@@ -4,11 +4,11 @@ sources:
 - kind: tar
   (?):
   - arch == "x86_64":
-      url: ziglang:download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
-      ref: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+      url: ziglang:download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+      ref: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
   - arch == "aarch64":
-      url: ziglang:download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz
-      ref: 958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f
+      url: ziglang:download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz
+      ref: ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst

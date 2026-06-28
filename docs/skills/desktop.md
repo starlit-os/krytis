@@ -639,3 +639,20 @@ w /sys/devices/system/cpu/cpufreq/policy*/energy_performance_preference - - - - 
 ```
 
 Add as `files/desktop-tweaks/tmpfiles.d/amd-pstate-epp.conf`. systemd-tmpfiles expands the glob at runtime. Requires `amd-pstate-epp` driver; linux-cachyos enables `amd_pstate=active` by default.
+
+## falcond (PikaOS gaming performance daemon)
+
+`elements/desktop/falcond.bst`. Source: https://git.pika-os.com/general-packages/falcond
+
+Requires Zig 0.16.0+ (`minimum_zig_version = "0.16.0"` in build.zig.zon). All three deps
+(`otter_conf`, `otter_desktop`, `otter_utils`) are `git+https://git.pika-os.com/...` — all go in
+`zig-deps-git/` and are placed via `place_git_dep`. See `docs/skills/packaging-zig.md` §
+pika-os git deps.
+
+`zig build` only installs the binary. Install the service file manually from
+`falcond/debian/falcond.service`. Also drop a tmpfiles.d fragment for `/var/lib/falcond/` and
+`/etc/falcond/`, and a systemd preset to enable `falcond.service`.
+
+Runtime: requires `power-profiles-daemon` (or `tuned-ppd`). Do NOT run alongside gamemode —
+they conflict. SCX scheduler binaries (`scx_lavd`, `scx_bpfland`) are optional; falcond
+feature-detects them and degrades gracefully if absent. Closes #221.
