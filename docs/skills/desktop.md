@@ -544,3 +544,74 @@ Pattern for gnome-build-meta D-Bus-activated services:
 - **No new tracking** — versioned by the `gnome-build-meta.bst` junction, updated by the `track-core-junctions` CI job. Do not add a matrix entry to `track-bst-sources.yml`.
 
 Reference: `elements/stacks/desktop.bst`. Closes #182.
+
+---
+
+## GTK Settings and dconf System Database
+
+### GTK4 settings.ini vs gsettings priority (critical pitfall)
+
+GTK4 priority order (highest wins):
+
+| Priority | Source |
+|---|---|
+| 4 | Application (hardcoded) |
+| 3 | XSettings daemon |
+| **2** | **`~/.config/gtk-4.0/settings.ini`** |
+| **2** | **`/etc/gtk-4.0/settings.ini`** (loaded earlier, so `~/.config/` wins on tie) |
+| **1** | **gsettings / dconf** |
+
+`/etc/gtk-4.0/settings.ini` is priority 2 — it **overrides** per-user gsettings. A system `settings.ini` with `gtk-icon-theme-name=Papirus` means `gsettings set org.gnome.desktop.interface icon-theme 'Adwaita'` has **no effect**.
+
+**Fix: use dconf system database instead.** System-db values sit at priority 1 alongside user-db; user-db takes precedence, so `gsettings set` correctly overrides system defaults.
+
+### dconf system database pattern
+
+Three files required:
+
+**1. dconf profile** (`/etc/dconf/profile/user`):
+```
+user-db:user
+system-db:local
+```
+
+**2. keyfile** (`/etc/dconf/db/local.d/00-defaults`):
+```ini
+[org/gnome/desktop/interface]
+icon-theme='Papirus'
+color-scheme='prefer-dark'
+```
+
+**3. Compile** — run `dconf update` after all elements are staged. Place in `oci/krytis/stack.bst` integration-commands (same pattern as `fc-cache -f /usr/share/fonts/` for fonts):
+```yaml
+# Compile dconf system database from /etc/dconf/db/local.d/ keyfiles.
+# Must run after all elements are staged so the keyfiles exist.
+- dconf update
+```
+
+dconf is **not transitive** in this image — must depend on `gnome-build-meta.bst:core-deps/dconf.bst` explicitly in the config element.
+
+### GTK3 dark mode
+
+GTK3 has no `color-scheme` key. Dark mode requires `gtk-application-prefer-dark-theme=true` in `/etc/gtk-3.0/settings.ini`. GTK3 reads icon-theme from dconf but `settings.ini` provides a fallback:
+
+```ini
+[Settings]
+gtk-icon-theme-name=Papirus
+gtk-application-prefer-dark-theme=true
+```
+
+GTK3 `settings.ini` priority is the same structure as GTK4 — but since GTK3 apps rarely expose a per-user override for dark mode this is acceptable.
+
+### Resetting per-user dconf overrides
+
+After the system db is baked, a user can reset per-user overrides to pick up system defaults:
+
+```bash
+dconf reset /org/gnome/desktop/interface/icon-theme
+dconf reset /org/gnome/desktop/interface/color-scheme
+# or reset entire subtree:
+dconf reset -f /org/gnome/desktop/interface/
+```
+
+Reference: `elements/config/gtk-settings.bst`, `elements/oci/krytis/stack.bst`. Closes #212.
