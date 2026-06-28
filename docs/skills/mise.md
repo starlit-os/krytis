@@ -322,8 +322,56 @@ mise/tasks/
 ├── generate-disk
 ├── boot-vm
 ├── kernel-update
-└── mise-update
+├── mise-update
+├── gum-update
+├── pangolin-update
+├── niri-update
+├── ghostty-update
+├── symbols-nerd-font-update
+└── game-devices-udev-update # Codeberg source; uses curl+jq not gh api
 ```
+
+## Element update tasks
+
+Update tasks live in `mise/tasks/<name>-update`. Each task:
+1. Fetches the latest version from the upstream source
+2. Downloads the new artifact, computes SHA256
+3. Patches the element file in-place with `sed -i`
+4. Prints a summary; exits 0 (already up-to-date) or leaves the diff for CI to detect
+
+The CI job in `track-bst-sources.yml` calls the task, checks `git diff`, and opens/updates a PR if anything changed.
+
+### GitHub sources (`gh api`)
+
+Use `gh api repos/<owner>/<repo>/releases/latest --jq '.tag_name'`. Requires `GH_TOKEN` in the CI environment (`env: GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`).
+
+```bash
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+```
+
+### Codeberg sources (`curl + jq`)
+
+Codeberg has no `gh`-compatible CLI. Use the Gitea-compatible REST API with `curl + jq`:
+
+```bash
+API="https://codeberg.org/api/v1/repos/<owner>/<repo>/releases?limit=1"
+LATEST_TAG=$(curl -sf "$API" | jq -r '.[0].tag_name')
+```
+
+No auth token needed for public repos. Do **not** add `GH_TOKEN` to the CI step env — it only applies to `gh` CLI calls. The CI job for a Codeberg element omits the `env: GH_TOKEN:` block entirely.
+
+Tarball URL pattern: `https://codeberg.org/<owner>/<repo>/archive/<tag>.tar.gz`. Use the `codeberg_files:` alias in the element (see `docs/skills/bst.md` § udev rules elements).
+
+### SHA extraction pattern
+
+```bash
+curl -sSfL "$URL" -o "$TMPDIR/src.tar.gz"
+NEW_SHA=$(sha256sum "$TMPDIR/src.tar.gz" | awk '{print $1}')
+CURRENT_SHA=$(grep 'ref:' "$ELEMENT" | awk '{print $2}')
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "$ELEMENT"
+```
+
+Use `mktemp -d` + `trap 'rm -rf "$TMPDIR"' EXIT` for the temp directory.
 
 ## Never add loose shell scripts
 
