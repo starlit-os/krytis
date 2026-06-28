@@ -19,8 +19,9 @@ kind: manual
 #   ntsync.conf — autoload ntsync kernel module (NT sync primitives for Wine/Proton)
 #
 # tmpfiles.d (usr/lib/tmpfiles.d/):
-#   thp.conf         — THP defrag=defer+madvise (improves tcmalloc/jemalloc perf)
+#   thp.conf          — THP defrag=defer+madvise (improves tcmalloc/jemalloc perf)
 #   thp-shrinker.conf — THP shrinker max_ptes_none=409 (kernel ≥6.12; reduces OOM risk)
+#   amd-pstate-epp.conf — set EPP=balance_performance for amd-pstate-epp driver. Closes #220.
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst

@@ -106,3 +106,9 @@ depends:
   - gnome-build-meta.bst:gnomeos-deps/hidraw-udev.bst
   - gnome-build-meta.bst:gnomeos-deps/udev-hide-usr.bst
   - gnome-build-meta.bst:gnomeos/reload-sysext.bst
+
+  # ── Memory / OOM protection ────────────────────────────────────────
+  # zram-generator is already included above (gnomeos-deps).
+  # oomd: enables systemd-oomd.service (compiled into systemd) with tuning.
+  # Prevents OOM kills by acting on swap pressure before the kernel OOM fires. Closes #219.
+  - config/oomd.bst
