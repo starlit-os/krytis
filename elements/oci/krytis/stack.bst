@@ -40,3 +40,7 @@ public:
       # "uninitialized" triggers ConditionFirstBoot=yes for systemd-firstboot.service.
       # An empty file does not.
       - printf 'uninitialized\n' > /etc/machine-id
+
+      # Compile dconf system database from /etc/dconf/db/local.d/ keyfiles.
+      # Must run after all elements are staged so the keyfiles exist.
+      - dconf update
