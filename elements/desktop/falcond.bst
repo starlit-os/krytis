@@ -103,8 +103,7 @@ config:
         --prefix /usr \
         --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
         -Doptimize=ReleaseFast \
-        -Dcpu=baseline \
-        -Dpie=true
+        -Dcpu=baseline
 
     # Service file (zig build does not install it)
     - |
