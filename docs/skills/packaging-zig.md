@@ -65,11 +65,16 @@ config:
         zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep" || true
       done
 
-    # Stage 3: Populate git deps from local Gitea commit tarballs via zig fetch
-    # (see lesson: "git deps and zig fetch" below)
+    # Stage 3: Populate git deps from local Gitea commit tarballs via zig fetch.
+    # zig fetch requires a build.zig in cwd. If sources extract to a subdir (e.g.
+    # falcond/), use a throwaway sandbox to avoid modifying the real build.zig.zon.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-      for dep in zig-deps-git/*.tar.gz; do
+      SOURCE_DIR="$(pwd)"
+      mkdir -p /tmp/zig-fetch-sandbox
+      touch /tmp/zig-fetch-sandbox/build.zig
+      cd /tmp/zig-fetch-sandbox
+      for dep in "$SOURCE_DIR"/zig-deps-git/*.tar.gz; do
         zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
       done
 
@@ -114,6 +119,24 @@ will resolve the dependency from cache.
 NameServerFailure). That means the Gitea archive content differs from what `zig fetch
 git+https://` would produce. In that case, patch `build.zig.zon` to use `https://` URLs
 pointing at the Gitea archive, with the hash that `zig fetch` output.
+
+**`zig fetch` requires a `build.zig` in the current directory (or a parent).** If the sources
+extract to a subdirectory (e.g. `falcond/build.zig` lives under `falcond/` but build-commands
+run from the parent), `zig fetch` fails with `error: no build.zig file found`. Use a throwaway
+sandbox to satisfy this requirement without touching the real project:
+
+```bash
+SOURCE_DIR="$(pwd)"
+mkdir -p /tmp/zig-fetch-sandbox
+touch /tmp/zig-fetch-sandbox/build.zig
+cd /tmp/zig-fetch-sandbox
+for dep in "$SOURCE_DIR"/zig-deps-git/*.tar.gz; do
+  zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
+done
+```
+
+Projects whose source extracts directly to the staging root (like ghostty) do not have this
+problem — ghostty's `build.zig` is at the staging root, so `zig fetch` finds it immediately.
 
 **Zig 0.15.x and earlier**: The `place_git_dep` function (extract tarball into `p/<hash>/`)
 did work in 0.15.x. The behaviour change is a 0.16.0 regression/redesign. Do not use

@@ -48,14 +48,20 @@ config:
     # Populate Zig global cache from local Gitea commit archives using `zig fetch`.
     # In Zig 0.16.0, git+https:// deps are always re-fetched via network regardless of
     # what is placed in p/<hash>/ manually. Only `zig fetch <tarball>` produces a cache
-    # entry that zig build recognises as satisfying a git dep. If the Gitea archive
-    # content matches the git tree (it should, since Gitea uses git-archive internally),
-    # the content hash zig fetch computes will match the hash in build.zig.zon.
+    # entry that zig build recognises as satisfying a git dep.
+    #
+    # `zig fetch` requires a build.zig in the current directory (or a parent). Build
+    # commands run from the source staging root, which is one level above falcond/. Use
+    # a throwaway sandbox so zig fetch has a project context without touching falcond's
+    # own build.zig.zon.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
-      mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
-      for dep in zig-deps-git/*.tar.gz; do
+      SOURCE_DIR="$(pwd)"
+      mkdir -p "$ZIG_GLOBAL_CACHE_DIR" /tmp/zig-fetch-sandbox
+      touch /tmp/zig-fetch-sandbox/build.zig
+      cd /tmp/zig-fetch-sandbox
+      for dep in "$SOURCE_DIR"/zig-deps-git/*.tar.gz; do
         echo "zig fetch: $dep"
         zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
       done
