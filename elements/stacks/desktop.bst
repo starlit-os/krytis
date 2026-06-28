@@ -77,6 +77,11 @@ depends:
   # Adwaita fonts: GNOME system UI font.
   - gnome-build-meta.bst:sdk/adwaita-fonts.bst
 
+  # ── Icons ──────────────────────────────────────────────────────────────
+  # Papirus: flat icon theme providing Papirus, Papirus-Dark, and Papirus-Light
+  # variants. Closes #208.
+  - desktop/papirus-icon-theme.bst
+
   # ── Camera ─────────────────────────────────────────────────────────────
   # libcamera: camera abstraction library (UVC, IPU3, etc.).
   # pipewire-daemon: includes spa-0.2/libcamera (built with -Dlibcamera=enabled),
