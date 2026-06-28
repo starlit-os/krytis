@@ -173,17 +173,41 @@ Symptom of missing these: `sh: line N: tar: command not found` at exit code 127 
 
 ### Zig version splits: use a separate element when minimum_zig_version conflicts
 
-If one package (e.g., ghostty) requires Zig 0.15.x and another (e.g., falcond) requires
-`minimum_zig_version = "0.16.0"`, do NOT upgrade the shared `zig.bst` — Zig is not
-backwards-compatible across minor versions and cache hash formats change. Instead:
+Zig is **not backwards-compatible across minor versions**. Each release changes the package cache
+hash format. A package pinned to 0.15.x will break silently or loudly under 0.16.x.
 
-1. Keep `zig.bst` at the version used by the majority / most stable package.
-2. Create `zig-0.16.bst` (or `zig-<version>.bst`) mirroring `zig.bst` at the new version.
-3. Have the new package reference the versioned element.
-4. Drop the versioned element once the other packages have caught up.
+**What changes in 0.16.0 that breaks 0.15.x packages:**
 
-Zig 0.16.0 changed how `zig build` extracts packages: deps are now placed into a project-local
-`zig-pkg/` directory. The global cache `p/<hash>/` placement approach used for 0.15.x still
-works for `zig fetch` (HTTP deps) but transitive git deps from within those packages get
-re-fetched live via `git+https://`, which fails in the network-isolated BST sandbox. Packages
-packaged against 0.15.x need updating before they can build under 0.16.x.
+`zig build` now extracts packages to a project-local `zig-pkg/` directory instead of reading
+directly from the global `p/<hash>/` cache. HTTP deps still land in the global cache via
+`zig fetch`, but transitive `git+https://` deps referenced from within those packages are
+re-resolved at build time. If their global-cache entry isn't at the hash path 0.16.0 expects,
+Zig attempts a live network fetch — which fails inside the BST sandbox. Symptom:
+
+```
+error: unable to discover remote git server capabilities: NameServerFailure
+    .url = "git+https://github.com/…",
+```
+
+**Pattern when two packages need different Zig versions:**
+
+1. Keep `zig.bst` at the version used by the most established / most-transitive package.
+2. Create `zig-<version>.bst` (e.g., `zig-0.16.bst`) mirroring `zig.bst` at the new version.
+3. Have the newer package reference the versioned element.
+4. When the established package (ghostty) is updated to support the newer Zig version, promote
+   `zig-<version>.bst` to `zig.bst` and delete the old element.
+
+**Ghostty / Zig 0.16.0 transition note:**
+
+As of ghostty 1.3.x, ghostty builds against Zig 0.15.x. ghostty 1.4 is expected to target
+Zig 0.16.0. When updating ghostty to 1.4:
+
+- Run `mise run ghostty-update` to get the new source ref and dep hashes.
+- Verify `minimum_zig_version` in the new ghostty `build.zig.zon` says `0.16.0`.
+- Promote `zig-0.16.bst` → `zig.bst` (replace its contents in place).
+- Delete `zig-0.16.bst`.
+- Update `falcond.bst` `build-depends` to reference `zig.bst` again.
+- Re-derive all `place_git_dep` hashes for ghostty deps under 0.16.0 (hash format changed).
+
+**Current state (as of 2026-06-28):** `zig.bst` = 0.15.2 (ghostty), `zig-0.16.bst` = 0.16.0
+(falcond). Both coexist until ghostty 1.4 ships.
