@@ -43,6 +43,32 @@ sources:
     ref: 866b2a5ea57a1bc724b5c34405efa26457256e7d035912741edea0ebfb87a1c8
     directory: zig-deps-git
 
+  # Transitive deps of otter_desktop/vendor/pipewire Zig binding:
+  #
+  # valgrind.h@3.23.0 — C header-only, no build.zig.zon, hash format: N-V-__8AAMV2...
+  - kind: remote
+    url: github_files:allyourcodebase/valgrind.h/archive/refs/tags/3.23.0.tar.gz
+    ref: 30bcb1ad585faa189b084b8338bde149425b5c93048b48cbc433b8e97b7a20be
+    directory: zig-deps-git
+
+  # pipewire C source@1.6.3 (upstream dep for header extraction by vendor/pipewire)
+  - kind: remote
+    url: freedesktop_files:pipewire/pipewire/-/archive/1.6.3/pipewire-1.6.3.tar.gz
+    ref: 93db72dc06768db548d48ae2b8e96e7c299c89a47f5c4426f152221aa90b0f2d
+    directory: zig-deps-git
+
+  # translate-c@46b5609b5ac4c0a896217d1d984f3ae50e4810b5 — Zig C-to-Zig translator
+  - kind: remote
+    url: codeberg_files:ziglang/translate-c/archive/46b5609b5ac4c0a896217d1d984f3ae50e4810b5.tar.gz
+    ref: 4f50eeaa6bfd68fad382a94b6693de5eb86f42474b496b725fab923f9c0eaf1a
+    directory: zig-deps-git
+
+  # aro (arocc) @5f5a050569a95ecc40a426f0c3666ae7ef987ede — C compiler frontend, dep of translate-c
+  - kind: remote
+    url: github_files:Vexu/arocc/archive/5f5a050569a95ecc40a426f0c3666ae7ef987ede.tar.gz
+    ref: e20b49a13049e8ef5aa1d798a70d8fc02b691fe44c7c78928aae3d363a1deb7e
+    directory: zig-deps-git
+
 config:
   build-commands:
     # Populate Zig global cache from local Gitea commit archives using `zig fetch`.
