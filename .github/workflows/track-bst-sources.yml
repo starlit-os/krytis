@@ -23,6 +23,7 @@ on:
           - manual-merge
           - core-junctions
           - game-devices-udev
+          - papirus-icon-theme
 
 permissions: read-all
 
@@ -656,6 +657,10 @@ jobs:
             element: deps/i2c-tools.bst
             branch: auto/track-i2c-tools
             title: "chore(deps): update i2c-tools"
+          - group: papirus-icon-theme
+            element: desktop/papirus-icon-theme.bst
+            branch: auto/track-papirus-icon-theme
+            title: "chore(deps): update papirus-icon-theme"
 
     steps:
       - name: Checkout repository

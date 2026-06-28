@@ -1189,6 +1189,39 @@ cursor {
 }
 ```
 
+## SVG Icon Themes (Makefile-based)
+
+Icon themes that install via `make install DESTDIR=... PREFIX=/usr` use `kind: make` with `buildsystem-make.bst`. SVGs are non-ELF content — set `strip-binaries: ""` and `strip-commands: [":"]`. Source via `git_repo` with a `track:` glob so `bst source track` handles updates.
+
+```yaml
+kind: make
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/buildsystem-make.bst
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  strip-binaries: ""
+
+config:
+  strip-commands:
+  - ":"
+  build-commands: []
+  install-commands:
+  - 'make install DESTDIR="%{install-root}" PREFIX="%{prefix}"'
+  - "%{install-extra}"
+
+sources:
+- kind: git_repo
+  url: github:<owner>/<repo>.git
+  track: refs/tags/*
+  ref: <tag>-0-g<full-commit-sha>
+```
+
+`build-commands: []` suppresses the default `make` invocation — icon themes have nothing to compile. The Makefile's `install:` target uses `cp -R` to copy theme directories to `$(DESTDIR)$(PREFIX)/share/icons/`. Multiple theme variants (e.g. Papirus, Papirus-Dark, Papirus-Light) are installed in a single pass. Add element to the `track` matrix in `track-bst-sources.yml` — `git_repo` sources are tracked by `bst source track` directly.
+
 ## Junction override: sudo-rs replacing fdsdk sudo
 
 `components/sudo.bst` in fdsdk can be overridden to point at `core/sudo-rs.bst`. Add to `elements/freedesktop-sdk.bst` `config.overrides`:
