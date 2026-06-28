@@ -1,6 +1,6 @@
 ---
 name: packaging-zig
-description: Packages a Zig build system project in BST. Covers two-stage cache population, git-dep manual placement, DESTDIR pattern, and -Dcpu=baseline. ghostty.bst is the reference.
+description: Packages a Zig build system project in BST. Covers zig fetch cache population (HTTP and git deps), DESTDIR pattern, -Dcpu=baseline, and version-split strategy. ghostty.bst is the reference.
 ---
 
 # Packaging Zig Projects
@@ -39,7 +39,7 @@ sources:
     ref: sha256hex...
     directory: zig-deps
 
-  # Git deps go under zig-deps-git/ (cannot use zig fetch — see lesson below)
+  # Git deps go under zig-deps-git/ and are populated via zig fetch (see lesson below)
   - kind: remote
     url: github_files:owner/repo/archive/sha.tar.gz
     ref: sha256hex...
@@ -141,7 +141,7 @@ ziglang: https://ziglang.org/
 ### pika-os git deps (falcond pattern)
 
 falcond's `build.zig.zon` deps are all `git+https://git.pika-os.com/...` — no CDN tarballs. All go
-in `zig-deps-git/` (not `zig-deps/`), placed manually via `place_git_dep`. Add the alias:
+in `zig-deps-git/` and are populated via `zig fetch <local-tarball>`. Add the alias:
 
 ```yaml
 pikaos_files: https://git.pika-os.com/
@@ -149,8 +149,10 @@ pikaos_files: https://git.pika-os.com/
 
 Archive URL from Gitea: `pikaos_files:<org>/<repo>/archive/<commit-sha>.tar.gz`
 
-The `place_git_dep` function is the same as for GitHub git deps (strip-components=1 into
-`$ZIG_GLOBAL_CACHE_DIR/p/<zig-hash>/`). Hash values come from the `.hash` field in `build.zig.zon`.
+In the build commands, run `zig fetch --global-cache-dir ... zig-deps-git/<sha>.tar.gz` for each
+dep. Zig computes the content hash and stores the package in the correct 0.16.0 format. If the
+Gitea archive content matches the git tree, the hash matches `build.zig.zon` and the build resolves
+the dependency offline.
 
 ### Source lives in a subdirectory — cd before zig build
 
