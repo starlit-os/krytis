@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#MISE description="Build a live ISO for Krytis using the dakota-iso pipeline"
+#USAGE flag "--output-dir <dir>" default="output" help="Directory for the final ISO and intermediate artifacts"
+#USAGE flag "--workdir <dir>" help="Working directory for squashfs staging (XFS/BTRFS recommended)"
+#USAGE flag "--compression <mode>" default="fast" help="Squashfs compression: fast or release"
+#USAGE flag "--debug" help="Enable SSH in the live environment (not for production)"
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+DAKOTA_ISO_DIR="${DAKOTA_ISO_DIR:-$(realpath "${REPO_ROOT}/../dakota-iso")}"
+
+if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
+    echo "ERROR: dakota-iso not found at ${DAKOTA_ISO_DIR}" >&2
+    echo "       Clone kitten-lily/dakota-iso as a sibling of this repo, or set DAKOTA_ISO_DIR." >&2
+    exit 1
+fi
+
+OUTPUT_DIR="${usage_output_dir:-output}"
+WORKDIR="${usage_workdir:-${OUTPUT_DIR}}"
+DEBUG=$([[ "${usage_debug:-}" == "true" ]] && echo 1 || echo 0)
+COMPRESSION="${usage_compression:-fast}"
+
+mkdir -p "${OUTPUT_DIR}"
+
+echo "==> Building Krytis live ISO"
+echo "    dakota-iso: ${DAKOTA_ISO_DIR}"
+echo "    output:     ${OUTPUT_DIR}"
+echo "    workdir:    ${WORKDIR}"
+echo "    compress:   ${COMPRESSION}"
+
+TARGET=krytis \
+OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")" \
+WORKDIR="$(realpath "${WORKDIR}")" \
+DEBUG="${DEBUG}" \
+COMPRESSION="${COMPRESSION}" \
+    just --justfile "${DAKOTA_ISO_DIR}/justfile" \
+         --working-directory "${DAKOTA_ISO_DIR}" \
+         iso-sd-boot krytis
+
+echo "==> ISO ready: ${OUTPUT_DIR}/krytis-live.iso"

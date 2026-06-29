@@ -412,3 +412,11 @@ vendor_conf.d/some-tool.fish ← loads after, mise already active
 `elements/core/mise.bst` installs mise's fish integration to `vendor_conf.d/01-mise.fish` so any tool conf sorting after `01-` sees a fully initialised mise environment.
 
 **Known limitation:** fish [#8553](https://github.com/fish-shell/fish-shell/issues/8553) — `vendor_conf.d` load order is not guaranteed to be stable across all fish versions. The numeric prefix is a best-effort workaround; no complete fix available until upstream resolves this.
+
+## ISO build task (`mise run build-iso`)
+
+`mise/tasks/build-iso` shells out to `just iso-sd-boot krytis` in the `dakota-iso` fork (`kitten-lily/dakota-iso`). It expects the fork to be cloned as a sibling of the krytis repo (`../dakota-iso`). Override with `DAKOTA_ISO_DIR=/path/to/fork mise run build-iso`.
+
+The task passes `--justfile` and `--working-directory` so `just` runs from the dakota-iso repo root regardless of the caller's cwd. All intermediate artifacts land in `OUTPUT_DIR` (default `output/`); the final ISO is `output/krytis-live.iso`.
+
+Prerequisites: `podman`, `just`, `mtools`, `xorriso`, `mksquashfs` (from `squashfs-tools`), `implantisomd5` (from `isomd5sum`). On CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum`.
