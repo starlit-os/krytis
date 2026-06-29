@@ -87,8 +87,7 @@ config:
         --prefix /usr \
         --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
         -Doptimize=ReleaseFast \
-        -Dcpu=baseline \
-        -Dpie=true
+        -Dcpu=baseline
 ```
 
 ## Key flags
@@ -98,7 +97,7 @@ config:
 | `--global-cache-dir` | Override Zig global cache — required for reproducibility |
 | `-Dcpu=baseline` | Don't use host-CPU extensions; produces portable binaries |
 | `-Doptimize=ReleaseFast` | Max optimization; use `ReleaseSafe` for safety-critical code |
-| `-Dpie=true` | Position-independent executable |
+| `-Dpie=true` | PIE — only if `build.zig` defines this option (see lesson below) |
 | `DESTDIR="%{install-root}"` with `--prefix /usr` | See lesson below |
 
 ## Lessons
@@ -251,3 +250,20 @@ Zig 0.16.0. When updating ghostty to 1.4:
 
 **Current state (as of 2026-06-28):** `zig.bst` = 0.15.2 (ghostty), `zig-0.16.bst` = 0.16.0
 (falcond). Both coexist until ghostty 1.4 ships.
+
+### `-Dpie=true` is project-specific — check `build.zig` first
+
+`-Dpie=true` is not a standard Zig build option. A project only accepts it if `build.zig` explicitly
+declares an `addOption` or `option` for `pie`. If the project doesn't declare it, `zig build` exits
+with:
+
+```
+error: invalid option: -Dpie
+```
+
+**Symptom**: build fails in `install-commands`, not in `build-commands` (zig fetch phase succeeds).
+
+**Fix**: Grep `build.zig` for `pie` before adding `-Dpie=true`. If absent, omit the flag — don't
+assume it applies because another package (e.g., ghostty) uses it.
+
+ghostty defines `-Dpie`; falcond does not. Do not copy flags blindly across elements.

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#MISE description="Update falcond element to the latest pikaos release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/falcond.bst"
+API="https://git.pika-os.com/api/v1/repos/general-packages/falcond/releases/latest"
+BASE_URL="https://git.pika-os.com/general-packages/falcond/archive"
+
+echo "==> Fetching latest falcond release..."
+LATEST_TAG=$(curl -sf "$API" | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_TAG=$(grep -oP 'archive/\Kv[^/]+(?=\.tar\.gz)' "$ELEMENT" | head -1)
+CURRENT_VER="${CURRENT_TAG#v}"
+echo "==> Current: ${CURRENT_TAG}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ARCHIVE="${LATEST_TAG}.tar.gz"
+echo "==> Downloading ${ARCHIVE}..."
+curl -sSL "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
+echo "    sha256=${SHA}"
+
+CURRENT_SHA=$(grep -A2 "archive/${CURRENT_TAG}.tar.gz" "$ELEMENT" | grep 'ref:' | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+sed -i "s|archive/${CURRENT_TAG}.tar.gz|archive/${LATEST_TAG}.tar.gz|" "$ELEMENT"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${SHA}|" "$ELEMENT"
+
+echo "==> Done. Run 'mise run validate' to verify."
