@@ -4,6 +4,10 @@ python = "3.12"
 uv = "latest"
 gum = "latest"
 bat = "latest"
+# `just` drives the dakota-iso ISO build pipeline (mise run build-iso).
+# Sourced from mise (aqua) rather than a BST element — it is dev-host
+# tooling, not part of the shipped OS runtime.
+just = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"

@@ -23,17 +23,27 @@ COMPRESSION="${usage_compression:-fast}"
 
 mkdir -p "${OUTPUT_DIR}"
 
+# buildah + xorriso have no freedesktop-sdk component, so they are not in the
+# Krytis image. Build the iso-tools container (Fedora-based, carries both) and
+# point iso-sd-boot.sh at it via ISO_TOOLS_IMAGE. The host runs everything else
+# (podman, skopeo, mksquashfs, mtools, dosfstools) from the dev-tools stack.
+ISO_TOOLS_IMAGE="${ISO_TOOLS_IMAGE:-localhost/iso-tools:latest}"
+echo "==> Building iso-tools container (${ISO_TOOLS_IMAGE})..."
+podman build -t "${ISO_TOOLS_IMAGE}" "${DAKOTA_ISO_DIR}/live/iso-tools"
+
 echo "==> Building Krytis live ISO"
 echo "    dakota-iso: ${DAKOTA_ISO_DIR}"
 echo "    output:     ${OUTPUT_DIR}"
 echo "    workdir:    ${WORKDIR}"
 echo "    compress:   ${COMPRESSION}"
+echo "    iso-tools:  ${ISO_TOOLS_IMAGE}"
 
 TARGET=krytis \
 OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")" \
 WORKDIR="$(realpath "${WORKDIR}")" \
 DEBUG="${DEBUG}" \
 COMPRESSION="${COMPRESSION}" \
+ISO_TOOLS_IMAGE="${ISO_TOOLS_IMAGE}" \
     just --justfile "${DAKOTA_ISO_DIR}/justfile" \
          --working-directory "${DAKOTA_ISO_DIR}" \
          iso-sd-boot krytis
