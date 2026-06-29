@@ -722,6 +722,18 @@ tar -xzf src.tar.gz --wildcards "*/Cargo.lock" -O | grep -oP '(?<=\?rev=)[^#]+'
 
 Update both occurrences in the element. `mise run niri-update` does this automatically.
 
+### `buildsystem-make.bst` is required for all Rust elements — missing it silently breaks linking
+
+Symptom: build succeeds through `cargo build` but then fails with:
+
+```
+posix_spawn failed: No such file or directory
+```
+
+Cause: `buildsystem-make.bst` provides the system linker (`ld` / `lld`) that clang invokes after compiling. If only `runtime-minimal.bst` is in `build-depends`, the sandbox has no linker binary and the spawn fails. The skeleton above already includes `buildsystem-make.bst`; this bites when you omit it while simplifying `build-depends`.
+
+Fix: ensure `freedesktop-sdk.bst:public-stacks/buildsystem-make.bst` is in `build-depends`, not just `depends`.
+
 ### C library deps and Mesa
 
 C libraries needed at runtime go in `depends` — BST stages `depends` items at build time too, so headers and pkgconfig files are available to the compiler. Mesa is an exception: always list it in **both** `build-depends` and `depends`:

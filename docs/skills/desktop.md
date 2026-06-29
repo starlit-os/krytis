@@ -657,6 +657,28 @@ Runtime: requires `power-profiles-daemon` (or `tuned-ppd`). Do NOT run alongside
 they conflict. SCX scheduler binaries (`scx_lavd`, `scx_bpfland`) are optional; falcond
 feature-detects them and degrades gracefully if absent. Closes #221.
 
+## scx_loader (sched-ext D-Bus scheduler loader)
+
+`elements/desktop/scx-loader.bst`. Source: https://github.com/sched-ext/scx-loader
+
+**Repo disambiguation:** `sched-ext/scx-loader` is a *separate* repo from `sched-ext/scx` (the
+full scheduler monorepo). The D-Bus loader service is also bundled inside the monorepo but the
+standalone repo is the right source for an isolated package. Use `scx-loader`, not `scx`.
+
+Provides `org.scx.Loader` on the system D-Bus. falcond calls it for per-game CPU scheduler
+switching. Requires kernel sched-ext support (present in linux-cachyos). Closes #228.
+
+Packaged as `kind: manual` + `kind: cargo2` (Rust/cargo2 strategy A — see `docs/skills/bst.md`
+§ Rust / Cargo Projects). Uses `buildsystem-make.bst` in `build-depends` (linker).
+
+Install targets from the upstream source tree:
+- `services/scx_loader.service` → `%{indep-libdir}/systemd/system/`
+- `services/org.scx.Loader.service` → `%{datadir}/dbus-1/system-services/`
+- `configs/org.scx.Loader.conf` → `%{datadir}/dbus-1/system.d/`
+- `configs/org.scx.Loader.xml` → `%{datadir}/dbus-1/interfaces/`
+- `configs/org.scx.Loader.policy` → `%{datadir}/polkit-1/actions/`
+- `configs/scx_loader.toml` → `%{datadir}/scx_loader/config.toml`
+
 ## Kernel Tuning — config/desktop-udev.bst
 
 `config/desktop-udev.bst` installs kernel configuration files from `files/desktop-tweaks/`. It covers:
