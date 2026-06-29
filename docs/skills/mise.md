@@ -432,9 +432,25 @@ Krytis is immutable with no package manager, so the build runs with only the too
 
 `buildah` and `xorriso` have **no freedesktop-sdk component**, so the `build-iso` task builds a Fedora-based `iso-tools` container and sets `ISO_TOOLS_IMAGE`. `iso-sd-boot.sh` then routes only those two steps through `podman run`:
 
-- **Payload prep** (multi-step `buildah from→copy→commit`) runs as one `podman run` of `live/iso-tools/payload-prep.sh`, with host `/var/lib/containers/storage` + `OUTPUT_DIR` bind-mounted. It must be a single invocation — an ephemeral `podman run` per buildah command would lose the working container.
+- **Payload prep** (multi-step `buildah from→copy→commit`) runs as one `podman run` of `live/iso-tools/payload-prep.sh` — a single invocation, or the buildah working container would not survive between commands.
 - **ISO assembly** passes `XORRISO`/`IMPLANTISOMD5` as `podman run …` command overrides to `build-iso.sh`; mtools/dosfstools still run on the host.
 
-`ISO_TOOLS_IMAGE` unset (dakota/bluefin CI on a mutable host) preserves the original host-binary path. Override the image tag with `ISO_TOOLS_IMAGE=… mise run build-iso`.
+`ISO_TOOLS_IMAGE` unset (dakota/bluefin CI on a mutable, rootful host) preserves the original host-binary path. Override the image tag with `ISO_TOOLS_IMAGE=… mise run build-iso`.
 
-For a one-off build on a **mutable** dev host instead, install the tools directly — e.g. CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum buildah` — and the host binaries are used (leave `ISO_TOOLS_IMAGE` unset, but the mise task sets it by default; export `ISO_TOOLS_IMAGE=` to opt out).
+### Rootless gotchas (verified building on Krytis itself)
+
+Krytis runs **rootless** podman. Three things this breaks vs dakota's rootful CI, all handled in the fork — keep them when touching the scripts:
+
+1. **Don't bind-mount the host containers-storage into the tools container.** Rootless storage lives under `$HOME`, not `/var/lib/containers/storage`, and the nested userns can't take the storage lock (`storage.lock: permission denied`). Instead `iso-sd-boot.sh` does `podman save --format oci-archive` of the payload on the host first, and payload-prep reads it with `buildah from oci-archive:` — transport-clean, works rootless and rootful.
+2. **Force `STORAGE_DRIVER=vfs` for the payload-prep container.** The container rootfs is on overlayfs; buildah's default overlay driver can't stack on overlayfs without fuse-overlayfs (`'overlay' is not supported over overlayfs`). vfs has no such constraint (costs disk, ~2× the payload).
+3. **The squashfs assembly's overlay mount falls back to `cp -a`** when rootless overlay isn't available — slower but works; no action needed.
+
+### Variant config gotcha
+
+`live/Containerfile` builds `FROM ghcr.io/${REGISTRY}/${TARGET}` — it prepends `ghcr.io/` itself. So `krytis/registry` is the **org only** (`starlit-os`), matching dakota's `projectbluefin`. A `ghcr.io/`-prefixed value produces the malformed `ghcr.io/ghcr.io/...` ref and the payload export fails with "image not known".
+
+### Status
+
+`mise run build-iso --debug` produces `output/krytis-live.iso` (~4 GB, volume label `KRYTIS_LIVE`, protective MBR + GPT) on rootless Krytis. **Boot test still pending** — Krytis ships no `qemu`; boot via dakota-iso's `run-iso` recipe (`ghcr.io/qemus/qemu` container) or external hardware/VM.
+
+For a one-off build on a **mutable** dev host instead, install the tools directly (e.g. CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum buildah`) and `export ISO_TOOLS_IMAGE=` to opt out of the container path.
