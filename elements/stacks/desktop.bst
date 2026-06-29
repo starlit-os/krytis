@@ -145,6 +145,11 @@ depends:
   # power-profiles-daemon: D-Bus API for balanced/performance/power-saver switching.
   # Works standalone (no GNOME required). Required by falcond (#221). Closes #218.
   - gnome-build-meta.bst:core-deps/power-profiles-daemon.bst
+  # falcond: PikaOS gaming performance daemon — per-game profiles, SCX scheduler
+  # selection (scx_lavd/bpfland), AMD 3D VCache management, DMEM GPU memory protection.
+  # Supersedes gamemode + scx_loader as a single daemon. Requires PPD at runtime.
+  # Do NOT run alongside gamemode. Closes #221.
+  - desktop/falcond.bst
 
   # ── Apps ───────────────────────────────────────────────────────────────
   # Proton Pass: password manager desktop app (bundled Electron, x86_64 only).
