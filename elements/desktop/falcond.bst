@@ -117,6 +117,9 @@ config:
       enable falcond.service
       EOF
 
+    # Profiles directory (/usr/share is read-only in bootc; create at image build time)
+    - install -d "%{install-root}%{datadir}/falcond/profiles"
+
     # State directories
     - |
       install -Dm644 /dev/stdin \
