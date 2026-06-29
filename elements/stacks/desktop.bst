@@ -150,6 +150,11 @@ depends:
   # Supersedes gamemode + scx_loader as a single daemon. Requires PPD at runtime.
   # Do NOT run alongside gamemode. Closes #221.
   - desktop/falcond.bst
+  # scx_loader: D-Bus on-demand loader of sched-ext CPU schedulers.
+  # Provides org.scx.Loader on the system bus; required by falcond (#221)
+  # for per-game scheduler switching. Requires kernel sched-ext support
+  # (present in linux-cachyos). Closes #228.
+  - desktop/scx-loader.bst
 
   # ── Apps ───────────────────────────────────────────────────────────────
   # Proton Pass: password manager desktop app (bundled Electron, x86_64 only).

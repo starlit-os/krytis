@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#MISE description="Update scx-loader element to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/scx-loader.bst"
+REPO="sched-ext/scx-loader"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_VER=$(grep -oP 'tags/v\K[^/]+(?=\.tar\.gz)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ARCHIVE="v${LATEST_VER}.tar.gz"
+BASE_URL="https://github.com/${REPO}/archive/refs/tags"
+
+echo "==> Downloading ${ARCHIVE}..."
+curl -sSL "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
+echo "    sha256=${SHA}"
+
+CURRENT_SHA=$(grep -A2 "tags/v${CURRENT_VER}.tar.gz" "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+sed -i "s|tags/v${CURRENT_VER}.tar.gz|tags/v${LATEST_VER}.tar.gz|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${SHA}|" "${ELEMENT}"
+
+echo "==> Running bst source track to update cargo2 crate list..."
+mise run bst source track desktop/scx-loader.bst
+
+echo "==> Done. Run 'mise run validate' to verify."
