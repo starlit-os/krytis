@@ -449,6 +449,8 @@ Krytis runs **rootless** podman. Three things this breaks vs dakota's rootful CI
 
 `live/Containerfile` builds `FROM ghcr.io/${REGISTRY}/${TARGET}` — it prepends `ghcr.io/` itself. So `krytis/registry` is the **org only** (`starlit-os`), matching dakota's `projectbluefin`. A `ghcr.io/`-prefixed value produces the malformed `ghcr.io/ghcr.io/...` ref and the payload export fails with "image not known".
 
+**Kernel cmdline label must match the volume label.** `build-iso.sh` once hardcoded `root=live:LABEL=DAKOTA_LIVE` in every boot entry while the volume label comes from `--label` (`KRYTIS_LIVE`, from `krytis/live_label`). The mismatch made dmsquash-live search for a non-existent label and **hang to a black screen** — no error, in QEMU/Boxes and on bare metal. The cmdlines now use `${LABEL}`; if you add a variant, set `live_label` and confirm the boot entries reference it. The krytis cmdline also carries `console=tty0` (so boot renders on a display, not just serial) and `rd.shell rd.info loglevel=7` (verbose + emergency shell on initramfs failure instead of a silent hang).
+
 ### Status
 
 `mise run build-iso --debug` produces `output/krytis-live.iso` (~4 GB, volume label `KRYTIS_LIVE`, protective MBR + GPT) on rootless Krytis. **Boot test still pending** — Krytis ships no `qemu`; boot via dakota-iso's `run-iso` recipe (`ghcr.io/qemus/qemu` container) or external hardware/VM.
