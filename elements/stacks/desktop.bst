@@ -139,9 +139,12 @@ depends:
   - desktop/game-devices-udev.bst
 
   # ── System performance tuning ──────────────────────────────────────────
-  # IO schedulers, audio PM, SATA link power, THP, amdgpu modprobe, ntsync.
-  # Ported from CachyOS-Settings (udev rules, modprobe.d, modules-load.d, tmpfiles.d).
+  # IO schedulers, audio PM, SATA link power, THP, amdgpu modprobe, ntsync,
+  # amd-pstate EPP hint. Ported from CachyOS-Settings.
   - config/desktop-udev.bst
+  # power-profiles-daemon: D-Bus API for balanced/performance/power-saver switching.
+  # Works standalone (no GNOME required). Required by falcond (#221). Closes #218.
+  - gnome-build-meta.bst:core-deps/power-profiles-daemon.bst
 
   # ── Apps ───────────────────────────────────────────────────────────────
   # Proton Pass: password manager desktop app (bundled Electron, x86_64 only).

@@ -615,3 +615,27 @@ dconf reset -f /org/gnome/desktop/interface/
 ```
 
 Reference: `elements/config/gtk-settings.bst`, `elements/oci/krytis/stack.bst`. Closes #212.
+
+## Performance Services (from #101)
+
+### power-profiles-daemon
+
+Available in `gnome-build-meta.bst:core-deps/power-profiles-daemon.bst` — one line in `stacks/desktop.bst`, zero new packaging. Provides a D-Bus API (`org.freedesktop.UPower.PowerProfiles`) for balanced/performance/power-saver switching. Works standalone without GNOME; required by falcond. Do not add tuned alongside it — they conflict via the PPD compat shim.
+
+### systemd-oomd
+
+Already compiled into our systemd build. Enable via a config element (`elements/config/oomd.bst`) that drops:
+- `/usr/lib/systemd/oomd.conf.d/krytis.conf` — SwapUsedLimit=90%, pressure limit 60%, duration 20s
+- `/usr/lib/systemd/system-preset/70-krytis-oomd.preset` — `enable systemd-oomd.service`
+
+Add to `stacks/base-system.bst` (system-level, not desktop-level). Pattern: `strip-commands: [':']` since no binaries.
+
+### amd-pstate EPP default
+
+Use `tmpfiles.d` type `w` to write `balance_performance` to all cpufreq policy sysfs paths at boot:
+
+```
+w /sys/devices/system/cpu/cpufreq/policy*/energy_performance_preference - - - - balance_performance
+```
+
+Add as `files/desktop-tweaks/tmpfiles.d/amd-pstate-epp.conf`. systemd-tmpfiles expands the glob at runtime. Requires `amd-pstate-epp` driver; linux-cachyos enables `amd_pstate=active` by default.
