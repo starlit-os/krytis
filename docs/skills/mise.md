@@ -419,4 +419,22 @@ vendor_conf.d/some-tool.fish ← loads after, mise already active
 
 The task passes `--justfile` and `--working-directory` so `just` runs from the dakota-iso repo root regardless of the caller's cwd. All intermediate artifacts land in `OUTPUT_DIR` (default `output/`); the final ISO is `output/krytis-live.iso`.
 
-Prerequisites: `podman`, `just`, `mtools`, `xorriso`, `mksquashfs` (from `squashfs-tools`), `implantisomd5` (from `isomd5sum`). On CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum`.
+### Tool sourcing — designed to run on Krytis itself
+
+Krytis is immutable with no package manager, so the build runs with only the tools baked into the image (dev-tools stack) or managed by mise — **plus one container**:
+
+| Tool | Source |
+|---|---|
+| `just` | mise (`mise.toml [tools]`) |
+| `podman`, `skopeo` | `stacks/bootc.bst` (already in image) |
+| `mksquashfs`, `mtools`, `mkfs.fat`, `rsync` | `stacks/dev-tools.bst` (fdsdk components: squashfs-tools, mtools, dosfstools, rsync) |
+| `buildah`, `xorriso` | **iso-tools container** (`live/iso-tools/Containerfile` in dakota-iso) |
+
+`buildah` and `xorriso` have **no freedesktop-sdk component**, so the `build-iso` task builds a Fedora-based `iso-tools` container and sets `ISO_TOOLS_IMAGE`. `iso-sd-boot.sh` then routes only those two steps through `podman run`:
+
+- **Payload prep** (multi-step `buildah from→copy→commit`) runs as one `podman run` of `live/iso-tools/payload-prep.sh`, with host `/var/lib/containers/storage` + `OUTPUT_DIR` bind-mounted. It must be a single invocation — an ephemeral `podman run` per buildah command would lose the working container.
+- **ISO assembly** passes `XORRISO`/`IMPLANTISOMD5` as `podman run …` command overrides to `build-iso.sh`; mtools/dosfstools still run on the host.
+
+`ISO_TOOLS_IMAGE` unset (dakota/bluefin CI on a mutable host) preserves the original host-binary path. Override the image tag with `ISO_TOOLS_IMAGE=… mise run build-iso`.
+
+For a one-off build on a **mutable** dev host instead, install the tools directly — e.g. CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum buildah` — and the host binaries are used (leave `ISO_TOOLS_IMAGE` unset, but the mise task sets it by default; export `ISO_TOOLS_IMAGE=` to opt out).
