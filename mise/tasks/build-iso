@@ -8,11 +8,21 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DAKOTA_ISO_DIR="${DAKOTA_ISO_DIR:-$(realpath "${REPO_ROOT}/../dakota-iso")}"
+
+# dakota-iso is expected as a sibling of the main krytis checkout. Resolve from
+# the main worktree (via git-common-dir) so this works when run from a git
+# worktree too — there REPO_ROOT is nested under .worktrees/ and a naive
+# "${REPO_ROOT}/.." points at the wrong place. Override with DAKOTA_ISO_DIR.
+if [[ -z "${DAKOTA_ISO_DIR:-}" ]]; then
+    COMMON_GIT="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    MAIN_ROOT="${COMMON_GIT:+$(dirname "${COMMON_GIT}")}"
+    MAIN_ROOT="${MAIN_ROOT:-${REPO_ROOT}}"
+    DAKOTA_ISO_DIR="$(realpath "${MAIN_ROOT}/../dakota-iso" 2>/dev/null || echo "${MAIN_ROOT}/../dakota-iso")"
+fi
 
 if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
     echo "ERROR: dakota-iso not found at ${DAKOTA_ISO_DIR}" >&2
-    echo "       Clone kitten-lily/dakota-iso as a sibling of this repo, or set DAKOTA_ISO_DIR." >&2
+    echo "       Clone kitten-lily/dakota-iso as a sibling of the krytis checkout, or set DAKOTA_ISO_DIR." >&2
     exit 1
 fi
 
