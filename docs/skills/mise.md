@@ -451,6 +451,22 @@ Krytis runs **rootless** podman. Three things this breaks vs dakota's rootful CI
 
 **Kernel cmdline label must match the volume label.** `build-iso.sh` once hardcoded `root=live:LABEL=DAKOTA_LIVE` in every boot entry while the volume label comes from `--label` (`KRYTIS_LIVE`, from `krytis/live_label`). The mismatch made dmsquash-live search for a non-existent label and **hang to a black screen** — no error, in QEMU/Boxes and on bare metal. The cmdlines now use `${LABEL}`; if you add a variant, set `live_label` and confirm the boot entries reference it. The krytis cmdline also carries `console=tty0` (so boot renders on a display, not just serial) and `rd.shell rd.info loglevel=7` (verbose + emergency shell on initramfs failure instead of a silent hang).
 
+### Live env must set `driver = "vfs"` for the offline store to resolve
+
+For `composefs=true` (krytis) the payload OCI image is embedded into the squashfs as a **VFS** containers-storage graphroot at `/var/lib/containers/storage`. Podman's default driver is **overlay**, so without an override it looks in an empty `overlay/` tree and reports the image as missing — the installer then fails until you `podman pull` it over the network, which defeats the whole point of an offline ISO. The symptom is "image not found" / a forced network pull at install time, *not* a build error.
+
+`configure-live-krytis.sh` writes `/etc/containers/storage.conf`:
+
+```toml
+[storage]
+driver = "vfs"
+
+[storage.options]
+additionalimagestores = ["/var/lib/containers/storage"]
+```
+
+`driver = "vfs"` matches the embedded store's on-disk layout. The `additionalimagestores` entry is what makes it resolve **rootless**: fisherman runs rootless as `liveuser`, and rootless podman always overrides the system graphroot to `~/.local/share/containers/storage` — so the embedded system-path store is invisible as a primary graphroot and must be registered as a read-only additional store. (A rootful pkexec path would read `/var/lib/containers/storage` as its default graphroot anyway, so this covers both.) The driver of an additional store must match the primary, hence `vfs` is mandatory on both lines.
+
 ### Status
 
 `mise run build-iso --debug` produces `output/krytis-live.iso` (~4 GB, volume label `KRYTIS_LIVE`, protective MBR + GPT) on rootless Krytis. **Boot test still pending** — Krytis ships no `qemu`; boot via dakota-iso's `run-iso` recipe (`ghcr.io/qemus/qemu` container) or external hardware/VM.
