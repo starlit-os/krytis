@@ -23,8 +23,15 @@ if [[ -f /etc/crypttab ]]; then
   done < /etc/crypttab
 fi
 
+# Fresh bootc installs have no /etc/crypttab — fall back to block device scan
 if [[ ${#LUKS_DEVICES[@]} -eq 0 ]]; then
-  echo "No LUKS devices found in /etc/crypttab" >&2
+  while IFS= read -r dev; do
+    [[ -n "$dev" ]] && LUKS_DEVICES+=("$dev")
+  done < <(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | sort)
+fi
+
+if [[ ${#LUKS_DEVICES[@]} -eq 0 ]]; then
+  echo "No LUKS devices found (checked /etc/crypttab and blkid scan)" >&2
   exit 1
 fi
 

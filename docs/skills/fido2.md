@@ -1,18 +1,24 @@
 # FIDO2 Skills
 
-## enroll-luks task: /etc/crypttab uses UUID= syntax
+## enroll-luks task: fresh bootc installs have no /etc/crypttab
 
-`/etc/crypttab` field 2 (the block device) is written as `UUID=<uuid>` by anaconda/bootc-install, not as a raw `/dev/sdXY` path. `cryptsetup isLuks UUID=xxx` fails with a "not a block device" error, silently filtered by `|| true`, leaving the device array empty.
+A freshly installed bootc system with encrypted root has **no `/etc/crypttab`**. The encrypted block device is configured via the bootloader/initrd, not crypttab. The task must fall back to a `blkid` scan when crypttab is absent or yields nothing:
 
-**Fix:** resolve `UUID=` prefix to `/dev/disk/by-uuid/<uuid>` before calling `cryptsetup isLuks`:
+```bash
+blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | sort
+```
+
+`/etc/crypttab` is a secondary source — only present after the user or installer populates it explicitly. Don't rely on it as the sole discovery path.
+
+## enroll-luks task: /etc/crypttab may use UUID= syntax
+
+When `/etc/crypttab` does exist, field 2 may be `UUID=<uuid>` rather than a raw device path. `cryptsetup isLuks UUID=xxx` fails silently. Resolve before use:
 
 ```bash
 if [[ "$DEVICE" =~ ^UUID= ]]; then
   DEVICE="/dev/disk/by-uuid/${DEVICE#UUID=}"
 fi
 ```
-
-`/dev/disk/by-uuid/` symlinks are always present on a live system. `systemd-cryptenroll` also accepts this path form.
 
 ## systemd-cryptenroll and FIDO2 PIN
 
