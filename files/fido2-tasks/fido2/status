@@ -20,21 +20,31 @@ fi
 
 echo ""
 echo "=== LUKS FIDO2 slots ==="
-if [[ ! -f /etc/crypttab ]]; then
-  echo "  (no /etc/crypttab)"
-  exit 0
+
+LUKS_DEVICES=()
+if [[ -f /etc/crypttab ]]; then
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// /}" ]] && continue
+    DEVICE=$(awk '{print $2}' <<< "$line")
+    if [[ "$DEVICE" =~ ^UUID= ]]; then
+      DEVICE="/dev/disk/by-uuid/${DEVICE#UUID=}"
+    fi
+    cryptsetup isLuks "$DEVICE" 2>/dev/null && LUKS_DEVICES+=("$DEVICE") || true
+  done < /etc/crypttab
 fi
 
-FOUND=false
-while IFS= read -r line; do
-  [[ "$line" =~ ^[[:space:]]*# ]] && continue
-  [[ -z "${line// /}" ]] && continue
-  DEVICE=$(awk '{print $2}' <<< "$line")
-  if cryptsetup isLuks "$DEVICE" 2>/dev/null; then
-    FOUND=true
+if [[ ${#LUKS_DEVICES[@]} -eq 0 ]]; then
+  while IFS= read -r dev; do
+    [[ -n "$dev" ]] && LUKS_DEVICES+=("$dev")
+  done < <(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | sort)
+fi
+
+if [[ ${#LUKS_DEVICES[@]} -eq 0 ]]; then
+  echo "  (no LUKS devices found)"
+else
+  for DEVICE in "${LUKS_DEVICES[@]}"; do
     echo "  ${DEVICE}:"
     systemd-cryptenroll "$DEVICE" 2>/dev/null | sed 's/^/    /' || true
-  fi
-done < /etc/crypttab
-
-$FOUND || echo "  (no LUKS devices in /etc/crypttab)"
+  done
+fi
