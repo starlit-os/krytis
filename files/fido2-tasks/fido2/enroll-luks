@@ -55,4 +55,15 @@ fi
 
 echo "Touch your security key when it blinks..."
 systemd-cryptenroll --fido2-device=auto "$DEVICE"
-echo "Enrolled. Verify with: mise fido2:status"
+
+# Enrolling the FIDO2 token in the LUKS header is not enough — the initrd's
+# systemd-cryptsetup-generator only tries FIDO2 unlock if told to via
+# rd.luks.options. Without this karg, boot still falls back to a passphrase
+# prompt even though the token slot exists. Scope to this device's UUID so
+# other LUKS volumes (e.g. swap) aren't affected.
+DEVICE_UUID=$(blkid -s UUID -o value "$DEVICE")
+echo "Setting kernel argument so initrd attempts FIDO2 unlock at boot..."
+bootc loader-entries set-options-for-source --source fido2-luks \
+  --options "rd.luks.options=${DEVICE_UUID}=fido2-device=auto"
+
+echo "Enrolled. Reboot to apply the new kernel argument, then verify with: mise fido2:status"

@@ -20,6 +20,20 @@ if [[ "$DEVICE" =~ ^UUID= ]]; then
 fi
 ```
 
+## LUKS header enrollment alone does not enable FIDO2 unlock at boot
+
+`systemd-cryptenroll --fido2-device=auto` only writes a token slot into the LUKS2 header. It does **not** make the initrd try FIDO2 at boot. The initrd's `systemd-cryptsetup-generator` needs `rd.luks.options=<uuid>=fido2-device=auto` on the kernel cmdline — without it, boot falls back to passphrase prompt even though the token slot exists and `mise fido2:status` shows it enrolled.
+
+On this bootc/composefs image there is no `rpm-ostree` (composefs backend is replacing it) and no `bootc kargs` subcommand. The correct persistent-karg mechanism is:
+
+```bash
+bootc loader-entries set-options-for-source --source <name> --options "<kargs>"
+```
+
+This tracks kargs per-source via `x-options-source-<name>` keys in the BLS entry and stages a new deployment. Scope the option to the specific device UUID (`rd.luks.options=<uuid>=fido2-device=auto`), not the blanket `rd.luks.options=fido2-device=auto` form — the blanket form applies to every LUKS volume on the system (e.g. swap), which may not have a FIDO2 token enrolled and will otherwise stall boot.
+
+Requires a reboot to take effect — kargs are staged, not live.
+
 ## systemd-cryptenroll and FIDO2 PIN
 
 `systemd-cryptenroll --fido2-device=auto` prompts for the existing LUKS passphrase, then for a FIDO2 PIN if the key requires user verification. The key blink prompt appears after the PIN prompt, not before. Telling users "touch when it blinks" is correct but the PIN step may precede it on UV-required keys.
