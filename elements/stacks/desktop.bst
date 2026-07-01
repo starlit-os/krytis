@@ -157,8 +157,9 @@ depends:
   - desktop/scx-loader.bst
 
   # ── Apps ───────────────────────────────────────────────────────────────
-  # Proton Pass: password manager desktop app (bundled Electron, x86_64 only).
-  - desktop/proton-pass.bst
+  # All pre-built desktop apps are grouped in desktop-apps to keep this file
+  # focused on session infrastructure. Add new apps to stacks/desktop-apps.bst.
+  - stacks/desktop-apps.bst
 
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
