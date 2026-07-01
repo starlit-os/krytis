@@ -15,6 +15,10 @@ if [[ -f /etc/crypttab ]]; then
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     [[ -z "${line// /}" ]] && continue
     DEVICE=$(awk '{print $2}' <<< "$line")
+    # crypttab commonly uses UUID= syntax; resolve to a path cryptsetup can open
+    if [[ "$DEVICE" =~ ^UUID= ]]; then
+      DEVICE="/dev/disk/by-uuid/${DEVICE#UUID=}"
+    fi
     cryptsetup isLuks "$DEVICE" 2>/dev/null && LUKS_DEVICES+=("$DEVICE") || true
   done < /etc/crypttab
 fi
