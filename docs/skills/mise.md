@@ -22,7 +22,6 @@ remaining args as positionals, so flags like `--deps` and `--tar` pass through w
 ## Standard build workflow
 
 ```
-mise generate-image-version   # stamp include/image-version.yml
 mise validate                 # confirm element graph resolves
 mise load-image               # BST build → podman local storage
 mise lint                     # bootc container lint (squash-all)
@@ -30,6 +29,10 @@ mise generate-disk            # bootc install to-disk → bootable.raw
 mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 ```
 
+- `include/image-version.yml` is **gitignored** — generated at build time, never committed.
+  `bst` and `validate` tasks declare `depends=["generate-image-version"]` so it's always
+  regenerated automatically. `mise bootstrap` also generates it for fresh clones.
+  Manual `mise generate-image-version` is only needed if you want to regenerate without building.
 - `lint` must be run after `load-image` — not automatically re-triggered.
 - `generate-disk` requires `sudo` (bootc loopback install needs root).
 - `boot-vm` requires `qemu-system-x86_64` + `edk2-ovmf`, or falls back to `docker.io/qemux/qemu-docker`.
