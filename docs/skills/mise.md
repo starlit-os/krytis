@@ -460,12 +460,21 @@ For `composefs=true` (krytis) the payload OCI image is embedded into the squashf
 ```toml
 [storage]
 driver = "vfs"
+graphroot = "/var/lib/containers/storage-live"
 
 [storage.options]
 additionalimagestores = ["/var/lib/containers/storage"]
 ```
 
-`driver = "vfs"` matches the embedded store's on-disk layout. The `additionalimagestores` entry is what makes it resolve **rootless**: fisherman runs rootless as `liveuser`, and rootless podman always overrides the system graphroot to `~/.local/share/containers/storage` — so the embedded system-path store is invisible as a primary graphroot and must be registered as a read-only additional store. (A rootful pkexec path would read `/var/lib/containers/storage` as its default graphroot anyway, so this covers both.) The driver of an additional store must match the primary, hence `vfs` is mandatory on both lines.
+`driver = "vfs"` matches the embedded store's on-disk layout, and its driver must match the primary store's, so `vfs` is mandatory. The `additionalimagestores` entry is what registers the embedded payload so podman/skopeo can read it.
+
+**The `graphroot` override is not optional — it avoids a self-reference lock trap.** fisherman installs via `pkexec` (**rootful**), whose *default* graphroot is exactly `/var/lib/containers/storage` — the same path as the embedded payload. containers/storage caches lockfiles by absolute path (`pkg/lockfile` `getLockfile`): the primary store opens `.../vfs-layers/layers.lock` **read-write**, then the additional store requests the **same** path **read-only** → cache hit on a read-write lock → fatal:
+
+```
+loading additional layer stores: lock /var/lib/containers/storage/vfs-layers/layers.lock is not a read-only lock
+```
+
+Pointing `graphroot` at a separate empty dir (`…/storage-live`) means the payload is only ever the read-only additional store, never the primary — the paths differ, so no cache collision. This also covers rootless (`liveuser`), where podman forces graphroot to `~/.local/share/containers/storage`; the payload is reachable only as an additional read-only store there too, and the distinct rootful graphroot keeps the pkexec path from colliding with it. See containers/podman#9852 for the original report of this failure mode.
 
 ### Status
 
