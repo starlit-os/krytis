@@ -15,12 +15,23 @@ if [[ -f /etc/crypttab ]]; then
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     [[ -z "${line// /}" ]] && continue
     DEVICE=$(awk '{print $2}' <<< "$line")
+    # crypttab commonly uses UUID= syntax; resolve to a path cryptsetup can open
+    if [[ "$DEVICE" =~ ^UUID= ]]; then
+      DEVICE="/dev/disk/by-uuid/${DEVICE#UUID=}"
+    fi
     cryptsetup isLuks "$DEVICE" 2>/dev/null && LUKS_DEVICES+=("$DEVICE") || true
   done < /etc/crypttab
 fi
 
+# Fresh bootc installs have no /etc/crypttab — fall back to block device scan
 if [[ ${#LUKS_DEVICES[@]} -eq 0 ]]; then
-  echo "No LUKS devices found in /etc/crypttab" >&2
+  while IFS= read -r dev; do
+    [[ -n "$dev" ]] && LUKS_DEVICES+=("$dev")
+  done < <(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | sort)
+fi
+
+if [[ ${#LUKS_DEVICES[@]} -eq 0 ]]; then
+  echo "No LUKS devices found (checked /etc/crypttab and blkid scan)" >&2
   exit 1
 fi
 
@@ -44,4 +55,15 @@ fi
 
 echo "Touch your security key when it blinks..."
 systemd-cryptenroll --fido2-device=auto "$DEVICE"
-echo "Enrolled. Verify with: mise fido2:status"
+
+# Enrolling the FIDO2 token in the LUKS header is not enough — the initrd's
+# systemd-cryptsetup-generator only tries FIDO2 unlock if told to via
+# rd.luks.options. Without this karg, boot still falls back to a passphrase
+# prompt even though the token slot exists. Scope to this device's UUID so
+# other LUKS volumes (e.g. swap) aren't affected.
+DEVICE_UUID=$(blkid -s UUID -o value "$DEVICE")
+echo "Setting kernel argument so initrd attempts FIDO2 unlock at boot..."
+bootc loader-entries set-options-for-source --source fido2-luks \
+  --options "rd.luks.options=${DEVICE_UUID}=fido2-device=auto"
+
+echo "Enrolled. Reboot to apply the new kernel argument, then verify with: mise fido2:status"
