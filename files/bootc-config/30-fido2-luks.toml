@@ -1,0 +1,5 @@
+# Let the initrd try FIDO2 unlock for any LUKS volume that has a
+# systemd-fido2 token enrolled (via systemd-cryptenroll / mise fido2:enroll-luks).
+# No-op for volumes without one — they fall through to passphrase as before.
+# Applied by bootc at deploy time via /usr/lib/bootc/kargs.d/.
+kargs = ["rd.luks.options=fido2-device=auto"]

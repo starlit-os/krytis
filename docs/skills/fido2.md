@@ -22,17 +22,23 @@ fi
 
 ## LUKS header enrollment alone does not enable FIDO2 unlock at boot
 
-`systemd-cryptenroll --fido2-device=auto` only writes a token slot into the LUKS2 header. It does **not** make the initrd try FIDO2 at boot. The initrd's `systemd-cryptsetup-generator` needs `rd.luks.options=<uuid>=fido2-device=auto` on the kernel cmdline — without it, boot falls back to passphrase prompt even though the token slot exists and `mise fido2:status` shows it enrolled.
+`systemd-cryptenroll --fido2-device=auto` only writes a token slot into the LUKS2 header. It does **not** make the initrd try FIDO2 at boot. The initrd's `systemd-cryptsetup-generator` needs `rd.luks.options=fido2-device=auto` on the kernel cmdline — without it, boot falls back to passphrase prompt even though the token slot exists and `mise fido2:status` shows it enrolled.
 
-On this bootc/composefs image there is no `rpm-ostree` (composefs backend is replacing it) and no `bootc kargs` subcommand. The correct persistent-karg mechanism is:
+**Bake this in at build time**, don't try to set it per-host at runtime. Ship it as `/usr/lib/bootc/kargs.d/*.toml` (see `files/bootc-config/30-fido2-luks.toml`, installed by `elements/config/bootc.bst`):
 
-```bash
-bootc loader-entries set-options-for-source --source <name> --options "<kargs>"
+```toml
+kargs = ["rd.luks.options=fido2-device=auto"]
 ```
 
-This tracks kargs per-source via `x-options-source-<name>` keys in the BLS entry and stages a new deployment. Scope the option to the specific device UUID (`rd.luks.options=<uuid>=fido2-device=auto`), not the blanket `rd.luks.options=fido2-device=auto` form — the blanket form applies to every LUKS volume on the system (e.g. swap), which may not have a FIDO2 token enrolled and will otherwise stall boot.
+This is safe to apply unconditionally to every build — it's a no-op for any LUKS volume without a `systemd-fido2` token enrolled (they fall straight through to their existing unlock method, e.g. passphrase or swap with no auth). No UUID-scoping needed. Applies automatically to every deployment, including future `bootc upgrade`s, with zero per-host or per-enrollment action required.
 
-Requires a reboot to take effect — kargs are staged, not live.
+### `bootc loader-entries` does not work on this project's composefs-native backend
+
+Tried first, doesn't work here — kept as a documented dead end so it isn't retried. `bootc loader-entries set-options-for-source --source <name> --options "<kargs>"` is the general mechanism for *runtime*, per-host karg persistence across deployments (tracks kargs per-source via `x-options-source-<name>` BLS keys, used for things like TuneD). It fails on this image with `error: OSTree storage not initialized`, even on ostree >= 2026.1 (rules out the version requirement documented in `bootc-loader-entries-set-options-for-source(8)`).
+
+Root cause: `bootc upgrade`/`bootc status` work fine and use their own code path for this backend. `loader-entries` is a separate code path that expects a classic ostree Sysroot deployment-tracking object (`/ostree/deploy/<stateroot>/deploy/<checksum>.0`), which this project's composefs-native layout (`state/deploy/<hash>/{etc,var}`, `composefs/<hash>` — see `bootc-vm.md`) doesn't populate, even though a plain content-addressed blob repo exists at `/sysroot/ostree`.
+
+Confirmed the BLS entries themselves are real, editable Type #1 text files at `<ESP>/loader/entries/*.conf` with a normal `options=` line — this is not a UKI/Type #2 boot setup. `loader-entries` failing is specific to how it locates/tracks deployments internally, not a fact about the boot chain itself. **Known limitation:** since composefs-native writes a fresh BLS entry per deployment on each `bootc upgrade`, any *runtime* per-host karg (via direct `options=` edit or a future working `loader-entries` fix) would not carry forward automatically — reinforces why kargs.d (baked into the image, applied at every deployment) is the right mechanism for anything that should persist across upgrades.
 
 ## systemd-cryptenroll and FIDO2 PIN
 
