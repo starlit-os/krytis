@@ -419,6 +419,18 @@ vendor_conf.d/some-tool.fish ← loads after, mise already active
 
 The task passes `--justfile` and `--working-directory` so `just` runs from the dakota-iso repo root regardless of the caller's cwd. All intermediate artifacts land in `OUTPUT_DIR` (default `output/`); the final ISO is `output/krytis-live.iso`.
 
+### Payload tag must match `dakota-iso/krytis/payload_ref` exactly
+
+`mise build` only tags the freshly built image as `localhost/krytis:latest`. dakota-iso's `iso-sd-boot.sh` reads `krytis/payload_ref` (`ghcr.io/starlit-os/krytis:latest`) and runs `podman save` on that **exact** ref to embed the offline payload — it does not know about `localhost/krytis:latest`, so without a matching tag the save either fails outright or, worse, silently picks up a stale `ghcr.io/starlit-os/krytis:latest` left over from an earlier `mise push`/`podman pull`, embedding an old image with no error.
+
+`build-iso` now re-tags on every run, so the ISO always embeds whatever `mise build` most recently produced:
+
+```bash
+podman tag localhost/krytis:latest "$(cat "${DAKOTA_ISO_DIR}/krytis/payload_ref")"
+```
+
+It fails fast with a clear message if `localhost/krytis:latest` doesn't exist yet — run `mise build` first.
+
 ### Tool sourcing — designed to run on Krytis itself
 
 Krytis is immutable with no package manager, so the build runs with only the tools baked into the image (dev-tools stack) or managed by mise — **plus one container**:

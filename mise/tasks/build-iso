@@ -26,6 +26,22 @@ if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
     exit 1
 fi
 
+# `mise build` only tags the freshly built image as localhost/krytis:latest.
+# dakota-iso's iso-sd-boot.sh reads krytis/payload_ref (ghcr.io/starlit-os/
+# krytis:latest) and does `podman save` on that exact ref to embed the
+# offline payload — without a matching local tag it either fails outright or
+# silently picks up a stale image pulled/pushed earlier. Re-tag on every run
+# so the ISO always embeds the image `mise build` just produced.
+LOCAL_IMAGE="localhost/krytis:latest"
+if ! podman image exists "${LOCAL_IMAGE}"; then
+    echo "ERROR: ${LOCAL_IMAGE} not found — run 'mise build' first." >&2
+    exit 1
+fi
+
+PAYLOAD_REF="$(cat "${DAKOTA_ISO_DIR}/krytis/payload_ref" | tr -d '[:space:]')"
+echo "==> Tagging ${LOCAL_IMAGE} → ${PAYLOAD_REF} for offline embed..."
+podman tag "${LOCAL_IMAGE}" "${PAYLOAD_REF}"
+
 OUTPUT_DIR="${usage_output_dir:-output}"
 WORKDIR="${usage_workdir:-${OUTPUT_DIR}}"
 DEBUG=$([[ "${usage_debug:-}" == "true" ]] && echo 1 || echo 0)
