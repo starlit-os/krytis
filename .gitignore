@@ -39,6 +39,7 @@ files/boot-keys/
 
 # Git worktrees
 .worktrees/
+.claude/worktrees/
 
 # Generated at build time — do not commit
 include/image-version.yml
