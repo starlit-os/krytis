@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#MISE description="Build a live ISO for Krytis using the dakota-iso pipeline"
+#USAGE flag "--output-dir <dir>" default="output" help="Directory for the final ISO and intermediate artifacts"
+#USAGE flag "--workdir <dir>" help="Working directory for squashfs staging (XFS/BTRFS recommended)"
+#USAGE flag "--compression <mode>" default="fast" help="Squashfs compression: fast or release"
+#USAGE flag "--debug" help="Enable SSH in the live environment (not for production)"
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# dakota-iso is expected as a sibling of the main krytis checkout. Resolve from
+# the main worktree (via git-common-dir) so this works when run from a git
+# worktree too — there REPO_ROOT is nested under .worktrees/ and a naive
+# "${REPO_ROOT}/.." points at the wrong place. Override with DAKOTA_ISO_DIR.
+if [[ -z "${DAKOTA_ISO_DIR:-}" ]]; then
+    COMMON_GIT="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    MAIN_ROOT="${COMMON_GIT:+$(dirname "${COMMON_GIT}")}"
+    MAIN_ROOT="${MAIN_ROOT:-${REPO_ROOT}}"
+    DAKOTA_ISO_DIR="$(realpath "${MAIN_ROOT}/../dakota-iso" 2>/dev/null || echo "${MAIN_ROOT}/../dakota-iso")"
+fi
+
+if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
+    echo "ERROR: dakota-iso not found at ${DAKOTA_ISO_DIR}" >&2
+    echo "       Clone kitten-lily/dakota-iso as a sibling of the krytis checkout, or set DAKOTA_ISO_DIR." >&2
+    exit 1
+fi
+
+# `mise build` only tags the freshly built image as localhost/krytis:latest.
+# dakota-iso's iso-sd-boot.sh reads krytis/payload_ref (ghcr.io/starlit-os/
+# krytis:latest) and does `podman save` on that exact ref to embed the
+# offline payload — without a matching local tag it either fails outright or
+# silently picks up a stale image pulled/pushed earlier. Re-tag on every run
+# so the ISO always embeds the image `mise build` just produced.
+LOCAL_IMAGE="localhost/krytis:latest"
+if ! podman image exists "${LOCAL_IMAGE}"; then
+    echo "ERROR: ${LOCAL_IMAGE} not found — run 'mise build' first." >&2
+    exit 1
+fi
+
+PAYLOAD_REF="$(cat "${DAKOTA_ISO_DIR}/krytis/payload_ref" | tr -d '[:space:]')"
+echo "==> Tagging ${LOCAL_IMAGE} → ${PAYLOAD_REF} for offline embed..."
+podman tag "${LOCAL_IMAGE}" "${PAYLOAD_REF}"
+
+OUTPUT_DIR="${usage_output_dir:-output}"
+WORKDIR="${usage_workdir:-${OUTPUT_DIR}}"
+DEBUG=$([[ "${usage_debug:-}" == "true" ]] && echo 1 || echo 0)
+COMPRESSION="${usage_compression:-fast}"
+
+mkdir -p "${OUTPUT_DIR}"
+
+# buildah + xorriso have no freedesktop-sdk component, so they are not in the
+# Krytis image. Build the iso-tools container (Fedora-based, carries both) and
+# point iso-sd-boot.sh at it via ISO_TOOLS_IMAGE. The host runs everything else
+# (podman, skopeo, mksquashfs, mtools, dosfstools) from the dev-tools stack.
+ISO_TOOLS_IMAGE="${ISO_TOOLS_IMAGE:-localhost/iso-tools:latest}"
+echo "==> Building iso-tools container (${ISO_TOOLS_IMAGE})..."
+podman build -t "${ISO_TOOLS_IMAGE}" "${DAKOTA_ISO_DIR}/live/iso-tools"
+
+echo "==> Building Krytis live ISO"
+echo "    dakota-iso: ${DAKOTA_ISO_DIR}"
+echo "    output:     ${OUTPUT_DIR}"
+echo "    workdir:    ${WORKDIR}"
+echo "    compress:   ${COMPRESSION}"
+echo "    iso-tools:  ${ISO_TOOLS_IMAGE}"
+
+TARGET=krytis \
+OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")" \
+WORKDIR="$(realpath "${WORKDIR}")" \
+DEBUG="${DEBUG}" \
+COMPRESSION="${COMPRESSION}" \
+ISO_TOOLS_IMAGE="${ISO_TOOLS_IMAGE}" \
+    just --justfile "${DAKOTA_ISO_DIR}/justfile" \
+         --working-directory "${DAKOTA_ISO_DIR}" \
+         iso-sd-boot krytis
+
+echo "==> ISO ready: ${OUTPUT_DIR}/krytis-live.iso"

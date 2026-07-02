@@ -412,3 +412,84 @@ vendor_conf.d/some-tool.fish ← loads after, mise already active
 `elements/core/mise.bst` installs mise's fish integration to `vendor_conf.d/01-mise.fish` so any tool conf sorting after `01-` sees a fully initialised mise environment.
 
 **Known limitation:** fish [#8553](https://github.com/fish-shell/fish-shell/issues/8553) — `vendor_conf.d` load order is not guaranteed to be stable across all fish versions. The numeric prefix is a best-effort workaround; no complete fix available until upstream resolves this.
+
+## ISO build task (`mise run build-iso`)
+
+`mise/tasks/build-iso` shells out to `just iso-sd-boot krytis` in the `dakota-iso` fork (`kitten-lily/dakota-iso`). It expects the fork to be cloned as a sibling of the krytis repo (`../dakota-iso`). Override with `DAKOTA_ISO_DIR=/path/to/fork mise run build-iso`.
+
+The task passes `--justfile` and `--working-directory` so `just` runs from the dakota-iso repo root regardless of the caller's cwd. All intermediate artifacts land in `OUTPUT_DIR` (default `output/`); the final ISO is `output/krytis-live.iso`.
+
+### Payload tag must match `dakota-iso/krytis/payload_ref` exactly
+
+`mise build` only tags the freshly built image as `localhost/krytis:latest`. dakota-iso's `iso-sd-boot.sh` reads `krytis/payload_ref` (`ghcr.io/starlit-os/krytis:latest`) and runs `podman save` on that **exact** ref to embed the offline payload — it does not know about `localhost/krytis:latest`, so without a matching tag the save either fails outright or, worse, silently picks up a stale `ghcr.io/starlit-os/krytis:latest` left over from an earlier `mise push`/`podman pull`, embedding an old image with no error.
+
+`build-iso` now re-tags on every run, so the ISO always embeds whatever `mise build` most recently produced:
+
+```bash
+podman tag localhost/krytis:latest "$(cat "${DAKOTA_ISO_DIR}/krytis/payload_ref")"
+```
+
+It fails fast with a clear message if `localhost/krytis:latest` doesn't exist yet — run `mise build` first.
+
+### Tool sourcing — designed to run on Krytis itself
+
+Krytis is immutable with no package manager, so the build runs with only the tools baked into the image (dev-tools stack) or managed by mise — **plus one container**:
+
+| Tool | Source |
+|---|---|
+| `just` | mise (`mise.toml [tools]`) |
+| `podman`, `skopeo` | `stacks/bootc.bst` (already in image) |
+| `mksquashfs`, `mtools`, `mkfs.fat`, `rsync` | `stacks/dev-tools.bst` (fdsdk components: squashfs-tools, mtools, dosfstools, rsync) |
+| `buildah`, `xorriso` | **iso-tools container** (`live/iso-tools/Containerfile` in dakota-iso) |
+
+`buildah` and `xorriso` have **no freedesktop-sdk component**, so the `build-iso` task builds a Fedora-based `iso-tools` container and sets `ISO_TOOLS_IMAGE`. `iso-sd-boot.sh` then routes only those two steps through `podman run`:
+
+- **Payload prep** (multi-step `buildah from→copy→commit`) runs as one `podman run` of `live/iso-tools/payload-prep.sh` — a single invocation, or the buildah working container would not survive between commands.
+- **ISO assembly** passes `XORRISO`/`IMPLANTISOMD5` as `podman run …` command overrides to `build-iso.sh`; mtools/dosfstools still run on the host.
+
+`ISO_TOOLS_IMAGE` unset (dakota/bluefin CI on a mutable, rootful host) preserves the original host-binary path. Override the image tag with `ISO_TOOLS_IMAGE=… mise run build-iso`.
+
+### Rootless gotchas (verified building on Krytis itself)
+
+Krytis runs **rootless** podman. Three things this breaks vs dakota's rootful CI, all handled in the fork — keep them when touching the scripts:
+
+1. **Don't bind-mount the host containers-storage into the tools container.** Rootless storage lives under `$HOME`, not `/var/lib/containers/storage`, and the nested userns can't take the storage lock (`storage.lock: permission denied`). Instead `iso-sd-boot.sh` does `podman save --format oci-archive` of the payload on the host first, and payload-prep reads it with `buildah from oci-archive:` — transport-clean, works rootless and rootful.
+2. **Force `STORAGE_DRIVER=vfs` for the payload-prep container.** The container rootfs is on overlayfs; buildah's default overlay driver can't stack on overlayfs without fuse-overlayfs (`'overlay' is not supported over overlayfs`). vfs has no such constraint (costs disk, ~2× the payload).
+3. **The squashfs assembly's overlay mount falls back to `cp -a`** when rootless overlay isn't available — slower but works; no action needed.
+
+### Variant config gotcha
+
+`live/Containerfile` builds `FROM ghcr.io/${REGISTRY}/${TARGET}` — it prepends `ghcr.io/` itself. So `krytis/registry` is the **org only** (`starlit-os`), matching dakota's `projectbluefin`. A `ghcr.io/`-prefixed value produces the malformed `ghcr.io/ghcr.io/...` ref and the payload export fails with "image not known".
+
+**Kernel cmdline label must match the volume label.** `build-iso.sh` once hardcoded `root=live:LABEL=DAKOTA_LIVE` in every boot entry while the volume label comes from `--label` (`KRYTIS_LIVE`, from `krytis/live_label`). The mismatch made dmsquash-live search for a non-existent label and **hang to a black screen** — no error, in QEMU/Boxes and on bare metal. The cmdlines now use `${LABEL}`; if you add a variant, set `live_label` and confirm the boot entries reference it. The krytis cmdline also carries `console=tty0` (so boot renders on a display, not just serial) and `rd.shell rd.info loglevel=7` (verbose + emergency shell on initramfs failure instead of a silent hang).
+
+### Live env must set `driver = "vfs"` for the offline store to resolve
+
+For `composefs=true` (krytis) the payload OCI image is embedded into the squashfs as a **VFS** containers-storage graphroot at `/var/lib/containers/storage`. Podman's default driver is **overlay**, so without an override it looks in an empty `overlay/` tree and reports the image as missing — the installer then fails until you `podman pull` it over the network, which defeats the whole point of an offline ISO. The symptom is "image not found" / a forced network pull at install time, *not* a build error.
+
+`configure-live-krytis.sh` writes `/etc/containers/storage.conf`:
+
+```toml
+[storage]
+driver = "vfs"
+graphroot = "/var/lib/containers/storage-live"
+
+[storage.options]
+additionalimagestores = ["/var/lib/containers/storage"]
+```
+
+`driver = "vfs"` matches the embedded store's on-disk layout, and its driver must match the primary store's, so `vfs` is mandatory. The `additionalimagestores` entry is what registers the embedded payload so podman/skopeo can read it.
+
+**The `graphroot` override is not optional — it avoids a self-reference lock trap.** fisherman installs via `pkexec` (**rootful**), whose *default* graphroot is exactly `/var/lib/containers/storage` — the same path as the embedded payload. containers/storage caches lockfiles by absolute path (`pkg/lockfile` `getLockfile`): the primary store opens `.../vfs-layers/layers.lock` **read-write**, then the additional store requests the **same** path **read-only** → cache hit on a read-write lock → fatal:
+
+```
+loading additional layer stores: lock /var/lib/containers/storage/vfs-layers/layers.lock is not a read-only lock
+```
+
+Pointing `graphroot` at a separate empty dir (`…/storage-live`) means the payload is only ever the read-only additional store, never the primary — the paths differ, so no cache collision. This also covers rootless (`liveuser`), where podman forces graphroot to `~/.local/share/containers/storage`; the payload is reachable only as an additional read-only store there too, and the distinct rootful graphroot keeps the pkexec path from colliding with it. See containers/podman#9852 for the original report of this failure mode.
+
+### Status
+
+`mise run build-iso --debug` produces `output/krytis-live.iso` (~4 GB, volume label `KRYTIS_LIVE`, protective MBR + GPT) on rootless Krytis. **Boot test still pending** — Krytis ships no `qemu`; boot via dakota-iso's `run-iso` recipe (`ghcr.io/qemus/qemu` container) or external hardware/VM.
+
+For a one-off build on a **mutable** dev host instead, install the tools directly (e.g. CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum buildah`) and `export ISO_TOOLS_IMAGE=` to opt out of the container path.
