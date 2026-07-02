@@ -8,4 +8,7 @@ set -euo pipefail
 # This is idempotent and safe to re-run.
 mise settings experimental=true
 
+# Generate include/image-version.yml — gitignored so not committed.
+mise run generate-image-version
+
 echo "==> Bootstrap complete."

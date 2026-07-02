@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Run any bst command (native uv venv by default; --container for podman)"
+#MISE depends=["generate-image-version"]
 #USAGE flag "--container" help="Use the pinned bst2 podman container instead of native BST"
 #USAGE arg "<args>" var=#true help="bst subcommand and arguments (e.g. build stacks/base-system.bst)"
 
