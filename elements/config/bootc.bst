@@ -15,4 +15,5 @@ config:
   - install -Dm644 -t "%{install-root}%{indep-libdir}/ostree/" prepare-root.conf
   - install -Dm644 -t "%{install-root}%{indep-libdir}/tmpfiles.d" 10-bootc.conf
   - install -Dm644 -t "%{install-root}%{indep-libdir}/bootc/kargs.d" 20-plymouth.toml
+  - install -Dm644 -t "%{install-root}%{indep-libdir}/bootc/kargs.d" 30-fido2-luks.toml
   - "%{install-extra}"
