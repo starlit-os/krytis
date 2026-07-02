@@ -3,8 +3,9 @@
 # GitHub's archive/refs/heads/main.tar.gz regenerates on every push;
 # always pin to a full commit SHA.
 #
-# Currently pinned to kitten-lily/noctalia-greeter fix/show-pam-text-info-cue
-# pending upstream merge of the PAM_TEXT_INFO cue fix into noctalia-dev/main.
+# Our PAM_TEXT_INFO cue fix was merged upstream (noctalia-dev/main commit
+# 26865dae "always allow empty passwords and surface PAM info messages").
+# Pinned to upstream noctalia-dev/noctalia-greeter main, not our fork.
 #
 # The greeter runs inside Cage (kiosk wlroots compositor) via the
 # noctalia-greeter-session wrapper script that greetd calls.
@@ -49,5 +50,5 @@ variables:
 
 sources:
 - kind: tar
-  url: github_files:kitten-lily/noctalia-greeter/archive/e39ae7ff055c801876b15a815f1bc350733cf87c.tar.gz
-  ref: 4f4e32dc49aae753a358bb123d71c53b6e352fb0130dfba641710304669a38ad
+  url: github_files:noctalia-dev/noctalia-greeter/archive/a3265c8c16d3cf338cbb39c7ca718991578e4e26.tar.gz
+  ref: 36b5b2562cfbcc46f2525f5aa3a306431eae4d00388252653ce29936df601edf
