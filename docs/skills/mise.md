@@ -488,6 +488,18 @@ loading additional layer stores: lock /var/lib/containers/storage/vfs-layers/lay
 
 Pointing `graphroot` at a separate empty dir (`…/storage-live`) means the payload is only ever the read-only additional store, never the primary — the paths differ, so no cache collision. This also covers rootless (`liveuser`), where podman forces graphroot to `~/.local/share/containers/storage`; the payload is reachable only as an additional read-only store there too, and the distinct rootful graphroot keeps the pkexec path from colliding with it. See containers/podman#9852 for the original report of this failure mode.
 
+### `bootc update` "graph driver overwritten by vfs from database" is benign
+
+After installing from the ISO, `bootc update` on the installed system prints:
+
+```
+User-selected graph driver "overlay" overwritten by graph driver "vfs" from database
+```
+
+**This is expected and non-fatal — the update succeeds and stages the image.** Do not chase it as a bug. It is inherent to *any* live-ISO composefs install, not specific to krytis: fisherman's `selectStorageDriver` (`tuna-os/fisherman` `internal/install/storage_driver.go`) rejects `overlayfs`/`tmpfs` scratch and falls back to **vfs**, and in a live environment the scratch dir is always overlayfs/tmpfs. bootc therefore records `vfs` in the installed system's containers-storage database; containers/storage honours the recorded driver over the configured `overlay` and warns. The only cost is vfs storing layers uncompressed (more disk, slower) — functionally correct. dakota/bluefin ISOs use the same fisherman and behave the same way.
+
+The clean-but-deep fix would be to embed the offline payload as an **overlay** store (matching what fisherman/superiso natively expect) so nothing forces vfs, dropping the `storage.conf` override entirely — blocked on producing an overlay containers-storage from the rootless build. Not worth doing while `bootc update` works.
+
 ### Status
 
 `mise run build-iso --debug` produces `output/krytis-live.iso` (~4 GB, volume label `KRYTIS_LIVE`, protective MBR + GPT) on rootless Krytis. **Boot test still pending** — Krytis ships no `qemu`; boot via dakota-iso's `run-iso` recipe (`ghcr.io/qemus/qemu` container) or external hardware/VM.
