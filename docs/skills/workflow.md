@@ -6,6 +6,8 @@ Reference for setting up worktrees, branches, and following the self-improvement
 
 Always create a worktree before touching any files — including when working on an **existing** branch. Never `git checkout <branch>` in the primary worktree; that switches HEAD away from `main` and defeats the whole point.
 
+**Always use `git worktree add` via Bash. Never use the `EnterWorktree` tool.** The tool hardcodes `.claude/worktrees/` as the base and prefixes the branch with `worktree-` — both violate this project's convention. A `PreToolUse` hook in `.claude/settings.json` blocks it with a reminder.
+
 **Existing branch (no `-b`):**
 ```shell
 git worktree add <worktree-path> <existing-branch>
@@ -40,11 +42,11 @@ Read the `parent:` field in the output. This determines which path form to use.
 
 | Scenario | Worktree path | Branch name |
 |---|---|---|
-| Top-level issue | `<base>/gh<number>-<slug>` | `<number>-<slug>` |
+| Top-level issue | `<base>/<cc-type>/gh<number>-<slug>` | `<number>-<slug>` |
 | Issue with parent | `<base>/gh<parent-number>/<number>-<slug>` | `<number>-<slug>` |
 | No issue | `<base>/<branch-name>` | `<branch-name>` (Conventional Commits style) |
 
-Branch name is always flat — no parent number encoding.
+`<cc-type>` is the Conventional Commits type (`feat`, `fix`, `ci`, `chore`, `docs`, `refactor`, …). Branch name is always flat — no type prefix, no parent number encoding.
 
 ### Step 4 — trust mise in the new worktree
 

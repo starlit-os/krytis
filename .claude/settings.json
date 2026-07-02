@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'EnterWorktree is blocked: hardcodes .claude/worktrees/ and adds a worktree- branch prefix, both wrong for this project. Use git worktree add via Bash. See docs/skills/workflow.md for the path and branch naming convention.' >&2 && exit 2"
+          }
+        ]
+      }
+    ]
+  }
+}

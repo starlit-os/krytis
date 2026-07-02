@@ -450,6 +450,53 @@ config:
 
 **Version discovery (Proton apps):** `https://proton.me/download/PassDesktop/linux/x64/version.json` returns `{"Releases": [{"CategoryName": "Stable", "Version": "X.Y.Z", ...}]}`. Parse with Python: `[r for r in data['Releases'] if r['CategoryName'] == 'Stable'][0]['Version']`.
 
+### Bundled-app tarballs with RPATH structure (e.g. Zed)
+
+Some apps ship a self-contained tarball (`app.tar.gz → app.app/`) with an internal layout that encodes RPATH. For example, Zed's `bin/zed` has `RPATH: $ORIGIN/../lib` — it expects bundled `.so` files at `../lib` relative to the binary. If you install `bin/zed` to `/usr/bin/zed`, `$ORIGIN/../lib` resolves to `/usr/lib/`, which is the **system** lib directory, not the bundled libs.
+
+**Fix:** install the app to a private directory (`/usr/lib/<app>/`) that preserves the relative structure, then symlink the launcher:
+
+```yaml
+kind: manual
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  strip-binaries: ''
+
+config:
+  strip-commands:
+  - ':'
+
+  install-commands:
+  - |
+    install -d "%{install-root}/usr/lib/zed"
+    cp -a bin libexec lib "%{install-root}/usr/lib/zed/"
+    install -d "%{install-root}/usr/bin"
+    ln -s /usr/lib/zed/bin/zed "%{install-root}/usr/bin/zed"
+    cp -a share "%{install-root}/usr/"
+
+sources:
+- kind: tar
+  (?):
+  - arch == "x86_64":
+      url: github_files:zed-industries/zed/releases/download/vVER/zed-linux-x86_64.tar.gz
+      ref: <sha256>
+  - arch == "aarch64":
+      url: github_files:zed-industries/zed/releases/download/vVER/zed-linux-aarch64.tar.gz
+      ref: <sha256>
+```
+
+- BST strips the single top-level dir (`zed.app/`) so `bin/`, `libexec/`, `lib/`, `share/` are at the staging root.
+- `cp -a bin libexec lib` copies the entire internal app tree — preserving the `bin/→../lib` relationship.
+- `cp -a share "%{install-root}/usr/"` installs icons/`.desktop` files to the standard XDG paths.
+- `strip-binaries: ''` and `strip-commands: [':']` required — pre-built ELFs must not be stripped.
+- Check RPATH with `readelf -d <binary> | grep RPATH` before deciding on the install layout.
+
 ### Raw binary elements (`kind: remote` + `filename`)
 
 For pre-built raw binaries (not tarballs) use `kind: remote`. The `filename:` key controls the staged filename — place it at the source level, *outside* the arch-conditional block, so `install-commands` can reference a stable name regardless of arch:

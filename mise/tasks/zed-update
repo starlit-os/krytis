@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#MISE description="Update zed element to the latest stable release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/zed.bst"
+
+echo "==> Fetching latest zed-industries/zed release..."
+LATEST_TAG=$(gh api repos/zed-industries/zed/releases/latest --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_VER}"
+
+CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+for ARCH in x86_64 aarch64; do
+  URL="https://github.com/zed-industries/zed/releases/download/${LATEST_TAG}/zed-linux-${ARCH}.tar.gz"
+  FILE="${TMPDIR}/zed-linux-${ARCH}.tar.gz"
+  echo "==> Downloading ${URL}..."
+  curl -sSL "$URL" -o "$FILE"
+  SHA256=$(sha256sum "$FILE" | awk '{print $1}')
+  echo "    ${ARCH} sha256=${SHA256}"
+
+  # Replace URL and ref for this arch
+  sed -i "s|zed-linux-${ARCH}.tar.gz$|zed-linux-${ARCH}.tar.gz|" "${ELEMENT}"
+  sed -i "/zed-linux-${ARCH}/{n;s|ref: .*|ref: ${SHA256}|}" "${ELEMENT}"
+done
+
+# Update version variable and URLs
+sed -i "s|version: \"${CURRENT_VER}\"|version: \"${LATEST_VER}\"|" "${ELEMENT}"
+sed -i "s|/v${CURRENT_VER}/|/v${LATEST_VER}/|g" "${ELEMENT}"
+
+echo "==> Done: ${CURRENT_VER} → ${LATEST_VER}. Run 'mise run validate' to verify."
