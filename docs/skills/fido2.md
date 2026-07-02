@@ -32,6 +32,8 @@ kargs = ["rd.luks.options=fido2-device=auto"]
 
 This is safe to apply unconditionally to every build — it's a no-op for any LUKS volume without a `systemd-fido2` token enrolled (they fall straight through to their existing unlock method, e.g. passphrase or swap with no auth). No UUID-scoping needed. Applies automatically to every deployment, including future `bootc upgrade`s, with zero per-host or per-enrollment action required.
 
+**Decision rule:** before reaching for a per-host runtime persistence mechanism, check whether the karg is actually host-independent. `fido2-device=auto` doesn't encode a specific credential — it's a generic "try FIDO2 if a token is enrolled" hint, safe on every machine whether or not a key is ever enrolled there. That makes it build-time (`kargs.d`) material, not runtime material, even though FIDO2 enrollment itself is a per-host action. Don't conflate "the feature is configured per-host" with "the karg must be set per-host" — they're independent. Getting this wrong here cost a full build+push cycle on a runtime approach that was never going to work.
+
 ### `bootc loader-entries` does not work on this project's composefs-native backend
 
 Tried first, doesn't work here — kept as a documented dead end so it isn't retried. `bootc loader-entries set-options-for-source --source <name> --options "<kargs>"` is the general mechanism for *runtime*, per-host karg persistence across deployments (tracks kargs per-source via `x-options-source-<name>` BLS keys, used for things like TuneD). It fails on this image with `error: OSTree storage not initialized`, even on ostree >= 2026.1 (rules out the version requirement documented in `bootc-loader-entries-set-options-for-source(8)`).
