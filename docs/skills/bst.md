@@ -1312,6 +1312,21 @@ Requirements for cache hit:
 
 **Limitation:** The local override element CANNOT use `(@):` to include YAML files from the sub-project — includes are resolved within the current project only. All configuration must be inlined.
 
+## Junction override: hiding gvim's desktop entry
+
+fdsdk's `components/vim.bst` builds vim with an unpatched autotools `./configure` — no `--disable-gui` flag is set, so `configure` autodetects X11/GTK in the build sandbox and builds both `vim` and `gvim`, installing **two** desktop files: `runtime/vim.desktop` and `runtime/gvim.desktop`. fdsdk already carries a local patch (`patches/vim/vim-not-show-in-gnome.patch`) that sets `NoDisplay=true` on `vim.desktop` (the terminal one) — but leaves `gvim.desktop` untouched, so gvim shows up as a stray app-menu entry.
+
+Fix: override `components/vim.bst` (same `overrides/<name>.bst` pattern as `frei0r.bst`/`sudo-rs.bst`) with an element identical to upstream's, plus one extra `kind: patch` source that sets `NoDisplay=true` on `gvim.desktop` the same way. The original `vim-not-show-in-gnome.patch` must also be copied into `patches/vim/` locally — a `kind: patch` source path is resolved within the current project, it cannot reach into the fdsdk junction's `patches/` directory.
+
+```yaml
+# elements/freedesktop-sdk.bst
+config:
+  overrides:
+    components/vim.bst: overrides/vim.bst
+```
+
+Insertion point in both `vim.desktop` and `gvim.desktop` is identical: add `NoDisplay=true` on the line before `Type=Application`.
+
 ### fdsdk codecs-extra: linker path, not a rebuild
 
 fdsdk's base ffmpeg (`components/ffmpeg.bst`) has H.264 decode disabled. The codecs-extra extension (`extensions/codecs-extra/ffmpeg.bst`) has it enabled, but installs to a non-standard prefix (`/usr/lib/%{gcc_triplet}/codecs-extra/lib/`). Without an explicit ldconfig entry, the dynamic linker finds only the base libavcodec (at the default search path) and `avdec_h264` is never registered.

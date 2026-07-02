@@ -659,6 +659,10 @@ jobs:
             element: deps/i2c-tools.bst
             branch: auto/track-i2c-tools
             title: "chore(deps): update i2c-tools"
+          - group: manual-merge
+            element: overrides/vim.bst
+            branch: auto/track-vim
+            title: "chore(deps): update vim"
           - group: papirus-icon-theme
             element: desktop/papirus-icon-theme.bst
             branch: auto/track-papirus-icon-theme

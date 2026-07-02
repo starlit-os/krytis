@@ -1,0 +1,12 @@
+diff --git a/runtime/gvim.desktop b/runtime/gvim.desktop
+index 2c25ae0..c2d9a08 100644
+--- a/runtime/gvim.desktop
++++ b/runtime/gvim.desktop
+@@ -112,6 +112,7 @@ Comment[zh_TW]=編輯文字檔
+ TryExec=gvim
+ Exec=gvim -f %F
+ Terminal=false
++NoDisplay=true
+ Type=Application
+ # Translators: Search terms to find this application. Do NOT change the semicolons! The list MUST also end with a semicolon!
+ Keywords[ca]=Text;editor;
