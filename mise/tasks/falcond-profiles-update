@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#MISE description="Update falcond-profiles element to the latest GitHub commit"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/falcond.bst"
+REPO="PikaOS-Linux/falcond-profiles"
+
+# No GitHub Releases upstream — profiles are pushed straight to main, so track the
+# latest commit SHA rather than a tag (unlike falcond-update/scx-loader-update).
+echo "==> Fetching latest ${REPO} commit..."
+LATEST_SHA=$(gh api "repos/${REPO}/commits/main" --jq '.sha')
+echo "==> Latest: ${LATEST_SHA}"
+
+# Scoped to the falcond-profiles source block specifically — the element has
+# several other archive/<40-hex-sha>.tar.gz sources (zig-deps-git pins) that must
+# not be touched.
+CURRENT_SHA=$(grep -A2 "PikaOS-Linux/falcond-profiles/archive" "${ELEMENT}" | grep -oP "archive/\K[0-9a-f]{40}(?=\.tar\.gz)")
+echo "==> Current: ${CURRENT_SHA}"
+
+if [ "${LATEST_SHA}" = "${CURRENT_SHA}" ]; then
+  echo "==> Already up to date (${CURRENT_SHA})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ARCHIVE="${LATEST_SHA}.tar.gz"
+BASE_URL="https://github.com/${REPO}/archive"
+
+echo "==> Downloading ${ARCHIVE}..."
+curl -sSL "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
+echo "    sha256=${SHA}"
+
+CURRENT_REF=$(grep -A2 "archive/${CURRENT_SHA}.tar.gz" "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_SHA} -> ${LATEST_SHA}"
+sed -i "s|archive/${CURRENT_SHA}.tar.gz|archive/${LATEST_SHA}.tar.gz|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_REF}|ref: ${SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."
