@@ -420,6 +420,28 @@ The job should either create/update a PR (if a new release exists) or print "Alr
 
 **ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
 
+### Temporary fork pins for tarball-pinned elements
+
+When a `kind: tar` element needs a fix that isn't upstream yet, point the source at a fork branch's archive tarball instead of waiting on a PR merge — same `github_files:<owner>/<repo>/archive/<sha>.tar.gz` shape, just a different owner:
+
+```yaml
+# TEMPORARY FORK PIN — <fork-owner>/<repo> branch <branch-name>, carrying a
+# fix for <symptom>. File upstream once confirmed fixed on real hardware,
+# then revert this pin to <upstream-owner>/<repo> once merged there.
+sources:
+- kind: tar
+  url: github_files:<fork-owner>/<repo>/archive/<full-commit-sha>.tar.gz
+  ref: <sha256-of-tarball>
+```
+
+Put the "why forked / what to revert to" context **in the element's own comment**, not just the commit message — a future agent bumping this element via `git blame` or a routine update task needs to see the deviation without digging through PR history. Compute the tarball's sha256 the same way as any other tar-pinned bump: `curl -sSfL <url> -o /tmp/x.tar.gz && sha256sum /tmp/x.tar.gz`.
+
+**Rooting the fork branch: prefer the fork's latest upstream `main` once any new dep gap is confirmed satisfiable, not reflexively the old pinned commit.** A fork branch rooted on stale main avoids upstream drift short-term, but it accumulates as a second thing to unwind later (rebase forward *and* revert the fork pin, instead of just reverting the pin). If rebasing onto latest main produces a meson/pkg-config dependency error, don't assume krytis genuinely lacks that dependency — check whether it's already available elsewhere in the dep graph (`grep -rn <pkg-name> elements/`) first. freedesktop-sdk components pulled in by a sibling stack element (e.g. `stacks/desktop.bst`) aren't automatically visible to *this* element's build sandbox; BST elements only see their own explicit `depends:`/`build-depends:`. Often the real fix is just adding the already-pinned freedesktop-sdk component to this element's own `depends:` list, not a broader krytis-wide version upgrade — cheaper than carrying the stale-base workaround forward.
+
+**Squash trial-and-error into one clean commit before pinning.** If arriving at the fix took an abandoned or insufficient-alone intermediate attempt (e.g. a narrower mitigation that turned out not to fix the root cause on its own), don't cherry-pick/rebase the whole exploratory commit sequence into the fork branch you pin krytis to. Diff the final working tree against the fix's pre-attempt base (`git diff <before-sha> <final-sha> -- <path>`), apply that as one patch on the clean rebase target, and commit once with a message describing the actual mechanism of the final fix — not the narrative of what didn't work first. Verify the squashed tree is byte-identical to the original multi-commit tip (`git diff <old-tip> <new-branch> -- <path>` should be empty) before trusting it. Keeps the eventual upstream PR (and krytis's pin history) reviewable as "here's the fix," not "here's how we got here."
+
+This is a stopgap, not a new steady state — track reverting to the upstream owner/commit once the fork's fix lands upstream (open the upstream issue/PR only once the fork branch is confirmed working, so the report includes verified evidence).
+
 ### .deb extraction in BST sandbox
 
 `.deb` files are `ar` archives containing `control.tar.xz` and `data.tar.xz`. BST has no native `.deb` source kind. Extract manually in `build-commands`:
