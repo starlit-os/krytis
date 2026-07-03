@@ -39,15 +39,11 @@ Upstream bug: passing the wrong property key to `CreateCollection` causes an `un
 Correct key: `org.freedesktop.Secret.Collection.Label` (capital S, singular Secret)  
 Wrong key: `org.freedesktop.secrets.collection.Label` (lowercase, plural) → panic
 
-## noctalia-greeter: PAM_TEXT_INFO (FIDO2 cue) display
+## noctalia-greeter: PAM_TEXT_INFO (FIDO2 cue) display — fixed upstream
 
-`driveAuthConversation` in `greeter_surface.cpp` ACKs `Info` messages with an empty response but did not call `updateStatus` for them — the "Please touch your security key" cue was silently dropped. The fix (krytis patch `files/noctalia-greeter/0001-show-pam-info-cue.patch`) adds:
-- `updateStatus(authMsg.message, isError)` for both Info and Error messages.
-- `layoutScene`: `hasStatus = !m_status.empty()` (was `m_statusIsError && …`).
-- `updateStatus(text, false)`: store `text` instead of clearing (empty string still hides the block).
-- `commitImmediateFrame(true)` before `postAuthData("")`: `postAuthData` blocks in `::recv()` while PAM waits for hardware touch; the Wayland event loop cannot run during the block so `requestLayout()` never fires. `commitImmediateFrame(true)` forces `renderNow()` → `eglSwapBuffers()` → `flush()` synchronously before the recv. Same pattern as `tryAuthenticate()` before its blocking calls.
+`driveAuthConversation` in `greeter_surface.cpp` used to ACK `Info` messages with an empty response but not call `updateStatus` for them — the "Please touch your security key" cue was silently dropped. Krytis carried a local patch (`files/noctalia-greeter/0001-show-pam-info-cue.patch`) fixing this via `updateStatus` for both Info/Error, a `layoutScene` `hasStatus` check, and a `commitImmediateFrame(true)` before the blocking `postAuthData("")` recv (same pattern as `tryAuthenticate()`).
 
-Upstream PR pending for noctalia-greeter #133. Remove the patch once merged and bumped.
+Merged upstream in noctalia-dev/main commit `26865dae` ("always allow empty passwords and surface PAM info messages"). `desktop/noctalia-greeter.bst` is now pinned to upstream `main` directly — the local patch and fork pin are gone. If a future `bst source track` update on this element regresses the cue, check whether `26865dae`'s equivalent logic survived the change.
 
 ## noctalia polkit agent: FIDO2 works out of the box
 
