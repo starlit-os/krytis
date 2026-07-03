@@ -546,9 +546,13 @@ Plymouth is sourced from `freedesktop-sdk.bst:components/plymouth.bst` (also exi
 
 ### Theme selection: same both-places pitfall applies to `/etc/plymouth/plymouthd.conf`
 
-fdsdk's `plymouth.bst` ships `plymouthd.defaults` with `Theme=bgrt` — this renders the UEFI firmware logo (ACPI BGRT) via the `two-step` module's `UseFirmwareBackground=true`. Stock themes available (installed by the meson build regardless of which is active): `bgrt`, `spinner`, `spinfinity`, `glow`, `solar`, `fade-in`, `text`, `details`, `tribar`, `script`. Only `bgrt` touches the firmware logo — all others are pure Plymouth-rendered graphics. `glow` (two-step module, `merge-fade` transition, off-center large watermark) is the closest stock theme to "big custom logo, no firmware logo" and is what `config/plymouth-theme.bst` pins.
+fdsdk's `plymouth.bst` ships `plymouthd.defaults` with `Theme=bgrt` — this renders the UEFI firmware logo (ACPI BGRT) via the `two-step` module's `UseFirmwareBackground=true`. Stock themes available (installed by the meson build regardless of which is active): `bgrt`, `spinner`, `spinfinity`, `glow`, `solar`, `fade-in`, `text`, `details`, `tribar`, `script`. Only `bgrt` touches the firmware logo — all others are pure Plymouth-rendered graphics.
 
-**dracut only packages the currently-selected theme's files into the initramfs**, not all stock themes — so `config/plymouth-theme.bst` (which drops `Theme=glow` into `%{sysconfdir}/plymouth/plymouthd.conf`) must be a **build-dep of `core/initramfs.bst`** (theme picked up before `dracut --force` runs) **and** a **runtime dep of `stacks/desktop.bst`** (theme persists on the final rootfs for shutdown/reboot animations after switch-root). Same failure mode as the plymouth binary itself: miss one side and the initramfs splash and the post-switch-root theme diverge.
+`glow` was tried first (two-step module, `merge-fade` transition, off-center large watermark) but dropped as visually too heavy (pie-chart progress fill + logo-reveal animation). Settled on `spinner` instead: it's the same `two-step` module and animation frames `bgrt` itself reuses (`bgrt.plymouth`'s `ImageDir=/usr/share/plymouth/themes//spinner`), just without the firmware-background layer — lighter, and it already has a watermark slot.
+
+**Reuse the existing watermark slot instead of inventing a theme directory.** fdsdk's `plymouth-logo.bst` (a transitive dep of `plymouth.bst`) installs `freedesktop-sdk-40.png` to `%{datadir}/plymouth/themes/spinner/watermark.png`. `config/plymouth-theme.bst` overwrites that same path with a local logo (`files/plymouth/krytis-watermark.png`) rather than copying spinner's ~70 animation frames into a new theme dir. Requires **two** `overlap-whitelist` entries on `config/plymouth-theme.bst`, not just one: `/etc/plymouth/plymouthd.conf` (upstream ships a commented-out template there) and `/usr/share/plymouth/themes/spinner/watermark.png` (upstream's own logo file).
+
+**dracut only packages the currently-selected theme's files into the initramfs**, not all stock themes — so `config/plymouth-theme.bst` (which drops `Theme=spinner` into `%{sysconfdir}/plymouth/plymouthd.conf`) must be a **build-dep of `core/initramfs.bst`** (theme picked up before `dracut --force` runs) **and** a **runtime dep of `stacks/desktop.bst`** (theme persists on the final rootfs for shutdown/reboot animations after switch-root). Same failure mode as the plymouth binary itself: miss one side and the initramfs splash and the post-switch-root theme diverge.
 
 ### Verification (on booted image)
 
@@ -559,10 +563,12 @@ systemctl status plymouth-start.service plymouth-quit.service
 cat /proc/cmdline | grep -o 'quiet\|splash'
 # dracut module was included
 lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep plymouth
-# Active theme (should read "glow")
+# Active theme (should read "spinner")
 plymouth-set-default-theme
 # Theme assets present inside the initramfs, not just the rootfs
-lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep 'plymouth/themes/glow'
+lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep 'plymouth/themes/spinner'
+# Watermark is the krytis logo, not the freedesktop-sdk swirl
+lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img --file usr/share/plymouth/themes/spinner/watermark.png > /tmp/watermark.png
 ```
 
 ---

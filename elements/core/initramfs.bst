@@ -13,7 +13,7 @@ build-depends:
   - freedesktop-sdk.bst:components/plymouth.bst
   # plymouth-theme must be staged here too: dracut's plymouth module only
   # packages the theme currently selected in /etc/plymouth/plymouthd.conf,
-  # so this sandbox needs Theme=glow present before dracut runs below,
+  # so this sandbox needs Theme=spinner present before dracut runs below,
   # matching what stacks/desktop.bst sets on the final rootfs.
   - config/plymouth-theme.bst
 

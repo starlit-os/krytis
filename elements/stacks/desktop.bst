@@ -128,7 +128,7 @@ depends:
   # Alias=display-manager.service so the quit ordering is automatic.
   # kargs (quiet splash) are baked via config/bootc.bst kargs.d. Closes #100.
   - freedesktop-sdk.bst:components/plymouth.bst
-  # plymouth-theme: pins Theme=glow (no firmware logo, big custom watermark).
+  # plymouth-theme: pins Theme=spinner + krytis watermark (no firmware logo).
   - config/plymouth-theme.bst
 
   # ── Input devices ──────────────────────────────────────────────────────
