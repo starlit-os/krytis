@@ -354,6 +354,12 @@ mise run bst artifact checkout elements/krytis/something.bst --directory "$OUTDI
 rm -rf "$OUTDIR"   # clean up when done
 ```
 
+## `install -Dm###` modes are clamped to 644/755
+
+BuildStream's artifact storage only tracks two regular-file modes, like a git tree object: executable (755) or not (644). `install -Dm440`, `-Dm600`, etc. in `install-commands` are accepted without error but silently clamped to `0644` by the time the file lands in the artifact/image — there's no error or warning at build time. Verify actual perms with `bst artifact checkout --tar <element> --tar out.tar && tar tvf out.tar`; a plain `bst artifact checkout --directory` may also normalize/mangle modes on non-root checkout, so prefer `--tar` when checking this specifically.
+
+If a stricter mode is a hard requirement (not just convention), it needs a boot-time `tmpfiles.d` `z` line (`z /path 0440 root root -`) to fix it up post-checkout — same category of workaround as the `setcap`-at-boot pattern above. Before reaching for that, check whether the looser mode is actually a functional problem: e.g. sudoers.d files at 0644 (vs. the conventional 0440) still load and are honored by both GNU sudo and sudo-rs — they only refuse world-*writable* includes, not world-readable ones (confirmed against sudo-rs's own compliance test suite, `sudo/sudoers/includedir.rs`, `ignores_and_warns_about_file_with_bad_perms`). Root-owned + non-writable is enough; readability weaker than 0440 may just be a minor hardening gap, not a break — evaluate before adding boot-time complexity for it.
+
 ## Adding a Package
 
 1. Create `elements/krytis/<name>.bst` (copy a similar existing element)
@@ -548,7 +554,18 @@ Then in `config.install-commands`: `install -Dm755 pangolin-cli "%{install-root}
 unable to set CAP_SETFCAP effective capability: Operation not permitted
 ```
 
-The sandbox doesn't grant `CAP_SETFCAP` regardless of build-time fakeroot/pseudo-root status — there's no build-time workaround. If a binary needs a file capability (e.g. `cap_net_admin+ep` so a non-root user can bring up a tun interface without polkit/sudo — polkit only mediates D-Bus actions, not raw capability checks), apply it at boot instead: ship a oneshot systemd unit that runs the real `setcap` as real root, enabled via a `system-preset` (see `core/pangolin-cli.bst`). The binary providing `setcap` (`libcap.bst`) must be a runtime `depends:`, not just `build-depends:` — the setcap CLI isn't pulled into the runtime-minimal stack by anything else. Tradeoff: the capability is absent for the brief window between boot and the oneshot unit running.
+The sandbox doesn't grant `CAP_SETFCAP` regardless of build-time fakeroot/pseudo-root status — there's no build-time workaround. If a binary needs a file capability, apply it at boot instead: ship a oneshot systemd unit that runs the real `setcap` as real root, enabled via a `system-preset`. The binary providing `setcap` (`libcap.bst`) must be a runtime `depends:`, not just `build-depends:` — the setcap CLI isn't pulled into the runtime-minimal stack by anything else. Tradeoff: the capability is absent for the brief window between boot and the oneshot unit running.
+
+**Before reaching for this, check whether the client actually uses file capabilities at all.** `core/pangolin-cli.bst` originally shipped exactly this pattern (`cap_net_admin+ep` on the pangolin binary, oneshot unit + preset) to let a non-root user bring up its tun interface. It had no effect: `pangolin up` (fosrl/cli) never checks the binary's capabilities — `cmd/up/client/client.go` unconditionally re-execs itself via `sudo sh -c "..."` whenever `os.Geteuid() != 0`, every invocation, with no flag to skip it. The setcap unit was dead weight and was reverted; see the sudoers pattern below instead.
+
+### Passwordless sudo for a client that self-elevates (`sudoers.d` + dedicated group)
+
+Some prebuilt clients (see above) call `sudo` on themselves internally instead of relying on file capabilities or polkit. You can't scope a sudoers rule to "just this binary" in that case — sudo matches on the literal argv it receives, which is `sh -c "<dynamic string>"`, not the binary path. Pattern used in `core/pangolin-cli.bst`:
+
+- **Dedicated group, not `wheel`**: create an empty system group via `sysusers.d` (`g pangolin - -`, installed to `%{indep-libdir}/sysusers.d/`). Nobody is a member by default — scopes *who* gets the rule. Users opt in with `usermod -aG pangolin <user>`.
+- **Prefix-anchored glob, not `sh -c *`**: a bare wildcard grants group members unrestricted passwordless root shell (any command, since the client fully controls what it passes to `sh -c`). Anchor the sudoers `Cmnd` to the literal prefix of the string the client is known to emit, e.g. `/usr/bin/sh -c "export PANGOLIN_SUBPROCESS=1 && ... nohup \"%{bindir}/pangolin\"*"`, ending in `*` only after the fixed part. This restricts matches to invocations of that specific binary, not arbitrary shell.
+- **This is fragile by design, not by accident.** The prefix is scraped from the client's source at a point in time. `kind: remote` sources are a no-op for `bst source track` (see above), so a version bump via `mise run pangolin-update` won't flag a changed shell-wrapper format — the rule just silently stops matching and the client falls back to an interactive password prompt (no error). Document the exact upstream source line the prefix was derived from in the element's comment, and re-check it against upstream on every version bump.
+- sudoers file mode must be `0440`, filename must not contain a `.` — see `install -Dm440 ... /etc/sudoers.d/pangolin-cli`.
 
 ### Systemd service installation
 
