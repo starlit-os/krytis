@@ -1,0 +1,21 @@
+diff --git a/src/greeter/greeter_surface.cpp b/src/greeter/greeter_surface.cpp
+index d2f6243..001defa 100644
+--- a/src/greeter/greeter_surface.cpp
++++ b/src/greeter/greeter_surface.cpp
+@@ -572,16 +572,6 @@ void GreeterSurface::initialize(RenderContext* context) {
+   refreshSelectionLabels();
+   applyInitialUserSelection();
+
+-  const auto logoPath = paths::assetPath("noctalia.svg");
+-  m_brandLogoTexture = m_renderContext->textureManager().loadFromFile(logoPath.string(), 1024, true);
+-  if (m_bottomBrandLogo != nullptr && m_brandLogoTexture.id != 0) {
+-    m_bottomBrandLogo->setTextureId(m_brandLogoTexture.id);
+-    m_bottomBrandLogo->setTextureSize(m_brandLogoTexture.width, m_brandLogoTexture.height);
+-    m_bottomBrandLogo->setTint(colorForRole(ColorRole::OnSurface, 0.90f));
+-  } else {
+-    kLog.warn("failed loading logo texture from {}", logoPath.string());
+-  }
+-
+   requestLayout();
+ }
+

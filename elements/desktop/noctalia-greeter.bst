@@ -52,3 +52,8 @@ sources:
 - kind: tar
   url: github_files:noctalia-dev/noctalia-greeter/archive/a3265c8c16d3cf338cbb39c7ca718991578e4e26.tar.gz
   ref: 36b5b2562cfbcc46f2525f5aa3a306431eae4d00388252653ce29936df601edf
+# Drops the Noctalia brand logo rendered above the login form. Removes the
+# texture load in GreeterSurface::initialize() entirely (not just visibility)
+# so the logo never occupies layout space and no failed-load warning fires.
+- kind: patch
+  path: patches/noctalia-greeter/no-brand-logo.patch

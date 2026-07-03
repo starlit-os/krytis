@@ -14,6 +14,29 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 
 Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-config.bst`.
 
+## Local patches on noctalia-greeter
+
+`desktop/noctalia-greeter.bst` pulls a `kind: tar` GitHub archive of the `kitten-lily/noctalia-greeter`
+fork. To carry a local UI tweak (e.g. removing the brand logo) without pushing to the fork, add a
+`kind: patch` source after the `tar` source, same pattern as `overrides/vim.bst`:
+
+```yaml
+- kind: patch
+  path: patches/noctalia-greeter/<name>.patch
+```
+
+- BST's tar source strips the archive's single top-level directory by default, so patch paths are
+  relative to the fork's repo root (e.g. `src/greeter/greeter_surface.cpp`), not the archive path.
+- Generate the patch with standard `git diff` (`a/`/`b/` prefixes) — BST's patch source defaults to
+  `strip-level: 1`, matching git's default. A `--no-prefix` diff needs `-p0` and will fail to apply.
+- Verify before committing: download the pinned tarball, `tar xzf`, `patch -p1 --dry-run <
+  patches/noctalia-greeter/<name>.patch` from the extracted root. Confirms both hunk context and
+  strip level before `bst build` ever sees it.
+- The greeter's logo widget (`m_bottomBrandLogo` in `greeter_surface.cpp`) only reserves layout space
+  when its texture load succeeds (`m_brandLogoTexture.id != 0`, checked in the layout pass). Deleting
+  the load call entirely (rather than hiding the widget after load) leaves the id at its zero default,
+  so the widget both stays invisible and never reserves space — cleaner than a visibility-only patch.
+
 ## Mesa Layout in the Image
 
 fdsdk installs mesa to a non-standard prefix:
