@@ -540,6 +540,16 @@ Then in `config.install-commands`: `install -Dm755 pangolin-cli "%{install-root}
 
 **`kind: remote` vs `kind: tar`**: use `remote` when the release asset is a raw ELF (e.g. `pangolin-cli_linux_amd64`), `tar` when it's a `.tar.gz`/`.tar.xz` (e.g. gum, mise). Both are no-ops for `bst source track`; both require a mise update task and CI job.
 
+### File capabilities (`setcap`) can't be set at build time
+
+`setcap` in `install-commands` always fails, even under BuildStream's fakeroot sandbox:
+
+```
+unable to set CAP_SETFCAP effective capability: Operation not permitted
+```
+
+The sandbox doesn't grant `CAP_SETFCAP` regardless of build-time fakeroot/pseudo-root status — there's no build-time workaround. If a binary needs a file capability (e.g. `cap_net_admin+ep` so a non-root user can bring up a tun interface without polkit/sudo — polkit only mediates D-Bus actions, not raw capability checks), apply it at boot instead: ship a oneshot systemd unit that runs the real `setcap` as real root, enabled via a `system-preset` (see `core/pangolin-cli.bst`). The binary providing `setcap` (`libcap.bst`) must be a runtime `depends:`, not just `build-depends:` — the setcap CLI isn't pulled into the runtime-minimal stack by anything else. Tradeoff: the capability is absent for the brief window between boot and the oneshot unit running.
+
 ### Systemd service installation
 
 **System services** need three things:
