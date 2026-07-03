@@ -11,6 +11,11 @@ build-depends:
   # the binary and libraries when building the initramfs. The plymouth
   # dracut module is enabled via 30-bootcrew-bootc-container-build.conf.
   - freedesktop-sdk.bst:components/plymouth.bst
+  # plymouth-theme must be staged here too: dracut's plymouth module only
+  # packages the theme currently selected in /etc/plymouth/plymouthd.conf,
+  # so this sandbox needs Theme=glow present before dracut runs below,
+  # matching what stacks/desktop.bst sets on the final rootfs.
+  - config/plymouth-theme.bst
 
 variables:
   uuidnamespace: 042dab3d-c024-448b-a70e-927daef22a59

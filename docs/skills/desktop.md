@@ -544,6 +544,12 @@ Plymouth is sourced from `freedesktop-sdk.bst:components/plymouth.bst` (also exi
 
 `core/initramfs.bst` lists Plymouth as a **build-dep** (staged into sandbox for dracut). `stacks/desktop.bst` lists Plymouth as a **runtime dep** (installed into the image for `plymouthd` and the systemd units). Listing it only in one place leaves either the initramfs splash or the post-switch-root quit service broken.
 
+### Theme selection: same both-places pitfall applies to `/etc/plymouth/plymouthd.conf`
+
+fdsdk's `plymouth.bst` ships `plymouthd.defaults` with `Theme=bgrt` — this renders the UEFI firmware logo (ACPI BGRT) via the `two-step` module's `UseFirmwareBackground=true`. Stock themes available (installed by the meson build regardless of which is active): `bgrt`, `spinner`, `spinfinity`, `glow`, `solar`, `fade-in`, `text`, `details`, `tribar`, `script`. Only `bgrt` touches the firmware logo — all others are pure Plymouth-rendered graphics. `glow` (two-step module, `merge-fade` transition, off-center large watermark) is the closest stock theme to "big custom logo, no firmware logo" and is what `config/plymouth-theme.bst` pins.
+
+**dracut only packages the currently-selected theme's files into the initramfs**, not all stock themes — so `config/plymouth-theme.bst` (which drops `Theme=glow` into `%{sysconfdir}/plymouth/plymouthd.conf`) must be a **build-dep of `core/initramfs.bst`** (theme picked up before `dracut --force` runs) **and** a **runtime dep of `stacks/desktop.bst`** (theme persists on the final rootfs for shutdown/reboot animations after switch-root). Same failure mode as the plymouth binary itself: miss one side and the initramfs splash and the post-switch-root theme diverge.
+
 ### Verification (on booted image)
 
 ```bash
@@ -553,6 +559,10 @@ systemctl status plymouth-start.service plymouth-quit.service
 cat /proc/cmdline | grep -o 'quiet\|splash'
 # dracut module was included
 lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep plymouth
+# Active theme (should read "glow")
+plymouth-set-default-theme
+# Theme assets present inside the initramfs, not just the rootfs
+lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep 'plymouth/themes/glow'
 ```
 
 ---
