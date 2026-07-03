@@ -1,8 +1,10 @@
 kind: manual
 
 # falcond: PikaOS gaming performance daemon.
-# Provides per-game profiles, SCX scheduler selection (replaces scx_loader),
-# AMD 3D VCache management, DMEM cgroup GPU protection, and Proton/Wine support.
+# Provides per-game profiles, SCX scheduler selection (D-Bus client of scx_loader —
+# falcond has no scheduler-loading code of its own; verified via `ldd`/`strings`, no
+# libbpf link, all scx_loader.zig symbols are calls to org.scx.Loader), AMD 3D VCache
+# management, DMEM cgroup GPU protection, and Proton/Wine support.
 # Do NOT run alongside gamemode (conflicts). Requires power-profiles-daemon at runtime.
 # Source: https://git.pika-os.com/general-packages/falcond
 
@@ -69,6 +71,17 @@ sources:
     ref: e20b49a13049e8ef5aa1d798a70d8fc02b691fe44c7c78928aae3d363a1deb7e
     directory: zig-deps-git
 
+  # Default game profile: PikaOS's global Proton/Wine catch-all, gives out-of-the-box
+  # coverage for any Steam Proton title (per falcond's own README). Low-effort default
+  # only — full per-game profile set + update-path automation tracked in #258.
+  # kind: remote is a no-op for `bst source track`; see docs/skills/bst.md § Element
+  # update path.
+  - kind: remote
+    filename: proton.conf
+    url: github_files:PikaOS-Linux/falcond-profiles/raw/5023a846980685812334586ae265f8f6a1ded38b/usr/share/falcond/profiles/proton.conf
+    ref: 15cd7c5c701cf1740fceb231560e5f1b09a254ec58daf6a21a5f9dbd5b7ab76e
+    directory: falcond-default-profiles
+
 config:
   build-commands:
     # Populate Zig global cache from local Gitea commit archives using `zig fetch`.
@@ -117,8 +130,20 @@ config:
       enable falcond.service
       EOF
 
-    # Profiles directory (/usr/share is read-only in bootc; create at image build time)
-    - install -d "%{install-root}%{datadir}/falcond/profiles"
+    # Profiles directories (/usr/share is read-only in bootc; create at image build
+    # time). /usr/share/falcond/profiles/user is falcond's compiled-in
+    # -Duser-profiles-dir default (confirmed via literal path strings in the built
+    # binary, not just the config.user_profiles_dir symbol name — that symbol alone
+    # is misleading, it's just the struct field, not the resolved path). Without
+    # this exact subdirectory, falcond's inotify watch fails at startup
+    # (error.FileNotFound) and LOADED_PROFILES stays 0 forever, even with profiles
+    # present in /usr/share/falcond/profiles itself.
+    - install -d "%{install-root}%{datadir}/falcond/profiles/user"
+
+    # Default game profile (see #258 for the full set)
+    - |
+      install -Dm644 falcond-default-profiles/proton.conf \
+        "%{install-root}%{datadir}/falcond/profiles/proton.conf"
 
     # State directories
     - |
