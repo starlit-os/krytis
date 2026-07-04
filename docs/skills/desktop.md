@@ -667,6 +667,14 @@ Reference: `elements/config/gtk-settings.bst`, `elements/oci/krytis/stack.bst`. 
 
 Available in `gnome-build-meta.bst:core-deps/power-profiles-daemon.bst` — one line in `stacks/desktop.bst`, zero new packaging. Provides a D-Bus API (`org.freedesktop.UPower.PowerProfiles`) for balanced/performance/power-saver switching. Works standalone without GNOME; required by falcond. Do not add tuned alongside it — they conflict via the PPD compat shim.
 
+noctalia's power-profile UI is a genuine bidirectional D-Bus client of this — verified
+live both directions (UI clicks land on `ActiveProfile`, and external `powerprofilesctl
+set` calls reflect back into the UI). No krytis glue code needed there. What's missing:
+nothing in the stack (ppd, falcond, or noctalia) watches AC/battery state to
+auto-switch profiles — ppd is a pure mechanism with no policy of its own, and grepping
+noctalia's `power_profiles_service.cpp`/`power_tab.cpp` shows its UPower integration is
+read-only telemetry only. Tracked as a Design Gate item in #261.
+
 ### systemd-oomd
 
 Already compiled into our systemd build. Enable via a config element (`elements/config/oomd.bst`) that drops:
@@ -771,6 +779,46 @@ journalctl -u falcond -b --no-pager | grep -i "profiles\|inotify"
 # profiles note above and #258 for the full per-game set.
 cat /var/lib/falcond/status
 ```
+
+### Proton-catch-all matching depends on launcher process ancestry, not filename
+
+Ground truth from upstream source (`matcher.zig`/`scanner.zig`, cloned from
+`git.pika-os.com/general-packages/falcond`), verified live against real games across
+four launchers (Bottles, Faugus, Heroic, Steam):
+
+1. Exact/case-insensitive hash-map hit: process name == a `.conf` filename stem (e.g.
+   `cs2.conf` matches process `cs2`). Wins immediately, no ancestry walk.
+2. Proton catch-all (`proton.conf`) only fires if the process name ends in `.exe`, is
+   NOT in `system.conf`'s ignore-list (Wine launcher/updater helper exes), AND walking
+   up to 10 parent PIDs via `/proc/<pid>/status` `PPid:`, some ancestor's `comm`
+   contains `wine`/`reaper`/`umu-run` **or** its `/proc/<pid>/cmdline` contains the
+   literal substring `proton`.
+
+This makes matching launcher-dependent, not just "is it Wine":
+
+- **Bottles-direct** (`bottles-cli run -p ... -b ...`) — MISS. Bottles bundles its own
+  runner; nothing in its cmdline says `proton`, and `bwrap` (which Bottles always
+  sandboxes through) reparents the game exe as `wineserver`'s *sibling*, not its
+  descendant — severing the ancestry link entirely.
+- **Faugus, Heroic, Steam** — HIT. All three either run a direct wine ancestor or
+  invoke a Steam Proton compat tool (`.../Proton-CachyOS.../proton waitforexitandrun`)
+  whose cmdline satisfies the substring fallback, even when also sandboxed through
+  `bwrap`/pressure-vessel (Faugus/Steam both are — bwrap by itself does not break
+  matching, only the *absence* of a wine/proton needle in the surviving ancestry does).
+
+Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
+invocation puts one of those literal needles in cmdline/comm within 10 hops.
+
+### dmem_protect cgroup delegation gap (#260)
+
+`dmem_protect = true` in a profile is currently a silent no-op on krytis. The kernel's
+`dmem` controller is present in root `cgroup.controllers` but is not delegated into
+`app.slice`'s `cgroup.subtree_control` (only `cpu io memory pids` are) — so no
+`dmem.min`/`dmem.max` file exists at a game's actual cgroup scope for falcond to write
+into. No error logged; verified by walking a live game's full cgroup ancestry and
+finding zero non-empty `dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd
+drop-in delegating `dmem` (e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice`
+level before this profile field does anything. See #260.
 
 ## scx_loader (sched-ext D-Bus scheduler loader)
 
