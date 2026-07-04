@@ -667,6 +667,14 @@ Reference: `elements/config/gtk-settings.bst`, `elements/oci/krytis/stack.bst`. 
 
 Available in `gnome-build-meta.bst:core-deps/power-profiles-daemon.bst` — one line in `stacks/desktop.bst`, zero new packaging. Provides a D-Bus API (`org.freedesktop.UPower.PowerProfiles`) for balanced/performance/power-saver switching. Works standalone without GNOME; required by falcond. Do not add tuned alongside it — they conflict via the PPD compat shim.
 
+noctalia's power-profile UI is a genuine bidirectional D-Bus client of this — verified
+live both directions (UI clicks land on `ActiveProfile`, and external `powerprofilesctl
+set` calls reflect back into the UI). No krytis glue code needed there. What's missing:
+nothing in the stack (ppd, falcond, or noctalia) watches AC/battery state to
+auto-switch profiles — ppd is a pure mechanism with no policy of its own, and grepping
+noctalia's `power_profiles_service.cpp`/`power_tab.cpp` shows its UPower integration is
+read-only telemetry only. Tracked as a Design Gate item in #261.
+
 ### systemd-oomd
 
 Already compiled into our systemd build. Enable via a config element (`elements/config/oomd.bst`) that drops:
@@ -695,12 +703,122 @@ Requires Zig 0.16.0+ (`minimum_zig_version = "0.16.0"` in build.zig.zon). All th
 pika-os git deps.
 
 `zig build` only installs the binary. Install the service file manually from
-`falcond/debian/falcond.service`. Also drop a tmpfiles.d fragment for `/var/lib/falcond/` and
-`/etc/falcond/`, and a systemd preset to enable `falcond.service`.
+`falcond/debian/falcond.service`. Also create `/usr/share/falcond/profiles/user/` at
+**build time** (`/usr/share` is read-only at runtime in bootc — `install -d`, not
+tmpfiles.d), drop a tmpfiles.d fragment for `/var/lib/falcond/` + `/etc/falcond/`, and a
+systemd preset to enable `falcond.service`.
+
+`/usr/share/falcond/profiles/user/` is falcond's compiled-in `-Duser-profiles-dir`
+default — documented in falcond's own upstream README under "Build Path Options", not
+something you need to reverse-engineer from `strings`. (First pass at this fix guessed
+`/etc/falcond/profiles` instead, by pattern-matching against sibling `/etc/falcond`
+state dirs rather than checking the README or the binary's literal path strings —
+`strings /usr/bin/falcond | grep -E "^/(usr|etc|var).*falcond"` gives the real compiled
+defaults directly, `config.user_profiles_dir` alone is just a misleading struct-field
+symbol name, not a resolved path. Always check literal path strings or the README before
+trusting a symbol name.) The build element only creates the parent
+`/usr/share/falcond/profiles` (system profiles dir), never the `/user` subdir — without
+it, falcond's inotify watch fails silently at startup
+(`warning(event_loop): inotify: cannot watch user profiles dir: error.FileNotFound` in
+`journalctl -u falcond`) and `LOADED_PROFILES` stays `0` forever, even with the daemon
+otherwise fully healthy and feature-detection working (DMEM cgroup GPU region correctly
+found, SCX scheduler list correctly enumerated). This is exactly the kind of failure that
+looks like "service is running fine" in `systemctl status` while the daemon's actual
+purpose (per-game profiles) silently never fires — `systemctl status` alone is not
+sufficient verification for this daemon; check `journalctl -u falcond -b` for the inotify
+warning and `cat /var/lib/falcond/status` for `LOADED_PROFILES`.
+
+Upstream ships zero default profiles in the source tarball itself (`falcond/debian/`
+contains only the systemd unit) — game profiles are entirely separate, maintained at
+[PikaOS-Linux/falcond-profiles](https://github.com/PikaOS-Linux/falcond-profiles) (9 root
+profiles + `handheld`/`htpc` device-mode variants + `system.conf`) and pulled in at
+package-build time by PikaOS's own packaging (per the README's "Packaging" section).
+krytis vendors just `proton.conf` (`kind: remote`, pinned to a single commit SHA) — the
+global Proton/Wine catch-all, giving out-of-the-box coverage for any Steam Proton title
+without per-game tracking overhead. `LOADED_PROFILES` will read `1` after the directory
+fix above, not `0` — but still won't match a native (non-Proton) game unless its specific
+profile is also vendored. Full per-game profile set + the `kind: remote` update-path
+automation this needs (`bst source track` is a no-op on it — see `docs/skills/bst.md` §
+Element update path) tracked in #258.
 
 Runtime: requires `power-profiles-daemon` (or `tuned-ppd`). Do NOT run alongside gamemode —
 they conflict. SCX scheduler binaries (`scx_lavd`, `scx_bpfland`) are optional; falcond
 feature-detects them and degrades gracefully if absent. Closes #221.
+
+### Verification (on booted image)
+
+No CI or `mise` task boots the image and checks service health (AGENTS.md's Verification
+gate references `mise boot-test` — that task does not exist as of 2026-07; treat it as
+aspirational, not real, until someone builds it). The fastest real check is a host already
+running krytis (self-hosted dev box) or `mise run boot-vm` + manual login:
+
+```bash
+# Daemons actually alive (not just "enabled")
+systemctl is-active power-profiles-daemon falcond scx_loader
+
+# ppd: real D-Bus data, not just process presence
+busctl --system get-property org.freedesktop.UPower.PowerProfiles \
+  /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles ActiveProfile
+powerprofilesctl list   # CLI works fine (PyGObject is packaged under system python3).
+# CAUTION: if you're testing from a dev shell with a mise/uv Python venv active, PATH
+# puts that venv's `python3` before /usr/bin/python3, and `powerprofilesctl`'s
+# `#!/usr/bin/env python3` shebang picks up the venv instead — which lacks `gi` and
+# throws ModuleNotFoundError. That's a dev-shell PATH artifact, not a packaging bug.
+# Verify with `env -i HOME=$HOME PATH=/usr/bin:/bin powerprofilesctl list` to rule out
+# shell contamination before concluding the CLI itself is broken.
+
+# scx_loader: real scheduler list, not stub
+busctl --system get-property org.scx.Loader /org/scx/Loader org.scx.Loader SupportedSchedulers
+# CurrentScheduler == "unknown" at idle is expected (on-demand loader, nothing has called
+# SwitchScheduler yet) — not itself a failure signal.
+
+# falcond: the check that actually matters — is the profiles-dir watch healthy?
+journalctl -u falcond -b --no-pager | grep -i "profiles\|inotify"
+# No "cannot watch user profiles dir" warning = the directory-creation bug is fixed.
+# LOADED_PROFILES: 1 (just proton.conf) is expected on krytis — see the default
+# profiles note above and #258 for the full per-game set.
+cat /var/lib/falcond/status
+```
+
+### Proton-catch-all matching depends on launcher process ancestry, not filename
+
+Ground truth from upstream source (`matcher.zig`/`scanner.zig`, cloned from
+`git.pika-os.com/general-packages/falcond`), verified live against real games across
+four launchers (Bottles, Faugus, Heroic, Steam):
+
+1. Exact/case-insensitive hash-map hit: process name == a `.conf` filename stem (e.g.
+   `cs2.conf` matches process `cs2`). Wins immediately, no ancestry walk.
+2. Proton catch-all (`proton.conf`) only fires if the process name ends in `.exe`, is
+   NOT in `system.conf`'s ignore-list (Wine launcher/updater helper exes), AND walking
+   up to 10 parent PIDs via `/proc/<pid>/status` `PPid:`, some ancestor's `comm`
+   contains `wine`/`reaper`/`umu-run` **or** its `/proc/<pid>/cmdline` contains the
+   literal substring `proton`.
+
+This makes matching launcher-dependent, not just "is it Wine":
+
+- **Bottles-direct** (`bottles-cli run -p ... -b ...`) — MISS. Bottles bundles its own
+  runner; nothing in its cmdline says `proton`, and `bwrap` (which Bottles always
+  sandboxes through) reparents the game exe as `wineserver`'s *sibling*, not its
+  descendant — severing the ancestry link entirely.
+- **Faugus, Heroic, Steam** — HIT. All three either run a direct wine ancestor or
+  invoke a Steam Proton compat tool (`.../Proton-CachyOS.../proton waitforexitandrun`)
+  whose cmdline satisfies the substring fallback, even when also sandboxed through
+  `bwrap`/pressure-vessel (Faugus/Steam both are — bwrap by itself does not break
+  matching, only the *absence* of a wine/proton needle in the surviving ancestry does).
+
+Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
+invocation puts one of those literal needles in cmdline/comm within 10 hops.
+
+### dmem_protect cgroup delegation gap (#260)
+
+`dmem_protect = true` in a profile is currently a silent no-op on krytis. The kernel's
+`dmem` controller is present in root `cgroup.controllers` but is not delegated into
+`app.slice`'s `cgroup.subtree_control` (only `cpu io memory pids` are) — so no
+`dmem.min`/`dmem.max` file exists at a game's actual cgroup scope for falcond to write
+into. No error logged; verified by walking a live game's full cgroup ancestry and
+finding zero non-empty `dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd
+drop-in delegating `dmem` (e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice`
+level before this profile field does anything. See #260.
 
 ## scx_loader (sched-ext D-Bus scheduler loader)
 

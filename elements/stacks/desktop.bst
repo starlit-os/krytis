@@ -149,8 +149,9 @@ depends:
   - gnome-build-meta.bst:core-deps/power-profiles-daemon.bst
   # falcond: PikaOS gaming performance daemon — per-game profiles, SCX scheduler
   # selection (scx_lavd/bpfland), AMD 3D VCache management, DMEM GPU memory protection.
-  # Supersedes gamemode + scx_loader as a single daemon. Requires PPD at runtime.
-  # Do NOT run alongside gamemode. Closes #221.
+  # Supersedes gamemode as a single daemon; scx_loader is a hard runtime dependency,
+  # not superseded (falcond is purely a D-Bus client of org.scx.Loader, no scheduler
+  # code of its own). Requires PPD at runtime. Do NOT run alongside gamemode. Closes #221.
   - desktop/falcond.bst
   # scx_loader: D-Bus on-demand loader of sched-ext CPU schedulers.
   # Provides org.scx.Loader on the system bus; required by falcond (#221)
