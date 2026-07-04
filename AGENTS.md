@@ -184,6 +184,10 @@ Example: `Fix composefs boot failure` → `fix-composefs-boot-failure`
 
 Worktrees are not automatically deleted — prune manually after merge or abandonment.
 
+**Merge strategy is squash-only**, enforced at the GitHub repo settings level (`allow_squash_merge: true`, `allow_merge_commit: false`, `allow_rebase_merge: false` — not just convention, the other options are disabled). This matters for cleanup:
+- `git branch -d <branch>` after merge will refuse — a squashed merge commit has no ancestry link back to the local branch's commits, so git can't see it as "merged." Use `git branch -D` (or check `gh pr view <n> --json state` first) instead of treating the safety check as a signal something's wrong.
+- Same applies to worktree pruning — don't rely on `git log --merged` to decide whether a worktree's branch landed; check the PR state directly.
+
 ---
 
 ## Human Decision Points — Stop and Ask
