@@ -166,3 +166,9 @@ depends:
 
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
+
+  # ── Background updates ──────────────────────────────────────────────────
+  # Silently updates bootc, system Flatpak, firmware, and mise tools on a
+  # daily timer. Placed here (not base-system) because it covers system
+  # Flatpak, which only exists once the desktop stack is present. Closes #173.
+  - config/starlit-update.bst

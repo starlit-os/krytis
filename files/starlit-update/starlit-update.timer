@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic bootc/flatpak/firmware update
+Documentation=https://github.com/starlit-os/krytis/issues/173
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

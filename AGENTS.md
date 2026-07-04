@@ -110,6 +110,8 @@ Non-compliance = automatic rejection.
 
 **Read-First:** Read `README.md`, `AGENTS.md`, and `docs/SKILL.md` before modifying anything. Do not assume project structure or patterns.
 
+**Assume the user knows the system:** Default to assuming the human knows krytis and the machine they're currently on — whether that machine is actually running krytis or something else. A static grep of this repo's `.bst` files is not proof of what's on a live system: transitive dependencies (see `docs/skills/bst.md`) and out-of-repo builds both produce real gaps between "what the source says" and "what's installed." Before contradicting a user's claim about running-system state, verify against the live system itself (`systemctl`, `busctl`, `/usr/manifest.json` SBOM, binaries on disk) — not just the dependency graph in this checkout.
+
 **Operator accountability:** The human deploying the agent is responsible for all decisions.
 
 **Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs.
