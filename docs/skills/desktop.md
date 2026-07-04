@@ -851,6 +851,51 @@ finding zero non-empty `dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a system
 drop-in delegating `dmem` (e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice`
 level before this profile field does anything. See #260.
 
+### Proton-catch-all matching depends on launcher process ancestry, not filename
+
+Ground truth from upstream source (`matcher.zig`/`scanner.zig`, cloned from
+`git.pika-os.com/general-packages/falcond`), verified live against real games across
+four launchers (Bottles, Faugus, Heroic, Steam):
+
+1. Exact/case-insensitive hash-map hit: process name == a `.conf` filename stem (e.g.
+   `cs2.conf` matches process `cs2`). Wins immediately, no ancestry walk.
+2. Proton catch-all (`proton.conf`) only fires if the process name ends in `.exe`, is
+   NOT in `system.conf`'s ignore-list (Wine launcher/updater helper exes), AND walking
+   up to 10 parent PIDs via `/proc/<pid>/status` `PPid:`, some ancestor's `comm`
+   contains `wine`/`reaper`/`umu-run` **or** its `/proc/<pid>/cmdline` contains the
+   literal substring `proton`.
+
+This makes matching launcher-dependent, not just "is it Wine":
+
+- **Bottles-direct** (`bottles-cli run -p ... -b ...`) — MISS. Bottles bundles its own
+  runner; nothing in its cmdline says `proton`, and `bwrap` (which Bottles always
+  sandboxes through) reparents the game exe as `wineserver`'s *sibling*, not its
+  descendant — severing the ancestry link entirely.
+- **Faugus, Heroic, Steam** — HIT. All three either run a direct wine ancestor or
+  invoke a Steam Proton compat tool (`.../Proton-CachyOS.../proton waitforexitandrun`)
+  whose cmdline satisfies the substring fallback, even when also sandboxed through
+  `bwrap`/pressure-vessel (Faugus/Steam both are — bwrap by itself does not break
+  matching, only the *absence* of a wine/proton needle in the surviving ancestry does).
+
+Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
+invocation puts one of those literal needles in cmdline/comm within 10 hops. This
+applies to every profile in this vendored set, not just `proton.conf` — native-game
+profiles (`cs2.conf` etc.) match on exact process name and don't need any of this, but
+anything relying on the Proton fallback does.
+
+### dmem_protect cgroup delegation gap (#260)
+
+`dmem_protect = true` — set on every profile in this vendored set — is currently a
+silent no-op on krytis. The kernel's `dmem` controller is present in root
+`cgroup.controllers` but is not delegated into `app.slice`'s `cgroup.subtree_control`
+(only `cpu io memory pids` are) — so no `dmem.min`/`dmem.max` file exists at a game's
+actual cgroup scope for falcond to write into. No error logged; verified by walking a
+live game's full cgroup ancestry and finding zero non-empty
+`dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd drop-in delegating `dmem`
+(e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice` level before this field does
+anything. See #260 — not a defect in this profile set, the profiles are correct, the
+delegation just isn't wired up yet.
+
 ## scx_loader (sched-ext D-Bus scheduler loader)
 
 `elements/desktop/scx-loader.bst`. Source: https://github.com/sched-ext/scx-loader
