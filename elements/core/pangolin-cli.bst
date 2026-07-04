@@ -17,14 +17,35 @@ kind: manual
 # ~L375-386) — this is not conditional on missing capabilities, so
 # `setcap cap_net_admin` on the binary (tried in an earlier revision of
 # this file, see git history) has no effect: the client never checks for
-# it. Root elevation is baked into the client every session; there is no
-# flag to skip it.
+# it.
+#
+# client.go's re-exec is itself conditional on `os.Geteuid() != 0`
+# (~L375: "If already running as root, skip sudo wrapper"). So instead of
+# granting sudo on the client's internal `sh -c "<dynamic string>"` re-exec
+# (which we can't scope tightly — sudo-rs's Cmnd Args matcher compares the
+# real argv array element-for-element with NO glob/substring matching
+# inside a single argv element; only a bare trailing `*` or `""` token is
+# supported, so a prefix-anchored match on part of that string is not
+# expressible at all, not just fragile), we grant sudo on the *outer*
+# `pangolin up` invocation itself. Callers must run `sudo pangolin up
+# [args...]` (not bare `pangolin up`) to hit this rule; once euid is
+# already 0, client.go's own check skips its internal sudo re-exec
+# entirely — no nested sudo prompt, and no dependency on client.go's
+# internal string format. This also fixes headless/GUI callers (e.g. a
+# noctalia plugin invoking this with no controlling TTY): client.go's
+# internal sudo call wires `procCmd.Stdin = os.Stdin` /
+# `procCmd.Stderr = os.Stderr` for interactive password entry, which
+# can't work without a TTY. Pre-elevating via our own NOPASSWD rule avoids
+# that path being reached at all.
 #
 # Passwordless sudo below is scoped to a dedicated `pangolin` group (see
 # sysusers.d below — group is created empty; add users manually, e.g.
-# `usermod -aG pangolin <user>`) and to the exact `sh -c` string prefix
-# pangolin-cli currently emits, not a bare `sh -c *` wildcard, to avoid
-# granting unrestricted root shell access to group members.
+# `usermod -aG pangolin <user>`) and to the `pangolin up` subcommand only
+# (`Args::Prefix` on the literal arg "up" — sudo-rs's supported wildcard
+# form, matching "up" plus any further args). This is a stable, public CLI
+# surface — unlike the internal shell-wrapper string, renaming/removing
+# the `up` subcommand would be a documented breaking change upstream, not
+# silent drift.
 #
 # The sudoers.d file installs at 0644, not the conventional 0440:
 # BuildStream's artifact storage only tracks two regular-file modes
@@ -36,18 +57,6 @@ kind: manual
 # 0644 still loads and is honored. Root-owned, not group/other-writable,
 # so this is a minor hardening gap (policy text is world-readable) not a
 # functional break.
-#
-# FRAGILE: the sudoers glob below matches a literal prefix of fosrl/cli's
-# internal shell-wrapper string (see client.go buildShellCmd logic:
-# `export PANGOLIN_SUBPROCESS=1 && [export PANGOLIN_CREDENTIALS_FROM_KEYRING=1 && ]nohup "<bindir>/pangolin"...`).
-# If a future pangolin-cli release changes this string (env var name,
-# ordering, or drops the wrapper entirely), the sudoers rule silently
-# stops matching and `pangolin up` falls back to an interactive password
-# prompt — it will NOT error loudly. `bst source track` is a no-op on
-# this `kind: remote` source, so version bumps happen via
-# `mise run pangolin-update` and won't surface this drift in review;
-# re-check the prefix against upstream client.go after every version
-# bump of this element.
 
 sources:
 - kind: remote
@@ -77,6 +86,5 @@ config:
   - |
     install -Dm644 /dev/stdin \
       "%{install-root}/etc/sudoers.d/pangolin-cli" <<'EOF'
-    %pangolin ALL=(root) NOPASSWD: /usr/bin/sh -c "export PANGOLIN_SUBPROCESS=1 && export PANGOLIN_CREDENTIALS_FROM_KEYRING=1 && nohup \"%{bindir}/pangolin\"*"
-    %pangolin ALL=(root) NOPASSWD: /usr/bin/sh -c "export PANGOLIN_SUBPROCESS=1 && nohup \"%{bindir}/pangolin\"*"
+    %pangolin ALL=(root) NOPASSWD: %{bindir}/pangolin up *
     EOF
