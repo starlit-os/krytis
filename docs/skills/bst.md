@@ -354,6 +354,12 @@ mise run bst artifact checkout elements/krytis/something.bst --directory "$OUTDI
 rm -rf "$OUTDIR"   # clean up when done
 ```
 
+## `install -Dm###` modes are clamped to 644/755
+
+BuildStream's artifact storage only tracks two regular-file modes, like a git tree object: executable (755) or not (644). `install -Dm440`, `-Dm600`, etc. in `install-commands` are accepted without error but silently clamped to `0644` by the time the file lands in the artifact/image — there's no error or warning at build time. Verify actual perms with `bst artifact checkout --tar <element> --tar out.tar && tar tvf out.tar`; a plain `bst artifact checkout --directory` may also normalize/mangle modes on non-root checkout, so prefer `--tar` when checking this specifically.
+
+If a stricter mode is a hard requirement (not just convention), it needs a boot-time `tmpfiles.d` `z` line (`z /path 0440 root root -`) to fix it up post-checkout — same category of workaround as the `setcap`-at-boot pattern above. Before reaching for that, check whether the looser mode is actually a functional problem: e.g. sudoers.d files at 0644 (vs. the conventional 0440) still load and are honored by both GNU sudo and sudo-rs — they only refuse world-*writable* includes, not world-readable ones (confirmed against sudo-rs's own compliance test suite, `sudo/sudoers/includedir.rs`, `ignores_and_warns_about_file_with_bad_perms`). Root-owned + non-writable is enough; readability weaker than 0440 may just be a minor hardening gap, not a break — evaluate before adding boot-time complexity for it.
+
 ## Adding a Package
 
 1. Create `elements/krytis/<name>.bst` (copy a similar existing element)
@@ -539,6 +545,48 @@ sources:
 Then in `config.install-commands`: `install -Dm755 pangolin-cli "%{install-root}%{bindir}/tool"`.
 
 **`kind: remote` vs `kind: tar`**: use `remote` when the release asset is a raw ELF (e.g. `pangolin-cli_linux_amd64`), `tar` when it's a `.tar.gz`/`.tar.xz` (e.g. gum, mise). Both are no-ops for `bst source track`; both require a mise update task and CI job.
+
+### File capabilities (`setcap`) can't be set at build time
+
+`setcap` in `install-commands` always fails, even under BuildStream's fakeroot sandbox:
+
+```
+unable to set CAP_SETFCAP effective capability: Operation not permitted
+```
+
+The sandbox doesn't grant `CAP_SETFCAP` regardless of build-time fakeroot/pseudo-root status — there's no build-time workaround. If a binary needs a file capability, apply it at boot instead: ship a oneshot systemd unit that runs the real `setcap` as real root, enabled via a `system-preset`. The binary providing `setcap` (`libcap.bst`) must be a runtime `depends:`, not just `build-depends:` — the setcap CLI isn't pulled into the runtime-minimal stack by anything else. Tradeoff: the capability is absent for the brief window between boot and the oneshot unit running.
+
+**Before reaching for this, check whether the client actually uses file capabilities at all.** `core/pangolin-cli.bst` originally shipped exactly this pattern (`cap_net_admin+ep` on the pangolin binary, oneshot unit + preset) to let a non-root user bring up its tun interface. It had no effect: `pangolin up` (fosrl/cli) never checks the binary's capabilities — `cmd/up/client/client.go` unconditionally re-execs itself via `sudo sh -c "..."` whenever `os.Geteuid() != 0`, every invocation, with no flag to skip it. The setcap unit was dead weight and was reverted; see "Passwordless sudo for a client that self-elevates" below instead.
+
+### sudo-rs Cmnd Args matching has no substring/glob support inside a single arg
+
+`sudoers.d` `Cmnd` specs in sudo-rs are matched against the real process argv **array, element-for-element** (`sudoers/mod.rs::match_command`: `Args::Prefix(vec) => args.starts_with(vec)`, `Args::Exact(vec) => args == vec`). The only wildcard forms are a bare trailing `*` token (Prefix: match these N whole args, allow any further whole args) or a bare trailing `""` token (Exact: no further args allowed) — a glob **inside** one arg string (e.g. `"foo"*` glued onto a quoted token) is rejected at parse time with `wildcards are not allowed in command arguments`. There is no fnmatch-style substring match like GNU sudo has. Also: only `\`, `,`, `:`, `=`, `#`, and space are escapable inside a Cmnd token (`tokens.rs::SimpleCommand::escaped`) — `\"` is not, and errors with `illegal escape sequence`.
+
+**Practical consequence:** you cannot sudoers-scope a client that self-elevates via `sudo sh -c "<dynamic string>"` to anything tighter than the whole `sh -c` invocation (`Args::Prefix(["-c"])`, i.e. `/usr/bin/sh -c *`) — there is no way to prefix-match *inside* the dynamic string argv element. A design that assumes GNU-sudo-style embedded wildcards will not parse. See below for the fix actually used for this case.
+
+### Passwordless sudo for a client that self-elevates: elevate the outer call instead, don't try to scope the inner `sh -c`
+
+Some prebuilt clients call `sudo` on themselves internally instead of relying on file capabilities or polkit (e.g. `pangolin up` — see above). Given the Args-matching limitation above, don't try to sudoers-scope the client's internal `sh -c "<dynamic string>"` re-exec at all. Instead check whether the client has an `if already root, skip the internal sudo` branch — `fosrl/cli`'s `cmd/up/client/client.go` does (`if os.Geteuid() == 0 { ...no sudo... } else { ...sudo sh -c... }`). If so, grant sudo on the client's own **outer**, stable CLI surface instead, and require callers to invoke it pre-elevated:
+
+```
+%pangolin ALL=(root) NOPASSWD: %{bindir}/pangolin up *
+```
+
+("up" and the bare trailing `*` are separate whitespace-tokenized args in the sudoers line → `Args::Prefix(["up"])`, a legal wildcard form.) Callers must run `sudo pangolin up ...` themselves — not bare `pangolin up`. Once euid is already 0 inside the client process, its own internal re-exec branch never triggers, so there's no nested sudo call and no dependency on the internal shell-wrapper string at all.
+
+This also fixes invoking a self-elevating client from a **GUI app with no controlling TTY** (e.g. a noctalia plugin shelling out to `pangolin up`): the client's internal sudo call typically wires `Stdin`/`Stderr` to the parent's for interactive password entry, which cannot work headlessly. Pre-elevating via a sudoers rule on the outer invocation means that code path is never reached — the caller's own `sudo pangolin up` is what's NOPASSWD-authorized, and no password prompt occurs so no TTY is needed either.
+
+- **Dedicated group, not `wheel`**: create an empty system group via `sysusers.d` (`g pangolin - -`, installed to `%{indep-libdir}/sysusers.d/`). Nobody is a member by default — scopes *who* gets the rule. Users opt in with `usermod -aG pangolin <user>`.
+- **Why this is tighter than it looks despite being a `Prefix` wildcard**: the wildcard is scoped to `pangolin up`, a small, public, versioned CLI subcommand — not `sh -c *` (arbitrary shell) and not the client's private internal string format. Renaming/removing `up` would be a documented breaking change upstream, not the kind of silent formatting drift a shell-wrapper string is prone to.
+- sudoers file mode must be `0440` by convention, filename must not contain a `.` — see `install -Dm644 ... /etc/sudoers.d/zz-pangolin-cli` and the mode-clamping note above (0644 is what actually ships on this platform and is still safe/honored).
+
+### `#includedir` ordering: last-matching-rule-wins can silently override a narrower NOPASSWD grant
+
+sudo's `#includedir /etc/sudoers.d` (installed by `core/sudo-rs.bst`) reads files in **filename sort order**, and sudoers resolves conflicting entries by **last matching rule wins** — not most-specific-wins. `base-system.bst` depends on freedesktop-sdk's `vm/config/sudo.bst`, which installs `/etc/sudoers.d/wheel` containing `%wheel ALL=(ALL) ALL` (password required, and `ALL` matches every command). Any user who is in both `wheel` and a narrower NOPASSWD group (the pangolin case above, and the common case for a real desktop user account) will have the narrow rule silently overridden if its filename sorts *before* `"wheel"` alphabetically — e.g. `pangolin-cli` < `wheel`. `sudo -l` is misleading here: it lists every matching entry, not just the effective one, so the NOPASSWD rule appears to be present and correct even though it's dead.
+
+**Symptom:** `sudo -n <cmd>` (or an interactive prompt appearing where NOPASSWD was expected) fails with `sudo: interactive authentication is required` (or, non-interactively, `sudo: a password is required`) despite `sudo -l` showing the NOPASSWD entry.
+
+**Fix:** name any narrow NOPASSWD carve-out file so it sorts *after* `wheel` — e.g. `zz-pangolin-cli` instead of `pangolin-cli`. Check this any time a new sudoers.d drop-in grants a permission narrower than an existing group-wide rule; a `zz-` prefix is the cheapest way to guarantee last-match without tracking every other file that might land in `/etc/sudoers.d`.
 
 ### Systemd service installation
 
