@@ -730,20 +730,52 @@ warning and `cat /var/lib/falcond/status` for `LOADED_PROFILES`.
 
 Upstream ships zero default profiles in the source tarball itself (`falcond/debian/`
 contains only the systemd unit) — game profiles are entirely separate, maintained at
-[PikaOS-Linux/falcond-profiles](https://github.com/PikaOS-Linux/falcond-profiles) (9 root
-profiles + `handheld`/`htpc` device-mode variants + `system.conf`) and pulled in at
-package-build time by PikaOS's own packaging (per the README's "Packaging" section).
-krytis vendors just `proton.conf` (`kind: remote`, pinned to a single commit SHA) — the
-global Proton/Wine catch-all, giving out-of-the-box coverage for any Steam Proton title
-without per-game tracking overhead. `LOADED_PROFILES` will read `1` after the directory
-fix above, not `0` — but still won't match a native (non-Proton) game unless its specific
-profile is also vendored. Full per-game profile set + the `kind: remote` update-path
-automation this needs (`bst source track` is a no-op on it — see `docs/skills/bst.md` §
-Element update path) tracked in #258.
+[PikaOS-Linux/falcond-profiles](https://github.com/PikaOS-Linux/falcond-profiles) and
+pulled in at package-build time by PikaOS's own packaging (per the README's "Packaging"
+section). krytis vendors the full set — see "Default game profiles (#258)" below.
 
 Runtime: requires `power-profiles-daemon` (or `tuned-ppd`). Do NOT run alongside gamemode —
 they conflict. SCX scheduler binaries (`scx_lavd`, `scx_bpfland`) are optional; falcond
 feature-detects them and degrades gracefully if absent. Closes #221.
+
+### Default game profiles (#258)
+
+Upstream falcond ships zero default profiles in its own source tree (`falcond/debian/`
+has only the systemd unit). PikaOS's real profile set lives in a separate repo,
+[PikaOS-Linux/falcond-profiles](https://github.com/PikaOS-Linux/falcond-profiles) — 9
+root profiles (`cs2`, `cyberpunk2077`, `ffxiv`, `hades2`, `civ7`, `factorio`, `obliv`,
+`x4`, `proton`), plus `handheld/`/`htpc/` device-mode variants and `system.conf`, no
+GitHub Releases (commits straight to `main`).
+
+Vendored as a single `kind: tar` source pinned to a commit SHA (not per-file — simpler
+one-ref tracking, and the whole repo is a clean `usr/share/falcond/` tree with no
+collisions against krytis's own `profiles/user/` override dir). Two things that bit on
+the way in:
+
+- **BST's tar source auto-strips the single leading path component.** The GitHub archive
+  is `falcond-profiles-<sha>/usr/share/falcond/...`; after staging into the source's
+  `directory:`, it's just `<directory>/usr/share/falcond/...` — no `falcond-profiles-<sha>/`
+  prefix survives. Don't glob for it.
+- **Scope any grep/sed against this element to the specific source block.** falcond.bst
+  already has several unrelated `archive/<40-hex-commit-sha>.tar.gz` sources (the
+  `zig-deps-git` pins) — a loose `grep -oP "archive/\K[0-9a-f]{40}"` matches the *first*
+  one in the file, not necessarily the one you mean. `mise/tasks/falcond-profiles-update`
+  scopes with `grep -A2 "PikaOS-Linux/falcond-profiles/archive"` first. Caught this by
+  actually running the task and diffing — it silently corrupted an unrelated
+  `otter_conf` source pin on the first attempt.
+
+Update path: `mise run falcond-profiles-update` (commit-SHA based, no release tags to
+compare — different shape from `falcond-update`/`scx-loader-update`) + `track-falcond-profiles`
+job in `.github/workflows/track-bst-sources.yml`, same `track-mise` pattern as every other
+`kind: tar`/`kind: remote` element (`bst source track` is a no-op on these — see
+`docs/skills/bst.md` § Element update path).
+
+`LOADED_PROFILES` should read `9` with default `profile_mode: none` (the root profiles;
+`handheld`/`htpc` variants only load when that config key is set) — see the
+`fix/falcond-user-profiles-dir` branch (#262) for why it read `0` before the
+profiles-dir bug fix landed (falcond's compiled-in `-Duser-profiles-dir` default,
+`/usr/share/falcond/profiles/user`, wasn't being created at build time). This branch
+supersedes #262's single `proton.conf` vendoring — the full tarball already contains it.
 
 ### Verification (on booted image)
 
@@ -775,8 +807,7 @@ busctl --system get-property org.scx.Loader /org/scx/Loader org.scx.Loader Suppo
 # falcond: the check that actually matters — is the profiles-dir watch healthy?
 journalctl -u falcond -b --no-pager | grep -i "profiles\|inotify"
 # No "cannot watch user profiles dir" warning = the directory-creation bug is fixed.
-# LOADED_PROFILES: 1 (just proton.conf) is expected on krytis — see the default
-# profiles note above and #258 for the full per-game set.
+# LOADED_PROFILES: 9 is expected on krytis — see "Default game profiles (#258)" above.
 cat /var/lib/falcond/status
 ```
 
@@ -819,6 +850,51 @@ into. No error logged; verified by walking a live game's full cgroup ancestry an
 finding zero non-empty `dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd
 drop-in delegating `dmem` (e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice`
 level before this profile field does anything. See #260.
+
+### Proton-catch-all matching depends on launcher process ancestry, not filename
+
+Ground truth from upstream source (`matcher.zig`/`scanner.zig`, cloned from
+`git.pika-os.com/general-packages/falcond`), verified live against real games across
+four launchers (Bottles, Faugus, Heroic, Steam):
+
+1. Exact/case-insensitive hash-map hit: process name == a `.conf` filename stem (e.g.
+   `cs2.conf` matches process `cs2`). Wins immediately, no ancestry walk.
+2. Proton catch-all (`proton.conf`) only fires if the process name ends in `.exe`, is
+   NOT in `system.conf`'s ignore-list (Wine launcher/updater helper exes), AND walking
+   up to 10 parent PIDs via `/proc/<pid>/status` `PPid:`, some ancestor's `comm`
+   contains `wine`/`reaper`/`umu-run` **or** its `/proc/<pid>/cmdline` contains the
+   literal substring `proton`.
+
+This makes matching launcher-dependent, not just "is it Wine":
+
+- **Bottles-direct** (`bottles-cli run -p ... -b ...`) — MISS. Bottles bundles its own
+  runner; nothing in its cmdline says `proton`, and `bwrap` (which Bottles always
+  sandboxes through) reparents the game exe as `wineserver`'s *sibling*, not its
+  descendant — severing the ancestry link entirely.
+- **Faugus, Heroic, Steam** — HIT. All three either run a direct wine ancestor or
+  invoke a Steam Proton compat tool (`.../Proton-CachyOS.../proton waitforexitandrun`)
+  whose cmdline satisfies the substring fallback, even when also sandboxed through
+  `bwrap`/pressure-vessel (Faugus/Steam both are — bwrap by itself does not break
+  matching, only the *absence* of a wine/proton needle in the surviving ancestry does).
+
+Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
+invocation puts one of those literal needles in cmdline/comm within 10 hops. This
+applies to every profile in this vendored set, not just `proton.conf` — native-game
+profiles (`cs2.conf` etc.) match on exact process name and don't need any of this, but
+anything relying on the Proton fallback does.
+
+### dmem_protect cgroup delegation gap (#260)
+
+`dmem_protect = true` — set on every profile in this vendored set — is currently a
+silent no-op on krytis. The kernel's `dmem` controller is present in root
+`cgroup.controllers` but is not delegated into `app.slice`'s `cgroup.subtree_control`
+(only `cpu io memory pids` are) — so no `dmem.min`/`dmem.max` file exists at a game's
+actual cgroup scope for falcond to write into. No error logged; verified by walking a
+live game's full cgroup ancestry and finding zero non-empty
+`dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd drop-in delegating `dmem`
+(e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice` level before this field does
+anything. See #260 — not a defect in this profile set, the profiles are correct, the
+delegation just isn't wired up yet.
 
 ## scx_loader (sched-ext D-Bus scheduler loader)
 
