@@ -18,6 +18,8 @@
 # (bottom of screen) to .4 (slightly above center) — the two-step module
 # has no separate "scale" knob, alignment is the only thing it exposes, so
 # sizing is baked into the source PNG and position is baked into the ini.
+# Background{Start,End}Color also overridden to krytis's #232136 (stock
+# spinner is plain black, 0x000000).
 #
 # This file must be depended on by BOTH stacks/desktop.bst (so the theme
 # is set on the final rootfs) and core/initramfs.bst (so dracut's plymouth
@@ -89,8 +91,8 @@ config:
     WatermarkVerticalAlignment=.4
     Transition=none
     TransitionDuration=0.0
-    BackgroundStartColor=0x000000
-    BackgroundEndColor=0x000000
+    BackgroundStartColor=0x232136
+    BackgroundEndColor=0x232136
     ProgressBarBackgroundColor=0x606060
     ProgressBarForegroundColor=0xffffff
     MessageBelowAnimation=true
