@@ -578,7 +578,15 @@ This also fixes invoking a self-elevating client from a **GUI app with no contro
 
 - **Dedicated group, not `wheel`**: create an empty system group via `sysusers.d` (`g pangolin - -`, installed to `%{indep-libdir}/sysusers.d/`). Nobody is a member by default — scopes *who* gets the rule. Users opt in with `usermod -aG pangolin <user>`.
 - **Why this is tighter than it looks despite being a `Prefix` wildcard**: the wildcard is scoped to `pangolin up`, a small, public, versioned CLI subcommand — not `sh -c *` (arbitrary shell) and not the client's private internal string format. Renaming/removing `up` would be a documented breaking change upstream, not the kind of silent formatting drift a shell-wrapper string is prone to.
-- sudoers file mode must be `0440` by convention, filename must not contain a `.` — see `install -Dm644 ... /etc/sudoers.d/pangolin-cli` and the mode-clamping note above (0644 is what actually ships on this platform and is still safe/honored).
+- sudoers file mode must be `0440` by convention, filename must not contain a `.` — see `install -Dm644 ... /etc/sudoers.d/zz-pangolin-cli` and the mode-clamping note above (0644 is what actually ships on this platform and is still safe/honored).
+
+### `#includedir` ordering: last-matching-rule-wins can silently override a narrower NOPASSWD grant
+
+sudo's `#includedir /etc/sudoers.d` (installed by `core/sudo-rs.bst`) reads files in **filename sort order**, and sudoers resolves conflicting entries by **last matching rule wins** — not most-specific-wins. `base-system.bst` depends on freedesktop-sdk's `vm/config/sudo.bst`, which installs `/etc/sudoers.d/wheel` containing `%wheel ALL=(ALL) ALL` (password required, and `ALL` matches every command). Any user who is in both `wheel` and a narrower NOPASSWD group (the pangolin case above, and the common case for a real desktop user account) will have the narrow rule silently overridden if its filename sorts *before* `"wheel"` alphabetically — e.g. `pangolin-cli` < `wheel`. `sudo -l` is misleading here: it lists every matching entry, not just the effective one, so the NOPASSWD rule appears to be present and correct even though it's dead.
+
+**Symptom:** `sudo -n <cmd>` (or an interactive prompt appearing where NOPASSWD was expected) fails with `sudo: interactive authentication is required` (or, non-interactively, `sudo: a password is required`) despite `sudo -l` showing the NOPASSWD entry.
+
+**Fix:** name any narrow NOPASSWD carve-out file so it sorts *after* `wheel` — e.g. `zz-pangolin-cli` instead of `pangolin-cli`. Check this any time a new sudoers.d drop-in grants a permission narrower than an existing group-wide rule; a `zz-` prefix is the cheapest way to guarantee last-match without tracking every other file that might land in `/etc/sudoers.d`.
 
 ### Systemd service installation
 

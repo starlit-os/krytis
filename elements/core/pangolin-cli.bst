@@ -57,6 +57,21 @@ kind: manual
 # 0644 still loads and is honored. Root-owned, not group/other-writable,
 # so this is a minor hardening gap (policy text is world-readable) not a
 # functional break.
+#
+# Filename is `zz-pangolin-cli`, NOT `pangolin-cli`: sudo's `#includedir`
+# reads /etc/sudoers.d in filename sort order, and sudoers semantics are
+# last-matching-rule-wins. base-system.bst depends on freedesktop-sdk's
+# vm/config/sudo.bst, which installs /etc/sudoers.d/wheel
+# (`%wheel ALL=(ALL) ALL`, password required). Any user in both `wheel`
+# and `pangolin` groups (the common case — see docs/skills/bst.md) would
+# have this rule silently overridden: "pangolin-cli" sorts before "wheel"
+# alphabetically, so wheel's general ALL rule is read *after* ours and
+# wins for the `pangolin up` command too (ALL matches everything). Prefixing
+# with `zz-` forces our narrower NOPASSWD carve-out to sort and load last.
+# Verified live: `sudo -n pangolin up` failed with "interactive
+# authentication is required" under the old filename despite `sudo -l`
+# correctly listing the NOPASSWD rule (sudo -l lists all matching entries,
+# not just the effective one) — renaming to `zz-pangolin-cli` fixed it.
 
 sources:
 - kind: remote
@@ -85,6 +100,6 @@ config:
     EOF
   - |
     install -Dm644 /dev/stdin \
-      "%{install-root}/etc/sudoers.d/pangolin-cli" <<'EOF'
+      "%{install-root}/etc/sudoers.d/zz-pangolin-cli" <<'EOF'
     %pangolin ALL=(root) NOPASSWD: %{bindir}/pangolin up *
     EOF
