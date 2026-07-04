@@ -12,6 +12,12 @@
 # transitive dep of plymouth.bst) installs freedesktop-sdk-40.png to
 # %{datadir}/plymouth/themes/spinner/watermark.png. We overwrite that same
 # path with our own logo rather than inventing a separate theme directory.
+# The logo itself is pre-scaled to 80% of the original artwork (629x469 ->
+# 503x375 via ffmpeg) so it doesn't dominate the screen. We also overwrite
+# spinner.plymouth to move WatermarkVerticalAlignment from the stock .96
+# (bottom of screen) to .4 (slightly above center) — the two-step module
+# has no separate "scale" knob, alignment is the only thing it exposes, so
+# sizing is baked into the source PNG and position is baked into the ini.
 #
 # This file must be depended on by BOTH stacks/desktop.bst (so the theme
 # is set on the final rootfs) and core/initramfs.bst (so dracut's plymouth
@@ -33,14 +39,15 @@ depends:
 # Upstream plymouth ships /etc/plymouth/plymouthd.conf itself (a fully
 # commented-out "Administrator customizations go in this file" template).
 # plymouth-logo.bst (transitive dep of plymouth.bst) ships spinner's
-# watermark.png. We intentionally overwrite both, which BST's overlap
-# detection (fatal-warnings: overlaps in project.conf) flags unless
-# whitelisted here.
+# watermark.png and spinner.plymouth. We intentionally overwrite all three,
+# which BST's overlap detection (fatal-warnings: overlaps in project.conf)
+# flags unless whitelisted here.
 public:
   bst:
     overlap-whitelist:
     - /etc/plymouth/plymouthd.conf
     - /usr/share/plymouth/themes/spinner/watermark.png
+    - /usr/share/plymouth/themes/spinner/spinner.plymouth
 
 variables:
   strip-binaries: ''
@@ -57,3 +64,71 @@ config:
     Theme=spinner
     EOF
   - install -Dm644 krytis-watermark.png "%{install-root}%{datadir}/plymouth/themes/spinner/watermark.png"
+  - |
+    # Stock spinner.plymouth (from fdsdk plymouth-logo.bst), trimmed of
+    # translated Name[xx] lines (cosmetic only, not read by the two-step
+    # module) and with WatermarkVerticalAlignment moved from .96 to .4.
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{datadir}/plymouth/themes/spinner/spinner.plymouth" <<'EOF'
+    [Plymouth Theme]
+    Name=Spinner
+    Description=A theme designed by jimmac that features a simple spinner.
+    ModuleName=two-step
+
+    [two-step]
+    Font=Cantarell 12
+    TitleFont=Cantarell Light 30
+    ImageDir=/usr/share/plymouth/themes//spinner
+    DialogHorizontalAlignment=.5
+    DialogVerticalAlignment=.382
+    TitleHorizontalAlignment=.5
+    TitleVerticalAlignment=.382
+    HorizontalAlignment=.5
+    VerticalAlignment=.7
+    WatermarkHorizontalAlignment=.5
+    WatermarkVerticalAlignment=.4
+    Transition=none
+    TransitionDuration=0.0
+    BackgroundStartColor=0x000000
+    BackgroundEndColor=0x000000
+    ProgressBarBackgroundColor=0x606060
+    ProgressBarForegroundColor=0xffffff
+    MessageBelowAnimation=true
+
+    [boot-up]
+    UseEndAnimation=false
+
+    [shutdown]
+    UseEndAnimation=false
+
+    [reboot]
+    UseEndAnimation=false
+
+    [updates]
+    SuppressMessages=true
+    ProgressBarShowPercentComplete=true
+    UseProgressBar=true
+    Title=Installing Updates...
+    SubTitle=Do not turn off your computer
+
+    [system-upgrade]
+    SuppressMessages=true
+    ProgressBarShowPercentComplete=true
+    UseProgressBar=true
+    Title=Upgrading System...
+    SubTitle=Do not turn off your computer
+
+    [firmware-upgrade]
+    SuppressMessages=true
+    ProgressBarShowPercentComplete=true
+    UseProgressBar=true
+    Title=Upgrading Firmware...
+    SubTitle=Do not turn off your computer
+
+    [system-reset]
+    SuppressMessages=true
+    ProgressBarShowPercentComplete=true
+    UseProgressBar=true
+    Title=Resetting System...
+    SubTitle=Do not turn off your computer
+    EOF
