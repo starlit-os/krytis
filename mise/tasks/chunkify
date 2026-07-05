@@ -33,9 +33,9 @@ MERGED=""
 
 cleanup() {
     [ -n "$MERGED" ] && $SUDO_CMD umount "$MERGED" 2>/dev/null || true
-    [ -n "$UPPER" ] && $SUDO_CMD rm -rf "$UPPER"
-    [ -n "$WORK" ] && $SUDO_CMD rm -rf "$WORK"
-    [ -n "$MERGED" ] && $SUDO_CMD rm -rf "$MERGED"
+    [ -n "$UPPER" ] && $SUDO_CMD rm -rf "$UPPER" || true
+    [ -n "$WORK" ] && $SUDO_CMD rm -rf "$WORK" || true
+    [ -n "$MERGED" ] && $SUDO_CMD rm -rf "$MERGED" || true
     $SUDO_CMD podman image umount "${TAG}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
