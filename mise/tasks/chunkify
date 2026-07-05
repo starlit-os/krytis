@@ -26,9 +26,16 @@ fi
 
 LOWER=$($SUDO_CMD podman image mount "${TAG}")
 
+# Initialize overlay variables early so cleanup trap is always safe.
+UPPER=""
+WORK=""
+MERGED=""
+
 cleanup() {
-    $SUDO_CMD umount "$MERGED" 2>/dev/null || true
-    $SUDO_CMD rm -rf "$UPPER" "$WORK" "$MERGED"
+    [ -n "$MERGED" ] && $SUDO_CMD umount "$MERGED" 2>/dev/null || true
+    [ -n "$UPPER" ] && $SUDO_CMD rm -rf "$UPPER"
+    [ -n "$WORK" ] && $SUDO_CMD rm -rf "$WORK"
+    [ -n "$MERGED" ] && $SUDO_CMD rm -rf "$MERGED"
     $SUDO_CMD podman image umount "${TAG}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -82,6 +89,11 @@ echo "${LOADED}"
 NEW_REF=$(echo "${LOADED}" | sed -n 's/^Loaded image(s): //p; s/^Loaded image: //p' | head -1)
 if [ -z "${NEW_REF}" ]; then
     NEW_REF=$(echo "${LOADED}" | grep -oP '^[0-9a-f]{64}$' | head -1 || true)
+fi
+
+if [ -z "${NEW_REF}" ]; then
+    echo "ERROR: could not parse podman load output — chunkah did not report a loaded image" >&2
+    exit 1
 fi
 
 if [ -n "${NEW_REF}" ] && [ "${NEW_REF}" != "${TAG}" ]; then
