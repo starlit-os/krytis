@@ -88,8 +88,12 @@ depends:
   # Papirus: flat icon theme providing Papirus, Papirus-Dark, and Papirus-Light
   # variants. Closes #208.
   - desktop/papirus-icon-theme.bst
-  # gtk-settings: sets Papirus as the system-wide GTK icon theme via
-  # /etc/gtk-3.0/settings.ini and /etc/gtk-4.0/settings.ini.
+  # adw-gtk3: GTK3 theme matching libadwaita/GTK4 styling, so GTK3 apps
+  # look consistent alongside GTK4/libadwaita apps.
+  - desktop/adw-gtk3.bst
+  # gtk-settings: sets Papirus as the system-wide GTK icon theme and
+  # adw-gtk3-dark as the system-wide GTK theme via /etc/gtk-3.0/settings.ini
+  # and dconf.
   - config/gtk-settings.bst
 
   # ── Camera ─────────────────────────────────────────────────────────────
