@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+#MISE description="Rechunk localhost/krytis:latest into composefs-ready component layers via chunkah"
+#USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image tag to chunkify in place"
+
+set -euo pipefail
+
+TAG="${usage_tag:-localhost/krytis:latest}"
+
+# Pinned chunkah image — bump via `mise chunkah-update` (see Task 4).
+CHUNKAH_REF="quay.io/coreos/chunkah:v0.6.0@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708"
+
+echo "==> Chunkifying ${TAG}..."
+
+SUDO_CMD=""
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO_CMD="sudo"
+fi
+
+CONFIG=$($SUDO_CMD podman inspect "${TAG}")
+
+FAKECAP_RESTORE="$(pwd)/files/fakecap/fakecap-restore"
+if [ ! -x "${FAKECAP_RESTORE}" ]; then
+    echo "==> Compiling fakecap-restore..."
+    gcc -O2 -o "${FAKECAP_RESTORE}" "$(pwd)/files/fakecap/fakecap-restore.c"
+fi
+
+LOWER=$($SUDO_CMD podman image mount "${TAG}")
+
+cleanup() {
+    $SUDO_CMD umount "$MERGED" 2>/dev/null || true
+    $SUDO_CMD rm -rf "$UPPER" "$WORK" "$MERGED"
+    $SUDO_CMD podman image umount "${TAG}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# Pick the tmpdir with the most free space for the overlay work dirs.
+# fakecap-restore triggers overlayfs copy-up for every file it touches;
+# copy-ups can exhaust /var/tmp on machines where root has little free
+# space (e.g. CI runners with a BTRFS loopback for /var/lib/containers).
+# Ported from dakota's e0b5a52 — see docs/skills/chunkah.md.
+_OVERLAY_TMPDIR="/var/tmp"
+for _candidate in /var/lib/containers /var/tmp; do
+    if [ -d "${_candidate}" ]; then
+        _free=$(df --output=avail "${_candidate}" 2>/dev/null | tail -1 || echo 0)
+        _best=$(df --output=avail "${_OVERLAY_TMPDIR}" 2>/dev/null | tail -1 || echo 0)
+        if (( _free > _best )); then _OVERLAY_TMPDIR="${_candidate}"; fi
+    fi
+done
+echo "==> overlay tmpdir: ${_OVERLAY_TMPDIR} ($(df -h --output=avail "${_OVERLAY_TMPDIR}" | tail -1 | tr -d ' ') free)"
+UPPER=$(mktemp -d -p "${_OVERLAY_TMPDIR}")
+WORK=$(mktemp -d -p "${_OVERLAY_TMPDIR}")
+MERGED=$(mktemp -d -p "${_OVERLAY_TMPDIR}")
+$SUDO_CMD chmod 755 "${UPPER}" "${WORK}" "${MERGED}"
+$SUDO_CMD mount -t overlay overlay \
+    -o "lowerdir=${LOWER},upperdir=${UPPER},workdir=${WORK}" \
+    "${MERGED}"
+
+echo "==> Applying user.component xattrs via fakecap-restore..."
+$SUDO_CMD "${FAKECAP_RESTORE}" files/fakecap-manifest.tsv "${MERGED}"
+
+echo "==> Pulling chunkah..."
+for attempt in 1 2 3; do
+    $SUDO_CMD podman pull "${CHUNKAH_REF}" && break
+    echo "==> chunkah pull attempt ${attempt} failed, retrying in 10s..."
+    [ "${attempt}" -lt 3 ] && sleep 10
+done
+
+echo "==> Running chunkah (max 120 layers)..."
+LOADED=$($SUDO_CMD podman run --rm \
+    --pull never \
+    --security-opt label=type:unconfined_t \
+    -v "${MERGED}:/chunkah:ro" \
+    -e "CHUNKAH_ROOTFS=/chunkah" \
+    -e "CHUNKAH_CONFIG_STR=${CONFIG}" \
+    "${CHUNKAH_REF}" build --max-layers 120 --prune /sysroot/ \
+    --label ostree.commit- --label ostree.final-diffid- \
+    | $SUDO_CMD podman load)
+
+echo "${LOADED}"
+
+# Parse the loaded image reference — podman's "Loaded image" wording varies by version.
+NEW_REF=$(echo "${LOADED}" | sed -n 's/^Loaded image(s): //p; s/^Loaded image: //p' | head -1)
+if [ -z "${NEW_REF}" ]; then
+    NEW_REF=$(echo "${LOADED}" | grep -oP '^[0-9a-f]{64}$' | head -1 || true)
+fi
+
+if [ -n "${NEW_REF}" ] && [ "${NEW_REF}" != "${TAG}" ]; then
+    echo "==> Retagging chunked image to ${TAG}..."
+    $SUDO_CMD podman tag "${NEW_REF}" "${TAG}"
+fi
+
+echo "==> Done: ${TAG} is now composefs-ready."

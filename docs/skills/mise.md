@@ -13,6 +13,7 @@ mise validate                                      # check all key element graph
 mise generate-image-version                        # update include/image-version.yml from git
 mise load-image                                    # bst build + podman load → localhost/krytis-input:latest
 mise lint                                          # bootc container lint via Containerfile
+mise chunkify                                      # rechunk into composefs-ready component layers
 mise kernel-update                                 # bump linux-cachyos to latest CachyOS v3 release
 ```
 
@@ -25,6 +26,8 @@ remaining args as positionals, so flags like `--deps` and `--tar` pass through w
 mise validate                 # confirm element graph resolves
 mise load-image               # BST build → podman local storage
 mise lint                     # bootc container lint (squash-all)
+mise generate-fakecap-manifest # regenerate files/fakecap-manifest.tsv (only when elements change)
+mise chunkify                 # rechunk into composefs-ready component layers
 mise generate-disk            # bootc install to-disk → bootable.raw
 mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 ```

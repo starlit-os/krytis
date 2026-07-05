@@ -98,3 +98,28 @@ strips leading slashes, not the leading `./`. Harmless (the kernel and
 `lsetxattr` resolve `/merged/./bin` and `/merged/bin` identically) and not
 worth fixing for a non-functional issue — just don't be confused by it when
 reading the TSV.
+
+## chunkify task (#30)
+
+`mise chunkify` mounts `localhost/krytis:latest` as a writable overlay,
+runs `fakecap-restore` to physically set `user.component` xattrs from
+`files/fakecap-manifest.tsv`, then runs the pinned `chunkah` container
+against the overlay and re-tags the result back onto the same image tag —
+no new tag, so `mise generate-disk`'s existing `--composefs-backend` flag
+(`mise/tasks/generate-disk:39`) needed no change.
+
+**Overlay tmpdir disk-pressure fix**, ported from dakota's `e0b5a52`
+(upstream `projectbluefin/dakota`, 2026-06-13 — confirmed via `git log
+HEAD..upstream/main` that this is dakota's *current* logic, not a stale
+snapshot): `fakecap-restore` triggers an overlayfs copy-up for every file
+it touches, and the manifest can be hundreds of thousands of entries. On
+a machine where root has little free space (BTRFS loopback CI runners,
+constrained dev VMs), that exhausts `/var/tmp`. The task picks whichever
+of `/var/lib/containers` or `/var/tmp` reports more free space via `df
+--output=avail` for the overlay's upper/work/merged dirs.
+
+**Podman "Loaded image" parsing** handles three known output formats
+(`Loaded image: <ref>`, `Loaded image(s): <ref>`, and bare 64-char sha256
+for untagged archives on some podman versions) — this is copied from
+dakota verbatim since it is itself a defensive workaround for
+podman-version skew, not something worth re-deriving.
