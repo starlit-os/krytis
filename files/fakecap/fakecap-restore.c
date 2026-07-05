@@ -56,6 +56,10 @@ int main(int argc, char *argv[]) {
         const char *component = tab1 + 1;
 
         char *tab2 = strchr(component, '\t');
+        /* krytis's own generator (scripts/generate-fakecap-manifest.py) always
+         * writes a 3rd field (currently always "monthly"), so this default is
+         * dead code in practice on krytis-produced manifests — kept because
+         * it's inherited from dakota's own tool, where 2-field lines can occur. */
         const char *interval = "weekly";
         if (tab2) { *tab2 = '\0'; interval = tab2 + 1; }
 

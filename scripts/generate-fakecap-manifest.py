@@ -98,8 +98,8 @@ def main() -> int:
         print(f"==> [{i}/{len(elements)}] {element}", file=sys.stderr)
         try:
             paths = files_for_element(element)
-        except subprocess.CalledProcessError as exc:
-            print(f"    skip (artifact checkout failed): {exc}", file=sys.stderr)
+        except (subprocess.CalledProcessError, tarfile.TarError) as exc:
+            print(f"    skip (checkout/tar failed): {exc}", file=sys.stderr)
             continue
         for path in paths:
             rows.append((path, element, DEFAULT_INTERVAL))

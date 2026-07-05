@@ -90,6 +90,29 @@ with no own content under `--deps none` (e.g. `oci/krytis/stack.bst`,
 out) plus a couple of `kind: script`-style elements — expected misses, not
 a regression.
 
+**Known low-severity risks, worth knowing but not worth fixing:** ~4.6% of
+distinct paths in `files/fakecap-manifest.tsv` are attributed to more than
+one element (e.g. shared config files installed by multiple related
+elements, like `pipewire-base.bst` and `pipewire.bst` both touching the
+same alsa conf file). Since the TSV is sorted by `(path, element)` and
+`fakecap-restore` applies xattrs row-by-row, the alphabetically-last
+element for a shared path wins the `user.component` xattr — deterministic,
+and the file still lands in a valid chunkah layer either way, but which
+element "owns" a shared file is arbitrary rather than semantically
+meaningful. Separately, the junction-prefix retry above (bare name, then
+each `JUNCTION_PREFIXES` entry in order) takes the first ref that resolves
+successfully with no collision guard: if a bare-name checkout ever failed
+and then coincidentally resolved under the *wrong* junction prefix (an
+element with the same relative path existing in both junctions), files
+would be silently misattributed to the wrong owning element. This hasn't
+been observed in practice — the two junctions' element namespaces are
+cleanly segregated by convention (`components/*`, `core-deps/*`,
+`bootstrap/*` → freedesktop-sdk; `gnomeos*/*`, `vm/*`, `extensions/*` →
+gnome-build-meta) — but nothing in the code enforces it. Both risks share
+the same blast radius: at most a shared/ambiguous file lands in a
+suboptimal but still-valid composefs layer for OTA-delta purposes — never
+a boot failure or a missing/corrupted xattr.
+
 **Cosmetic quirk:** every path in `files/fakecap-manifest.tsv` contains a
 literal `/./` segment (e.g. `/./bin`, `/./etc/UPower/UPower.conf`) instead
 of a clean `/bin` — `tarfile` member names come out of the tar as
