@@ -11,7 +11,7 @@
  * chunkah uses rustix raw syscalls for xattr reads (bypassing libc / LD_PRELOAD),
  * so xattrs must be physically applied before chunkah runs.
  * coreos/chunkah#113 is closed — the resolution is this overlay approach,
- * not a libc fallback. Used by `just chunkify` for local dev; CI uses
+ * not a libc fallback. Used by `mise chunkify` for local dev; CI uses
  * the bootc-build/chunka action (inject-xattrs.py) instead.
  *
  * Copyright (c) 2025  contributors
@@ -78,8 +78,17 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        lsetxattr(fullpath, "user.update-interval",
-                  interval, strlen(interval), 0);
+        r = lsetxattr(fullpath, "user.update-interval",
+                      interval, strlen(interval), 0);
+        if (r < 0) {
+            if (errno == ENOENT   ||
+                errno == EPERM    ||
+                errno == ENOTSUP  ||
+                errno == EOPNOTSUPP) { n_skip++; continue; }
+            n_err++;
+            continue;
+        }
+
         n_set++;
     }
     fclose(f);
