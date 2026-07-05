@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#MISE description="Update the pinned chunkah container digest in mise/tasks/chunkify"
+
+set -euo pipefail
+
+TASK_FILE="mise/tasks/chunkify"
+IMAGE="quay.io/coreos/chunkah"
+
+CURRENT_REF=$(grep -oP 'CHUNKAH_REF="\K[^"]+' "${TASK_FILE}")
+CURRENT_TAG=$(echo "${CURRENT_REF}" | sed -n 's|.*:\([^@]*\)@.*|\1|p')
+echo "==> Current: ${CURRENT_REF}"
+
+echo "==> Fetching latest tags for ${IMAGE}..."
+LATEST_TAG=$(skopeo list-tags "docker://${IMAGE}" | jq -r '.Tags[]' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+echo "==> Latest tag: ${LATEST_TAG}"
+
+LATEST_DIGEST=$(skopeo inspect "docker://${IMAGE}:${LATEST_TAG}" | jq -r '.Digest')
+NEW_REF="${IMAGE}:${LATEST_TAG}@${LATEST_DIGEST}"
+
+if [ "${NEW_REF}" = "${CURRENT_REF}" ]; then
+    echo "==> Already up to date (${CURRENT_REF})"
+    exit 0
+fi
+
+echo "==> Updating ${TASK_FILE}: ${CURRENT_TAG} → ${LATEST_TAG}"
+sed -i "s|CHUNKAH_REF=\"${CURRENT_REF}\"|CHUNKAH_REF=\"${NEW_REF}\"|" "${TASK_FILE}"
+
+echo "==> Done. Run 'mise chunkify' against a built image to verify."

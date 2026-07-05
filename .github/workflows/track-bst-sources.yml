@@ -28,6 +28,7 @@ on:
           - falcond-profiles
           - scx-loader
           - zed
+          - chunkah
 
 permissions: read-all
 
@@ -1506,3 +1507,45 @@ jobs:
               --body-file /tmp/pr-body.md)
           fi
           echo "PR: $PR_URL"
+
+  track-chunkah:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    if: >-
+      github.event.inputs.group == 'all' ||
+      github.event.inputs.group == 'chunkah' ||
+      github.event_name == 'schedule'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          experimental: true
+
+      - name: Run chunkah-update
+        run: mise run chunkah-update
+
+      - name: Create PR if changed
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BRANCH="track/chunkah-$(date +%Y%m%d)"
+          git checkout -b "${BRANCH}"
+          git add mise/tasks/chunkify
+          git commit -m "chore(deps): update chunkah digest"
+          git push origin "${BRANCH}"
+          gh pr create --title "chore(deps): update chunkah digest" \
+            --body "Automated digest bump via track-bst-sources.yml" \
+            --base main --head "${BRANCH}"
+        env:
+          GH_TOKEN: ${{ github.token }}
