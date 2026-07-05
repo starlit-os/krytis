@@ -463,24 +463,24 @@ Krytis runs **rootless** podman. Three things this breaks vs dakota's rootful CI
 
 **Kernel cmdline label must match the volume label.** `build-iso.sh` once hardcoded `root=live:LABEL=DAKOTA_LIVE` in every boot entry while the volume label comes from `--label` (`KRYTIS_LIVE`, from `krytis/live_label`). The mismatch made dmsquash-live search for a non-existent label and **hang to a black screen** — no error, in QEMU/Boxes and on bare metal. The cmdlines now use `${LABEL}`; if you add a variant, set `live_label` and confirm the boot entries reference it. The krytis cmdline also carries `console=tty0` (so boot renders on a display, not just serial) and `rd.shell rd.info loglevel=7` (verbose + emergency shell on initramfs failure instead of a silent hang).
 
-### Live env must set `driver = "vfs"` for the offline store to resolve
+### Live env embeds the offline store as **overlay**, not vfs (fixed, #248)
 
-For `composefs=true` (krytis) the payload OCI image is embedded into the squashfs as a **VFS** containers-storage graphroot at `/var/lib/containers/storage`. Podman's default driver is **overlay**, so without an override it looks in an empty `overlay/` tree and reports the image as missing — the installer then fails until you `podman pull` it over the network, which defeats the whole point of an offline ISO. The symptom is "image not found" / a forced network pull at install time, *not* a build error.
+`iso-sd-boot.sh`'s `_ns_build_squashfs` embeds the payload OCI image into the squashfs at `/var/lib/containers/storage` for `composefs=true` (krytis) via `skopeo copy oci-archive:… containers-storage:…` inside a `podman run --privileged` container, writing to a plain bind-mounted host directory (`CS_STAGING`, on WORKDIR's real filesystem — recommend xfs/ext4/btrfs per the `findmnt` hint earlier in the script). This step used to force `driver = "vfs"`, which made `configure-live-krytis.sh`'s `/etc/containers/storage.conf` match with its own `driver = "vfs"` — but vfs stores layers uncompressed (~2× size) and made `bootc update` on the installed system warn (see below, now historical).
 
-`configure-live-krytis.sh` writes `/etc/containers/storage.conf`:
+**Why vfs wasn't actually required here — this was a misdiagnosis carried over from a different step.** The *actual* rootless/overlay-on-overlayfs constraint lives one step earlier, in `payload-prep.sh` (buildah's own working-container storage on the iso-tools container's overlayfs rootfs — gotcha #2 above, still true, still vfs, unrelated to this step since it only emits an oci-archive). The squashfs-embed step above never had that constraint: it's already `--privileged`, and `/vfs-storage` is a bind mount, not the container's own overlayfs — proven by the `composefs=false` sibling branch in the same function, which has always used `driver = "overlay"` successfully in this exact setup. Ported that to the `composefs=true` branch:
 
 ```toml
 [storage]
-driver = "vfs"
+driver = "overlay"
 graphroot = "/var/lib/containers/storage-live"
 
 [storage.options]
 additionalimagestores = ["/var/lib/containers/storage"]
 ```
 
-`driver = "vfs"` matches the embedded store's on-disk layout, and its driver must match the primary store's, so `vfs` is mandatory. The `additionalimagestores` entry is what registers the embedded payload so podman/skopeo can read it.
+The squashfs-root copy also switched from `cp -a` to `rsync -a --no-specials --no-devices` (same reasoning as the `composefs=false` branch: overlay whiteout char-devices need privilege the rootless `podman unshare` copy step doesn't have; harmless to drop since `payload-prep.sh` squashes to a single layer first, so there's nothing for a whiteout to mark deleted). Verified end-to-end with `mise run build-iso`: log shows `Importing OCI image into squashfs overlay containers-storage...` and the build completes.
 
-**The `graphroot` override is not optional — it avoids a self-reference lock trap.** fisherman installs via `pkexec` (**rootful**), whose *default* graphroot is exactly `/var/lib/containers/storage` — the same path as the embedded payload. containers/storage caches lockfiles by absolute path (`pkg/lockfile` `getLockfile`): the primary store opens `.../vfs-layers/layers.lock` **read-write**, then the additional store requests the **same** path **read-only** → cache hit on a read-write lock → fatal:
+**The `graphroot` override is still not optional, regardless of driver — it avoids a self-reference lock trap.** fisherman installs via `pkexec` (**rootful**), whose *default* graphroot is exactly `/var/lib/containers/storage` — the same path as the embedded payload. containers/storage caches lockfiles by absolute path (`pkg/lockfile` `getLockfile`): the primary store opens its `layers.lock` **read-write**, then the additional store requests the **same** path **read-only** → cache hit on a read-write lock → fatal:
 
 ```
 loading additional layer stores: lock /var/lib/containers/storage/vfs-layers/layers.lock is not a read-only lock
@@ -488,17 +488,19 @@ loading additional layer stores: lock /var/lib/containers/storage/vfs-layers/lay
 
 Pointing `graphroot` at a separate empty dir (`…/storage-live`) means the payload is only ever the read-only additional store, never the primary — the paths differ, so no cache collision. This also covers rootless (`liveuser`), where podman forces graphroot to `~/.local/share/containers/storage`; the payload is reachable only as an additional read-only store there too, and the distinct rootful graphroot keeps the pkexec path from colliding with it. See containers/podman#9852 for the original report of this failure mode.
 
-### `bootc update` "graph driver overwritten by vfs from database" is benign
+**Not yet verified: a real `bootc install`/fisherman run against the overlay-embedded store**, confirming no `bootc update` "graph driver overwritten" warning end to end. The build produces the ISO correctly, but this host has no `qemu`/OVMF (see Status below) — boot/install-flow testing needs an external VM or the `run-iso`/`boot-iso-serial` just recipes in dakota-iso.
 
-After installing from the ISO, `bootc update` on the installed system prints:
+<details>
+<summary>Historical: the vfs-era <code>bootc update</code> warning (before #248)</summary>
+
+Before the fix above, `bootc update` on the installed system printed:
 
 ```
 User-selected graph driver "overlay" overwritten by graph driver "vfs" from database
 ```
 
-**This is expected and non-fatal — the update succeeds and stages the image.** Do not chase it as a bug. It is inherent to *any* live-ISO composefs install, not specific to krytis: fisherman's `selectStorageDriver` (`tuna-os/fisherman` `internal/install/storage_driver.go`) rejects `overlayfs`/`tmpfs` scratch and falls back to **vfs**, and in a live environment the scratch dir is always overlayfs/tmpfs. bootc therefore records `vfs` in the installed system's containers-storage database; containers/storage honours the recorded driver over the configured `overlay` and warns. The only cost is vfs storing layers uncompressed (more disk, slower) — functionally correct. dakota/bluefin ISOs use the same fisherman and behave the same way.
-
-The clean-but-deep fix would be to embed the offline payload as an **overlay** store (matching what fisherman/superiso natively expect) so nothing forces vfs, dropping the `storage.conf` override entirely — blocked on producing an overlay containers-storage from the rootless build. Not worth doing while `bootc update` works.
+This was expected and non-fatal under the vfs embed — the update still succeeded and staged the image. It was inherent to *any* live-ISO composefs install using vfs, not krytis-specific: fisherman's `selectStorageDriver` (`tuna-os/fisherman` → moved to `projectbluefin/fisherman`, `internal/install/storage_driver.go`) rejects `overlayfs`/`tmpfs` scratch and falls back to vfs, and a live environment's scratch dir is always overlayfs/tmpfs — so bootc recorded vfs in the installed system's containers-storage database and containers/storage honoured that over the configured overlay. The overlay embed fix above removes the reason this ever needed to be vfs in the first place.
+</details>
 
 ### Status
 
