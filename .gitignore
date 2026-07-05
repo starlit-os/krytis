@@ -43,3 +43,6 @@ files/boot-keys/
 
 # Generated at build time — do not commit
 include/image-version.yml
+
+# Host-side build tools (compiled ad hoc)
+files/fakecap/fakecap-restore
