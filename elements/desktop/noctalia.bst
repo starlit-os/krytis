@@ -19,28 +19,21 @@ depends:
 # Update the commit and ref together when bumping.
 # Note: repo was renamed from noctalia-shell to noctalia as of 2026.
 #
-# TEMPORARY FORK PIN — kitten-lily/noctalia branch
-# fix/wifi-persist-polkit-async, rebased onto upstream/main and rooted there.
-# Carries a fix for wifi connections never persisting to disk: NM requires
-# interactive polkit authorization for new wifi connections, and the prompt
-# can take well over a minute to resolve; addAndActivateAccessPoint's
-# AddAndActivateConnection2 call was synchronous, so it froze the whole UI
-# for the wait and its own D-Bus timeout could fire before the prompt
-# resolved, meaning NM's newly-activated memory-only connection was never
-# handed off to persistConnectionToDisk() and silently vanished on next NM
-# restart/reboot. Fixed by dispatching the call async (matching every
-# sibling activation path in that file) with a 120s reply timeout.
-#
-# main added a wireplumber-0.5 pkg-config requirement since this repo's
-# previous pin; freedesktop-sdk.bst:components/wireplumber.bst above (also
-# used by stacks/desktop.bst) already satisfies it.
-#
-# File upstream once confirmed fixed on real hardware, then revert this pin
-# to noctalia-dev/noctalia once merged there.
+# Back on upstream noctalia-dev/noctalia (dropped the kitten-lily fork pin).
+# Our fork carried fix/wifi-persist-polkit-async (async-dispatch
+# AddAndActivateConnection2 so a slow polkit prompt doesn't freeze the UI
+# and drop the memory-only connection before persistConnectionToDisk()).
+# Upstream commit 18e36ede3 ("separate VPN from physical link state, async
+# NM calls, safe proxy rebinds") independently made this same call async,
+# as part of a much larger rewrite of network_manager_service.cpp that our
+# fork commit no longer rebases onto cleanly. Caveat: upstream's async
+# dispatch has no explicit withTimeout (falls back to sdbus-c++'s ~25s
+# default), whereas our fork used 120s to survive slower polkit prompts —
+# watch for the connection still vanishing if the prompt runs long.
 sources:
 - kind: tar
-  url: github_files:kitten-lily/noctalia/archive/68672d6082a59527cabe1a2868a308dd5ee87a46.tar.gz
-  ref: 422360ef43c692df14382d778bc139efcb98b8f08816d16e1595cdc03836928e
+  url: github_files:noctalia-dev/noctalia/archive/87db64f1ad856ded71a09bfae971025640a6034d.tar.gz
+  ref: aa82651ad978f63cadf7c5618294ba49fd4dd82e07fad561de9d2d37cf549750
 
 variables:
   meson-local: >-

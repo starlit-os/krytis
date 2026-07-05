@@ -448,6 +448,8 @@ Put the "why forked / what to revert to" context **in the element's own comment*
 
 This is a stopgap, not a new steady state — track reverting to the upstream owner/commit once the fork's fix lands upstream (open the upstream issue/PR only once the fork branch is confirmed working, so the report includes verified evidence).
 
+**Retiring the pin: don't assume a rebase check is the right test.** Before mechanically rebasing the fork branch onto the latest upstream `main`, diff upstream's own commits since the fork point against the fix's target file (`git log <fork-point>..upstream/main -- <path>`) — an unrelated upstream refactor can independently reimplement the same fix (e.g. an async-dispatch rewrite that happens to cover the exact call our fork made async), which makes the fork moot even if a literal rebase would conflict. Conversely, absence of conflict doesn't mean the fork is still needed either way — check the semantics, not just whether `git rebase` exits clean. If upstream's reimplementation drops a detail the fork fix depended on (e.g. our fork used an explicit 120s `withTimeout` for a slow polkit prompt, upstream's version left the sdbus-c++ default ~25s), note that gap in the re-pin comment instead of silently dropping it — it may resurface as a narrower version of the same bug.
+
 ### .deb extraction in BST sandbox
 
 `.deb` files are `ar` archives containing `control.tar.xz` and `data.tar.xz`. BST has no native `.deb` source kind. Extract manually in `build-commands`:
