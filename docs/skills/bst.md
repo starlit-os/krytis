@@ -1174,6 +1174,34 @@ To pre-configure the Flathub remote system-wide, add to `stacks/desktop.bst`:
 
 This installs the `.flatpakrepo` file to `/usr/share/flatpak/remotes.d/` — the correct location for bootc (immutable `/usr` tree, not `/etc`). The alternative `freedesktop-sdk.bst:vm/config/flathub.bst` installs to `/etc/flatpak/remotes.d/` which is less appropriate for an immutable image.
 
+## NetworkManager Is Present and Running, Despite the networkd-Only Stack
+
+krytis's own elements only ever configure `freedesktop-sdk.bst:vm/config/networkd.bst` + `vm/config/resolved.bst` — there is no `depends:` on `core-deps/NetworkManager.bst` anywhere in `elements/`. Despite that, `NetworkManager.service` is active and enabled on a real deployed image (confirmed via `systemctl is-active NetworkManager`, `busctl list` showing `org.freedesktop.NetworkManager`, and `/usr/manifest.json` listing `core-deps/NetworkManager.bst`). A plain `grep -rl NetworkManager elements/` (or even a manual BFS over the two staged-junction trees starting from the wrong set of seed files) will wrongly conclude it isn't there — do not trust that conclusion without checking a live system.
+
+The actual chain:
+
+```
+stacks/desktop.bst
+  → gnome-build-meta.bst:core/nautilus.bst
+    → gnome-build-meta.bst:core-deps/localsearch.bst   (Tracker Miners successor, file-content indexing)
+      → (runtime depends) gnome-build-meta.bst:core-deps/NetworkManager.bst
+```
+
+`core-deps/upower.bst` arrives the same way, via a different, shorter path already used directly: `stacks/desktop.bst → gnome-build-meta.bst:core-deps/power-profiles-daemon.bst → core-deps/upower.bst`.
+
+Practical upshot: it is safe for other elements (e.g. a systemd `ExecCondition=` hardware gate) to assume `org.freedesktop.NetworkManager` and `org.freedesktop.UPower` are present on the D-Bus system bus at runtime, without adding an explicit new dependency for either.
+
+**How to check what's really on a live krytis image** (more reliable than grepping this repo): read `/usr/manifest.json` on the booted system. It's produced by `elements/oci/krytis/manifest.bst` (`kind: collect_manifest`) and lists every module in the actual build closure with its `x-cpe` product/version:
+
+```python
+import json
+mods = json.load(open('/usr/manifest.json'))['modules']
+names = {m['name'] for m in mods}
+'core-deps/NetworkManager.bst' in names  # True
+```
+
+This is ground truth for "is X in the image" — the source-tree dependency graph is not, since transitive `depends:` chains inside `freedesktop-sdk`/`gnome-build-meta` junctions are not always obvious from krytis's own files.
+
 ## Upstream Project Renames (2026)
 
 | Project | Old URL | Current URL |

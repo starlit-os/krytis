@@ -1,0 +1,13 @@
+[Unit]
+Description=Update user-managed mise tools
+Documentation=https://github.com/starlit-os/krytis/issues/173
+ConditionACPower=yes
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/libexec/starlit-update/check-conditions.sh
+ExecStart=-/usr/bin/mise upgrade --yes
+Nice=19
+IOSchedulingClass=idle

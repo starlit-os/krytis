@@ -1,0 +1,16 @@
+[Unit]
+Description=Update bootc image, system Flatpak apps, and firmware
+Documentation=https://github.com/starlit-os/krytis/issues/173
+ConditionACPower=yes
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/libexec/starlit-update/check-conditions.sh
+ExecStart=-/usr/bin/bootc upgrade
+ExecStart=-/usr/bin/flatpak update --system --noninteractive --assumeyes
+ExecStart=-/usr/bin/fwupdmgr refresh --force
+ExecStart=-/usr/bin/fwupdmgr update --assume-yes
+Nice=19
+IOSchedulingClass=idle
