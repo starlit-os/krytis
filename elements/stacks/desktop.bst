@@ -171,6 +171,15 @@ depends:
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
 
+  # ── Flatpak pre-install ─────────────────────────────────────────────────
+  # Installs initial system Flatpak apps (Bazaar app store, …) on
+  # first boot. Retries if the network was unavailable; marker file at
+  # /var/lib/flatpak/.krytis-preinstall-done gates re-execution.
+  # The bootc-installer flatpak (org.bootcinstaller.Installer) is never
+  # added to the OCI image — it only lives in the live ISO overlay — so no
+  # removal service is needed. Closes #66; resolves #175 installer concern.
+  - config/flatpak-preinstall.bst
+
   # ── Background updates ──────────────────────────────────────────────────
   # Silently updates bootc, system Flatpak, firmware, and mise tools on a
   # daily timer. Placed here (not base-system) because it covers system

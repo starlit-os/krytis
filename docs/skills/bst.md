@@ -1184,6 +1184,18 @@ To pre-configure the Flathub remote system-wide, add to `stacks/desktop.bst`:
 
 This installs the `.flatpakrepo` file to `/usr/share/flatpak/remotes.d/` — the correct location for bootc (immutable `/usr` tree, not `/etc`). The alternative `freedesktop-sdk.bst:vm/config/flathub.bst` installs to `/etc/flatpak/remotes.d/` which is less appropriate for an immutable image.
 
+## Flatpak Pre-install Service Pattern
+
+To install initial system Flatpak apps on first boot use a systemd oneshot service gated on a marker file rather than `ConditionFirstBoot=yes`. The marker approach retries if the network was unavailable on the first boot, while `ConditionFirstBoot=yes` only ever fires once.
+
+Key points:
+- Gate with `ConditionPathExists=!/var/lib/flatpak/.krytis-preinstall-done`; write the marker at the end of the script (only if `flatpak install` succeeded).
+- Declare `Wants=flatpak-system-helper.service` and `After=flatpak-system-helper.service` so the D-Bus helper is running before the install attempt.
+- The `flatpak` binary is already in the image transitively (see § above); no explicit dep needed.
+- The bootc-installer flatpak (`org.bootcinstaller.Installer`) lives only in the live ISO overlay — it is not part of the OCI image — so no firstboot removal service is needed. Dakota's `bluefin-remove-installer.service` exists because their image includes it; krytis's does not.
+- **Bazaar is `io.github.kolunmi.Bazaar`**, a standalone flatpak app-store frontend — not GNOME Software. It is installed as a flatpak (via the preinstall service), not as a BST element.
+- Bazaar's curated-recommends config lives in `/etc/bazaar/bazaar.yaml` + `/etc/bazaar/curated.yaml`, not in `/usr/share/gnome-software/`. Accessing `/etc` from a flatpak requires a permission override delivered via a tmpfiles symlink (see issue #245 for full porting notes). This config belongs in a dedicated BST element, not in the preinstall service.
+
 ## NetworkManager Is Present and Running, Despite the networkd-Only Stack
 
 krytis's own elements only ever configure `freedesktop-sdk.bst:vm/config/networkd.bst` + `vm/config/resolved.bst` — there is no `depends:` on `core-deps/NetworkManager.bst` anywhere in `elements/`. Despite that, `NetworkManager.service` is active and enabled on a real deployed image (confirmed via `systemctl is-active NetworkManager`, `busctl list` showing `org.freedesktop.NetworkManager`, and `/usr/manifest.json` listing `core-deps/NetworkManager.bst`). A plain `grep -rl NetworkManager elements/` (or even a manual BFS over the two staged-junction trees starting from the wrong set of seed files) will wrongly conclude it isn't there — do not trust that conclusion without checking a live system.
