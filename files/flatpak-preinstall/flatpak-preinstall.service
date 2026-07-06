@@ -3,8 +3,8 @@ Description=Pre-install initial Flatpak applications
 Documentation=https://github.com/starlit-os/krytis/issues/66
 # Retry until successful (marker absent means not yet done).
 ConditionPathExists=!/var/lib/flatpak/.krytis-preinstall-done
-Wants=network-online.target flatpak-system-helper.service
-After=network-online.target flatpak-system-helper.service
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
