@@ -1521,3 +1521,14 @@ Trust them with `mise trust`.
 ```
 
 Run `mise trust` once in the new worktree directory before any `mise validate`, `mise bst`, etc.
+
+## Reserved EFI System Partition Directory Name: `krytis`
+
+Any element whose build requires a distro's reserved ESP subdirectory name (efibootmgr's `EFIDIR`, and similarly for shim/grub-style bootloaders) must use `krytis` — matching `ID` in `elements/core/os-release.bst`. Example (`elements/core/efibootmgr.bst`):
+
+```yaml
+variables:
+  make-args: EFIDIR=krytis sbindir=%{bindir}
+```
+
+efibootmgr bakes this into the binary as the default `--loader` path (`\EFI\krytis\grub.efi`, verify with `--help`). Krytis boots via UKI (see `docs/plan/secure-boot-uki.md`), not grub, so this default loader path is currently unused at boot time — but keep it consistent for any future element that needs a reserved ESP dirname, so they don't disagree with each other.
