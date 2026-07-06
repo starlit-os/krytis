@@ -1,0 +1,26 @@
+// ────────────── Input Configuration ──────────────
+input {
+    keyboard {
+        repeat-delay 300
+        repeat-rate 30
+
+        numlock
+    }
+
+    touchpad {
+        tap
+        natural-scroll
+    }
+
+    mouse {
+        accel-profile "flat"
+    }
+
+    focus-follows-mouse max-scroll-amount="0%"
+}
+
+gestures {
+    hot-corners {
+        off
+    }
+}

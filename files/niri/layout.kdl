@@ -1,0 +1,31 @@
+// ────────────── Layout Configuration ──────────────
+layout {
+    gaps 4
+    center-focused-column "never"
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+        proportion 1.0
+    }
+
+    background-color "transparent"
+
+    default-column-width { proportion 0.66667; }
+
+    focus-ring {
+        width 2
+    }
+
+    // You can also add a border. It's similar to the focus ring, but always visible.
+    border {
+        width 2
+    }
+
+    struts {
+        left 4
+        right 4
+        top 4
+        bottom 4
+    }
+}
