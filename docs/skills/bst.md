@@ -1212,6 +1212,15 @@ names = {m['name'] for m in mods}
 
 This is ground truth for "is X in the image" — the source-tree dependency graph is not, since transitive `depends:` chains inside `freedesktop-sdk`/`gnome-build-meta` junctions are not always obvious from krytis's own files.
 
+## resolv.conf and /etc/hosts Are Already Covered — No network.bst Needed
+
+dakota ships `elements/bluefin/network.bst`, doing two things: (1) a tmpfiles.d rule symlinking `/etc/resolv.conf` to systemd-resolved's stub resolver, (2) a static `/etc/hosts` with `localhost` entries. Porting this to krytis (#176) looked plausible but both are already transitively covered — verified via `grep`ping the staged fdsdk junction (`.bst/staged-junctions/freedesktop-sdk.bst/<hash>/`) and confirming live on a booted image:
+
+1. `/etc/resolv.conf` symlink: systemd itself ships `/usr/lib/tmpfiles.d/systemd-resolve.conf` (`L! /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf`) as part of the systemd package — this arrives for free once anything depends on `freedesktop-sdk.bst:vm/config/resolved.bst` (already the case via `elements/stacks/base-system.bst`). Dakota's version is redundant, not a gap-filler.
+2. `/etc/hosts`: fdsdk's `components/hosts.bst` ships the identical two-line file, pulled in transitively as a runtime-minimal dep — no krytis element needed.
+
+Lesson: before porting a dakota element to krytis, check the target files against what fdsdk/gnome-build-meta already ship (staged junction tree under `.bst/staged-junctions/`, or ground-truth via `/usr/manifest.json` + reading the live file on a booted image per the NetworkManager section above) — "dakota has an element for X" does not imply "krytis needs an element for X."
+
 ## Upstream Project Renames (2026)
 
 | Project | Old URL | Current URL |
