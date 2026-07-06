@@ -1254,6 +1254,8 @@ jobs:
           echo "short=${SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Update falcond-profiles element
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run falcond-profiles-update
 
       - name: Check for changes
@@ -1342,6 +1344,9 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           experimental: true
+
+      - name: Install system dependencies
+        run: mise bootstrap --yes
 
       - name: Read current version
         id: current
