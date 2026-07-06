@@ -206,9 +206,34 @@ bootc constructs the BLS (Boot Loader Specification) entry title from os-release
 
 Result: boot entry shows `StarlitOS Krytis (25.08.202606201613)`.
 
-## niri Keybind Pattern
+## niri Config Layout (modular, ported from dotfiles)
 
-Keybinds in `files/niri/config.kdl` follow this form:
+`files/niri/` is no longer a single flat file — it mirrors kitten-lily's personal
+dotfiles structure (`~/.dotfiles/.config/niri`), split into includes:
+
+| File | Purpose |
+|---|---|
+| `config.kdl` | Top-level: includes + `cursor`/`environment`/`animations`/misc top-level nodes |
+| `input.kdl` | keyboard/touchpad/mouse/gestures |
+| `layout.kdl` | gaps, column widths, focus-ring/border widths, struts |
+| `noctalia.kdl` | Rose Pine-ish color overrides for focus-ring/border/shadow/tab-indicator, `recent-windows` highlight |
+| `rules.kdl` | `window-rule`/`layer-rule` blocks (per-app floating, blur, rounded corners, noctalia panel rules) |
+| `startup.kdl` | `spawn-at-startup`, hotkey-overlay skip |
+| `binds.kdl` | top-level binds + includes `binds/*.kdl` |
+| `binds/noctalia.kdl`, `binds/windows.kdl`, `binds/workspace.kdl` | bind groups |
+
+**`output.kdl` is deliberately excluded** — monitor layout (`output "DP-1" { mode ... }`)
+is machine-specific and not shipped in the image. `config.kdl`'s dotfiles source has
+`include optional=true "output.kdl"`; that include line itself is also dropped (not just
+the file) so `/etc/niri/config.kdl` doesn't reference a path that will never exist on-image.
+
+**niri resolves `include` paths relative to the including file's own directory**, not the
+top-level config's directory — confirmed by validating the staged tree directly. This is
+why `binds.kdl`'s `include "binds/noctalia.kdl"` still resolves correctly once everything
+is installed under `/etc/niri/` with the same relative layout (`elements/config/niri-config.bst`
+loops over both the flat files and `binds/*.kdl` in its install-commands).
+
+Keybind pattern used throughout:
 
 ```kdl
 Mod+X hotkey-overlay-title="Label: binary" { spawn "binary"; }
@@ -218,14 +243,16 @@ Mod+X hotkey-overlay-title="Label: binary" { spawn "binary"; }
 - `hotkey-overlay-title=` — label shown in the `Mod+?` overlay; format `"Verb a Thing: binary-name"`
 - `{ spawn "binary"; }` — launches the binary; use `spawn-sh "..."` for shell pipelines
 
-Standard binds already in `files/niri/config.kdl`:
+Current binds of note (see `binds.kdl` / `binds/*.kdl` for the full set):
 
 | Bind | Action |
 |---|---|
-| `Mod+T` | ghostty (terminal) |
-| `Mod+D` | fuzzel (launcher) |
+| `Mod+Return` | ghostty (terminal) |
+| `Mod+Space` | noctalia launcher (`noctalia msg panel-toggle launcher`) |
 | `Mod+E` | nautilus (file manager) |
-| `Super+Alt+L` | swaylock (screen lock) |
+
+There is no dedicated screen-lock bind in this config (dropped `Super+Alt+L`/swaylock
+from the old upstream-derived config — noctalia handles lock via its own panel).
 
 ## Cursor Theme
 
@@ -233,20 +260,26 @@ Krytis uses `xcursor-theme "Adwaita"` (size 24) set in the top-level `cursor { }
 
 ## Validating niri Config Changes
 
-When editing `files/niri/config.kdl`, validate before committing. If niri is available on the current machine:
+When editing anything under `files/niri/`, validate the top-level file before committing — since includes are relative, validate the file in place (not copied to `/tmp`, which would break the relative include paths):
 
 ```bash
 niri validate --config files/niri/config.kdl
 ```
 
-If the file needs to be in a specific location (e.g. testing on the booted image), write to a temp file first:
+To validate against what's actually staged into the image (catches install-command path
+mistakes the local check can't):
 
 ```bash
-cp files/niri/config.kdl /tmp/niri-test.kdl
-niri validate --config /tmp/niri-test.kdl
+podman run --rm localhost/krytis:latest niri validate --config /etc/niri/config.kdl
 ```
 
 `niri validate` catches unknown node names, type errors, and structural mistakes. Common mistake: `theme`/`size` inside `cursor { }` — correct names are `xcursor-theme`/`xcursor-size`.
+
+**`mise lint` alone does not rebuild the image** — it just runs `bootc container lint`
+against whatever `localhost/krytis-input:latest` already exists in local podman storage,
+which may be stale from a previous branch/session. To actually verify a source change
+landed, run `mise build` (generate-image-version + load-image + lint) or at minimum
+`mise run load-image` before `mise lint`.
 
 ## xdg-desktop-portal Backend Routing for niri
 
