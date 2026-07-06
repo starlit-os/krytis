@@ -632,6 +632,10 @@ jobs:
             branch: auto/track-bootc
             title: "chore(deps): update bootc"
           - group: manual-merge
+            element: core/efibootmgr.bst
+            branch: auto/track-efibootmgr
+            title: "chore(deps): update efibootmgr"
+          - group: manual-merge
             element: core/pam-u2f.bst
             branch: auto/track-pam-u2f
             title: "chore(deps): update pam-u2f"
