@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate files/fakecap-manifest.tsv from localhost/krytis:latest"
+#USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image tag to attribute files from"
+
+set -euo pipefail
+
+TAG="${usage_tag:-localhost/krytis:latest}"
+
+echo "==> Extracting /usr/manifest.json from ${TAG}..."
+podman run --rm "${TAG}" cat /usr/manifest.json > usr-manifest.json
+
+echo "==> Attributing files to elements (this walks every element's artifact — slow)..."
+uv run python3 scripts/generate-fakecap-manifest.py
+
+rm -f usr-manifest.json
+echo "==> Done. Review and commit files/fakecap-manifest.tsv."
