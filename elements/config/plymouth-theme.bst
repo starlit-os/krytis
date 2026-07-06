@@ -18,6 +18,9 @@
 # (bottom of screen) to .4 (slightly above center) — the two-step module
 # has no separate "scale" knob, alignment is the only thing it exposes, so
 # sizing is baked into the source PNG and position is baked into the ini.
+# Dialog/Title (LUKS unlock prompt) moved from .382 to .6 — at .382 they
+# sat almost on top of the .4 watermark. Spinner animation nudged .7 -> .75
+# to keep clearance below the now-lower dialog box.
 # Background{Start,End}Color also overridden to krytis's #232136 (stock
 # spinner is plain black, 0x000000).
 #
@@ -82,11 +85,11 @@ config:
     TitleFont=Cantarell Light 30
     ImageDir=/usr/share/plymouth/themes//spinner
     DialogHorizontalAlignment=.5
-    DialogVerticalAlignment=.382
+    DialogVerticalAlignment=.6
     TitleHorizontalAlignment=.5
-    TitleVerticalAlignment=.382
+    TitleVerticalAlignment=.6
     HorizontalAlignment=.5
-    VerticalAlignment=.7
+    VerticalAlignment=.75
     WatermarkHorizontalAlignment=.5
     WatermarkVerticalAlignment=.4
     Transition=none
