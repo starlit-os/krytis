@@ -18,8 +18,13 @@
 # (bottom of screen) to .4 (slightly above center) — the two-step module
 # has no separate "scale" knob, alignment is the only thing it exposes, so
 # sizing is baked into the source PNG and position is baked into the ini.
-# Background{Start,End}Color also overridden to krytis's #232136 (stock
-# spinner is plain black, 0x000000).
+# Dialog/Title (LUKS unlock prompt) moved from .382 to .7 — at .382 they
+# sat almost on top of the .4 watermark, and .6 was still too close.
+# Spinner animation nudged .7 -> .85 to keep clearance below the dialog.
+# Colors follow Rosé Pine Moon (rose-pine.dev): Background{Start,End}Color
+# is Moon's "base" (#232136, coincidentally what krytis already used),
+# ProgressBarBackgroundColor is Moon's "highlightMed" (#44415a),
+# ProgressBarForegroundColor is Moon's "iris" (#c4a7e7).
 #
 # This file must be depended on by BOTH stacks/desktop.bst (so the theme
 # is set on the final rootfs) and core/initramfs.bst (so dracut's plymouth
@@ -82,19 +87,19 @@ config:
     TitleFont=Cantarell Light 30
     ImageDir=/usr/share/plymouth/themes//spinner
     DialogHorizontalAlignment=.5
-    DialogVerticalAlignment=.382
+    DialogVerticalAlignment=.7
     TitleHorizontalAlignment=.5
-    TitleVerticalAlignment=.382
+    TitleVerticalAlignment=.7
     HorizontalAlignment=.5
-    VerticalAlignment=.7
+    VerticalAlignment=.85
     WatermarkHorizontalAlignment=.5
     WatermarkVerticalAlignment=.4
     Transition=none
     TransitionDuration=0.0
     BackgroundStartColor=0x232136
     BackgroundEndColor=0x232136
-    ProgressBarBackgroundColor=0x606060
-    ProgressBarForegroundColor=0xffffff
+    ProgressBarBackgroundColor=0x44415a
+    ProgressBarForegroundColor=0xc4a7e7
     MessageBelowAnimation=true
 
     [boot-up]
