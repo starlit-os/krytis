@@ -362,11 +362,11 @@ If a stricter mode is a hard requirement (not just convention), it needs a boot-
 
 ## Adding a Package
 
-1. Create `elements/krytis/<name>.bst` (copy a similar existing element)
-2. Add `krytis/<name>.bst` to `depends:` in `elements/krytis/deps.bst`
+1. Create `elements/desktop/<name>.bst` (or `elements/deps/`, `elements/config/`, etc. depending on what it is — copy a similar existing element)
+2. Add `desktop/<name>.bst` (or matching path) to `depends:` in the relevant `elements/stacks/*.bst` aggregator (e.g. `desktop.bst`)
 3. Add a URL alias to `include/aliases.yml` if the download domain is new
 4. Run `mise validate` (validates the full element graph)
-5. Run `mise bst build elements/krytis/<name>.bst`
+5. Run `mise bst build elements/desktop/<name>.bst`
 6. Run `mise build` for a full image build
 7. **Wire up an update path** — see § Element update path below
 
@@ -387,6 +387,14 @@ If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is n
 - `gnomeos-deps/` — OS-level config (flathub-config, etc.)
 
 Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
+
+### Meson `find_program()` calling a tool by the wrong name
+
+Some upstream meson projects call `find_program('<tool>')` expecting a specific CLI (e.g. Dart Sass's `sass`), but freedesktop-sdk/gnome-build-meta only vendor a different implementation of that tool under a different binary name with an incompatible CLI (e.g. `sassc`, the libsass C implementation — same *purpose*, different flags and positional-arg conventions). There's no BST-level program-name remapping for this.
+
+Fix: add a tiny `kind: manual` element that installs a shim script under the expected binary name into `%{bindir}`, translating the call into the available tool's actual CLI, and list it under the consuming element's `build-depends:` (not `depends:` — it's a build-time-only tool, not part of the runtime image). See `elements/deps/sass-shim.bst` (adw-gtk3.bst's build-dep) for a worked example: it strips the one incompatible flag (`--no-source-map`, which is already sassc's default behavior) and execs `sassc "$@"`.
+
+Keep the shim narrowly scoped to the one call site that needs it — don't generalize it into a "compat layer" for the tool in general; that's speculative work the actual usage doesn't need.
 
 ## Element Update Path
 

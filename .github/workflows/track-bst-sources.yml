@@ -24,6 +24,7 @@ on:
           - core-junctions
           - game-devices-udev
           - papirus-icon-theme
+          - adw-gtk3
           - falcond
           - falcond-profiles
           - scx-loader
@@ -670,6 +671,10 @@ jobs:
             element: desktop/papirus-icon-theme.bst
             branch: auto/track-papirus-icon-theme
             title: "chore(deps): update papirus-icon-theme"
+          - group: adw-gtk3
+            element: desktop/adw-gtk3.bst
+            branch: auto/track-adw-gtk3
+            title: "chore(deps): update adw-gtk3"
 
     steps:
       - name: Checkout repository
