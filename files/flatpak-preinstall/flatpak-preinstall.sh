@@ -7,8 +7,8 @@ set -euo pipefail
 MARKER=/var/lib/flatpak/.krytis-preinstall-done
 
 APPS=(
-    # GNOME Software: app discovery and management UI.
-    org.gnome.Software
+    # Bazaar: flatpak app-store frontend. Closes #66.
+    io.github.kolunmi.Bazaar
 )
 
 flatpak install --system --noninteractive --assumeyes flathub "${APPS[@]}"

@@ -168,7 +168,7 @@ depends:
   - config/niri-config.bst
 
   # ── Flatpak pre-install ─────────────────────────────────────────────────
-  # Installs initial system Flatpak apps (GNOME Software / bazaar, …) on
+  # Installs initial system Flatpak apps (Bazaar app store, …) on
   # first boot. Retries if the network was unavailable; marker file at
   # /var/lib/flatpak/.krytis-preinstall-done gates re-execution.
   # The bootc-installer flatpak (org.bootcinstaller.Installer) is never

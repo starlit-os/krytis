@@ -1185,7 +1185,8 @@ Key points:
 - Declare `Wants=flatpak-system-helper.service` and `After=flatpak-system-helper.service` so the D-Bus helper is running before the install attempt.
 - The `flatpak` binary is already in the image transitively (see § above); no explicit dep needed.
 - The bootc-installer flatpak (`org.bootcinstaller.Installer`) lives only in the live ISO overlay — it is not part of the OCI image — so no firstboot removal service is needed. Dakota's `bluefin-remove-installer.service` exists because their image includes it; krytis's does not.
-- Curated recommends for GNOME Software (bazaar) are separate YAML files placed in `/usr/share/gnome-software/` and belong in a dedicated config element, not in the preinstall service. See issue #245.
+- **Bazaar is `io.github.kolunmi.Bazaar`**, a standalone flatpak app-store frontend — not GNOME Software. It is installed as a flatpak (via the preinstall service), not as a BST element.
+- Bazaar's curated-recommends config lives in `/etc/bazaar/bazaar.yaml` + `/etc/bazaar/curated.yaml`, not in `/usr/share/gnome-software/`. Accessing `/etc` from a flatpak requires a permission override delivered via a tmpfiles symlink (see issue #245 for full porting notes). This config belongs in a dedicated BST element, not in the preinstall service.
 
 ## NetworkManager Is Present and Running, Despite the networkd-Only Stack
 
