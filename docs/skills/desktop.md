@@ -970,3 +970,31 @@ Install targets from the upstream source tree:
 **CachyOS sysctl overrides.** CachyOS ships a hardened kernel with `kernel.unprivileged_userns_clone=0`. This disables the sandbox in Flatpak apps (bubblewrap) and Chromium/Electron. `files/desktop-tweaks/sysctl.d/99-userns.conf` re-enables it. The pattern for any future CachyOS sysctl override is the same: add a `.conf` file under `files/desktop-tweaks/sysctl.d/` and it is installed automatically by the loop in `desktop-udev.bst` — except the current element installs `sysctl.d/99-userns.conf` explicitly (no glob loop yet). Add a glob loop if a second sysctl file is needed.
 
 Reference: `elements/config/desktop-udev.bst`. Closes #224.
+
+## noctalia config paths — no /etc fallback, unlike niri
+
+Unlike niri (`$XDG_CONFIG_HOME/niri/config.kdl` → `/etc/niri/config.kdl` fallback, see
+`config/niri-config.bst`), noctalia has **no system-wide `/etc` config path**. Verified by
+inspecting the live binary (`strings /usr/bin/noctalia`) and checking `/etc/xdg/noctalia`
+(absent). It only reads `$XDG_CONFIG_HOME` (default `~/.config`) for shell config, and its
+mutable *state* — including `settings.toml`, the `.setup-complete` first-run marker, and
+downloaded community palettes/themes — lives in `$XDG_STATE_HOME/noctalia`
+(`~/.local/state/noctalia`, not `~/.config/noctalia`). This is a noctalia-specific split from
+the usual XDG config/state convention — check state dir first when looking for its settings.
+
+Because there's no live `/etc` fallback, seeding defaults for new accounts means
+`/etc/skel` (`config/noctalia-skel.bst`), copied by `useradd` at account-creation time only —
+a one-shot copy, not a synced default like niri's. Existing users are unaffected; new users'
+copy diverges from image updates immediately, since it's just a plain file in their homedir
+after that.
+
+`settings.toml` is a **partial override** — noctalia merges missing keys against its own
+built-in defaults, so skel only needs to declare the keys being overridden.
+
+Community palettes (`source = "community"` in `[theme]`) are normally fetched from network
+on first use and cached under `community-palettes/`. If a community palette is set as the
+default in skel, bundle its JSON there too, or first login needs network to resolve the
+theme. **Filename gotcha:** noctalia names cached palette files by percent-encoding the
+palette name — e.g. palette `"Rose Pine Moon"` is cached as literal filename
+`Rose%20Pine%20Moon.json` (percent signs literally in the filename, not real spaces). Match
+this exactly or the lookup misses.
