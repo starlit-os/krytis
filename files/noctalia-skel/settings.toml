@@ -1,0 +1,9 @@
+[shell]
+font_family = "Adwaita Sans"
+polkit_agent = true
+
+[theme]
+builtin = "Rosé Pine"
+community_palette = "Rose Pine Moon"
+mode = "dark"
+source = "community"
