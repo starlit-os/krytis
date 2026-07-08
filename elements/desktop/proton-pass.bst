@@ -14,7 +14,7 @@ depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
 variables:
-  version: "1.37.0"
+  version: "1.38.0"
   strip-binaries: ''
 
 config:
@@ -32,5 +32,5 @@ config:
 sources:
 - kind: remote
   filename: proton-pass.deb
-  url: proton_me:download/pass/linux/proton-pass_1.37.0_amd64.deb
-  ref: 30b26f1402abeb3d03479e20613830abdb1e6f91e4e616ce7fff52780571076d
+  url: proton_me:download/pass/linux/proton-pass_1.38.0_amd64.deb
+  ref: e96622a8426abaaeb86f57cdbfc1dc41c4f8fd50b0b4490ae18adf0170c2ea76
