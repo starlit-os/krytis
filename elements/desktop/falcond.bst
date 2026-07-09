@@ -78,8 +78,8 @@ sources:
   # tracked via mise run falcond-profiles-update (kind: tar is a no-op for
   # `bst source track`).
   - kind: tar
-    url: github_files:PikaOS-Linux/falcond-profiles/archive/5023a846980685812334586ae265f8f6a1ded38b.tar.gz
-    ref: 7934e89822093056643e879a0057a45b7d4dd76b1a042e0b06363e2e04d244ab
+    url: github_files:PikaOS-Linux/falcond-profiles/archive/2c521cbe01a3fb092ef3ddf61b111a600ef9f673.tar.gz
+    ref: fd8d321e5c7626892a198ee6c40ed107b577ed450bed441f6c6a3121a81671ff
     directory: falcond-profiles-src
 
 config:
