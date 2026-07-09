@@ -127,6 +127,8 @@ The `-local` suffix distinguishes the test copy from the system version (which h
 
 Two sibling projects are used as references for element patterns. Locate them by checking sibling directories first (same parent as this repo). If not found, ask the user where they are.
 
+For pulling in lessons from what's *changed* in these repos since they were last checked — rather than reading them ad hoc — see [`docs/skills/upstream-sync.md`](upstream-sync.md) and the `upstream-lessons` skill.
+
 ```shell
 # Get sibling dirs — adjust the parent path to wherever this repo lives
 ls "$(git rev-parse --show-toplevel)/.."

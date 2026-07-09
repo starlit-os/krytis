@@ -15,6 +15,7 @@ mise load-image                                    # bst build + podman load →
 mise lint                                          # bootc container lint via Containerfile
 mise chunkify                                      # rechunk into composefs-ready component layers
 mise kernel-update                                 # bump linux-cachyos to latest CachyOS v3 release
+mise upstream-sync                                 # sync dakota/zirconium-hawaii forks, report new commits
 ```
 
 `--` is not needed. The bst task uses `#USAGE arg "<args>" var=#true` which captures all
@@ -66,7 +67,8 @@ mise/tasks/
 ├── generate-disk            # mise generate-disk
 ├── boot-vm                  # mise boot-vm
 ├── kernel-update            # mise kernel-update
-└── mise-update              # mise mise-update
+├── mise-update              # mise mise-update
+└── upstream-sync            # mise upstream-sync
 ```
 
 Subdirectory nesting uses `:` as separator: `mise/tasks/test/units` → `mise test:units`.

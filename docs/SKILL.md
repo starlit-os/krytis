@@ -17,6 +17,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
+| Sync dakota/zirconium-hawaii forks and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
 
 ## Reference Docs
 
