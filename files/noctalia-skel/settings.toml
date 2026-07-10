@@ -7,3 +7,7 @@ builtin = "Rosé Pine"
 community_palette = "Rose Pine Moon"
 mode = "dark"
 source = "community"
+
+[widget.control-center]
+custom_image = "/usr/share/noctalia/assets/images/etheria.png"
+scale = 1.6000000000000001
