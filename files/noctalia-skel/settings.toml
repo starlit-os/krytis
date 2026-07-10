@@ -1,4 +1,5 @@
 [shell]
+date_format = "%A, %F"
 font_family = "Adwaita Sans"
 polkit_agent = true
 
