@@ -3,10 +3,12 @@ kind: meson
 build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
 - freedesktop-sdk.bst:components/pkg-config.bst
-# Header-only libraries, needed at compile time only (new in v5.0.0-beta2)
+# stb and nlohmann-json are genuinely header-only (verified: no .so in
+# either artifact) — compile-time only. tomlplusplus is NOT: fdsdk builds
+# it as a shared library (libtomlplusplus.so.3, TOML_SHARED_LIB=1 in
+# noctalia's own meson flags), so it belongs in `depends` below, not here.
 - desktop/stb.bst
 - freedesktop-sdk.bst:components/nlohmann-json.bst
-- freedesktop-sdk.bst:components/tomlplusplus.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
@@ -14,6 +16,7 @@ depends:
 - freedesktop-sdk.bst:components/pipewire.bst
 - freedesktop-sdk.bst:components/polkit.bst
 - freedesktop-sdk.bst:components/wireplumber.bst
+- freedesktop-sdk.bst:components/tomlplusplus.bst
 - desktop/libqalculate.bst
 - desktop/md4c.bst
 - desktop/sdbus-cpp.bst

@@ -35,10 +35,32 @@ for how to diff the dependency surface before re-pinning. Mapping:
 | Upstream requirement | Provided by | Dep kind | Why |
 |---|---|---|---|
 | `dependency('md4c')` | `desktop/md4c.bst` (cmake, `track: release-*`) | `depends` | shared lib, linked at runtime |
-| `dependency('nlohmann_json')` | `freedesktop-sdk.bst:components/nlohmann-json.bst` | `build-depends` | header-only |
-| `dependency('tomlplusplus')` | `freedesktop-sdk.bst:components/tomlplusplus.bst` | `build-depends` | header-only |
-| `has_header('stb/…')` | `desktop/stb.bst` (manual, headers → `/usr/include/stb/`) | `build-depends` | header-only |
+| `dependency('nlohmann_json')` | `freedesktop-sdk.bst:components/nlohmann-json.bst` | `build-depends` | genuinely header-only — no `.so` in the artifact |
+| `dependency('tomlplusplus')` | `freedesktop-sdk.bst:components/tomlplusplus.bst` | `depends` | **not** header-only — fdsdk builds it as `libtomlplusplus.so.3` (`TOML_SHARED_LIB=1` in noctalia's own meson flags) |
+| `has_header('stb/…')` | `desktop/stb.bst` (manual, headers → `/usr/include/stb/`) | `build-depends` | genuinely header-only — no `.so` in the artifact |
 | `dependency('libwebp')` | already in closure (present since old pin) | — | — |
+
+**Don't assume "meson `dependency()` on a library with an upstream header-only
+design" means `build-depends`-only.** toml++ *is* header-only upstream, but fdsdk's
+`components/tomlplusplus.bst` chooses to build and ship it as a shared library
+anyway (likely to avoid duplicating the parser across every consumer that links
+it) — check the *provider's* artifact contents, not the upstream project's usual
+distribution model:
+
+```shell
+bst artifact list-contents freedesktop-sdk.bst:components/<name>.bst | grep '\.so'
+```
+
+A `build-depends`-only misclassification builds and links fine — the `.so` is
+present in the sandbox at compile time — and only fails at runtime
+(`error while loading shared libraries: lib<name>.so.N`) once the composed image
+is assembled, because BuildStream never pulls `build-depends` into the final
+image's runtime closure. **Checking an isolated element's own artifact (`bst
+artifact checkout <element>`) will not catch this** — it only contains that
+element's own installed files, not its `depends` closure, so `ldd` against it
+reports every runtime dep as "not found" regardless of whether the graph is
+correct. Verify against the actually composed rootfs instead:
+`bst artifact checkout oci/krytis/filesystem.bst`, then `ldd` the binary there.
 
 `desktop/stb.bst` notes: upstream `nothings/stb` has **no release tags**, so it uses
 `track: refs/heads/master` (branch tracking; the git-describe ref-format falls back

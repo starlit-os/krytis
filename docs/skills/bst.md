@@ -454,6 +454,25 @@ bst show --format '%{name}' freedesktop-sdk.bst:components/<name>.bst
 fdsdk ships `components/nlohmann-json.bst` and `components/tomlplusplus.bst`;
 neither junction ships md4c or stb (in-repo `desktop/md4c.bst`, `desktop/stb.bst`).
 
+**Finding a component does not tell you `build-depends` vs `depends`.** Don't infer
+that from whether the upstream project is "usually" header-only — check what the
+*junction's element* actually built:
+
+```shell
+bst artifact list-contents freedesktop-sdk.bst:components/<name>.bst | grep '\.so'
+```
+
+toml++ is header-only by upstream design, but fdsdk's `tomlplusplus.bst` builds it
+as `libtomlplusplus.so.3` anyway. Classifying it as `build-depends` (like the
+genuinely header-only `nlohmann-json`) builds and links fine — the `.so` is in the
+sandbox at link time — and only breaks at runtime, once the image is composed:
+`error while loading shared libraries: lib<name>.so.N`, because `build-depends`
+never enters the final image's runtime closure. Verifying against the standalone
+element's own artifact checkout will not catch this either — it has no `depends`
+closure staged, so every runtime dependency looks "not found" whether or not the
+graph is actually correct. The only check that reflects reality is `ldd` against
+the composed `oci/krytis/filesystem.bst` checkout.
+
 ### track-mise pattern for tarball-pinned elements
 
 The `track-mise` job in `track-bst-sources.yml` is the reference. Key steps:
