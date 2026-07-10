@@ -405,6 +405,22 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
 
+### tar → git_repo switch when releases appear
+
+A `kind: tar` element pinned to a commit SHA (because the upstream had no release
+tags) should be switched to `kind: git_repo` with `track: v*` once the upstream
+starts tagging releases. This moves the element from option B (mise task + CI job)
+to option A (matrix entry only) and closes the silent-drift gap — `bst source track`
+becomes a no-op on `tar`, so tarball-pinned elements without a mise task drift until
+someone manually bumps them. The noctalia and noctalia-greeter elements were 99 and 5
+commits behind respectively when this was discovered.
+
+The switch is mechanical: replace the `tar` source with a `git_repo` source using
+`url: github:<org>/<repo>.git`, `track: v*`, and a git-describe `ref:` (e.g.
+`v1.0.0-0-g<sha>`). Add a matrix entry to the `track` job. Delete any stale mise
+task if one existed. Drop the "no release tags exist" / "archive regenerates on
+every push" comments — they're no longer true.
+
 ### track-mise pattern for tarball-pinned elements
 
 The `track-mise` job in `track-bst-sources.yml` is the reference. Key steps:
@@ -1239,7 +1255,7 @@ Lesson: before porting a dakota element to krytis, check the target files agains
 |---|---|---|
 | cage | `Hjdskes/cage` (sr.ht) | `github_files:cage-kiosk/cage` |
 | wlr-randr | `sr.ht/~emersion/wlr-randr` | `freedesktop_files:emersion/wlr-randr` |
-| noctalia-shell | `noctalia-dev/noctalia-shell` | `github_files:noctalia-dev/noctalia` |
+| noctalia-shell | `noctalia-dev/noctalia-shell` | `github:noctalia-dev/noctalia` (`git_repo`) |
 
 Always verify the canonical URL when vendoring a source for the first time.
 

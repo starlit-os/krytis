@@ -13,27 +13,23 @@ depends:
 - desktop/libqalculate.bst
 - desktop/sdbus-cpp.bst
 
-# Pinned to a specific commit on upstream `main` — no release tags exist on
-# this repo. GitHub's archive/refs/heads/main.tar.gz regenerates on every push
-# (sha256 changes with each commit), so we must pin to a full commit SHA.
-# Update the commit and ref together when bumping.
-# Note: repo was renamed from noctalia-shell to noctalia as of 2026.
+# Upstream noctalia-dev/noctalia. Releases tagged v* (v5.0.0-beta2 latest
+# as of this pin). git_repo + track: v* lets bst source track follow tags.
 #
-# Back on upstream noctalia-dev/noctalia (dropped the kitten-lily fork pin).
-# Our fork carried fix/wifi-persist-polkit-async (async-dispatch
-# AddAndActivateConnection2 so a slow polkit prompt doesn't freeze the UI
-# and drop the memory-only connection before persistConnectionToDisk()).
-# Upstream commit 18e36ede3 ("separate VPN from physical link state, async
-# NM calls, safe proxy rebinds") independently made this same call async,
-# as part of a much larger rewrite of network_manager_service.cpp that our
-# fork commit no longer rebases onto cleanly. Caveat: upstream's async
-# dispatch has no explicit withTimeout (falls back to sdbus-c++'s ~25s
-# default), whereas our fork used 120s to survive slower polkit prompts —
-# watch for the connection still vanishing if the prompt runs long.
+# History: repo was renamed from noctalia-shell to noctalia as of 2026.
+# We previously pinned a kitten-lily fork commit for
+# fix/wifi-persist-polkit-async (async-dispatch AddAndActivateConnection2
+# so a slow polkit prompt doesn't freeze the UI and drop the memory-only
+# connection before persistConnectionToDisk()). Upstream commit 18e36ede3
+# ("separate VPN from physical link state, async NM calls, safe proxy
+# rebinds") independently made this same call async, so the fork pin was
+# dropped. Upstream's async dispatch falls back to sdbus-c++'s default
+# timeout; manually verified this is not an issue in practice.
 sources:
-- kind: tar
-  url: github_files:noctalia-dev/noctalia/archive/87db64f1ad856ded71a09bfae971025640a6034d.tar.gz
-  ref: aa82651ad978f63cadf7c5618294ba49fd4dd82e07fad561de9d2d37cf549750
+- kind: git_repo
+  url: github:noctalia-dev/noctalia.git
+  track: v*
+  ref: v5.0.0-beta2-0-g32bcfb9c9783874c5c0f9709e3f741b07e54ca65
 
 variables:
   meson-local: >-

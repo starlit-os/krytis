@@ -14,28 +14,47 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 
 Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-config.bst`.
 
-## Local patches on noctalia-greeter
+## noctalia-greeter source and config
 
-`desktop/noctalia-greeter.bst` pulls a `kind: tar` GitHub archive of the `kitten-lily/noctalia-greeter`
-fork. To carry a local UI tweak (e.g. removing the brand logo) without pushing to the fork, add a
-`kind: patch` source after the `tar` source, same pattern as `overrides/vim.bst`:
+`desktop/noctalia-greeter.bst` uses `kind: git_repo` with `track: v*` against upstream
+`noctalia-dev/noctalia-greeter` (releases tagged `v*`, e.g. `v1.0.0`). This replaced an
+earlier `kind: tar` pin against a `kitten-lily/noctalia-greeter` fork commit. The switch
+was made once upstream started tagging releases — `git_repo` + `track:` lets `bst source
+track` follow tags automatically (option A in the update-path gate), so no mise update task
+or `track-mise` CI job is needed. A matrix entry in the `track` job in
+`track-bst-sources.yml` is all that's required.
+
+### Hiding the brand logo
+
+The greeter renders a Noctalia brand logo above the login form. Upstream `v1.0.0` added
+an `appearance.hide_logo` option to `greeter.toml` (commit `f9b8778c`) that skips both
+the texture load in `GreeterSurface::initialize()` and the layout allocation — strictly
+better than the old `no-brand-logo.patch` it replaced.
+
+The greeter reads its config from `/var/lib/noctalia-greeter/greeter.toml`
+(`packageConfPath()` → `syncedDataDirectory() / "greeter.toml"`). This is **mutable runtime
+state** — `saveGreeterPreferences()` does read-modify-write on it to persist the user's
+last session and color scheme. See issue #296 for why seeding `hide_logo = true` is not
+trivial in a bootc composefs layout (bootc flags non-dir files in `/var`; `tmpfiles.d` `w`
+won't create the file, `f` clobbers user prefs on every boot) and the planned oneshot-unit
+approach. As of the `git_repo` switch, the logo is **visible** — the old patch was dropped
+without a replacement pending #296.
+
+### Carrying a local patch (if needed again)
+
+If a local fix is needed before it lands upstream, add a `kind: patch` source after the
+`git_repo` source, same pattern as `overrides/vim.bst`:
 
 ```yaml
 - kind: patch
   path: patches/noctalia-greeter/<name>.patch
 ```
 
-- BST's tar source strips the archive's single top-level directory by default, so patch paths are
-  relative to the fork's repo root (e.g. `src/greeter/greeter_surface.cpp`), not the archive path.
-- Generate the patch with standard `git diff` (`a/`/`b/` prefixes) — BST's patch source defaults to
-  `strip-level: 1`, matching git's default. A `--no-prefix` diff needs `-p0` and will fail to apply.
-- Verify before committing: download the pinned tarball, `tar xzf`, `patch -p1 --dry-run <
-  patches/noctalia-greeter/<name>.patch` from the extracted root. Confirms both hunk context and
+- Generate the patch with standard `git diff` (`a/`/`b/` prefixes) — BST's patch source defaults
+  to `strip-level: 1`, matching git's default. A `--no-prefix` diff needs `-p0` and will fail.
+- Verify before committing: check out the pinned ref, `patch -p1 --dry-run <
+  patches/noctalia-greeter/<name>.patch` from the repo root. Confirms both hunk context and
   strip level before `bst build` ever sees it.
-- The greeter's logo widget (`m_bottomBrandLogo` in `greeter_surface.cpp`) only reserves layout space
-  when its texture load succeeds (`m_brandLogoTexture.id != 0`, checked in the layout pass). Deleting
-  the load call entirely (rather than hiding the widget after load) leaves the id at its zero default,
-  so the widget both stays invisible and never reserves space — cleaner than a visibility-only patch.
 
 ## Mesa Layout in the Image
 

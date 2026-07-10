@@ -25,6 +25,8 @@ on:
           - game-devices-udev
           - papirus-icon-theme
           - adw-gtk3
+          - noctalia
+          - noctalia-greeter
           - falcond
           - falcond-profiles
           - scx-loader
@@ -621,6 +623,8 @@ jobs:
     if: >-
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'manual-merge' ||
+      github.event.inputs.group == 'noctalia' ||
+      github.event.inputs.group == 'noctalia-greeter' ||
       github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -679,6 +683,14 @@ jobs:
             element: desktop/adw-gtk3.bst
             branch: auto/track-adw-gtk3
             title: "chore(deps): update adw-gtk3"
+          - group: noctalia
+            element: desktop/noctalia.bst
+            branch: auto/track-noctalia
+            title: "chore(deps): update noctalia"
+          - group: noctalia-greeter
+            element: desktop/noctalia-greeter.bst
+            branch: auto/track-noctalia-greeter
+            title: "chore(deps): update noctalia-greeter"
 
     steps:
       - name: Checkout repository
