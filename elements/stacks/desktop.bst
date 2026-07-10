@@ -171,6 +171,7 @@ depends:
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
   - config/noctalia-skel.bst
+  - config/noctalia-assets.bst
 
   # ── Flatpak pre-install ─────────────────────────────────────────────────
   # Installs initial system Flatpak apps (Bazaar app store, …) on

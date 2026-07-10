@@ -405,6 +405,74 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
 
+### tar → git_repo switch when releases appear
+
+A `kind: tar` element pinned to a commit SHA (because the upstream had no release
+tags) should be switched to `kind: git_repo` with `track: v*` once the upstream
+starts tagging releases. This moves the element from option B (mise task + CI job)
+to option A (matrix entry only) and closes the silent-drift gap — `bst source track`
+becomes a no-op on `tar`, so tarball-pinned elements without a mise task drift until
+someone manually bumps them. The noctalia and noctalia-greeter elements were 99 and 5
+commits behind respectively when this was discovered.
+
+The switch is mechanical: replace the `tar` source with a `git_repo` source using
+`url: github:<org>/<repo>.git`, `track: v*`, and a git-describe `ref:` (e.g.
+`v1.0.0-0-g<sha>`). Add a matrix entry to the `track` job. Delete any stale mise
+task if one existed. Drop the "no release tags exist" / "archive regenerates on
+every push" comments — they're no longer true.
+
+**The source stanza is mechanical; the dependency surface is not.** A re-pin that
+jumps many commits (noctalia: 99) can change what the upstream build requires.
+Before building, diff the upstream build file between old and new refs:
+
+```shell
+gh api repos/<org>/<repo>/contents/meson.build?ref=<old-sha> --jq .content | base64 -d > old.build
+gh api repos/<org>/<repo>/contents/meson.build?ref=<new-sha> --jq .content | base64 -d > new.build
+PAT="dependency\('[^']+'|has_header\('[^']+'|find_library\('[^']+'"
+diff <(grep -oP "$PAT" old.build | sort -u) <(grep -oP "$PAT" new.build | sort -u)
+```
+
+Two failure shapes, only the first of which the textual diff catches:
+- **New `dependency()` calls** — e.g. noctalia v5.0.0-beta2 added `nlohmann_json`
+  and `has_header('stb/...')` checks.
+- **Un-vendoring** — the call already existed at the old ref but was gated behind a
+  `system_*` option with a vendored `third_party/` fallback; the new ref makes it
+  unconditional. noctalia did this to `md4c` and `tomlplusplus`. Grep the old build
+  file for the "new" dep name before concluding it's new — if it's there under an
+  `if get_option(...)` branch, the upstream un-vendored it.
+
+Also expect meson to report missing deps **one at a time** (it stops at the first
+failure) — resolve the full list from the diff up front instead of iterating builds.
+
+To check whether a junction already ships a component, probe directly (a miss names
+the junction, a hit echoes the element):
+
+```shell
+bst show --format '%{name}' freedesktop-sdk.bst:components/<name>.bst
+```
+
+fdsdk ships `components/nlohmann-json.bst` and `components/tomlplusplus.bst`;
+neither junction ships md4c or stb (in-repo `desktop/md4c.bst`, `desktop/stb.bst`).
+
+**Finding a component does not tell you `build-depends` vs `depends`.** Don't infer
+that from whether the upstream project is "usually" header-only — check what the
+*junction's element* actually built:
+
+```shell
+bst artifact list-contents freedesktop-sdk.bst:components/<name>.bst | grep '\.so'
+```
+
+toml++ is header-only by upstream design, but fdsdk's `tomlplusplus.bst` builds it
+as `libtomlplusplus.so.3` anyway. Classifying it as `build-depends` (like the
+genuinely header-only `nlohmann-json`) builds and links fine — the `.so` is in the
+sandbox at link time — and only breaks at runtime, once the image is composed:
+`error while loading shared libraries: lib<name>.so.N`, because `build-depends`
+never enters the final image's runtime closure. Verifying against the standalone
+element's own artifact checkout will not catch this either — it has no `depends`
+closure staged, so every runtime dependency looks "not found" whether or not the
+graph is actually correct. The only check that reflects reality is `ldd` against
+the composed `oci/krytis/filesystem.bst` checkout.
+
 ### track-mise pattern for tarball-pinned elements
 
 The `track-mise` job in `track-bst-sources.yml` is the reference. Key steps:
@@ -1239,7 +1307,7 @@ Lesson: before porting a dakota element to krytis, check the target files agains
 |---|---|---|
 | cage | `Hjdskes/cage` (sr.ht) | `github_files:cage-kiosk/cage` |
 | wlr-randr | `sr.ht/~emersion/wlr-randr` | `freedesktop_files:emersion/wlr-randr` |
-| noctalia-shell | `noctalia-dev/noctalia-shell` | `github_files:noctalia-dev/noctalia` |
+| noctalia-shell | `noctalia-dev/noctalia-shell` | `github:noctalia-dev/noctalia` (`git_repo`) |
 
 Always verify the canonical URL when vendoring a source for the first time.
 

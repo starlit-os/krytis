@@ -1,11 +1,6 @@
 # noctalia-greeter — Quickshell-style login greeter for greetd.
-# Pinned to a specific commit on upstream `main` — no release tags exist.
-# GitHub's archive/refs/heads/main.tar.gz regenerates on every push;
-# always pin to a full commit SHA.
-#
-# Our PAM_TEXT_INFO cue fix was merged upstream (noctalia-dev/main commit
-# 26865dae "always allow empty passwords and surface PAM info messages").
-# Pinned to upstream noctalia-dev/noctalia-greeter main, not our fork.
+# Upstream noctalia-dev/noctalia-greeter. Releases tagged v* (v1.0.0 latest
+# as of this pin). git_repo + track: v* lets bst source track follow tags.
 #
 # The greeter runs inside Cage (kiosk wlroots compositor) via the
 # noctalia-greeter-session wrapper script that greetd calls.
@@ -49,11 +44,7 @@ variables:
   meson-install: '%{prepend-mesa-env}; env DESTDIR="%{install-root}" meson install -C %{build-dir} --no-rebuild'
 
 sources:
-- kind: tar
-  url: github_files:noctalia-dev/noctalia-greeter/archive/a3265c8c16d3cf338cbb39c7ca718991578e4e26.tar.gz
-  ref: 36b5b2562cfbcc46f2525f5aa3a306431eae4d00388252653ce29936df601edf
-# Drops the Noctalia brand logo rendered above the login form. Removes the
-# texture load in GreeterSurface::initialize() entirely (not just visibility)
-# so the logo never occupies layout space and no failed-load warning fires.
-- kind: patch
-  path: patches/noctalia-greeter/no-brand-logo.patch
+- kind: git_repo
+  url: github:noctalia-dev/noctalia-greeter.git
+  track: v*
+  ref: v1.0.0-0-g68fa4a04122c0c9ded77072eb3a04464ed635f6b

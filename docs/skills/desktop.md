@@ -14,28 +14,93 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 
 Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-config.bst`.
 
-## Local patches on noctalia-greeter
+## noctalia-greeter source and config
 
-`desktop/noctalia-greeter.bst` pulls a `kind: tar` GitHub archive of the `kitten-lily/noctalia-greeter`
-fork. To carry a local UI tweak (e.g. removing the brand logo) without pushing to the fork, add a
-`kind: patch` source after the `tar` source, same pattern as `overrides/vim.bst`:
+`desktop/noctalia-greeter.bst` uses `kind: git_repo` with `track: v*` against upstream
+`noctalia-dev/noctalia-greeter` (releases tagged `v*`, e.g. `v1.0.0`). This replaced an
+earlier `kind: tar` pin against a `kitten-lily/noctalia-greeter` fork commit. The switch
+was made once upstream started tagging releases — `git_repo` + `track:` lets `bst source
+track` follow tags automatically (option A in the update-path gate), so no mise update task
+or `track-mise` CI job is needed. A matrix entry in the `track` job in
+`track-bst-sources.yml` is all that's required.
+
+## noctalia (shell) build dependencies
+
+`desktop/noctalia.bst` also uses `git_repo` + `track: v*`. The v5.0.0-beta2 re-pin
+(99 commits past the old `main` pin) changed the upstream dependency surface —
+upstream un-vendored `md4c`/`tomlplusplus` from `third_party/` and added
+`nlohmann_json` and stb header requirements. See `bst.md` § "tar → git_repo switch"
+for how to diff the dependency surface before re-pinning. Mapping:
+
+| Upstream requirement | Provided by | Dep kind | Why |
+|---|---|---|---|
+| `dependency('md4c')` | `desktop/md4c.bst` (cmake, `track: release-*`) | `depends` | shared lib, linked at runtime |
+| `dependency('nlohmann_json')` | `freedesktop-sdk.bst:components/nlohmann-json.bst` | `build-depends` | genuinely header-only — no `.so` in the artifact |
+| `dependency('tomlplusplus')` | `freedesktop-sdk.bst:components/tomlplusplus.bst` | `depends` | **not** header-only — fdsdk builds it as `libtomlplusplus.so.3` (`TOML_SHARED_LIB=1` in noctalia's own meson flags) |
+| `has_header('stb/…')` | `desktop/stb.bst` (manual, headers → `/usr/include/stb/`) | `build-depends` | genuinely header-only — no `.so` in the artifact |
+| `dependency('libwebp')` | already in closure (present since old pin) | — | — |
+
+**Don't assume "meson `dependency()` on a library with an upstream header-only
+design" means `build-depends`-only.** toml++ *is* header-only upstream, but fdsdk's
+`components/tomlplusplus.bst` chooses to build and ship it as a shared library
+anyway (likely to avoid duplicating the parser across every consumer that links
+it) — check the *provider's* artifact contents, not the upstream project's usual
+distribution model:
+
+```shell
+bst artifact list-contents freedesktop-sdk.bst:components/<name>.bst | grep '\.so'
+```
+
+A `build-depends`-only misclassification builds and links fine — the `.so` is
+present in the sandbox at compile time — and only fails at runtime
+(`error while loading shared libraries: lib<name>.so.N`) once the composed image
+is assembled, because BuildStream never pulls `build-depends` into the final
+image's runtime closure. **Checking an isolated element's own artifact (`bst
+artifact checkout <element>`) will not catch this** — it only contains that
+element's own installed files, not its `depends` closure, so `ldd` against it
+reports every runtime dep as "not found" regardless of whether the graph is
+correct. Verify against the actually composed rootfs instead:
+`bst artifact checkout oci/krytis/filesystem.bst`, then `ldd` the binary there.
+
+`desktop/stb.bst` notes: upstream `nothings/stb` has **no release tags**, so it uses
+`track: refs/heads/master` (branch tracking; the git-describe ref-format falls back
+to a plain SHA when no tag is reachable). Manual-kind elements built on
+`runtime-minimal` must set `strip-binaries: ""` — the default strip-commands call
+`freedesktop-sdk-stripper`, which runtime-minimal doesn't ship (exit 127 at the
+"Running commands" stage *after* install-commands succeed; same pattern as
+`desktop/falcond.bst`).
+
+### Hiding the brand logo
+
+The greeter renders a Noctalia brand logo above the login form. Upstream `v1.0.0` added
+an `appearance.hide_logo` option to `greeter.toml` (commit `f9b8778c`) that skips both
+the texture load in `GreeterSurface::initialize()` and the layout allocation — strictly
+better than the old `no-brand-logo.patch` it replaced.
+
+The greeter reads its config from `/var/lib/noctalia-greeter/greeter.toml`
+(`packageConfPath()` → `syncedDataDirectory() / "greeter.toml"`). This is **mutable runtime
+state** — `saveGreeterPreferences()` does read-modify-write on it to persist the user's
+last session and color scheme. See issue #296 for why seeding `hide_logo = true` is not
+trivial in a bootc composefs layout (bootc flags non-dir files in `/var`; `tmpfiles.d` `w`
+won't create the file, `f` clobbers user prefs on every boot) and the planned oneshot-unit
+approach. As of the `git_repo` switch, the logo is **visible** — the old patch was dropped
+without a replacement pending #296.
+
+### Carrying a local patch (if needed again)
+
+If a local fix is needed before it lands upstream, add a `kind: patch` source after the
+`git_repo` source, same pattern as `overrides/vim.bst`:
 
 ```yaml
 - kind: patch
   path: patches/noctalia-greeter/<name>.patch
 ```
 
-- BST's tar source strips the archive's single top-level directory by default, so patch paths are
-  relative to the fork's repo root (e.g. `src/greeter/greeter_surface.cpp`), not the archive path.
-- Generate the patch with standard `git diff` (`a/`/`b/` prefixes) — BST's patch source defaults to
-  `strip-level: 1`, matching git's default. A `--no-prefix` diff needs `-p0` and will fail to apply.
-- Verify before committing: download the pinned tarball, `tar xzf`, `patch -p1 --dry-run <
-  patches/noctalia-greeter/<name>.patch` from the extracted root. Confirms both hunk context and
+- Generate the patch with standard `git diff` (`a/`/`b/` prefixes) — BST's patch source defaults
+  to `strip-level: 1`, matching git's default. A `--no-prefix` diff needs `-p0` and will fail.
+- Verify before committing: check out the pinned ref, `patch -p1 --dry-run <
+  patches/noctalia-greeter/<name>.patch` from the repo root. Confirms both hunk context and
   strip level before `bst build` ever sees it.
-- The greeter's logo widget (`m_bottomBrandLogo` in `greeter_surface.cpp`) only reserves layout space
-  when its texture load succeeds (`m_brandLogoTexture.id != 0`, checked in the layout pass). Deleting
-  the load call entirely (rather than hiding the widget after load) leaves the id at its zero default,
-  so the widget both stays invisible and never reserves space — cleaner than a visibility-only patch.
 
 ## Mesa Layout in the Image
 
