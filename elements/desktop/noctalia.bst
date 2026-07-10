@@ -3,6 +3,10 @@ kind: meson
 build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
 - freedesktop-sdk.bst:components/pkg-config.bst
+# Header-only libraries, needed at compile time only (new in v5.0.0-beta2)
+- desktop/stb.bst
+- freedesktop-sdk.bst:components/nlohmann-json.bst
+- freedesktop-sdk.bst:components/tomlplusplus.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
@@ -11,6 +15,7 @@ depends:
 - freedesktop-sdk.bst:components/polkit.bst
 - freedesktop-sdk.bst:components/wireplumber.bst
 - desktop/libqalculate.bst
+- desktop/md4c.bst
 - desktop/sdbus-cpp.bst
 
 # Upstream noctalia-dev/noctalia. Releases tagged v* (v5.0.0-beta2 latest

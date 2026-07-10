@@ -421,6 +421,39 @@ The switch is mechanical: replace the `tar` source with a `git_repo` source usin
 task if one existed. Drop the "no release tags exist" / "archive regenerates on
 every push" comments — they're no longer true.
 
+**The source stanza is mechanical; the dependency surface is not.** A re-pin that
+jumps many commits (noctalia: 99) can change what the upstream build requires.
+Before building, diff the upstream build file between old and new refs:
+
+```shell
+gh api repos/<org>/<repo>/contents/meson.build?ref=<old-sha> --jq .content | base64 -d > old.build
+gh api repos/<org>/<repo>/contents/meson.build?ref=<new-sha> --jq .content | base64 -d > new.build
+PAT="dependency\('[^']+'|has_header\('[^']+'|find_library\('[^']+'"
+diff <(grep -oP "$PAT" old.build | sort -u) <(grep -oP "$PAT" new.build | sort -u)
+```
+
+Two failure shapes, only the first of which the textual diff catches:
+- **New `dependency()` calls** — e.g. noctalia v5.0.0-beta2 added `nlohmann_json`
+  and `has_header('stb/...')` checks.
+- **Un-vendoring** — the call already existed at the old ref but was gated behind a
+  `system_*` option with a vendored `third_party/` fallback; the new ref makes it
+  unconditional. noctalia did this to `md4c` and `tomlplusplus`. Grep the old build
+  file for the "new" dep name before concluding it's new — if it's there under an
+  `if get_option(...)` branch, the upstream un-vendored it.
+
+Also expect meson to report missing deps **one at a time** (it stops at the first
+failure) — resolve the full list from the diff up front instead of iterating builds.
+
+To check whether a junction already ships a component, probe directly (a miss names
+the junction, a hit echoes the element):
+
+```shell
+bst show --format '%{name}' freedesktop-sdk.bst:components/<name>.bst
+```
+
+fdsdk ships `components/nlohmann-json.bst` and `components/tomlplusplus.bst`;
+neither junction ships md4c or stb (in-repo `desktop/md4c.bst`, `desktop/stb.bst`).
+
 ### track-mise pattern for tarball-pinned elements
 
 The `track-mise` job in `track-bst-sources.yml` is the reference. Key steps:

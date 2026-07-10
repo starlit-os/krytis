@@ -27,6 +27,8 @@ on:
           - adw-gtk3
           - noctalia
           - noctalia-greeter
+          - md4c
+          - stb
           - falcond
           - falcond-profiles
           - scx-loader
@@ -625,6 +627,8 @@ jobs:
       github.event.inputs.group == 'manual-merge' ||
       github.event.inputs.group == 'noctalia' ||
       github.event.inputs.group == 'noctalia-greeter' ||
+      github.event.inputs.group == 'md4c' ||
+      github.event.inputs.group == 'stb' ||
       github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -691,6 +695,14 @@ jobs:
             element: desktop/noctalia-greeter.bst
             branch: auto/track-noctalia-greeter
             title: "chore(deps): update noctalia-greeter"
+          - group: md4c
+            element: desktop/md4c.bst
+            branch: auto/track-md4c
+            title: "chore(deps): update md4c"
+          - group: stb
+            element: desktop/stb.bst
+            branch: auto/track-stb
+            title: "chore(deps): update stb"
 
     steps:
       - name: Checkout repository

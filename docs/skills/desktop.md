@@ -24,6 +24,30 @@ track` follow tags automatically (option A in the update-path gate), so no mise 
 or `track-mise` CI job is needed. A matrix entry in the `track` job in
 `track-bst-sources.yml` is all that's required.
 
+## noctalia (shell) build dependencies
+
+`desktop/noctalia.bst` also uses `git_repo` + `track: v*`. The v5.0.0-beta2 re-pin
+(99 commits past the old `main` pin) changed the upstream dependency surface —
+upstream un-vendored `md4c`/`tomlplusplus` from `third_party/` and added
+`nlohmann_json` and stb header requirements. See `bst.md` § "tar → git_repo switch"
+for how to diff the dependency surface before re-pinning. Mapping:
+
+| Upstream requirement | Provided by | Dep kind | Why |
+|---|---|---|---|
+| `dependency('md4c')` | `desktop/md4c.bst` (cmake, `track: release-*`) | `depends` | shared lib, linked at runtime |
+| `dependency('nlohmann_json')` | `freedesktop-sdk.bst:components/nlohmann-json.bst` | `build-depends` | header-only |
+| `dependency('tomlplusplus')` | `freedesktop-sdk.bst:components/tomlplusplus.bst` | `build-depends` | header-only |
+| `has_header('stb/…')` | `desktop/stb.bst` (manual, headers → `/usr/include/stb/`) | `build-depends` | header-only |
+| `dependency('libwebp')` | already in closure (present since old pin) | — | — |
+
+`desktop/stb.bst` notes: upstream `nothings/stb` has **no release tags**, so it uses
+`track: refs/heads/master` (branch tracking; the git-describe ref-format falls back
+to a plain SHA when no tag is reachable). Manual-kind elements built on
+`runtime-minimal` must set `strip-binaries: ""` — the default strip-commands call
+`freedesktop-sdk-stripper`, which runtime-minimal doesn't ship (exit 127 at the
+"Running commands" stage *after* install-commands succeed; same pattern as
+`desktop/falcond.bst`).
+
 ### Hiding the brand logo
 
 The greeter renders a Noctalia brand logo above the login form. Upstream `v1.0.0` added
