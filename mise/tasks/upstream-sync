@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#MISE description="Sync tracked forks (docs/upstreams.yml) to their upstream branch and report the commit range since the last lessons-mining pass"
+#USAGE arg "[repo]" help="Only sync this repo (matches 'name:' in docs/upstreams.yml); default: all tracked repos"
+#USAGE flag "--check" help="Report pending commits without syncing (skips gh repo sync / git pull)"
+
+set -euo pipefail
+
+TRACKING_FILE="docs/upstreams.yml"
+FILTER="${usage_repo:-}"
+CHECK_ONLY="${usage_check:-false}"
+
+if [ ! -f "$TRACKING_FILE" ]; then
+  echo "ERROR: $TRACKING_FILE not found" >&2
+  exit 1
+fi
+
+# docs/upstreams.yml is a fixed, flat "name/fork/upstream/branch/..." shape owned by
+# the upstream-lessons skill — parsed with awk rather than pulling in a yaml library.
+mapfile -t NAMES < <(awk -F': ' '/^  - name:/{print $2}' "$TRACKING_FILE")
+
+if [ -n "$FILTER" ] && ! printf '%s\n' "${NAMES[@]}" | grep -qx "$FILTER"; then
+  echo "ERROR: '${FILTER}' not found in ${TRACKING_FILE} (known: ${NAMES[*]})" >&2
+  exit 1
+fi
+
+# local_path in docs/upstreams.yml is a bare dir name, sibling of krytis's *main*
+# checkout — not $PWD, which under a worktree is somewhere else on disk entirely.
+MAIN_WORKTREE=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+SIBLING_BASE=$(dirname "$MAIN_WORKTREE")
+
+for name in "${NAMES[@]}"; do
+  [ -n "$FILTER" ] && [ "$name" != "$FILTER" ] && continue
+
+  block=$(awk -v n="$name" '
+    $0 ~ "^  - name: " n "$" {found=1}
+    found && /^  - name:/ && $0 !~ ("^  - name: " n "$") {found=0}
+    found {print}
+  ' "$TRACKING_FILE")
+
+  fork=$(awk -F': ' '/^    fork:/{print $2; exit}' <<<"$block")
+  branch=$(awk -F': ' '/^    branch:/{print $2; exit}' <<<"$block")
+  local_path="${SIBLING_BASE}/$(awk -F': ' '/^    local_path:/{print $2; exit}' <<<"$block")"
+  last_sha=$(awk -F': ' '/^    last_checked_sha:/{print $2; exit}' <<<"$block")
+
+  if [ ! -d "$local_path/.git" ]; then
+    echo "==> ${name}: no checkout at ${local_path}, skipping" >&2
+    continue
+  fi
+
+  echo "==> ${name} (${fork}, branch ${branch})"
+
+  if [ "$CHECK_ONLY" = "true" ]; then
+    git -C "$local_path" fetch origin "$branch" --quiet
+    new_sha=$(git -C "$local_path" rev-parse "origin/${branch}")
+  else
+    gh repo sync "$fork" --branch "$branch"
+    git -C "$local_path" pull --ff-only origin "$branch"
+    new_sha=$(git -C "$local_path" rev-parse HEAD)
+  fi
+
+  if [ "$new_sha" = "$last_sha" ]; then
+    echo "    up to date at ${last_sha:0:12} — nothing new since the last lessons pass"
+    continue
+  fi
+
+  count=$(git -C "$local_path" rev-list --count "${last_sha}..${new_sha}" 2>/dev/null || echo "?")
+  echo "    ${last_sha:0:12}..${new_sha:0:12} (${count} commits) — new HEAD: ${new_sha}"
+done

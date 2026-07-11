@@ -15,6 +15,7 @@ mise load-image                                    # bst build + podman load →
 mise lint                                          # bootc container lint via Containerfile
 mise chunkify                                      # rechunk into composefs-ready component layers
 mise kernel-update                                 # bump linux-cachyos to latest CachyOS v3 release
+mise upstream-sync                                 # sync dakota/zirconium-hawaii forks, report new commits
 ```
 
 `--` is not needed. The bst task uses `#USAGE arg "<args>" var=#true` which captures all
@@ -52,6 +53,17 @@ With multiple `console=` kernel arguments, all consoles receive output, but `/de
 
 Reversing the order (tty1 first, ttyS0 last) breaks interactive firstboot on the VGA display.
 
+### `git push` fails with "gh: not found" after a `gh` version bump
+
+`~/.gitconfig`'s `credential.https://github.com.helper` can hardcode an *absolute* path to
+a specific mise-installed `gh` version (e.g. `.../gh/2.95.0/.../gh`). mise only keeps the
+`latest` version on disk after an upgrade — the old version dir is pruned, so the
+credential helper points at a binary that no longer exists, and any `git push`/`fetch`
+over HTTPS fails with `gh: not found` (not an auth error, easy to misdiagnose as one).
+Fix: `gh auth setup-git` regenerates the helper to point at the current `gh`. This isn't a
+krytis-specific bug, but the project's `mise`-managed `gh` makes it something any
+contributor pushing from this repo can hit after their next `mise` upgrade.
+
 ## File tasks
 
 All tasks are **file tasks** — standalone executable scripts in `mise/tasks/`. Each file becomes a `mise <name>` command.
@@ -66,7 +78,8 @@ mise/tasks/
 ├── generate-disk            # mise generate-disk
 ├── boot-vm                  # mise boot-vm
 ├── kernel-update            # mise kernel-update
-└── mise-update              # mise mise-update
+├── mise-update              # mise mise-update
+└── upstream-sync            # mise upstream-sync
 ```
 
 Subdirectory nesting uses `:` as separator: `mise/tasks/test/units` → `mise test:units`.
