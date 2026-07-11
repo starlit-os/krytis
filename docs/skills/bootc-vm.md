@@ -143,6 +143,12 @@ Invalid splitstream content type
 
 `--format oci-archive` preserves the OCI media types and resolves this.
 
+## dracut files belong in the bootc element, not initramfs element
+
+*Source: zirconium-hawaii `928fdf8` — `fix(initramfs): put dracut files into bootc element`*
+
+Non-obvious placement rule from zirconium-hawaii: dracut files go in the `bootc.bst` element, not `initramfs.bst`. Krytis's current layout puts dracut config in `core/initramfs.bst` (the bootc dracut module fix documented above), which works for our case — but if adding additional dracut files specific to bootc behavior, place them in the bootc element to match the convention.
+
 ## Temporary root password for VM testing
 
 The `Containerfile` has a commented line for setting a debug root password:

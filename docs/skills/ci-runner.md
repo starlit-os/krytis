@@ -150,6 +150,18 @@ When adding a new action to any workflow, check whether `<owner>/<repo>` is alre
 | `cache-warm.yml` | `[self-hosted, linux, x64]` | Needs local BST cache volume mount and full disk |
 | `track-bst-sources.yml` | `ubuntu-24.04` | Lightweight; must run when local machine is off |
 
+## `max-jobs` should only be set high when remote-execution is on
+
+*Source: zirconium-hawaii `aceeb13` — `fix: set max-jobs to 12 only when remote-execution is on`*
+
+Setting `max-jobs` high (e.g. 12–32) on a local GitHub Actions runner **without** remote CAS causes problems — the runner doesn't have the CPU/RAM to actually parallelize that many local builds, and they contend for resources. Only raise `max-jobs` when remote-execution is enabled (the actual builds happen on the CAS server cluster). Gate the `max-jobs` setting on the remote-execution flag rather than setting it unconditionally.
+
+## Use smaller/less-privileged CAS config for no-push phase
+
+*Source: zirconium-hawaii `4a9b19c` — `chore: Use smaller config for no-push phase`*
+
+When running a build phase that doesn't push to CAS (e.g. a validation-only or no-push CI phase), don't specify the key/auth/mTLS config. Use a smaller, less-privileged CAS client config that authenticates read-only or anonymously. Less privilege = smaller blast radius if the config leaks, and fewer moving parts that can fail on a phase that doesn't need push capability.
+
 ## `track-bst-sources.yml` per-job gotchas
 
 Each `track-<element>` job in this workflow is hand-written (no shared template), so two requirements don't propagate automatically when copy-pasting a new job:
