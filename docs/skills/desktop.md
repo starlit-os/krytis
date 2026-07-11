@@ -271,6 +271,12 @@ bootc constructs the BLS (Boot Loader Specification) entry title from os-release
 
 Result: boot entry shows `StarlitOS Krytis (25.08.202606201613)`.
 
+## iio-niri releases ship stale Cargo.lock — regenerate
+
+*Source: zirconium-hawaii `a516e31` — `fix(iio-niri): generate cargo lock file once more`*
+
+iio-niri's released `Cargo.lock` is frequently out of date. BST must generate its own Cargo.lock during the build rather than trusting the one shipped in the release tarball. This is a recurring issue (zirconium-hawaii has hit it multiple times). If packaging iio-niri and the build fails with cargo dependency resolution errors, generate the lock file in `build-commands` before `cargo build`.
+
 ## niri Config Layout (modular, ported from dotfiles)
 
 `files/niri/` is no longer a single flat file — it mirrors kitten-lily's personal

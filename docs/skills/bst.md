@@ -1611,6 +1611,32 @@ Trust them with `mise trust`.
 
 Run `mise trust` once in the new worktree directory before any `mise validate`, `mise bst`, etc.
 
+## `systemd-stage1` belongs in `build-depends`, not `depends`; path is FDSDK-version-specific
+
+*Source: zirconium-hawaii `3ae47dd`, `28656b2`*
+
+`systemd-stage1` is a build-time tool — it belongs in `build-depends`, not `depends` (runtime). Putting it in `depends` silently breaks the build because the element isn't available at build time where it's actually needed.
+
+The path is also FDSDK-version-specific. zirconium-hawaii hit a silent break from using a `26.08beta` path when the junction was actually `25.08`. Always verify the path against the current junction ref — don't copy a path from another project or branch without confirming the version segment matches.
+
+## lynx fails to build on FDSDK 25.08.13 — use w3m instead
+
+*Source: zirconium-hawaii `92b9cae` — `fix(fdSDK 25.08.13): switch from lynx to w3m`*
+
+lynx completely fails to build on FDSDK 25.08.13 (no diagnostics, just a build failure). zirconium-hawaii switched to `w3m` as the text browser. Krytis currently uses lynx transitively via `elements/desktop/xdg-utils.bst` (the `xmlto`/docbook text-browser toolchain). When krytis bumps to FDSDK 25.08.13+, this may need the same switch — watch for a lynx build failure on the next junction bump.
+
+## Don't hardcode `mesa.bst` as a runtime dep for apps
+
+*Source: zirconium-hawaii `517ff98` — `chore: remove mesa as runtime dependency for apps`*
+
+Convention: don't list `mesa.bst` as an explicit runtime dep for apps. Hardcoding it prevents swapping in `extensions/mesa/mesa-extra.bst` (or krytis's `desktop/mesa-all-codecs.bst` override — see `desktop.md` § AMD VA-API). Let mesa enter the runtime closure transitively via the stack instead. zirconium-hawaii removed it from app elements for this reason.
+
+## Set both OCI annotations and labels
+
+*Source: zirconium-hawaii `d418742` — `fix: set both annotations and labels`*
+
+OCI images need both annotations **and** labels set — not just one or the other. Some tooling reads annotations, some reads labels; setting only one means metadata is invisible to the other set of tools. When assembling the OCI image, set the same metadata in both fields.
+
 ## Reserved EFI System Partition Directory Name: `krytis`
 
 Any element whose build requires a distro's reserved ESP subdirectory name (efibootmgr's `EFIDIR`, and similarly for shim/grub-style bootloaders) must use `krytis` — matching `ID` in `elements/core/os-release.bst`. Example (`elements/core/efibootmgr.bst`):
