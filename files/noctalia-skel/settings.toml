@@ -1,14 +1,60 @@
+[backdrop]
+enabled = true
+
+[bar.default]
+background_opacity = 0.64999998547136784
+end = [ "tray", "network", "bluetooth", "volume", "brightness", "battery", "session" ]
+start = [ "control-center", "workspaces", "media" ]
+
+[desktop_widgets]
+enabled = false
+
+[[plugins.source]]
+kind = "git"
+location = "https://github.com/noctalia-dev/official-plugins"
+name = "official"
+
+[[plugins.source]]
+kind = "git"
+location = "https://github.com/noctalia-dev/community-plugins"
+name = "community"
+
 [shell]
 date_format = "%A, %F"
 font_family = "Adwaita Sans"
 polkit_agent = true
+settings_show_advanced = false
+
+    [shell.panel]
+    borders = false
+    transparency_mode = "soft"
 
 [theme]
 builtin = "Rosé Pine"
 community_palette = "Rose Pine Moon"
 mode = "dark"
 source = "community"
+wallpaper_scheme = "m3-content"
+
+    [theme.templates]
+    builtin_ids = [ "cava", "gtk3", "gtk4", "niri" ]
+    community_ids = [ "zen-browser", "papirus-icons" ]
+
+[widget.bluetooth]
+hide_when_no_connected_device = true
 
 [widget.control-center]
 custom_image = "/usr/share/noctalia/assets/images/etheria.png"
 scale = 1.6000000000000001
+
+[widget.media]
+hide_when_no_media = true
+
+[widget.network]
+show_label = false
+
+[widget.notifications]
+hide_when_no_unread = true
+
+[widget.volume]
+show_label = false
