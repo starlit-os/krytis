@@ -206,6 +206,7 @@ Wraps the pinned `bst2` container image. Override points:
 | `BST_MEMORY_LIMIT` | `mise.toml [env]` default | Container memory cap |
 | `BST_FLAGS` | Shell only | Appended to default flags |
 | `BST_FLAGS_OVERRIDE` | Shell only | Replaces all flags |
+| `BST_CONTAINER` | `.mise.local.toml [env]` (per-developer) | `true` defaults every `bst`/`validate`/`load-image` call to `--container` |
 
 Default flags applied: `-o x86_64_v3 true --no-interactive`
 
@@ -288,6 +289,26 @@ fi
 ```
 
 The unquoted `${CONTAINER:-}` in the caller expands to nothing when empty, so no spurious empty-string arg is passed.
+
+### `BST_CONTAINER` env var as a workstation-wide default
+
+Systems without native BST host deps (`patch`, `lzip`, `bubblewrap`, etc.) need `--container` on every invocation. Rather than typing the flag every time, a developer can set it once in `.mise.local.toml` (gitignored):
+
+```toml
+[env]
+BST_CONTAINER = "true"
+```
+
+Unlike `BST2_IMAGE`/`BST_MEMORY_LIMIT`, this is **not** declared in the project `mise.toml [env]` block — it's purely a per-developer override with no meaningful project-wide default (same category as `BST_FLAGS`). Each of `bst`, `validate`, and `load-image` checks it independently, after the explicit `--container` flag computation, so a literal flag always takes precedence:
+
+```bash
+CONTAINER=${usage_container:+--container}
+if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
+    CONTAINER=--container
+fi
+```
+
+Each task re-checks `BST_CONTAINER` rather than relying purely on env-var inheritance through the `validate`/`load-image` → `bst` call chain, so the fallback is self-documenting at every layer and doesn't depend on assumptions about which env vars mise exports to child processes.
 
 ## `usage_container` is inherited by child processes
 
