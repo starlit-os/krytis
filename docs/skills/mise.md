@@ -164,6 +164,19 @@ usage = "latest"
 
 Run `mise install` to install declared tools. System tools (podman, git, qemu) are **not** managed here.
 
+## System-wide config: `/etc/mise/conf.d/*.toml`
+
+mise reads a system-wide config tree at `MISE_SYSTEM_CONFIG_DIR` (default `/etc/mise`), same
+shape as the user tree at `~/.config/mise/`: `config.toml` plus a `conf.d/*.toml` fragment
+directory loaded alphabetically. It is the **lowest**-precedence layer — project and user
+config both override it — so it's safe for image-wide defaults a user can freely shadow.
+Confirmed against https://mise.jdx.dev/configuration.html; no local testing needed since
+the doc explicitly diagrams `/etc/mise/conf.d/*.toml` as a first-class layer.
+
+`config/mise-aliases.bst` ships `/etc/mise/conf.d/aliases.toml` with a curated
+`[tool_alias]` block (`fish`, `micro`, `tealdeer`, …) so users get short names for
+aqua/github/pipx-backed tools without needing the full backend path. Closes #153.
+
 ## User-overrideable environment defaults
 
 Use `[env]` with `{ default = "..." }` in `mise.toml`. Mise applies the fallback only when the variable is **unset or empty** in the calling environment; existing non-empty values are preserved.

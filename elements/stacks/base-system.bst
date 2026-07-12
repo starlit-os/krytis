@@ -68,6 +68,7 @@ depends:
   # ── Dev tooling ───────────────────────────────────────────
   - freedesktop-sdk.bst:components/git.bst
   - core/mise.bst
+  - config/mise-aliases.bst
   - config/fido2-tasks.bst
 
   # ── Core utilities ─────────────────────────────────────────────────
