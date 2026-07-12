@@ -14,6 +14,17 @@ mise load-image --container
 
 The podman container fallback has no host dep requirements beyond podman itself. Without `--container` on a machine that lacks the native deps, BST fails immediately on element graph resolution with "Did not find 'patch' in PATH".
 
+**On a machine that always needs `--container`, set it once instead of passing it on every invocation.** Add to `.mise.local.toml` (gitignored, per-developer):
+
+```toml
+[env]
+BST_CONTAINER = "true"
+```
+
+The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only when `--container` is not passed on the command line — an explicit flag always wins. See `docs/skills/mise.md` § Propagating flags through tasks that call other tasks.
+
+**Agent guidance:** if a BST command fails with "Did not find 'patch' in PATH" (or another missing native-dep error), don't just retry with `--container` — recognise the pattern, explain the cause, and offer to write `BST_CONTAINER = "true"` to `.mise.local.toml` as a one-time fix for that workstation (issue #54).
+
 ## Quick Reference
 
 | Goal | Command |

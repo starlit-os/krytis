@@ -27,6 +27,12 @@ if [ "${1:-}" = "--container" ]; then
     shift
 fi
 
+# BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default for
+# machines without native BST host deps. Explicit --container (above) always wins.
+if [ "$CONTAINER" != "true" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
+    CONTAINER=true
+fi
+
 if [ "$CONTAINER" = "true" ]; then
     mkdir -p "${HOME}/.cache/buildstream"
     # word-splitting on FLAGS is intentional (space-separated option flags)

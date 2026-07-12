@@ -5,6 +5,11 @@
 
 set -euo pipefail
 CONTAINER=${usage_container:+--container}
+# BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default.
+# Explicit --container above always wins.
+if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
+    CONTAINER=--container
+fi
 ./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/base-system.bst
 ./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/bootc.bst
 ./mise/tasks/bst ${CONTAINER:-} show --deps all oci/krytis/image.bst
