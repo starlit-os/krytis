@@ -19,15 +19,36 @@ CachyOS's secure boot posture (confirmed by their docs at <https://wiki.cachyos.
 
 The CachyOS PKGBUILD's `_sign_modules()` signs modules with `certs/signing_key.x509` — an ephemeral key generated fresh during each `make` and compiled into the kernel's builtin trusted keyring. It is not shipped in the package, not published anywhere, and changes with every kernel build. There is no CachyOS-published cert to enroll. The dropped #34 was based on the false premise that one exists. See #34 for the full analysis and <https://github.com/CachyOS/linux-cachyos/issues/743> for the `INTEGRITY_CA_MACHINE_KEYRING` context.
 
-## Key strategy
+## Key model
 
-The developer's existing signing keys (shared with CachyOS and the Fedora sealed desktop images) are reused. Keys live in `files/boot-keys/` (gitignored) when on disk.
+Three key hierarchies (PK, KEK, db), matching the [sbctl](https://man.archlinux.org/man/sbctl.8.en) model. The developer's existing keys are sbctl-generated (RSA 4096), shared with CachyOS and the Fedora sealed desktop images.
+
+| Key | Role |
+|-----|------|
+| PK | Firmware Platform Key (root of trust) |
+| KEK | Firmware Key Exchange Key (updates db) |
+| db | Signs both the UKI (#32) and `systemd-boot` (#33); enrolled in firmware |
+
+One key (db) signs all EFI binaries — same as `sbctl sign`. No separate VENDOR, SYSEXT, or linux-module-cert keys: VENDOR merged into db (sbctl model), SYSEXT not in current scope, linux-module-cert dropped with #34 (CachyOS module signing handled by kernel builtin keyring).
+
+Keys live in `files/boot-keys/` (gitignored) when on disk:
+
+```
+files/boot-keys/
+├── PK.key
+├── PK.crt
+├── KEK.key
+├── KEK.crt
+├── db.key
+├── db.crt
+└── extra-db/       # empty dir (for Microsoft certs included in db.auth)
+```
 
 ### Key retrieval: Proton Pass via fnox (#311)
 
 Keys are stored as custom hidden fields in a Proton Pass vault item (e.g. an item "Secure Boot Keys" with fields `PK.key`, `PK.crt`, `KEK.key`, etc.). A committed `fnox.toml` maps secret names to `pass://` references — it contains only references, no actual secrets.
 
-`fnox` wraps the Proton Pass CLI (`pass-cli`) and resolves the references at retrieval time. The developer logs in once with `pass-cli login` (browser-based); after that `mise run pull-keys` retrieves all 12 key/cert files and validates them with openssl.
+`fnox` wraps the Proton Pass CLI (`pass-cli`) and resolves the references at retrieval time. The developer logs in once with `pass-cli login` (browser-based); after that `mise run pull-keys` retrieves all 6 key/cert files (3 key pairs) and validates them with openssl.
 
 This is the preferred path for an existing key set. The `generate-keys` task (#31) remains as a fallback for generating fresh keys on a clean checkout without Proton Pass configured.
 
@@ -35,8 +56,8 @@ This is the preferred path for an existing key set. The `generate-keys` task (#3
 
 ```
 pass-cli login (one time, browser-based)
-  └─ mise run pull-keys (#311) → fnox get → files/boot-keys/ (validated)
-       └─ mise run seal-uki (#32) → signs UKI + systemd-boot
+  └─ mise run pull-keys (#311) → fnox get → files/boot-keys/ (6 files, validated)
+       └─ mise run seal-uki (#32) → signs UKI (db.key) + systemd-boot (db.key)
             └─ shred -u files/boot-keys/*.key (optional — minimize key exposure)
 ```
 
@@ -54,7 +75,7 @@ All design gates are resolved. The decisions below were verified against bootc v
 
 Keys are stored as custom hidden fields in a Proton Pass vault item. A committed `fnox.toml` maps secret names to `pass://vault/item/field` references (no secrets in the repo). `fnox` wraps `pass-cli` to resolve them.
 
-`pull-keys` writes all 12 key/cert files to `files/boot-keys/` and validates each with `openssl rsa -check` / `openssl x509 -noout`. Private keys are `chmod 600`; certs are `chmod 644`.
+`pull-keys` writes all 6 key/cert files (3 key pairs: PK, KEK, db) to `files/boot-keys/` and validates each with `openssl rsa -check` / `openssl x509 -noout`. Private keys are `chmod 600`; certs are `chmod 644`.
 
 The `generate-keys` task (#31) remains as a fallback for fresh key generation when Proton Pass is not configured.
 
@@ -62,7 +83,7 @@ The `generate-keys` task (#31) remains as a fallback for fresh key generation wh
 
 | Alternative | Why rejected |
 |-------------|--------------|
-| Store keys as 12 GitHub Actions secrets | Works for CI but clutters secret management. One Proton Pass token replaces 12 secrets. |
+| Store keys as GitHub Actions secrets | Works for CI but clutters secret management. One Proton Pass token replaces all key files. |
 | Keys persist on disk only | Keys sit on disk between signing sessions. Proton Pass retrieval allows shredding after signing. |
 
 ### 1. UKI build: post-BST mise task (#32)
@@ -100,7 +121,7 @@ mise run generate-disk → bootc install to-disk (from sealed image)
 
 **Decision:** Sign `systemd-boot` with `sbsign` during the `seal-uki` task. No shim initially.
 
-krytis's boot flow uses `bootc install --bootloader systemd`, which installs `systemd-boot` to the ESP at install time. Signing happens in the `seal-uki` task alongside the UKI build — `sbsign --key DB.key --cert DB.crt` on the `systemd-boot` binary. `bootc install` then installs the pre-signed copy.
+krytis's boot flow uses `bootc install --bootloader systemd`, which installs `systemd-boot` to the ESP at install time. Signing happens in the `seal-uki` task alongside the UKI build — `sbsign --key db.key --cert db.crt` on the `systemd-boot` binary. `bootc install` then installs the pre-signed copy.
 
 **No shim:** The user's db key is enrolled directly via systemd-boot's native `loader/keys/` mechanism (see decision 3 below). shim is only needed for MOK fallback enrollment or firmware that only trusts Microsoft's keys. Add shim later only if those scenarios arise.
 
@@ -129,7 +150,7 @@ The `.auth` files are signed EFI signature lists (not just DER certs). Generatio
 
 **Decision (initial):** CI builds the unsigned OCI image (`mise build`). The signed image is produced locally by the developer running `mise run seal-uki`. Keys never touch CI infrastructure.
 
-**Future upgrade path: single Proton Pass token.** Store one `PROTON_PASS_PERSONAL_ACCESS_TOKEN` as a GitHub Actions secret. CI runs `pass-cli login --personal-access-token $TOKEN` → `fnox get` (via `mise run pull-keys`) pulls all 12 key/cert files → signing proceeds. One token instead of 12 key files — cleaner than storing each key as a separate CI secret.
+**Future upgrade path: single Proton Pass token.** Store one `PROTON_PASS_PERSONAL_ACCESS_TOKEN` as a GitHub Actions secret. CI runs `pass-cli login --personal-access-token $TOKEN` → `fnox get` (via `mise run pull-keys`) pulls all 6 key/cert files → signing proceeds. One token instead of 6 key files — cleaner than storing each key as a separate CI secret.
 
 ## Status in sibling / reference projects
 
@@ -147,34 +168,34 @@ Retrieve keys from Proton Pass via `fnox get` into `files/boot-keys/`. Validate 
 
 ### 2. Key generation (`mise run generate-keys`) — #31
 
-Fallback for fresh key generation when Proton Pass is not configured. Keys live in `files/boot-keys/` (already `.gitignore`d). Idempotent task modelled on zirconium's `generate-keys` Justfile recipe:
+Fallback for fresh key generation when Proton Pass is not configured. Keys live in `files/boot-keys/` (already `.gitignore`d). Idempotent task generating 3 key pairs (PK, KEK, db), RSA 4096 to match sbctl:
 
 ```bash
-openssl req -new -x509 -newkey rsa:2048 -subj "/CN=Krytis <KEY>/" \
+openssl req -new -x509 -newkey rsa:4096 -subj "/CN=Krytis <KEY>/" \
     -keyout files/boot-keys/<KEY>.key -out files/boot-keys/<KEY>.crt \
     -days 3650 -nodes -sha256
 ```
 
-Keys needed: `PK`, `KEK`, `DB`, `VENDOR`, `SYSEXT`, `linux-module-cert`.
+Keys needed: `PK`, `KEK`, `db`.
 
-Guard: skip generation if `.key` + `.crt` already exist (reuse developer's existing keys). Also ensure `extra-db/` and `modules/` subdirectories exist; copy `linux-module-cert.crt` into `modules/`.
+Guard: skip generation if `.key` + `.crt` already exist (reuse developer's existing keys). Also ensure `extra-db/` subdirectory exists (for Microsoft certs included in db.auth during enrollment — see #309).
 
 ### 3. UKI assembly + bootloader signing (`mise run seal-uki`) — #32, #33
 
-Post-BST mise task wrapping `bootc container ukify`:
+Post-BST mise task wrapping `bootc container ukify`. The db key signs both the UKI and `systemd-boot`:
 
 ```bash
 bootc container ukify --rootfs <extracted-layer> \
-    -- --secureboot-private-key files/boot-keys/VENDOR.key \
-       --secureboot-certificate files/boot-keys/VENDOR.crt \
+    -- --secureboot-private-key files/boot-keys/db.key \
+       --secureboot-certificate files/boot-keys/db.crt \
        --signtool sbsign \
        --output <uki-path>
 ```
 
-Then sign `systemd-boot`:
+Then sign `systemd-boot` with the same db key:
 
 ```bash
-sbsign --key files/boot-keys/DB.key --cert files/boot-keys/DB.crt \
+sbsign --key files/boot-keys/db.key --cert files/boot-keys/db.crt \
     --output <sealed-layer>/boot/EFI/systemd/systemd-bootx64.efi \
     <source-systemd-bootx64.efi>
 ```
@@ -213,4 +234,4 @@ mise/tasks/seal-uki                   # #32 + #33 — bootc container ukify + sb
 
 **Initial: local-only signing.** CI builds unsigned (`mise build`). Developer runs `mise run pull-keys && mise run seal-uki` locally with keys pulled from Proton Pass.
 
-**Future: single Proton Pass token.** Store `PROTON_PASS_PERSONAL_ACCESS_TOKEN` as a GitHub Actions secret. CI runs `pass-cli login --personal-access-token $TOKEN` then `mise run pull-keys` to retrieve all 12 key/cert files, then `mise run seal-uki` to sign. One CI secret replaces 12.
+**Future: single Proton Pass token.** Store `PROTON_PASS_PERSONAL_ACCESS_TOKEN` as a GitHub Actions secret. CI runs `pass-cli login --personal-access-token $TOKEN` then `mise run pull-keys` to retrieve all 6 key/cert files, then `mise run seal-uki` to sign. One CI secret replaces 6.
