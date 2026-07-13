@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#MISE description="Update zen-browser element to the latest stable release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/zen-browser.bst"
+
+echo "==> Fetching latest zen-browser/desktop release..."
+LATEST_VER=$(gh api repos/zen-browser/desktop/releases/latest --jq '.tag_name')
+
+echo "==> Latest: ${LATEST_VER}"
+
+CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+for ARCH in x86_64 aarch64; do
+  URL="https://github.com/zen-browser/desktop/releases/download/${LATEST_VER}/zen.linux-${ARCH}.tar.xz"
+  FILE="${TMPDIR}/zen.linux-${ARCH}.tar.xz"
+  echo "==> Downloading ${URL}..."
+  curl -sSL "$URL" -o "$FILE"
+  SHA256=$(sha256sum "$FILE" | awk '{print $1}')
+  echo "    ${ARCH} sha256=${SHA256}"
+
+  # Replace the ref on the line following this arch's URL
+  sed -i "/zen.linux-${ARCH}.tar.xz/{n;s|ref: .*|ref: ${SHA256}|}" "${ELEMENT}"
+done
+
+# Update version variable and release-tag path segment in both URLs
+sed -i "s|version: \"${CURRENT_VER}\"|version: \"${LATEST_VER}\"|" "${ELEMENT}"
+sed -i "s|/download/${CURRENT_VER}/|/download/${LATEST_VER}/|g" "${ELEMENT}"
+
+echo "==> Done: ${CURRENT_VER} → ${LATEST_VER}. Run 'mise run validate' to verify."

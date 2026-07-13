@@ -325,6 +325,37 @@ Current binds of note (see `binds.kdl` / `binds/*.kdl` for the full set):
 There is no dedicated screen-lock bind in this config (dropped `Super+Alt+L`/swaylock
 from the old upstream-derived config — noctalia handles lock via its own panel).
 
+## Packaging Firefox-derivative browser tarballs (Zen Browser, #314)
+
+Upstream Firefox-style Linux release tarballs (`zen.linux-<arch>.tar.xz` and equivalents
+for any Firefox fork) are a bare unpacked binary tree, not an installable package —
+confirmed by extracting the actual archive rather than assuming:
+
+- **No `.desktop` entry, no icon-theme install, no update-policy file are shipped.**
+  All three must be hand-authored in the element (see `elements/desktop/zen-browser.bst`
+  for a working example — heredocs in `install-commands`, no separate `files/` needed
+  since the content is small and element-specific).
+- **Icons ship only as flat PNGs** at `browser/chrome/icons/default/default{16,32,48,64,128}.png`
+  — no SVG, no pre-built hicolor tree. Symlink each size into
+  `/usr/share/icons/hicolor/<N>x<N>/apps/<name>.png` rather than copying — avoids
+  duplicating multi-MB binaries in the image layer.
+- **The launcher binary is a stripped, pre-linked ELF PIE** (`zen` in the Zen tarball,
+  execs `zen-bin` alongside it) with `$ORIGIN`-relative library resolution baked in at
+  Mozilla's build time — same shape as `zed.bst`'s `/usr/lib/zed` + symlink pattern.
+  Install the whole extracted tree to `/usr/lib/<name>/` and symlink only the launcher
+  into `/usr/bin/`; do not try to relocate individual `.so` files.
+- **Must disable the bundled auto-updater.** Firefox-derivative browsers self-update by
+  writing into their own install directory — which is read-only on a bootc image and
+  will fail (or silently no-op in a confusing way). Set `DisableAppUpdate: true` via
+  `distribution/policies.json` inside the install tree (enterprise policy mechanism,
+  same one used by Firefox ESR deployments) so the browser doesn't attempt it. Updates
+  instead flow through the normal mise-managed version pin.
+- **Cross-checking against the distro's own binary packaging (AUR `*-bin` PKGBUILDs)
+  is a fast way to confirm sha256s and discover packaging gotchas** (the `DisableAppUpdate`
+  policy, the icon-symlink approach, and the `zen`-vs-`zen-bin` launcher split were all
+  confirmed this way) — the actual upstream sha256sums for a given tag are reproducible
+  and make good independent verification against a value computed by hand.
+
 ## Cursor Theme
 
 Krytis uses `xcursor-theme "Adwaita"` (size 24) set in the top-level `cursor { }` block in `files/niri/config.kdl`. No extra element is needed — `gnome-build-meta.bst:core/nautilus.bst` already pulls `sdk/adwaita-icon-theme.bst` transitively. Verify with `grep -r "adwaita-icon-theme" <gnome-build-meta-staged>/elements/core/nautilus.bst`.
