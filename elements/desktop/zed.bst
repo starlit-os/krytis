@@ -14,7 +14,7 @@ depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
 variables:
-  version: "1.10.2"
+  version: "1.10.3"
   strip-binaries: ''
 
 config:
@@ -33,8 +33,8 @@ sources:
 - kind: tar
   (?):
   - arch == "x86_64":
-      url: github_files:zed-industries/zed/releases/download/v1.10.2/zed-linux-x86_64.tar.gz
-      ref: ef68f4e304a944fecde442f31bcf128f29d359e3cb08edbc91c99032a7fc7a75
+      url: github_files:zed-industries/zed/releases/download/v1.10.3/zed-linux-x86_64.tar.gz
+      ref: 55eb5ef8b211c950a9009da30b7f603d2c9d2c80b207f9de94ffab6d31d58f8c
   - arch == "aarch64":
-      url: github_files:zed-industries/zed/releases/download/v1.10.2/zed-linux-aarch64.tar.gz
-      ref: 6409f02b13b95f8249d24cc4a7f3468e73671d2c1c081b9d524bf2821fe4ae0e
+      url: github_files:zed-industries/zed/releases/download/v1.10.3/zed-linux-aarch64.tar.gz
+      ref: 0b16eb38fea307aa8392729498e8d6b97369c4a81853d26378d69bba84ce01e3
