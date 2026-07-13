@@ -22,7 +22,7 @@
 - This plan touches the boot path and LUKS — Breakage Gate (#312) must be cleared before full boot chain verification
 - `--allow-missing-verity` must be passed to `bootc container ukify` — the Containerfile build filesystem does not support fs-verity
 - systemd-boot binary lives at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi` in the image — `/boot` is empty (wiped by `stack.bst`). Sign in place at the source path, not at `/boot/EFI/systemd/`.
-- bootc discovers UKIs at `/boot/EFI/Linux/` inside the composefs image tree. The Containerfile `RUN` step adds the UKI there, and bootc's `Type2Entry::load_all` finds it. bootc validates the UKI's `composefs=` cmdline matches the deployment ID.
+- **HYPOTHESIS (verified by Task 3 spike):** bootc is expected to discover UKIs at `/boot/EFI/Linux/` inside the composefs image tree and validate the UKI`s `composefs=` cmdline matches the deployment ID. This is unverified — Task 3 confirms or refutes it before Tasks 5+ proceed.
 - `loader.conf` is written by `bootctl install` at install time — a shipped `/boot/loader/loader.conf` gets wiped. `secure-boot-enroll` must be configured via a bootc install hook or a `/usr/lib/bootc/` mechanism, not a static file in `/boot/`.
 
 ## Prerequisites (before starting any task)
@@ -252,6 +252,7 @@ Assisted-by: Claude Sonnet 4.6"
 - Produces: a decision document that gates Tasks 5+ (UKI consumption verified, `--allow-missing-verity` confirmed, `--measure` decision, `systemd-tpm2-*` masking decision, TPM re-enrollment decision)
 
 **Issue:** #312 (Breakage Gate — must be cleared before Tasks 5 and 7)
+**Blocked by:** Task 1 (needs keys), Task 2 (needs pull-keys), Task 4 Steps 1-3 (needs ukify in image)
 
 This task combines two investigations:
 1. **Blocker B spike:** Does `bootc install to-disk` actually boot a pre-built UKI from `/boot/EFI/Linux/`? Does the composefs digest in the UKI match what bootc computes at install time?
@@ -279,24 +280,36 @@ podman build --squash-all -t localhost/krytis:sealed-test \
     -f Containerfile .
 ```
 
-Note: this requires the Containerfile to already have the conditional signing step (Task 5 Step 2). If doing this spike before Task 5, use a temporary Containerfile or run the ukify command manually inside a container:
+Create a temporary `Containerfile.spike` to test the seal step before writing the real `seal-uki` task:
+
+```dockerfile
+# Containerfile.spike — temporary, for the Task 3 spike only
+FROM localhost/krytis-input:latest
+
+RUN bootc container lint
+
+RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
+    set -ex \
+    && mkdir -p /boot/EFI/Linux \
+    && bootc container ukify --allow-missing-verity -- \
+        --secureboot-private-key /run/secrets/db_key \
+        --secureboot-certificate /run/secrets/db_crt \
+        --signtool sbsign \
+        --output /boot/EFI/Linux/krytis.efi \
+    && sbsign --key /run/secrets/db_key --cert /run/secrets/db_crt \
+        --output /usr/lib/systemd/boot/efi/systemd-bootx64.efi \
+        /usr/lib/systemd/boot/efi/systemd-bootx64.efi
+```
 
 ```bash
-# Alternative: run ukify manually inside the image
-podman run --rm -it \
+podman build --squash-all -t localhost/krytis:sealed-test \
+    --build-arg SEAL_SECURE_BOOT=true \
     --secret id=db_key,src=files/boot-keys/db.key \
     --secret id=db_crt,src=files/boot-keys/db.crt \
-    localhost/krytis:latest bash -c '
-        mkdir -p /boot/EFI/Linux
-        bootc container ukify --allow-missing-verity -- \
-            --secureboot-private-key /run/secrets/db_key \
-            --secureboot-certificate /run/secrets/db_crt \
-            --signtool sbsign \
-            --output /boot/EFI/Linux/krytis.efi
-        '
-# Commit the container as a new image
-podman commit <container-id> localhost/krytis:sealed-test
+    -f Containerfile.spike .
 ```
+
+Note: this spike uses `podman build` (not `podman run`) because `--secret id=...,src=...` is `podman build` syntax. `podman run --secret` takes a registered secret name, not a `src=` path. Using `podman build` with a temp Containerfile avoids the `--rm`/`podman commit` contradiction and the secret-mount syntax mismatch.
 
 - [ ] **Step 2: Install the sealed image to a test disk (no secure boot yet)**
 
@@ -322,7 +335,7 @@ Document: did bootc find the UKI at `/boot/EFI/Linux/`? Did it use it instead of
 
 Possible issues:
 - `bootc container ukify` computes a different composefs digest than `bootc install`'s `generate_boot_image`
-- The UKI at `/boot/EFI/Linux/` is not found by `Type2Entry::load_all` (composefs tree doesn't include it)
+- The UKI at `/boot/EFI/Linux/` is not found by bootc's boot-entry discovery (the exact symbol is unverified for v1.16.3)
 - bootc prefers `UsrLibModulesVmlinuz` over Type2 entries
 
 Check bootc install logs for "Failed to get version and boot label from UKI" or "No boot entries!" or "wrong composefs= parameter".
@@ -506,7 +519,7 @@ ARG SEAL_SECURE_BOOT=false
 # systemd-boot is signed in place at /usr/lib/systemd/boot/efi/ — bootc install
 # copies it from there to the ESP at install time. /boot is empty in the image
 # (wiped by stack.bst); the UKI is placed at /boot/EFI/Linux/ where bootc's
-# Type2Entry::load_all discovers it in the composefs image tree.
+# bootc discovers it in the composefs image tree (verified by Task 3 spike).
 RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
     --mount=type=secret,id=kek_key --mount=type=secret,id=kek_crt \
     --mount=type=secret,id=pk_key --mount=type=secret,id=pk_crt \
@@ -648,9 +661,9 @@ CERTS_DIR="files/microsoft-uefi-certs"
 mkdir -p "$CERTS_DIR"
 
 # Microsoft Corporation UEFI CA 2011
-curl -sSfL "https://go.microsoft.com/fwlink/p/?linkid=321506" -out "$CERTS_DIR/microsoft-uefi-ca-2011.der"
+curl -sSfL "https://go.microsoft.com/fwlink/p/?linkid=321506" -o "$CERTS_DIR/microsoft-uefi-ca-2011.der"
 # Microsoft Corporation UEFI CA 2023
-curl -sSfL "https://go.microsoft.com/fwlink/p/?linkid=2093978" -out "$CERTS_DIR/microsoft-uefi-ca-2023.der"
+curl -sSfL "https://go.microsoft.com/fwlink/p/?linkid=2093978" -o "$CERTS_DIR/microsoft-uefi-ca-2023.der"
 
 # Verify
 for cert in "$CERTS_DIR"/*.der; do
@@ -795,17 +808,61 @@ depends:
   - config/secureboot-keys.bst
 ```
 
-- [ ] **Step 8: Handle `secure-boot-enroll` in `loader.conf`**
+- [ ] **Step 8: Set `secure-boot-enroll manual` in `loader.conf` via a first-boot oneshot service**
 
-`loader.conf` is written by `bootctl install` at install time — a shipped `/boot/loader/loader.conf` gets wiped with `/boot`. Investigate how to set `secure-boot-enroll`:
+`loader.conf` is written by `bootctl install` at install time — a shipped `/boot/loader/loader.conf` gets wiped with `/boot`. The setting must be injected after `bootctl install` runs.
 
-Option A: Check if bootc has a config option for `secure-boot-enroll` (check `bootc install print-configuration` or the bootc config files under `/usr/lib/bootc/`).
+**Approach:** Ship a systemd oneshot service that appends `secure-boot-enroll manual` to `/boot/loader/loader.conf` on first boot, enabled via a systemd preset.
 
-Option B: Use a bootc install hook or a systemd tmpfiles entry that writes `secure-boot-enroll manual` to `ESP/loader/loader.conf` after `bootctl install`.
+Create `elements/config/secureboot-loader-conf.bst`:
 
-Option C: Document that the user must manually set it in the boot menu (less ideal).
+```yaml
+kind: manual
 
-Document the chosen approach. If Option B, create the appropriate config element.
+# Ships a oneshot systemd service that sets secure-boot-enroll=manual
+# in ESP/loader/loader.conf on first boot, after bootctl install has
+# written the initial loader.conf.
+build-depends:
+- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+
+variables:
+  strip-binaries: ''
+
+config:
+  install-commands:
+  - |
+    install -Dm644 secure-boot-enroll.service "%{install-root}%{indep-libdir}/systemd/system/secure-boot-enroll.service"
+    install -Dm644 80-secure-boot-enroll.preset "%{install-root}%{indep-libdir}/systemd/system-preset/80-secure-boot-enroll.preset"
+  - '%{install-extra}'
+
+sources:
+- kind: local
+  path: files/secureboot-loader-conf
+```
+
+Create `files/secureboot-loader-conf/secure-boot-enroll.service`:
+
+```ini
+[Unit]
+Description=Set secure-boot-enroll=manual in loader.conf
+ConditionFirstBoot=yes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sh -c 'grep -q secure-boot-enroll /boot/loader/loader.conf || echo "secure-boot-enroll manual" >> /boot/loader/loader.conf'
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Create `files/secureboot-loader-conf/80-secure-boot-enroll.preset`:
+```
+enable secure-boot-enroll.service
+```
+
+Add `config/secureboot-loader-conf.bst` to `stacks/bootc.bst`.
+
+Note: verify that the ESP is mounted at `/boot` when this service runs. If the ESP is at `/boot/efi`, adjust the path to `/boot/efi/loader/loader.conf`. Check the mount layout by running `findmnt /boot` on a test install. If bootc has a native config option for `secure-boot-enroll` (check `bootc install print-configuration`), prefer that over the oneshot service.
 
 - [ ] **Step 9: Validate and build**
 
@@ -826,9 +883,9 @@ Expected: `PK.auth`, `KEK.auth`, `db.auth` present
 
 ```bash
 git add mise/tasks/fetch-microsoft-certs mise/tasks/generate-auth \
-    elements/config/secureboot-keys.bst elements/stacks/bootc.bst \
-    .gitignore files/microsoft-uefi-certs/
-# Also add loader.conf handling if Option B was chosen
+    elements/config/secureboot-keys.bst elements/config/secureboot-loader-conf.bst \
+    elements/stacks/bootc.bst .gitignore files/microsoft-uefi-certs/ \
+    files/secureboot-loader-conf/
 git commit -m "feat(secure-boot): add .auth file generation and secureboot-keys element
 
 Closes #309
@@ -959,7 +1016,8 @@ if [ "$SECURE" = "true" ]; then
     MACHINE_ARGS="q35,smm=on"
     FLASH_SECURE="-global driver=cfi.pflash01,property=secure,value=on"
 else
-    MACHINE_ARGS="q35"
+    # Non-secure: do NOT change machine type (preserves existing i440fx behavior)
+    MACHINE_ARGS=""
     FLASH_SECURE=""
 fi
 
@@ -1026,26 +1084,25 @@ Assisted-by: Claude Sonnet 4.6"
 
 ---
 
-## Task 8: Add `docs/skills/secure-boot.md` (AGENTS.md mandate)
+## Task 8: Update `docs/SKILL.md` router (AGENTS.md mandate)
 
 **Files:**
-- Create: `docs/skills/secure-boot.md`
+- Modify: `docs/SKILL.md` (add router row)
 
-**Issue:** AGENTS.md Self-Improvement Loop — skill file updates must be in the same PR
+**Issue:** AGENTS.md Self-Improvement Loop
 
-- [ ] **Step 1: Write the skill file**
+**Note:** The skill file entries themselves (`docs/skills/secure-boot.md`) should be written and committed *with* the tasks that produce the learnings (Tasks 4, 5, 6, 7) — not as a trailing task. AGENTS.md is explicit: "A learning committed as a follow-up is a failure of the loop." This task only adds the router entry to `docs/SKILL.md` after the skill file has been created by the earlier tasks.
 
-Create `docs/skills/secure-boot.md` documenting the non-obvious patterns discovered during implementation:
+- [ ] **Step 1: Create `docs/skills/secure-boot.md` incrementally**
 
-- `/boot` is empty in the image (wiped by `stack.bst`) — the UKI is placed at `/boot/EFI/Linux/` by the Containerfile `RUN` step, and bootc discovers it there via `Type2Entry::load_all`
-- `systemd-boot` binary lives at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi` — sign in place, not at `/boot/EFI/systemd/`
-- `--allow-missing-verity` required for `bootc container ukify` in a Containerfile build (no fs-verity support)
-- podman `--secret` mounts for keys — keys never enter the image layer
-- `cert-to-efi-sig-list` takes no type argument; `sign-efi-sig-list` takes the type as first positional
-- `loader.conf` is written at install time by `bootctl install` — not shippable in `/boot/`
-- QEMU secure boot requires q35+smm+secboot OVMF CODE + `secure=on` on pflash
-- Microsoft UEFI CA certs are committed in `files/microsoft-uefi-certs/` (public, not secret)
-- bootc validates the UKI's `composefs=` cmdline matches the deployment ID
+As Tasks 4-7 are implemented, add each non-obvious pattern to `docs/skills/secure-boot.md` and commit it *with* the task that discovered it:
+
+- **Task 4 commit:** add the EFI stub dependency note (`systemd-ukify.bst` is a filter — verify stub is included)
+- **Task 5 commit:** add the `/boot` empty / sign-in-place / `--allow-missing-verity` / `--secret` mount notes
+- **Task 6 commit:** add the `cert-to-efi-sig-list` syntax / `loader.conf` install-time / Microsoft cert location notes
+- **Task 7 commit:** add the QEMU SMM + qcow2/raw pflash format detection notes
+
+Each task's commit includes the corresponding skill file entry — same commit, not a follow-up.
 
 - [ ] **Step 2: Update `docs/SKILL.md` router**
 
@@ -1057,12 +1114,8 @@ Add a row to the Task → Skill table:
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/skills/secure-boot.md docs/SKILL.md
-git commit -m "docs(skills): add secure-boot skill file
-
-Documents non-obvious patterns: empty /boot in image, systemd-boot
-source path, --allow-missing-verity, --secret mounts, cert-to-efi-sig-list
-syntax, loader.conf install-time generation, QEMU SMM requirement.
+git add docs/SKILL.md
+git commit -m "docs(skills): add secure-boot router entry
 
 Assisted-by: Claude Sonnet 4.6"
 ```
@@ -1107,7 +1160,11 @@ Expected: boots to login prompt
 ssh -p 2222 root@localhost
 bootctl status | grep "Secure Boot"      # → enabled (user)
 ls /usr/lib/bootc/install/secureboot-keys/auto/  # → PK.auth KEK.auth db.auth
+# Verify secure-boot-enroll is set in loader.conf on the ESP
+cat /boot/loader/loader.conf | grep secure-boot-enroll  # → secure-boot-enroll manual
 ```
+
+Note: the `secure-boot-enroll` setting is written by the oneshot service from Task 6 Step 8 on first boot. In QEMU testing with pre-enrolled OVMF vars, this setting is not functionally tested (keys are already in firmware), but verify it structurally — the line must be present in `loader.conf` on the ESP.
 
 - [ ] **Step 5: Verify fido2-luks unlock still works**
 
@@ -1167,7 +1224,7 @@ Assisted-by: Claude Sonnet 4.6'
 
 3. **systemd-boot is signed at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`**, not at `/boot/EFI/systemd/systemd-bootx64.efi`. `/boot` is empty in the image. `bootc install --bootloader systemd` runs `bootctl install` which copies the binary from `/usr/lib/` to the ESP.
 
-4. **bootc discovers UKIs at `/boot/EFI/Linux/`** in the composefs image tree. The Containerfile `RUN` step places the UKI there. bootc's `Type2Entry::load_all` finds it and validates the `composefs=` cmdline matches the deployment ID.
+4. **UKI discovery is a hypothesis verified by Task 3.** bootc is expected to discover UKIs at `/boot/EFI/Linux/` in the composefs image tree. The exact internal mechanism (e.g. `Type2Entry::load_all` in composefs-rs) is unverified for v1.16.3 — Task 3 confirms it. Do not rely on the symbol name until verified.
 
 5. **`cert-to-efi-sig-list` takes NO type argument.** Its syntax is `cert-to-efi-sig-list <cert.der> <output.esl>`. `sign-efi-sig-list` takes the type (`PK`, `KEK`, `db`) as its first positional — that's the variable name being updated.
 
