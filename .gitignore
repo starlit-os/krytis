@@ -34,6 +34,9 @@ files/boot-keys/
 .opencode/*
 !.opencode/skills/
 
+# pi local state
+.pi-subagents
+
 # Claude Code local state (AGENTS.md and .claude/commands/ are committed)
 .claude/settings.local.json
 
