@@ -438,6 +438,7 @@ Secrets that must never enter the repo (e.g. signing keys) are retrieved with [`
 - One-time setup on a dev machine: `pass-cli login` (browser-based). After that, `fnox get SECRET_NAME` resolves the reference and prints the value to stdout.
 - Tasks that consume secrets (e.g. `mise/tasks/pull-keys`, #311) loop over the `fnox.toml` secret names, redirect `fnox get` output to the destination file, and validate the result (`openssl x509 -noout`, `openssl rsa -check`) — a fnox misconfiguration or an empty vault field fails loudly instead of writing a garbage key file.
 - Retrieved secrets land in a gitignored path (e.g. `files/boot-keys/`), never committed.
+- `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (`pass-cli = "latest"`) in the project `mise.toml` — same dev-host-tooling pattern as `just`. `mise install` then provisions it automatically; no manual download step.
 
 `usage lint` cannot parse plain bash task files without `#USAGE` annotations (it expects a KDL spec) — this is expected and not a lint failure; it applies equally to every existing task that has no `#USAGE` block (e.g. `symbols-nerd-font-update`).
 
