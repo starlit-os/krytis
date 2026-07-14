@@ -1,3 +1,7 @@
+[tool_alias]
+# pass-cli has no aqua/asdf backend; resolve the short name to the GitHub backend.
+pass-cli = "github:protonpass/pass-cli"
+
 [tools]
 usage = "latest"
 python = "3.12"
@@ -8,6 +12,9 @@ bat = "latest"
 # Sourced from mise (aqua) rather than a BST element — it is dev-host
 # tooling, not part of the shipped OS runtime.
 just = "latest"
+# pass-cli: required by `mise run pull-keys` (#311) to authenticate against the
+# Proton Pass vault holding secure boot signing keys. Dev-host tooling only.
+pass-cli = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"
