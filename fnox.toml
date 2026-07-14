@@ -1,0 +1,12 @@
+[providers.protonpass]
+type = "proton-pass"
+vault = "Krytis"
+agent_reason = "krytis secure boot key retrieval"
+
+[secrets]
+PK_KEY  = { provider = "protonpass", value = "Secure Boot Keys/PK.key" }
+PK_CRT  = { provider = "protonpass", value = "Secure Boot Keys/PK.crt" }
+KEK_KEY = { provider = "protonpass", value = "Secure Boot Keys/KEK.key" }
+KEK_CRT = { provider = "protonpass", value = "Secure Boot Keys/KEK.crt" }
+DB_KEY  = { provider = "protonpass", value = "Secure Boot Keys/db.key" }
+DB_CRT  = { provider = "protonpass", value = "Secure Boot Keys/db.crt" }

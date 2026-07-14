@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#MISE description="Pull secure boot keys from Proton Pass into files/boot-keys/"
+set -euo pipefail
+
+mkdir -p files/boot-keys/extra-db
+
+# Map fnox secret names to boot-keys filenames
+declare -A KEYS=(
+    [PK_KEY]=PK.key    [PK_CRT]=PK.crt
+    [KEK_KEY]=KEK.key  [KEK_CRT]=KEK.crt
+    [DB_KEY]=db.key    [DB_CRT]=db.crt
+)
+
+for secret in "${!KEYS[@]}"; do
+    dest="files/boot-keys/${KEYS[$secret]}"
+    fnox get "$secret" > "$dest"
+done
+
+chmod 600 files/boot-keys/*.key
+chmod 644 files/boot-keys/*.crt
+
+# Validate keys round-trip cleanly from Proton Pass
+for key in PK KEK db; do
+    openssl rsa -check -in "files/boot-keys/${key}.key" -noout 2>/dev/null || \
+        openssl ec -check -in "files/boot-keys/${key}.key" -noout 2>/dev/null || \
+        { echo "ERROR: ${key}.key failed validation"; exit 1; }
+    openssl x509 -noout -in "files/boot-keys/${key}.crt" || \
+        { echo "ERROR: ${key}.crt failed validation"; exit 1; }
+done
+
+echo "==> Keys pulled and validated in files/boot-keys/"
