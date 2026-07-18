@@ -40,5 +40,13 @@ sources:
   ref: v5.0.0-beta.3-0-g6b3632096231ecde16780937ef7ec26e8a1de388
 
 variables:
+  # tests=disabled: noctalia's meson.build enables `tests: auto` unit test
+  # binaries for debug buildtypes (freedesktop-sdk's default). One of them,
+  # input_password_mode_test, fails to link against v5.0.0-beta.3 — its
+  # meson.build sources list is missing theme/fixed_palette.cpp,
+  # theme/contrast.cpp and render/core/color.cpp (undefined reference to
+  # expandFixedPalettes/applyTerminalPalette/relativeLuminance). We don't
+  # ship or run these test binaries, so disable the option rather than
+  # patch upstream's meson.build.
   meson-local: >-
-    -Djemalloc=disabled
+    -Djemalloc=disabled -Dtests=disabled

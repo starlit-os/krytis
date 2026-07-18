@@ -70,6 +70,30 @@ to a plain SHA when no tag is reachable). Manual-kind elements built on
 "Running commands" stage *after* install-commands succeed; same pattern as
 `desktop/falcond.bst`).
 
+### noctalia unit tests fail to link on debug buildtype (`-Dtests=disabled`)
+
+noctalia's `meson_options.txt` defines `tests: feature, value: auto` ("on for
+unsanitized debug builds"), and freedesktop-sdk's meson buildtype defaults to
+`debug`, so `bst build desktop/noctalia.bst` builds noctalia's unit test
+binaries even though we never run or ship them. As of `v5.0.0-beta.3`, one of
+those targets — `input_password_mode_test` — fails at link time:
+
+```
+undefined reference to `noctalia::theme::expandFixedPalettes(...)'
+undefined reference to `noctalia::theme::applyTerminalPalette(...)'
+undefined reference to `relativeLuminance(Color const&)'
+```
+
+This is an upstream `meson.build` bug: the test's `sources:` list omits
+`src/theme/fixed_palette.cpp`, `src/theme/contrast.cpp`, and
+`src/render/core/color.cpp`, which is where those symbols are actually
+defined (confirmed via `grep -rn` across the checked-out source — don't
+patch noctalia's own `meson.build` sources list to fix this, since upstream
+moves fast pre-1.0 and the fix would need re-verifying on every re-pin).
+Instead, pass `-Dtests=disabled` in `noctalia.bst`'s `meson-local` — we don't
+consume the test binaries, so disabling the whole feature is strictly safer
+than chasing individual broken targets across releases.
+
 ### Hiding the brand logo
 
 The greeter renders a Noctalia brand logo above the login form. Upstream `v1.0.0` added
