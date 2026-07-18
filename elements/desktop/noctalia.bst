@@ -37,7 +37,7 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/noctalia.git
   track: v*
-  ref: v5.0.0-beta2-0-g32bcfb9c9783874c5c0f9709e3f741b07e54ca65
+  ref: v5.0.0-beta.3-0-g6b3632096231ecde16780937ef7ec26e8a1de388
 
 variables:
   meson-local: >-
