@@ -46,6 +46,16 @@ of krytis itself, which is the normal case per `AGENTS.md`'s worktree policy. An
 draft of this task stored `../dakota` and resolved it relative to `$PWD`; it silently
 skipped both repos the first time it ran from a worktree. Keep it a bare name.
 
+## `docs/upstreams.yml` Values Must Not Carry Inline Comments
+
+`mise upstream-sync` parses this file with `awk -F': '` on fixed field names — not a YAML
+library — because the schema is a flat, fixed shape (see the task's own comment on this).
+An inline comment on a value line (e.g. `branch: testing  # rationale`) becomes part of the
+parsed value verbatim, since awk doesn't know `#` starts a comment here. This broke `gh repo
+sync` with an opaque `HTTP 404: Branch not found` when a rationale comment was appended to
+`branch: testing`. Put explanatory comments on their **own line above** the field, never
+trailing on the same line as a value.
+
 ## `mise upstream-sync`
 
 ```bash
