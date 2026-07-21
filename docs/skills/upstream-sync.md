@@ -28,10 +28,16 @@ repos:
 ```
 
 **`branch` is not always the upstream repo's GitHub default branch.** dakota's upstream
-(`projectbluefin/dakota`) defaults to `testing`, its bleeding-edge branch — but the fork
-tracks `main`, the promoted-stable branch (`auto/promote-testing-to-main` handles that
-promotion upstream). Confirm which branch is actually the one worth mining before adding a
-new repo; don't assume `gh repo view --json defaultBranchRef` gives the right answer.
+(`projectbluefin/dakota`) defaults to `testing`, its bleeding-edge branch; `main` is the
+promoted-stable branch (`auto/promote-testing-to-main` handles that promotion upstream).
+Confirm which branch is actually the one worth mining before adding a new repo; don't
+assume `gh repo view --json defaultBranchRef` gives the right answer.
+
+As of 2026-07-21, dakota is tracked on `testing`, not `main` — `main` had zero new commits
+over a 10-day window because promotions from `testing` had stalled, leaving nothing to
+mine. `testing` moves continuously and is where the lessons actually surface first; the
+tradeoff is that a `testing` commit can still get reverted before promotion, so treat
+anything mined from it as provisional until it lands on `main` too.
 
 **`local_path` is a bare directory name, not a relative path.** `mise upstream-sync`
 resolves it against the sibling of krytis's *main* git worktree (via `git worktree list`),
@@ -39,6 +45,16 @@ not `$PWD` — `$PWD` is wrong whenever the task runs from inside a `git worktre
 of krytis itself, which is the normal case per `AGENTS.md`'s worktree policy. An earlier
 draft of this task stored `../dakota` and resolved it relative to `$PWD`; it silently
 skipped both repos the first time it ran from a worktree. Keep it a bare name.
+
+## `docs/upstreams.yml` Values Must Not Carry Inline Comments
+
+`mise upstream-sync` parses this file with `awk -F': '` on fixed field names — not a YAML
+library — because the schema is a flat, fixed shape (see the task's own comment on this).
+An inline comment on a value line (e.g. `branch: testing  # rationale`) becomes part of the
+parsed value verbatim, since awk doesn't know `#` starts a comment here. This broke `gh repo
+sync` with an opaque `HTTP 404: Branch not found` when a rationale comment was appended to
+`branch: testing`. Put explanatory comments on their **own line above** the field, never
+trailing on the same line as a value.
 
 ## `mise upstream-sync`
 

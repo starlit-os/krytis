@@ -55,6 +55,27 @@ A multi-step root cause that took dakota many iterations to resolve. If krytis a
 
 If `bootc install to-disk` defaults to xfs but the image lacks `xfsprogs`, `mkfs.xfs` fails inside the container. The fix is to add `freedesktop-sdk.bst:components/xfsprogs.bst` as a runtime dep of the bootc element. Alternatively, pass `--filesystem ext4` to `bootc install to-disk` in boot-check if the image has ext4 tools but not xfsprogs (filesystem type is irrelevant for a boot-check that only verifies deploy + boot).
 
+### Patch queues on junctions destroy upstream cache reuse
+
+*Source: dakota `dbb9f6d`, `ac100d7`, `1b48630` — `fix(bluefin): remove gnome-build-meta patch queue for 100% cache reuse` + the paired skill docs*
+
+A local `patch_queue` source applied to a junction (`gnome-build-meta.bst`, `freedesktop-sdk.bst`) changes that junction's cryptographic source hash and cache key. BST derives every downstream element's strong cache key from its build-dependencies' keys recursively — so a patch on the junction invalidates the cache key of *everything* the junction provides, not just the patched piece. Dakota carried one small patch (`disable-lorry-mirrors.patch`) on `gnome-build-meta.bst` and it silently forced local compiles of WebKit and other large components instead of pulling from the public `gbm.gnome.org` cache. Removing the patch queue immediately restored 1053/1090 cached elements (96% hit rate).
+
+Krytis has no `patch_queue` source on a junction today, but it does junction both `freedesktop-sdk.bst` and `gnome-build-meta.bst` (see `docs/skills/zirconium-hawaii.md` — krytis doesn't use the gbm junction currently, but if that changes, this is the failure mode to avoid). If a junction-level patch is ever needed: submit it upstream first, or bump the junction ref instead of patching locally. Element-level overrides (`overrides/<name>.bst`, the `frei0r.bst`/`sudo-rs.bst` pattern already used in krytis) don't have this problem — only patches applied directly to a junction's own source do.
+
+### Verify nested-junction ref consistency before merging a bump
+
+*Source: dakota `docs/skills/patch-junctions.md` — "found in the wild: testing pinned fdsk 25.08.12 while gbm 50.2-2 expects 25.08.13"*
+
+When a project junctions both `gnome-build-meta.bst` and `freedesktop-sdk.bst` directly, `gnome-build-meta` also pins its own expected `freedesktop-sdk` ref internally. If the project's own `freedesktop-sdk.bst` ref drifts out of sync with what the pinned `gnome-build-meta` commit expects, downstream cache keys diverge from the upstream `gbm.gnome.org` cache and builds silently fall back to local compiles — no error, just cold-cache CI. Before merging any junction ref bump, check the two refs agree:
+
+```bash
+curl -fsSL "https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/<gbm-sha>/elements/freedesktop-sdk.bst" | grep -m1 ref:
+grep -m1 ref: elements/freedesktop-sdk.bst   # must match
+```
+
+Krytis doesn't currently junction `gnome-build-meta` (per `docs/skills/zirconium-hawaii.md`), so this doesn't apply yet — but it's the exact check to add to `track-core-junctions`-style tooling the day that junction is added.
+
 ### Drop stale `gtk-doc` override
 
 *Source: zirconium-hawaii `b96b398` / [gnome-build-meta `1d96e6f`](https://gitlab.gnome.org/GNOME/gnome-build-meta/-/commit/1d96e6f43e8f6c0db4441ec2d51c1250c22275e7)*
