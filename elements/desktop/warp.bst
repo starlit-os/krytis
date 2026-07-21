@@ -1,3 +1,5 @@
+kind: manual
+
 # Warp: agentic terminal (https://warp.dev). Closes #315.
 #
 # Official prebuilt .deb from Warp's own apt repository — no build from
