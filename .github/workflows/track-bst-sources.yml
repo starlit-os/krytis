@@ -35,6 +35,8 @@ on:
           - zed
           - chunkah
           - zen-browser
+          - kmscon
+          - libtsm
 
 permissions: read-all
 
@@ -630,6 +632,8 @@ jobs:
       github.event.inputs.group == 'noctalia-greeter' ||
       github.event.inputs.group == 'md4c' ||
       github.event.inputs.group == 'stb' ||
+      github.event.inputs.group == 'kmscon' ||
+      github.event.inputs.group == 'libtsm' ||
       github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -704,6 +708,14 @@ jobs:
             element: desktop/stb.bst
             branch: auto/track-stb
             title: "chore(deps): update stb"
+          - group: kmscon
+            element: desktop/kmscon.bst
+            branch: auto/track-kmscon
+            title: "chore(deps): update kmscon"
+          - group: libtsm
+            element: desktop/libtsm.bst
+            branch: auto/track-libtsm
+            title: "chore(deps): update libtsm"
 
     steps:
       - name: Checkout repository
