@@ -22,6 +22,12 @@ depends:
   # ── Terminal ────────────────────────────────────────────────────────────
   - desktop/ghostty.bst
 
+  # ── Virtual console (VT2-4) ─────────────────────────────────────────────
+  # kmscon replaces fbcon with a KMS/DRM-rendered console on VT2-4, leaving
+  # VT1 to greetd. config/kmscon.bst installs the preset enabling only the
+  # tty2/tty3/tty4 instances of kmsconvt@.
+  - config/kmscon.bst
+
   # ── XDG portals ────────────────────────────────────────────────────────
   # xdg-desktop-portal (base daemon) is pulled in transitively.
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst

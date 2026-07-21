@@ -1319,8 +1319,20 @@ Lesson: before porting a dakota element to krytis, check the target files agains
 | cage | `Hjdskes/cage` (sr.ht) | `github_files:cage-kiosk/cage` |
 | wlr-randr | `sr.ht/~emersion/wlr-randr` | `freedesktop_files:emersion/wlr-randr` |
 | noctalia-shell | `noctalia-dev/noctalia-shell` | `github:noctalia-dev/noctalia` (`git_repo`) |
+| kmscon | `Aetf/kmscon` (personal fork) | `github:kmscon/kmscon` (`git_repo`) |
+| libtsm | `Aetf/libtsm` (personal fork) | `github:kmscon/libtsm` (`git_repo`) |
 
 Always verify the canonical URL when vendoring a source for the first time.
+
+## fdsdk mesa doesn't expose `egl.pc` / `glesv2.pc` via pkg-config
+
+Even with mesa built `-Degl=enabled -Dgles2=enabled`, a plain `dependency('egl')` or `dependency('glesv2')` in a consuming project's meson.build will fail to resolve, regardless of `PKG_CONFIG_PATH` pointing at mesa's `GL/default/lib/pkgconfig` (see the prepend-mesa-env pattern above). `freedesktop-sdk.bst:components/libglvnd.bst` deliberately `rm`s `egl.pc`, `gl.pc`, `glesv2.pc`, and `glesv1_cm.pc` from its own install output, and mesa's own `GL/default` split only ships `gbm.pc`/`libdrm*.pc` — no EGL/GLES2 `.pc` files exist anywhere in the dependency graph. Projects that need actual GPU-accelerated GL/EGL (wlroots, niri) sidestep this by using `libepoxy` (dlopen-based GL/EGL loading, no `.pc` needed at compile time) instead of linking `libEGL`/`libGLESv2` directly.
+
+If a new element's meson.build has a hard `dependency('egl')`/`dependency('glesv2')` requirement with no libepoxy option, the pragmatic fix is to disable the feature that pulls it in (e.g. kmscon's `video_drm3d`/`renderer_gltex`) and fall back to a software/DRM2D path instead, rather than trying to manufacture the missing `.pc` files. See `elements/desktop/kmscon.bst`.
+
+## Enabling one instance of a templated getty-replacement unit, never the bare template
+
+Some VT console emulators (kmscon's `kmsconvt@.service`, similarly `agetty@.service`) ship an `[Install]` section with `Alias=autovt@.service` and `DefaultInstance=tty1` — enabling the bare template (`systemctl enable kmsconvt@`) makes systemd-logind spawn it in place of `getty@tty1`, i.e. VT1. If VT1 is already owned by another service (greetd, in krytis), do **not** enable the bare template. Enable only the specific instances you want (`enable kmsconvt@tty2.service`, `tty3`, `tty4`, ...) via the system-preset file — each instance's `Conflicts=getty@%i.service` then only conflicts with that VT's getty, leaving VT1 untouched. See `elements/config/kmscon.bst`.
 
 ## Commit-SHA Source Pinning (Repos Without Release Tags)
 
