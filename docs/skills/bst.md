@@ -416,6 +416,18 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
 
+### Verify a track: glob only matches the intended release channel
+
+A `track:` glob that's too loose, or that names a branch instead of a tag pattern, silently
+drifts an element onto untagged/edge commits — `bst source track` succeeds either way, so
+nothing flags the mistake at build time. zirconium-hawaii hit this on `linux-ogc.bst`:
+`track: "ogc-*"` also matched pre-release tags from the same project, and a second source
+in the same element used `track: "main"` (a branch) when it meant to follow tags. Both
+were corrected to `track: "v*-ogc*"`, which matches only the intended stable-release tag
+shape. When adding or reviewing a `track:` glob, check it against the upstream's actual tag
+list (`git ls-remote --tags <url>`) rather than assuming the glob is selective enough, and
+never point `track:` at a branch name when tag-pinned stability is the goal.
+
 ### tar → git_repo switch when releases appear
 
 A `kind: tar` element pinned to a commit SHA (because the upstream had no release

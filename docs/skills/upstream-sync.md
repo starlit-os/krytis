@@ -28,10 +28,16 @@ repos:
 ```
 
 **`branch` is not always the upstream repo's GitHub default branch.** dakota's upstream
-(`projectbluefin/dakota`) defaults to `testing`, its bleeding-edge branch — but the fork
-tracks `main`, the promoted-stable branch (`auto/promote-testing-to-main` handles that
-promotion upstream). Confirm which branch is actually the one worth mining before adding a
-new repo; don't assume `gh repo view --json defaultBranchRef` gives the right answer.
+(`projectbluefin/dakota`) defaults to `testing`, its bleeding-edge branch; `main` is the
+promoted-stable branch (`auto/promote-testing-to-main` handles that promotion upstream).
+Confirm which branch is actually the one worth mining before adding a new repo; don't
+assume `gh repo view --json defaultBranchRef` gives the right answer.
+
+As of 2026-07-21, dakota is tracked on `testing`, not `main` — `main` had zero new commits
+over a 10-day window because promotions from `testing` had stalled, leaving nothing to
+mine. `testing` moves continuously and is where the lessons actually surface first; the
+tradeoff is that a `testing` commit can still get reverted before promotion, so treat
+anything mined from it as provisional until it lands on `main` too.
 
 **`local_path` is a bare directory name, not a relative path.** `mise upstream-sync`
 resolves it against the sibling of krytis's *main* git worktree (via `git worktree list`),

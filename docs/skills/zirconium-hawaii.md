@@ -124,6 +124,25 @@ Keys are generated locally with `just generate-keys <vendor>` and stored in `fil
 
 Without `--composefs-backend`, bootc takes the traditional ostree path and requires bootupd. bootupd's `generate-update-metadata` relies on RPM-registered EFI component metadata and fails on non-RPM (BST) builds. The composefs path is the correct approach for BST-built images.
 
+## Removing a Broken Upstream profile.d Script
+
+freedesktop-sdk ships `/etc/profile.d/fcitx5.sh` (fcitx5 is a transitive fdsdk dependency,
+so krytis inherits this file too). Without fcitx5 actually configured, the script does
+nothing useful and breaks the Steam overlay. zirconium-hawaii's fix is to remove the file
+from the image via `remove-files:` in `elements/zirconium/common.bst` rather than patch or
+disable it in freedesktop-sdk itself — a narrowly-scoped `remove-files:` on the file, kept
+in place until fcitx5 support is actually wired up, not a permanent fix.
+
+## Disabling a Redundant Service via systemd Preset
+
+To drop avahi (redundant once systemd-resolved is in use), zirconium-hawaii doesn't remove
+an avahi element — it ships a systemd preset file (`files/systemd-zirconium/10-zirconium.preset`)
+that disables `avahi-daemon.service` and `avahi-daemon.socket` by default. This is the right
+pattern when the package/element is still installed (e.g. as a transitive dependency you
+don't control) but shouldn't run: a preset-file disable is declarative and shows up
+alongside other service-default overrides, versus deleting the element outright (which only
+works if nothing else depends on it).
+
 ## Referencing This Project
 
 When borrowing an element or pattern, copy from `../zirconium-hawaii/elements/` and adapt — don't symlink or junction into zirconium-hawaii from Krytis. Both projects maintain independent BST artifact caches and element trees.
