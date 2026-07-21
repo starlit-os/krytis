@@ -1673,6 +1673,8 @@ The path is also FDSDK-version-specific. zirconium-hawaii hit a silent break fro
 
 lynx completely fails to build on FDSDK 25.08.13 (no diagnostics, just a build failure). zirconium-hawaii switched to `w3m` as the text browser. Krytis currently uses lynx transitively via `elements/desktop/xdg-utils.bst` (the `xmlto`/docbook text-browser toolchain). When krytis bumps to FDSDK 25.08.13+, this may need the same switch — watch for a lynx build failure on the next junction bump.
 
+**Does not apply to krytis.** `elements/desktop/xdg-utils.bst` (krytis's only transitive consumer of lynx-style doc tooling) never invokes `xmlto`/`docbook-xml`/`docbook-xsl`/`lynx` — its `build-commands` generate stub `.txt` synopsis files directly instead of running a real text-browser doc pipeline, and its `build-depends`/`depends` list has no lynx dependency. Confirmed 2026-07-21 while auditing issue #305's migration concerns. No w3m swap needed here (contrast with zirconium-hawaii, where this issue is real).
+
 ## Don't hardcode `mesa.bst` as a runtime dep for apps
 
 *Source: zirconium-hawaii `517ff98` — `chore: remove mesa as runtime dependency for apps`*
