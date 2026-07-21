@@ -15,6 +15,7 @@ aliases:
   gnome_downloads: https://download.gnome.org/sources/
   proton_me: https://proton.me/
   pypi: https://files.pythonhosted.org/packages/
+  warp_releases: https://releases.warp.dev/
 
   # git aliases
   codeberg: https://codeberg.org/
