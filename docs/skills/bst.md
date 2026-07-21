@@ -567,6 +567,19 @@ config:
 
 **Version discovery (Proton apps):** `https://proton.me/download/PassDesktop/linux/x64/version.json` returns `{"Releases": [{"CategoryName": "Stable", "Version": "X.Y.Z", ...}]}`. Parse with Python: `[r for r in data['Releases'] if r['CategoryName'] == 'Stable'][0]['Version']`.
 
+### Vendor apt/yum repos as a pinnable prebuilt-binary source (e.g. Warp)
+
+Before concluding "no pinnable binary exists, must build from source": check whether the vendor runs their own apt/yum repo, not just GitHub Releases or a client-rendered `/download` redirect page. Warp (`warpdotdev/warp` — closes #315) was initially assessed as source-only because:
+
+- GitHub Releases ship source tarballs only (`assets: []`).
+- `app.warp.dev/get_warp?package=deb` returns `200` HTML with no static `Location` header — not pinnable.
+
+Both true, but irrelevant — Warp publishes its own apt repo at `https://releases.warp.dev/linux/deb/dists/stable/main/binary-{amd64,arm64}/Packages`, a plain-text RFC822 Packages index with versioned `Filename`, `Size`, and `SHA256` per package, refreshed on every stable release. **Always check for a vendor-run apt/yum repo before accepting a from-source build as the only option** — search `releases.<vendor>.dev`, `apt.<vendor>.com`, `<vendor>.com/linux/{deb,rpm}`, or grep the vendor's own install docs for `add-apt-repository` / `.repo` file instructions.
+
+- **`Filename` in a Packages/Release file is root-relative, not directory-relative.** The apt client resolves it against the repo root configured in `sources.list` (here `linux/deb/`), not against the `dists/stable/main/binary-amd64/` path the Packages file itself lives at. Warp's `Filename: ../../stable/vX.Y.stable_NN/pkg_amd64.deb` resolves to `https://releases.warp.dev/stable/vX.Y.stable_NN/pkg_amd64.deb` (two `../` cancel `linux/deb/` entirely) — **not** `.../linux/deb/dists/stable/stable/...` as naive relative-path math from the Packages file's own directory would suggest. Verify by fetching the resolved URL before hand-deriving a mise update task's URL construction.
+- **`postinst` symlinks are not present in `data.tar.xz`.** Some `.deb`s (Warp included) rely on `postinst` to create `/usr/bin/<name>` pointing at a binary installed elsewhere (e.g. `/opt/vendor/app/bin`), rather than shipping the symlink in the tarball itself. BST never runs maintainer scripts. Check `control.tar.xz`'s `postinst`/`postrm` for `ln -s` before assuming `cp -a usr "%{install-root}/"` alone gives you a working `$PATH` entry — recreate the symlink manually in `install-commands` if so, mirroring exactly what `postinst` does (source path, target path, symlink vs hardlink).
+- **`ar` isn't guaranteed in ad-hoc investigation shells** — only in the BST build sandbox (`freedesktop-sdk.bst:components/binutils.bst`). If parsing a `.deb`'s ar-archive layout outside BST (e.g. to inspect `postinst` before writing the element), the `ar` format is trivial to hand-parse: `!<arch>\n` magic, then repeating 60-byte member headers (name at offset 0 len 16, size as ASCII decimal at offset 48 len 10), member data padded to an even byte boundary.
+
 ### Bundled-app tarballs with RPATH structure (e.g. Zed)
 
 Some apps ship a self-contained tarball (`app.tar.gz → app.app/`) with an internal layout that encodes RPATH. For example, Zed's `bin/zed` has `RPATH: $ORIGIN/../lib` — it expects bundled `.so` files at `../lib` relative to the binary. If you install `bin/zed` to `/usr/bin/zed`, `$ORIGIN/../lib` resolves to `/usr/lib/`, which is the **system** lib directory, not the bundled libs.

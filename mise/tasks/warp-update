@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#MISE description="Update warp element to the latest stable release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/warp.bst"
+PACKAGES_URL_AMD64="https://releases.warp.dev/linux/deb/dists/stable/main/binary-amd64/Packages"
+PACKAGES_URL_ARM64="https://releases.warp.dev/linux/deb/dists/stable/main/binary-arm64/Packages"
+
+# Extracts the warp-terminal stanza from an apt Packages file (RFC822-ish;
+# stanzas separated by blank lines).
+extract_stanza() {
+  awk '/^Package: warp-terminal$/{p=1} p{print} p && /^$/{exit}'
+}
+
+echo "==> Fetching latest warp-terminal Packages metadata..."
+AMD64_META=$(curl -sSL "$PACKAGES_URL_AMD64" | extract_stanza)
+ARM64_META=$(curl -sSL "$PACKAGES_URL_ARM64" | extract_stanza)
+
+LATEST_VER=$(grep -oP '^Version: \K.+' <<< "$AMD64_META")
+FILENAME_AMD64=$(grep -oP '^Filename: \K.+' <<< "$AMD64_META")
+FILENAME_ARM64=$(grep -oP '^Filename: \K.+' <<< "$ARM64_META")
+SHA256_AMD64=$(grep -oP '^SHA256: \K.+' <<< "$AMD64_META")
+SHA256_ARM64=$(grep -oP '^SHA256: \K.+' <<< "$ARM64_META")
+
+echo "==> Latest: ${LATEST_VER}"
+
+CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+# Filename is relative to the repo root (one level above dists/), e.g.
+# "../../stable/vX.Y.stable_NN/warp-terminal_X.Y.stable.NN_amd64.deb"
+# resolves to https://releases.warp.dev/stable/vX.Y.stable_NN/warp-terminal_...
+POOL_PATH_AMD64="${FILENAME_AMD64#../../}"
+POOL_PATH_ARM64="${FILENAME_ARM64#../../}"
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} -> ${LATEST_VER}"
+
+sed -i "s|version: \"${CURRENT_VER}\"|version: \"${LATEST_VER}\"|" "${ELEMENT}"
+
+sed -i "/arch == \"x86_64\"/,+2 {
+  s|url: warp_releases:.*|url: warp_releases:${POOL_PATH_AMD64}|
+  s|ref: .*|ref: ${SHA256_AMD64}|
+}" "${ELEMENT}"
+
+sed -i "/arch == \"aarch64\"/,+2 {
+  s|url: warp_releases:.*|url: warp_releases:${POOL_PATH_ARM64}|
+  s|ref: .*|ref: ${SHA256_ARM64}|
+}" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."
