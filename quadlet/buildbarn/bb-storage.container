@@ -22,4 +22,4 @@ Volume=buildbarn-storage-fsac.volume:/data/storage-fsac
 Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

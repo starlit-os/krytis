@@ -21,4 +21,4 @@ Volume=buildbarn-asset-cache.volume:/data/asset-cache
 Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
