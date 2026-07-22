@@ -1,8 +1,0 @@
-[Unit]
-Description=krytis Buildbarn CAS network
-
-[Network]
-Internal=false
-
-[Install]
-WantedBy=default.target

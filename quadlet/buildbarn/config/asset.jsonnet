@@ -2,7 +2,9 @@ local common = import 'common.libsonnet';
 
 {
   contentAddressableStorage: {
-    grpc: { client: { address: 'bb-storage:8981' } },
+    // No bridge network (see bb-asset.container Network=host) — reach
+    // bb-storage via its host-published port instead of a container DNS name.
+    grpc: { client: { address: 'localhost:7982' } },
   },
   assetCache: {
     blobAccess: {
@@ -30,12 +32,17 @@ local common = import 'common.libsonnet';
   // this is what lets a source that later 404s upstream (e.g. #233) stay
   // retrievable once it has been fetched into the cache at least once.
   fetcher: { http: {} },
-  global: common.globalWithDiagnostics(':9981'),
+  global: common.globalWithDiagnostics(':9982'),
   grpcServers: [{
-    listenAddresses: [':8981'],
+    listenAddresses: [':7981'],
     tls: {
-      serverCertificate: importstr '/certs/server.crt',
-      serverPrivateKey: importstr '/certs/server.key',
+      serverKeyPair: {
+        files: {
+          certificatePath: '/certs/server.crt',
+          privateKeyPath: '/certs/server.key',
+          refreshInterval: '3600s',
+        },
+      },
     },
     authenticationPolicy: common.tlsAuthenticationPolicy,
   }],

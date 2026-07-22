@@ -170,6 +170,25 @@ There's no `buildbarn:start`/`buildbarn:stop` mise task — quadlet-generated
 a mise task would just be a less capable wrapper around the thing systemd
 already provides.
 
+### Quadlet-generated units cannot be `systemctl enable`d
+
+`systemctl --user enable --now bb-storage.service` fails with:
+
+```
+Failed to enable unit: Unit /run/user/1000/systemd/generator/bb-storage.service is transient or generated
+```
+
+Quadlet units aren't real unit files on disk — they're generated into
+`/run/user/<uid>/systemd/generator/` (or the system equivalent) by
+`podman-system-generator` at every `daemon-reload`, and `systemctl enable`
+only works on persisted unit files it can symlink. The `[Install]` section's
+`WantedBy=` is instead honored **by the generator itself**, which creates
+the `default.target.wants/bb-storage.service -> ../bb-storage.service`
+symlink directly inside `/run` as part of generation — confirm with
+`ls /run/user/<uid>/systemd/generator/default.target.wants/`. So the correct
+lifecycle is just `systemctl --user start`/`stop`; there is no `enable`/
+`disable` step, and `mise buildbarn:install` no longer attempts one.
+
 ### Rootless (`--user`) first, system-level later
 
 The units currently target **rootless, user-level** Quadlet
@@ -223,19 +242,115 @@ quadlet units with `QUADLET_UNIT_DIRS=<dir> /usr/libexec/podman/quadlet
 -dryrun -no-kmsg-log` and grep the `ExecStart=` line for the `systemd-`
 prefix on every volume reference before trusting the unit.
 
-### First-deploy verification still pending
+### Rootless bridge networking needs nft/iptables — use `Network=host` instead
 
-The jsonnet configs and quadlet units in this section are a first pass
-written against Buildbarn's documented config schema and `bb-deployments`
-reference examples. Unit *syntax* has been verified with
-`/usr/libexec/podman/quadlet -dryrun` in both system and `-user` mode (see
-above) — actual service startup, mTLS handshake, and the push/pull
-authorizer split have not. Local rootless testing flow:
+A custom Quadlet `.network` unit (`podman network create`, netavark backend)
+failed on this dev box with:
+
+```
+Error: netavark: code: 3, msg: modprobe: ERROR: could not insert 'ip_tables': Operation not permitted
+iptables v1.8.13 (legacy): can't initialize iptables table `nat': Table does not exist
+```
+
+Rootless bridge networking needs NAT (iptables/nftables) support in the
+user namespace, which isn't guaranteed to be available (missing `nft`
+binary, restricted kernel module loading, etc.). Buildbarn's own two
+services don't need a bridge network's DNS-by-container-name convenience
+badly enough to justify that fragility for local/dev use: `bb-storage` and
+`bb-asset` both use `Network=host` and reach each other over `localhost`
+at their published ports instead of a `bb-storage:8981`-style container DNS
+name. This does mean the two services can no longer share port `8981`
+internally — each needs a distinct host-facing port baked directly into
+its own `grpcServers.listenAddresses` (no publish-time remapping exists
+under `Network=host`).
+
+If the shared runner box turns out to support rootless bridge networking
+fine, reintroducing a `.network` unit there is a reasonable follow-up —
+just re-run the `modprobe ip_tables`/`nft` check first rather than assuming
+it'll work because it works elsewhere.
+
+### `Exec=` takes the config path positionally, not as `-config <path>`
+
+`Exec=-config /config/storage.jsonnet` produces `Usage: bb_storage
+bb_storage.jsonnet` and exits — both `bb_storage` and `bb_remote_asset`
+take the jsonnet config path as a bare positional argument. `-config` looks
+like a plausible flag by analogy with other Buildbarn-adjacent tooling but
+isn't one here.
+
+### TLS server cert: `serverKeyPair.files`, not `serverCertificate`/`serverPrivateKey`, and `refreshInterval` is mandatory
+
+The `tls.proto` `ServerConfiguration` message **reserves** the old flat
+`server_certificate`/`server_private_key` fields (present in some outdated
+examples floating around) in favor of a `server_key_pair` oneof:
+`inline: {certificate, privateKey}` (raw PEM strings — forces
+`importstr`, see below) or `files: {certificatePath, privateKeyPath,
+refreshInterval}`. Use `files` — it also means the daemon can hot-reload a
+rotated cert without a restart. `refreshInterval` looks optional but isn't:
+leaving it unset produces `Failed to parse refresh interval: proto: invalid
+nil Duration`. Set it explicitly even for a cert that's never rotated
+(e.g. `'3600s'`).
+
+### jsonnet `importstr`/`import` require a string literal path
+
+`importstr certDir + '/ca.crt'` (concatenating a local variable) fails with
+`RUNTIME ERROR: Computed imports are not allowed`. The path has to be
+written out in full at each call site — no path-prefix variable, no
+helper function wrapping it.
+
+### mTLS authorization requires an explicit metadata-extraction expression — it isn't automatic
+
+Setting `tlsClientCertificate.clientCertificateAuthorities` is enough to
+*authenticate* a connection (verify the client cert against the CA), but on
+its own it does **not** populate `AuthenticationMetadata` for any later
+Authorizer to read. `AuthorizerConfiguration`'s `jmespath_expression`
+variant runs against `{authenticationMetadata, files, instanceName}` — if
+`authenticationMetadata.public`/`.private` were never populated, an
+expression like `contains(authenticationMetadata.public.uris, ...)`
+simply evaluates against a null/missing field. The
+`tlsClientCertificate` policy needs its own
+`metadataExtractionJmespathExpression` (e.g. `` `{public: {uris: uris}}` ``
+— same `{dnsNames, emailAddresses, uris}` SAN context as the validation
+expression) to actually carry the cert's SAN into
+`AuthenticationMetadata.public` where the per-operation Authorizer can see
+it. Two separate jmespath expressions, two separate jobs: validation
+decides *whether* the handshake authenticates; metadata-extraction decides
+*what* gets handed to authorization.
+
+### A raw TLS handshake succeeding without a client cert doesn't mean mTLS isn't enforced
+
+`openssl s_client -connect host:port` (no `-cert`/`-key`) completing with
+`Verify return code: 0 (ok)` only proves the *server's* cert validated —
+it says nothing about whether the connection would be authorized to make an
+actual gRPC call. Buildbarn's TLS client-cert policy operates at the gRPC
+interceptor layer (per the client-cert config's own docs: a validation
+failure returns gRPC `UNAUTHENTICATED`, not a TLS handshake abort) so the
+TCP/TLS layer deliberately completes even for an unauthenticated peer.
+Confirming the push/pull split actually holds requires a real gRPC call
+(e.g. `bst source push`/`bst artifact push` once #339/#340 wire
+`project.conf` at this remote) — a bare `openssl s_client` probe is not
+sufficient evidence either way.
+
+### Freshly created named volumes need `persistent_state` pre-created
+
+Neither `bb_storage` nor `bb_remote_asset` create their own
+`persistent_state` subdirectory inside a brand-new (empty) data volume —
+first start fails with `Failed to open persistent state directory ...: no
+such file or directory`. `mise buildbarn:install` seeds each of the four
+named volumes with an empty `persistent_state/` dir via a throwaway
+`busybox` container before starting the services; skip this step and a
+fresh volume will not come up.
+
+### First-deploy verification
+
+All of the above was found and fixed by actually running
 `mise buildbarn:certs-init` → `mise buildbarn:install` →
-`mise buildbarn:status`. Before relying on this in CI on the shared runner
-box, confirm a `pull`-cert client can fetch and only the `ci-push`-cert
-client can push (a `pull`-cert push attempt should fail, not silently
-succeed).
+`mise buildbarn:status` end-to-end on a rootless dev box, not by reading
+docs alone — `bb-storage` and `bb-asset` both reach `active (running)`
+and bind their expected ports from a clean slate (no existing volumes/certs).
+What's still unverified: the mTLS push/pull authorization split under a
+real gRPC client (see above), and behavior once this moves to the shared
+runner box as a system-level service (see "Rootless first, system-level
+later" above).
 
 ## Workflow Runner Choices
 

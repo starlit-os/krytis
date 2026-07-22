@@ -2,10 +2,17 @@ local common = import 'common.libsonnet';
 
 {
   grpcServers: [{
-    listenAddresses: [':8981'],
+    listenAddresses: [':7982'],
     tls: {
-      serverCertificate: importstr '/certs/server.crt',
-      serverPrivateKey: importstr '/certs/server.key',
+      serverKeyPair: {
+        files: {
+          certificatePath: '/certs/server.crt',
+          privateKeyPath: '/certs/server.key',
+          // Required even for a cert that won't be rotated — Files.refresh_interval
+          // being unset (nil Duration) is a hard error, not a "never refresh" default.
+          refreshInterval: '3600s',
+        },
+      },
     },
     authenticationPolicy: common.tlsAuthenticationPolicy,
   }],
