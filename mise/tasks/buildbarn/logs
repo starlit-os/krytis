@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#MISE description="Follow Buildbarn CAS service logs"
+#MISE description="Follow Buildbarn CAS service logs (rootless, systemctl --user)"
 
 set -euo pipefail
 
-journalctl -u bb-storage.service -u bb-asset.service -f
+journalctl --user -u bb-storage.service -u bb-asset.service -f

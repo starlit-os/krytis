@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="Stop and remove the local Buildbarn CAS quadlet units (keeps certs and cache data)"
+
+set -euo pipefail
+
+QUADLET_DEST="${HOME}/.config/containers/systemd"
+
+echo "==> Stopping bb-storage / bb-asset..."
+systemctl --user stop bb-asset.service bb-storage.service 2>/dev/null || true
+systemctl --user disable bb-asset.service bb-storage.service 2>/dev/null || true
+
+echo "==> Removing quadlet unit files from ${QUADLET_DEST}..."
+rm -f "${QUADLET_DEST}"/bb-storage.container "${QUADLET_DEST}"/bb-asset.container \
+      "${QUADLET_DEST}"/buildbarn.network \
+      "${QUADLET_DEST}"/buildbarn-storage-cas.volume \
+      "${QUADLET_DEST}"/buildbarn-storage-ac.volume \
+      "${QUADLET_DEST}"/buildbarn-storage-fsac.volume \
+      "${QUADLET_DEST}"/buildbarn-asset-cache.volume
+
+systemctl --user daemon-reload
+
+echo "==> Done. Certs (~/.local/share/buildbarn/certs) and cache data (podman volumes) were left in place."
+echo "    Remove podman volumes manually with 'podman volume rm systemd-buildbarn-storage-cas' etc. if you want a clean slate."

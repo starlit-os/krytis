@@ -156,12 +156,36 @@ The self-hosted runner (`mise runner:*`) is manually started/stopped around
 CI activity — a `podman run` wrapper fits that lifecycle. Buildbarn is a
 **persistent** host service that should survive reboots and restart on
 failure, so it's modeled as Podman Quadlet units (`quadlet/buildbarn/`)
-instead: `systemctl start/stop bb-storage bb-asset` after
+instead: `systemctl --user start/stop bb-storage bb-asset` after
 `mise buildbarn:install` copies the units into
-`/etc/containers/systemd/` and reloads systemd. There's no `buildbarn:start`/
-`buildbarn:stop` mise task — quadlet-generated `.service` units already give
-us that via `systemctl`, and duplicating it in a mise task would just be a
-less capable wrapper around the thing systemd already provides.
+`~/.config/containers/systemd/` and reloads the user systemd manager.
+There's no `buildbarn:start`/`buildbarn:stop` mise task — quadlet-generated
+`.service` units already give us that via `systemctl`, and duplicating it in
+a mise task would just be a less capable wrapper around the thing systemd
+already provides.
+
+### Rootless (`--user`) first, system-level later
+
+The units currently target **rootless, user-level** Quadlet
+(`~/.config/containers/systemd/`, `WantedBy=default.target`,
+`systemctl --user`) rather than system-level
+(`/etc/containers/systemd/`, `WantedBy=multi-user.target`, `sudo systemctl`)
+— deliberately, so this can be brought up and torn down on a normal dev
+box with `mise buildbarn:install` / `buildbarn:uninstall` while the design
+is still being verified, with no `sudo` required. `%h` in a Quadlet unit
+resolves to the *running user's* home directory in both modes, so the unit
+files themselves don't need to change when this eventually moves to the
+shared runner box as a system-level service — only the install
+destination, `WantedBy=` target, and the `systemctl`/`journalctl` invocation
+(drop `--user`) change. When that migration happens, re-run the
+`quadlet -dryrun` check (below) against both modes, since the generator
+resolves `%h` differently for a system unit (root's home, not the invoking
+user's) if the service isn't given an explicit `User=`.
+
+Rootless user services stop when the login session ends unless
+`loginctl enable-linger <user>` has been run — not needed for interactive
+local testing, but required before this is useful unattended even in
+user-mode.
 
 ### mTLS: SAN-based push/pull split, not CN
 
@@ -197,11 +221,15 @@ prefix on every volume reference before trusting the unit.
 
 The jsonnet configs and quadlet units in this section are a first pass
 written against Buildbarn's documented config schema and `bb-deployments`
-reference examples — not yet exercised against a live deploy. Before relying
-on this in CI, run `mise buildbarn:install` on the runner box and confirm:
-both services start (`mise buildbarn:status`), a `pull`-cert client can
-fetch, and only the `ci-push`-cert client can push (a `pull`-cert push
-attempt should fail, not silently succeed).
+reference examples. Unit *syntax* has been verified with
+`/usr/libexec/podman/quadlet -dryrun` in both system and `-user` mode (see
+above) — actual service startup, mTLS handshake, and the push/pull
+authorizer split have not. Local rootless testing flow:
+`mise buildbarn:certs-init` → `mise buildbarn:install` →
+`mise buildbarn:status`. Before relying on this in CI on the shared runner
+box, confirm a `pull`-cert client can fetch and only the `ci-push`-cert
+client can push (a `pull`-cert push attempt should fail, not silently
+succeed).
 
 ## Workflow Runner Choices
 
