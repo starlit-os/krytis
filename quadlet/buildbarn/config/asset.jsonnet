@@ -28,10 +28,17 @@ local common = import 'common.libsonnet';
       },
     },
   },
-  // Fetches from the original upstream URI when an asset isn't cached yet —
-  // this is what lets a source that later 404s upstream (e.g. #233) stay
-  // retrievable once it has been fetched into the cache at least once.
-  fetcher: { http: {} },
+  // bb-remote-asset's HTTP fetcher backend cannot serve FetchDirectory
+  // ("HTTP Fetching of directories is not supported") - BuildStream's
+  // source cache pushes/fetches multi-file sources as CAS Directory trees,
+  // not single blobs, so 'http: {}' breaks every push with PERMISSION_DENIED.
+  // This is meant to be a pure cache anyway - krytis's own bst invocations
+  // do the real upstream fetch and push the result here; bb-asset should
+  // never reach out on its own. 'error' with NOT_FOUND (5) makes a cache
+  // miss behave like an empty cache instead of attempting (and failing) a
+  // live fetch.
+  // 'error' must be quoted in jsonnet - it collides with a reserved keyword.
+  fetcher: { 'error': { code: 5, message: 'krytis Buildbarn is a pure cache; no server-side fetcher is configured' } },
   global: common.globalWithDiagnostics(':9982'),
   grpcServers: [{
     listenAddresses: [':7981'],

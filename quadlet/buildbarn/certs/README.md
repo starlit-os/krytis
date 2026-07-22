@@ -1,8 +1,12 @@
 # Buildbarn TLS material
 
-**Nothing in this directory is committed except this README.** The quadlet
-units mount `~/.local/share/buildbarn/certs` (see `bb-storage.container` /
-`bb-asset.container`), which must contain, on the runner box only:
+**Only `ca.crt` and this README are committed.** `ca.crt` is the public CA
+cert — `project.conf`'s `source-caches:`/`artifacts:` entries reference it
+(relative path, per BuildStream's project-config convention) so any clone
+gets automatic read access. Everything else here is generated locally by
+`mise buildbarn:certs-init` into `~/.local/share/buildbarn/certs` (see
+`bb-storage.container` / `bb-asset.container`), which must contain, on the
+runner box only:
 
 | File | Contents | Sensitivity |
 |---|---|---|
