@@ -408,6 +408,90 @@ committed) with `type: index`/`type: storage` split entries mirroring
 `project.conf`, pointed at the same `ci-push` cert `certs-init` already
 generates locally.
 
+## Deployed remote: bow (materia), JWT bearer token instead of mTLS
+
+The design above (mTLS: CA + per-role client certs) was the **local
+dev-test** design, verified against a Buildbarn instance on the dev
+workstation. krytis's own `project.conf` now points at a real deployed
+instance instead — `bst-cache.ririi.dev:7981`/`:7982`, on `bow`, managed
+by a separate repo (`materia`, a GitOps Podman orchestration project —
+see `specs/plans/issue-28-bst-cache-krytis.md` and
+`specs/plans/issue-28-krytis-handoff.md` there for the full server-side
+design, deployment, and handoff). **The auth model changed** during that
+deployment — not a preference, a hard constraint discovered live:
+
+### HS256 (mTLS's originally-planned JWT successor) doesn't work — Buildbarn requires an asymmetric algorithm
+
+Buildbarn's JWT signature validator only accepts asymmetric public keys.
+go-jose v3's `JSONWebKey.Valid()` has no `case []byte:` (returns `false`
+for symmetric/`oct` keys — go-jose issue #314), and
+`bb-storage`'s `NewSignatureValidatorFromJSONWebKeySet` type switch only
+handles `*ecdsa.PublicKey` / `ed25519.PublicKey` / `*rsa.PublicKey` — no
+symmetric case either. An HS256 JWKS (`kty: oct`) crashes `bb-storage`
+with `Invalid JSON Web Key at index 0` on startup. This is a fundamental
+incompatibility, not a config mistake — confirmed by an actual crash on
+live deployment, not caught by local dry-run testing since the local mTLS
+design never touched JWT at all.
+
+The materia-side fix: switched to **EdDSA (Ed25519)** — one keypair, no
+CA, no per-role client certs (closer in spirit to krytis's original mTLS
+design than HS256 would have been, just with one keypair instead of a CA
++ 2 client certs). If krytis ever needs to mint or verify a token
+client-side for debugging, it's Ed25519 signatures (`openssl pkeyutl
+-sign/-verify -rawin`, not HMAC) — the JWT header is
+`{"alg":"EdDSA","typ":"JWT"}`.
+
+### `auth:` config shape — `access-token`, not `client-cert`/`client-key`
+
+BuildStream's project-config `auth:` block still only needs
+`server-cert` (unchanged — Buildbarn still terminates its own TLS,
+server-only, for confidentiality through the tunnel; there's no client
+cert anymore, but the connection is still TLS and still needs a
+trusted server cert). What changes is the **user-config** side
+(CI/local `buildstream.conf`, never committed to this repo):
+
+```yaml
+# OLD (local mTLS dev-test design, PRs #341–#343's original local testing) — remove:
+auth:
+  server-cert: /path/to/ca.crt
+  client-cert: /path/to/ci-push.crt
+  client-key:  /path/to/ci-push.key
+
+# NEW (JWT/EdDSA against the deployed bow instance):
+auth:
+  server-cert: /path/to/bow-server.crt   # quadlet/buildbarn/certs/bow-server.crt in this repo
+  access-token: /path/to/token            # file containing the minted push or pull JWT string
+```
+
+BuildStream's own docs describe `access-token` as "path to a token for
+optional HTTP bearer authentication" — sent as `Authorization: Bearer
+<token>`, exactly what Buildbarn's `jwt` `AuthenticationPolicy` expects.
+Tokens are minted on the materia side (`mise buildbarn:mint-token
+--role push|pull`, run from the materia repo with vault access) — not
+something krytis mints or stores; the `push` token goes into krytis's
+GitHub Actions secrets (e.g. `BUILDBARN_PUSH_TOKEN`), written to a file
+at CI workflow start, path passed as `access-token`.
+
+### Two other live-deploy-only gotchas (materia side, documented here for anyone debugging a connection failure from the krytis side)
+
+- The JWT policy's claim-validation field is `claims_validation_jmespath_expression`
+  (`claimsValidationJmespathExpression` in jsonnet) — **not**
+  `validationJmespathExpression` like the x509/mTLS policy used above.
+  Different Buildbarn config messages, same concept, different field
+  name (a `claims_` prefix the x509 one doesn't have). A live crash
+  (`unknown field validationJmespathExpression`) caught this on the
+  materia side — irrelevant to krytis's own config, but explains why the
+  two policies in this doc don't look symmetric if you go compare them.
+- `cacheReplacementPolicy` (e.g. `LEAST_RECENTLY_USED`) is a **required**
+  field on the JWT policy's token-validation cache, not optional — the
+  proto3 zero value is `UNKNOWN`, which `bb-storage` rejects outright.
+
+None of the above requires a krytis-side code change beyond the
+`auth:` shape swap — they're Buildbarn/materia-side config details,
+included here because a connection failure investigated from krytis's
+side (`UNAUTHENTICATED`, `PERMISSION_DENIED`) could plausibly be
+misdiagnosed as a krytis-side problem without this context.
+
 ## Workflow Runner Choices
 
 | Workflow | Runner | Rationale |
