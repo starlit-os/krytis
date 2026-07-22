@@ -74,10 +74,10 @@ curl -fsSL "https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/<gbm-sha>/elem
 grep -m1 ref: elements/freedesktop-sdk.bst   # must match
 ```
 
-Krytis doesn't currently junction `gnome-build-meta` (per `docs/skills/zirconium-hawaii.md`), so this doesn't apply yet — but it's the exact check to add to `track-core-junctions`-style tooling the day that junction is added.
+Krytis DOES junction `gnome-build-meta` today (`elements/gnome-build-meta.bst`, tracking branch `gnome-50`). This check applies now. Verified 2026-07-21: krytis's `elements/freedesktop-sdk.bst` ref (`freedesktop-sdk-25.08.14-0-g57149392fe26548b0e7c50a2e171e3aac005a412`) matches the fdsdk ref pinned by the tracked gnome-build-meta commit (`50.3-5-g4b25046df8a03b6341db7aa8956c55fbbc0c1365`) exactly — no drift. Re-run this check before merging any future junction bump (including the eventual 26.08 bump tracked in #305).
 
-### Drop stale `gtk-doc` override
+### Drop stale `gtk-doc` override — NOT YET STALE (verified 2026-07-21)
 
 *Source: zirconium-hawaii `b96b398` / [gnome-build-meta `1d96e6f`](https://gitlab.gnome.org/GNOME/gnome-build-meta/-/commit/1d96e6f43e8f6c0db4441ec2d51c1250c22275e7)*
 
-FDSDK/gnome-build-meta resolved the gtk-doc issue upstream; the `freedesktop-sdk.bst` override that points `components/gtk-doc.bst` → `gnome-build-meta.bst:sdk/gtk-doc.bst` may now be stale. Krytis currently has this override at `elements/freedesktop-sdk.bst:32`. Verify against the current FDSDK junction ref whether it's still needed; if the upstream issue is resolved, drop it.
+Krytis's `freedesktop-sdk.bst` overrides `components/gtk-doc.bst` → `gnome-build-meta.bst:sdk/gtk-doc.bst`, mirroring gnome-build-meta's own overrides list. Checked against the gnome-build-meta ref krytis currently tracks (`50.3-5-g4b25046df8a03b6341db7aa8956c55fbbc0c1365`, branch `gnome-50`): gnome-build-meta's own `elements/freedesktop-sdk.bst` at that ref STILL contains `components/gtk-doc.bst: sdk/gtk-doc.bst` in its overrides. The upstream fix (`1d96e6f`) has not propagated to the `gnome-50` branch krytis tracks — the override remains required. **Re-check this at every future junction bump** (starting with the eventual 26.08 bump, #305) rather than treating this verdict as permanent; drop the override only once the ref krytis tracks stops carrying it upstream.
