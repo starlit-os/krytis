@@ -143,6 +143,66 @@ The `starlit-os` org has an allowlist of permitted external actions. Any `uses: 
 
 When adding a new action to any workflow, check whether `<owner>/<repo>` is already allowlisted. If not, prompt the user to add it before the PR is merged. The allowlist is managed in the org's GitHub Actions settings.
 
+## Buildbarn CAS (Quadlet)
+
+krytis owns a Buildbarn deployment (`bb-storage` + `bb-remote-asset`) on the
+self-hosted runner box, providing both a source cache (fixes upstream churn
+like #233's CachyOS 404) and an artifact cache for krytis-specific elements.
+See #234 and its sub-issues for the design rationale.
+
+### Why Quadlet instead of `podman run` (unlike the runner)
+
+The self-hosted runner (`mise runner:*`) is manually started/stopped around
+CI activity — a `podman run` wrapper fits that lifecycle. Buildbarn is a
+**persistent** host service that should survive reboots and restart on
+failure, so it's modeled as Podman Quadlet units (`quadlet/buildbarn/`)
+instead: `systemctl start/stop bb-storage bb-asset` after
+`mise buildbarn:install` copies the units into
+`/etc/containers/systemd/` and reloads systemd. There's no `buildbarn:start`/
+`buildbarn:stop` mise task — quadlet-generated `.service` units already give
+us that via `systemctl`, and duplicating it in a mise task would just be a
+less capable wrapper around the thing systemd already provides.
+
+### mTLS: SAN-based push/pull split, not CN
+
+Buildbarn's `AuthenticationPolicy.tlsClientCertificate` supports a
+`validation_jmespath_expression`, but its docs explicitly recommend using it
+for **authentication** decisions, not **authorization** — a failed match
+returns `UNAUTHENTICATED`, not `PERMISSION_DENIED`, so gating write access
+this way muddies the error semantics of a not-yet-registered pull cert vs. a
+valid pull cert trying to push. Instead: one CA signs two client certs (SAN
+`spiffe://krytis/ci-push` for CI, `spiffe://krytis/pull` for everyone else),
+and the actual push/pull split is enforced per-operation via `putAuthorizer`/
+`pushAuthorizer` (`jmespathExpression` matching the SAN) vs. `getAuthorizer`/
+`fetchAuthorizer` (`allow: {}` for any cert signed by the CA). CN was
+considered and rejected — SAN is what Buildbarn's own docs use for this kind
+of identity check.
+
+### Volume naming for Quadlet-referenced `.volume` units
+
+A `.container` unit's `Volume=` line referencing a sibling `.volume` unit
+must keep the **`.volume` suffix** — `Volume=buildbarn-storage-cas.volume:/data/storage-cas`.
+Dropping the suffix (`Volume=buildbarn-storage-cas:/data/storage-cas`) looks
+plausible but silently breaks unit-reference detection: `/usr/libexec/podman/quadlet
+-dryrun` shows the generated `ExecStart=` falls back to treating the name as
+a literal podman volume (`-v buildbarn-storage-cas:...`) instead of the
+managed `systemd-<name>` volume the sibling `.volume` unit actually creates
+(`-v systemd-buildbarn-storage-cas:...`) — two different volumes, one of
+which is never created by the `-volume.service` unit. Always dry-run new
+quadlet units with `QUADLET_UNIT_DIRS=<dir> /usr/libexec/podman/quadlet
+-dryrun -no-kmsg-log` and grep the `ExecStart=` line for the `systemd-`
+prefix on every volume reference before trusting the unit.
+
+### First-deploy verification still pending
+
+The jsonnet configs and quadlet units in this section are a first pass
+written against Buildbarn's documented config schema and `bb-deployments`
+reference examples — not yet exercised against a live deploy. Before relying
+on this in CI, run `mise buildbarn:install` on the runner box and confirm:
+both services start (`mise buildbarn:status`), a `pull`-cert client can
+fetch, and only the `ci-push`-cert client can push (a `pull`-cert push
+attempt should fail, not silently succeed).
+
 ## Workflow Runner Choices
 
 | Workflow | Runner | Rationale |

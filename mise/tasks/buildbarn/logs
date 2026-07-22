@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Follow Buildbarn CAS service logs"
+
+set -euo pipefail
+
+journalctl -u bb-storage.service -u bb-asset.service -f
