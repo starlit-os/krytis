@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Install/refresh the Buildbarn CAS quadlet units and reload systemd"
+
+set -euo pipefail
+
+QUADLET_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../quadlet/buildbarn" && pwd)"
+QUADLET_DEST="/etc/containers/systemd"
+DATA_DIR="${HOME}/.local/share/buildbarn"
+
+if [ ! -f "${DATA_DIR}/certs/ca.crt" ]; then
+    echo "ERROR: ${DATA_DIR}/certs/ca.crt not found."
+    echo "       Provision TLS material first — see quadlet/buildbarn/certs/README.md."
+    exit 1
+fi
+
+echo "==> Copying quadlet units to ${QUADLET_DEST}..."
+sudo mkdir -p "${QUADLET_DEST}"
+sudo cp "${QUADLET_SRC}"/*.network "${QUADLET_SRC}"/*.container "${QUADLET_SRC}"/*.volume "${QUADLET_DEST}/"
+
+echo "==> Copying jsonnet config to ${DATA_DIR}/config..."
+mkdir -p "${DATA_DIR}/config"
+cp "${QUADLET_SRC}"/config/*.jsonnet "${QUADLET_SRC}"/config/*.libsonnet "${DATA_DIR}/config/"
+
+echo "==> Reloading systemd units..."
+sudo systemctl daemon-reload
+
+echo "==> Enabling + starting bb-storage and bb-asset..."
+sudo systemctl enable --now bb-storage.service bb-asset.service
+
+echo "==> Done. Use 'mise buildbarn:status' / 'mise buildbarn:logs' to check."

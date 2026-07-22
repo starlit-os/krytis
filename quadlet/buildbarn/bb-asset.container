@@ -1,0 +1,24 @@
+[Unit]
+Description=krytis Buildbarn remote-asset (source cache index)
+After=bb-storage.service
+Requires=bb-storage.service
+
+[Container]
+Image=ghcr.io/buildbarn/bb-remote-asset@sha256:55566d19f722ac78a4a67c431de0efd5a834137033468af0848b964ac1aafefe
+ContainerName=bb-asset
+Network=buildbarn.network
+Exec=-config /config/asset.jsonnet
+
+# gRPC (remote asset / index) — mTLS terminated in-process, see config/asset.jsonnet.
+PublishPort=7981:8981
+PublishPort=127.0.0.1:9982:9981
+
+Volume=%h/.local/share/buildbarn/config:/config:ro,Z
+Volume=%h/.local/share/buildbarn/certs:/certs:ro,Z
+Volume=buildbarn-asset-cache.volume:/data/asset-cache
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
