@@ -340,17 +340,73 @@ named volumes with an empty `persistent_state/` dir via a throwaway
 `busybox` container before starting the services; skip this step and a
 fresh volume will not come up.
 
+### Server cert SAN must include the actual connecting hostname
+
+A client connecting to `https://<host>:<port>` fails with `Peer name <host>
+is not in peer certificate` if the server cert's SAN list only has the
+in-container aliases (`localhost`, `bb-storage`, `bb-asset`, `127.0.0.1`)
+and not the hostname clients actually dial. `mise buildbarn:certs-init`
+now adds `$(hostname)`/`$(hostname -f)` to the SAN automatically. If the
+CA already exists (the common case — `certs-init` is idempotent and skips
+everything once `ca.crt` is present), the server cert has to be **manually
+reissued** with the corrected SAN using the existing `ca.key`/`server.key`
+— reissuing the leaf server cert doesn't invalidate the CA or any already-
+issued client cert, only the CA rotation would.
+
+### `project.conf`'s `source-caches:`/`artifacts:` need separate `type: index` / `type: storage` entries
+
+A single unsplit cache entry (the implicit `type: all`) assumes **one**
+endpoint serves both the remote-asset index and the CAS storage. Buildbarn
+splits these across two services/ports (`bb-asset` = index, `bb-storage` =
+storage) — pointing a single `type: all`-implied entry at `bb-asset` alone
+fails every push with `UNIMPLEMENTED: unknown service
+build.bazel.remote.execution.v2.ContentAddressableStorage` (bb-asset simply
+doesn't implement the CAS API). Fix: two entries per cache list, one
+`type: index` at the `bb-asset` port, one `type: storage` at the
+`bb-storage` port — matches the shape of Buildbarn's own docker-compose
+reference example almost exactly.
+
+### bb-remote-asset's HTTP fetcher can't serve `FetchDirectory` — use the `error` fetcher for a pure cache
+
+BuildStream's source cache pushes/fetches multi-file sources as CAS
+Directory trees, not single blobs. `fetcher: { http: {} }` (the shape used
+in every Buildbarn reference example) can only serve blob fetches over
+HTTP, and every push fails with `PERMISSION_DENIED: FetchDirectory: 7: HTTP
+Fetching of directories is not supported!` — the asset service tries an
+existence-check `FetchDirectory` internally as part of handling `Push`,
+hits the unsupported path, and aborts the whole push. This is also simply
+the wrong fetcher for krytis's use case: `bb-asset` is meant to be a *pure
+cache* (krytis's own `bst` invocations do the real upstream fetch and push
+the result here) — it should never reach out on its own. `fetcher.proto`
+has a purpose-built `error` variant for exactly this ("can be wrapped by
+CachingFetcher for a Push/Fetch service without any server side
+downloads"): `fetcher: { 'error': { code: 5, message: '...' } }` (code `5`
+= `NOT_FOUND`) makes a cache miss behave like an empty cache instead of
+attempting a doomed live fetch. Note the quotes around `'error'` — it's a
+jsonnet/Go-reserved-adjacent keyword and parses as a syntax error unquoted.
+
 ### First-deploy verification
 
 All of the above was found and fixed by actually running
 `mise buildbarn:certs-init` → `mise buildbarn:install` →
 `mise buildbarn:status` end-to-end on a rootless dev box, not by reading
-docs alone — `bb-storage` and `bb-asset` both reach `active (running)`
-and bind their expected ports from a clean slate (no existing volumes/certs).
-What's still unverified: the mTLS push/pull authorization split under a
-real gRPC client (see above), and behavior once this moves to the shared
-runner box as a system-level service (see "Rootless first, system-level
-later" above).
+docs alone. Full round trip verified against #339's `project.conf` wiring:
+with `~/.cache/buildstream` **completely wiped**, `bst source push
+core/linux-cachyos.bst` succeeded against the local remote, and a
+subsequent `bst source fetch core/linux-cachyos.bst` pulled the source
+entirely from `melog:7981`/`melog:7982` — zero requests to the upstream
+CachyOS CDN. This is the actual #233 resilience scenario, proven working
+end-to-end, not just plausible from reading the design.
+
+Still open: CI-side push wiring (`cache-warm.yml` generating a push-enabled
+`buildstream.conf` with CI's `ci-push` cert from a GitHub Actions secret)
+is deferred until Buildbarn is actually deployed on the shared runner box
+— that's a Security Gate item (secret provisioning) that needs a human
+decision, not something to wire silently. Local verification used a
+hand-written `~/.config/buildstream.conf` user-config override (not
+committed) with `type: index`/`type: storage` split entries mirroring
+`project.conf`, pointed at the same `ci-push` cert `certs-init` already
+generates locally.
 
 ## Workflow Runner Choices
 
