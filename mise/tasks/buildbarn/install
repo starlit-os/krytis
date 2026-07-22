@@ -15,7 +15,7 @@ fi
 
 echo "==> Copying quadlet units to ${QUADLET_DEST}..."
 mkdir -p "${QUADLET_DEST}"
-cp "${QUADLET_SRC}"/*.network "${QUADLET_SRC}"/*.container "${QUADLET_SRC}"/*.volume "${QUADLET_DEST}/"
+cp "${QUADLET_SRC}"/*.container "${QUADLET_SRC}"/*.volume "${QUADLET_DEST}/"
 
 echo "==> Copying jsonnet config to ${DATA_DIR}/config..."
 mkdir -p "${DATA_DIR}/config"
@@ -24,8 +24,25 @@ cp "${QUADLET_SRC}"/config/*.jsonnet "${QUADLET_SRC}"/config/*.libsonnet "${DATA
 echo "==> Reloading user systemd units..."
 systemctl --user daemon-reload
 
-echo "==> Enabling + starting bb-storage and bb-asset..."
-systemctl --user enable --now bb-storage.service bb-asset.service
+# bb-storage/bb-remote-asset don't create their own "persistent_state"
+# subdirectories on first run — a freshly created (empty) named volume
+# makes them fail with "no such file or directory". Seed each volume once
+# via a throwaway busybox container before starting the real services.
+echo "==> Seeding persistent_state directories in fresh volumes..."
+for vol in systemd-buildbarn-storage-cas systemd-buildbarn-storage-ac systemd-buildbarn-storage-fsac systemd-buildbarn-asset-cache; do
+    if ! podman run --rm -v "${vol}:/data" docker.io/library/busybox:latest \
+        sh -c 'test -d /data/persistent_state' 2>/dev/null; then
+        podman run --rm -v "${vol}:/data" docker.io/library/busybox:latest \
+            mkdir -p /data/persistent_state
+    fi
+done
+
+echo "==> Starting bb-storage and bb-asset..."
+# Quadlet-generated units cannot be 'systemctl enable'd (they're transient
+# generator output, not real unit files) — the generator itself already
+# wires the WantedBy= target via a .wants symlink at daemon-reload time.
+# Only 'start' is needed/valid here.
+systemctl --user start bb-storage.service bb-asset.service
 
 echo "==> Done. Use 'mise buildbarn:status' / 'mise buildbarn:logs' to check."
 echo "    Note: rootless user services stop when your session ends unless"

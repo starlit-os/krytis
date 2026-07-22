@@ -14,14 +14,23 @@
 // Neither the CA key nor the two client certs/keys are committed to this
 // repo. See certs/README.md for provisioning.
 
-local certDir = '/certs';
-
 {
   maximumMessageSizeBytes: 2 * 1024 * 1024 * 1024,
 
+  // jsonnet's importstr requires a string literal, not a computed path
+  // (concatenating a local var errors with "Computed imports are not
+  // allowed") — the path must be written out in full here.
+  //
+  // metadataExtractionJmespathExpression populates AuthenticationMetadata.public
+  // from the client cert's SAN URIs so the Authorizer's jmespath_expression
+  // (below) can read it back as authenticationMetadata.public.uris — without
+  // this, authenticationMetadata is never populated at all and the
+  // authorizer expression has nothing to match against.
   tlsAuthenticationPolicy: {
     tlsClientCertificate: {
-      clientCertificateAuthorities: importstr certDir + '/ca.crt',
+      clientCertificateAuthorities: importstr '/certs/ca.crt',
+      validationJmespathExpression: { expression: '`true`' },
+      metadataExtractionJmespathExpression: { expression: '{public: {uris: uris}}' },
     },
   },
 
@@ -31,7 +40,7 @@ local certDir = '/certs';
   pushOnlyAuthorizer: {
     jmespathExpression: {
       expression: |||
-        contains(authenticationMetadata.public.tls.uris, 'spiffe://krytis/ci-push')
+        contains(authenticationMetadata.public.uris, 'spiffe://krytis/ci-push')
       |||,
     },
   },

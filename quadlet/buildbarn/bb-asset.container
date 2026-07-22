@@ -6,12 +6,11 @@ Requires=bb-storage.service
 [Container]
 Image=ghcr.io/buildbarn/bb-remote-asset@sha256:55566d19f722ac78a4a67c431de0efd5a834137033468af0848b964ac1aafefe
 ContainerName=bb-asset
-Network=buildbarn.network
-Exec=-config /config/asset.jsonnet
-
-# gRPC (remote asset / index) — mTLS terminated in-process, see config/asset.jsonnet.
-PublishPort=7981:8981
-PublishPort=127.0.0.1:9982:9981
+# See bb-storage.container for why this is host networking, not a bridge.
+# Reaches bb-storage via localhost:7982 (config/asset.jsonnet), not a
+# container DNS name, since there's no shared bridge network anymore.
+Network=host
+Exec=/config/asset.jsonnet
 
 Volume=%h/.local/share/buildbarn/config:/config:ro,Z
 Volume=%h/.local/share/buildbarn/certs:/certs:ro,Z
