@@ -408,6 +408,35 @@ committed) with `type: index`/`type: storage` split entries mirroring
 `project.conf`, pointed at the same `ci-push` cert `certs-init` already
 generates locally.
 
+### Artifacts need the same `type: index`/`type: storage` split as sources
+
+Unlike the initial assumption ("artifacts only need CAS + ActionCache,
+both served by `bb-storage` alone"), BuildStream's artifact protocol also
+resolves artifact refs via the Remote Asset Fetch service, same as
+sources. A single unsplit entry against `bb-storage` alone fails
+immediately with `Configured remote does not implement the Remote Asset
+Fetch service. Please check remote configuration.` — `project.conf`'s
+`artifacts:` needs the identical `type: index` (at `bb-asset`) /
+`type: storage` (at `bb-storage`) pair as `source-caches:` (#339), not the
+single-entry shape shown in BuildStream's own "Global caches" user-config
+docs example (that example assumes one combined server, which isn't our
+topology).
+
+### Artifact cache verified live: real pushes into the krytis remote during a bootstrap build
+
+With `~/.cache/buildstream` wiped (left over from #339's source-cache
+wipe test) and `mise bst build core/linux-cachyos.bst` running, the log
+shows real `Pushed artifact <key> -> https://melog:7981` /
+`Pushed data from artifact <key> -> https://melog:7982` lines for elements
+as they complete (e.g. `freedesktop-sdk.bst:bootstrap/build/python3.bst`,
+`freedesktop-sdk.bst:bootstrap/base-sdk/binary-seed.bst`) — confirming the
+write path (mTLS push auth, `type: index`/`type: storage` routing) works
+under real build load, not just a synthetic single-element push/pull like
+#339's test. A one-off `UNAUTHENTICATED: Client provided no X.509 client
+certificate` warning appeared on the very first remote-init attempt and
+self-resolved on retry — treat a single transient auth warning at startup
+as noise if subsequent pushes succeed; only worry if it repeats per-element.
+
 ## Deployed remote: bow (materia), JWT bearer token instead of mTLS
 
 The design above (mTLS: CA + per-role client certs) was the **local
