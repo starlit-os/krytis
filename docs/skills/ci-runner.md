@@ -521,6 +521,49 @@ included here because a connection failure investigated from krytis's
 side (`UNAUTHENTICATED`, `PERMISSION_DENIED`) could plausibly be
 misdiagnosed as a krytis-side problem without this context.
 
+### Local push/pull verification against the deployed bow remote (#340)
+
+Done with a hand-written user-config override (not committed, same pattern
+as the earlier local mTLS verification) pointed at `bst-cache.ririi.dev`
+with `push`/`pull` JWTs pulled from Proton Pass (Krytis vault, "Buildbarn"
+item). `bst source push`/`fetch` round-tripped cleanly against
+`core/gum.bst` (small `kind: tar` GitHub-release source — reliable to
+re-fetch on demand, unlike `core/linux-cachyos.bst`, whose upstream tarball
+was returning a 404 at time of testing: the exact #233 resilience scenario
+this cache exists to solve, but unhelpful as a push-test fixture since a
+cold-cache push needs a successful upstream fetch first).
+
+Two gotchas surfaced that aren't covered above:
+
+- **Combining `artifacts:` and `source-caches:` overrides in one user-config
+  file crashes `bst source push`** with `AssertionError: Trying to add task
+  group 'Fetch' to {'Fetch': ...}` — BuildStream's scheduler double-registers
+  the Fetch queue when both cache types are configured together for a
+  source-only operation. Not a Buildbarn-side issue — a BuildStream 2.7.0
+  scheduler bug. Workaround: use separate single-purpose config files (one
+  with only `source-caches:` for source push/fetch, one with only
+  `artifacts:` for artifact push/pull) rather than one combined file, even
+  though the deployed-remote urls/auth are otherwise identical between them.
+- **`mise run bst --container -- --config <path> <subcommand> ...` fails**
+  with `Error: No such command '--config'` — the task's `FLAGS` (always
+  prepended) vs. the trailing `"$@"` ordering means a `--config` placed in
+  the trailing args after `--container --` doesn't parse as a top-level bst
+  option the way it looks like it should. Pass it via `BST_FLAGS="--config
+  <path>"` instead (already prepended ahead of the subcommand by the task):
+  `BST_FLAGS="--config /src/.buildbarn-test/push.conf" mise run bst
+  --container -- source push core/gum.bst`.
+
+Artifact push/pull itself is still unverified end-to-end: any element pull
+requires the full freedesktop-sdk bootstrap chain when the local cache is
+cold, and `cache.freedesktop-sdk.io:11001` (FDSDK's own recommended remote,
+unrelated to krytis's Buildbarn) has every bootstrap **source** cached but
+zero bootstrap **artifacts** cached — every artifact pull attempt reports
+"does not have artifact cached" while the matching source pulls succeed.
+That's suspicious on its own (a cache serving sources but no artifacts is
+unusual) and orthogonal to #340 — worth a separate look, but it means a full
+artifact-push proof here means an from-scratch SDK build, not attempted in
+this session.
+
 ## Workflow Runner Choices
 
 | Workflow | Runner | Rationale |
