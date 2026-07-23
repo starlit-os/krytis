@@ -614,36 +614,65 @@ BST_FLAGS_OVERRIDE="-o x86_64_v3 false --no-interactive --config /src/.buildbarn
   mise run bst --container -- artifact pull core/gum.bst
 ```
 
-### `cache-warm.yml` pushes into bow when `BUILDBARN_PUSH_TOKEN` is set
+### `project.conf` deliberately omits bow entries — bearer auth means a token-less entry can never work
+
+`bst-cache.ririi.dev` (bow) requires a JWT bearer token for **every** RPC,
+read or write — not just push. Buildbarn's `jwt` `AuthenticationPolicy`
+gates the connection itself; there's no anonymous-read carve-out. Since no
+token is ever committed to this repo, a `project.conf` entry for bow with
+only `server-cert` (no `access-token`) can *never* authenticate — it isn't
+a fallback that degrades gracefully, it's permanently dead. The original
+#339/#340 wiring declared bow in `project.conf` anyway (reasoning: "a
+read-only default, override with a token for write access"), which seemed
+right by analogy to `gbm.gnome.org`/`cache.projectbluefin.io` (genuinely
+anonymous-read remotes) but doesn't hold for bow — the result was two
+permanent `UNAUTHENTICATED` warnings per cache type, on every single build,
+forever, confirmed live in a `cache-warm` run even with a valid push token
+configured (BuildStream doesn't dedupe user-config and project.conf entries
+for the same URL — both get tried, and the token-less one always fails).
+
+**Fix:** removed the `bst-cache.ririi.dev` entries from both `artifacts:`
+and `source-caches:` in `project.conf` entirely. bow is now reached *only*
+via a user-config override that supplies `access-token` — `cache-warm.yml`
+is the only current consumer (see below). Anyone who wants local bow access
+adds their own `~/.config/buildstream.conf` override with a minted token,
+same as the local push/pull verification did.
+
+### `cache-warm.yml` wires bow via push token, falling back to a pull-only token
 
 `cache-warm.yml`'s original scope (#340) included wiring the warm-cache
 build to *push* krytis-built sources/artifacts into bow as it builds, not
-just pull from it — this was missed in the initial `project.conf` wiring
-(#339/#340 only did the pull side) and added separately once the gap was
-noticed. The mechanism: BuildStream pushes each artifact to any
+just pull from it. The mechanism: BuildStream pushes each artifact to any
 push-enabled remote as soon as that element finishes building, so a normal
 `cache-warm` run incrementally populates bow over the course of the build
 — no separate "push everything at the end" step needed.
 
-The "Configure BuildStream" step writes `${{ secrets.BUILDBARN_PUSH_TOKEN }}`
-to a file under `$RUNNER_TEMP` (`printf '%s'`, not `echo`, to avoid a
-trailing newline in the token) and appends push-enabled `artifacts:`/
-`source-caches:` blocks to the user `buildstream.conf`, pointing at the same
-`bst-cache.ririi.dev:7981`/`7982` bow endpoints `project.conf` already
-declares read-only. User-config remotes are tried before project-recommended
-ones (see BuildStream's `override-project-caches` semantics), so these
-push-capable entries take priority without needing `override-project-caches:
-true` — project.conf's existing pull-only bow/gbm/bluefin entries remain as
-fallback.
+Since `project.conf` no longer declares bow at all (see above), the
+"Configure BuildStream" step is the *only* place bow gets wired, and it now
+prefers `BUILDBARN_PUSH_TOKEN` over `BUILDBARN_PULL_TOKEN`:
 
-**Degrades gracefully if the secret is missing**: the whole push block is
-guarded by `if [ -n "${BUILDBARN_PUSH_TOKEN}" ]` — an unset secret means
-`cache-warm` falls back to exactly its old pull-only behavior instead of
-failing. The secret itself (`BUILDBARN_PUSH_TOKEN`, an EdDSA JWT with
-`role: push`, minted via `mise buildbarn:mint-token --role push` from the
-materia repo) has to be added by a human through the GitHub repo settings
-UI — provisioning a production secret is a Security Gate item per AGENTS.md,
-not something to wire or set autonomously.
+- **Push token present:** used for both `artifacts:` and `source-caches:`,
+  `push: true` on both `type: index`/`type: storage` entries. A
+  push-capable connection also serves reads (verified live — the same run
+  that pushed also queried the cache successfully), so this alone covers
+  both directions.
+- **Push token absent, pull token present:** falls back to the same entries
+  with `push: false`, so `cache-warm` still benefits from whatever's
+  already in bow (faster builds) even when push isn't configured — e.g. the
+  push secret isn't provisioned yet, or got rotated out. Push and pull are
+  minted as **separate JWT roles** (materia's `mise buildbarn:mint-token
+  --role push|pull`) — a push-role token isn't guaranteed to authorize
+  reads by design, even though it happened to work in the live test above,
+  so don't assume one token covers both; wire the role you actually need.
+- **Neither present:** no bow entries in user config at all — `cache-warm`
+  builds against `gbm.gnome.org`/`cache.projectbluefin.io` only, cleanly,
+  no warnings (since `project.conf` doesn't declare bow either).
+
+The token file is written to `$RUNNER_TEMP` with `printf '%s'` (not `echo`,
+to avoid a trailing newline in the token). Both secrets have to be added by
+a human through the GitHub repo settings UI — provisioning a production
+secret is a Security Gate item per AGENTS.md, not something to wire or set
+autonomously.
 
 ## Workflow Runner Choices
 
