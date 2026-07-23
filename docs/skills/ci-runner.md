@@ -553,16 +553,66 @@ Two gotchas surfaced that aren't covered above:
   `BST_FLAGS="--config /src/.buildbarn-test/push.conf" mise run bst
   --container -- source push core/gum.bst`.
 
-Artifact push/pull itself is still unverified end-to-end: any element pull
-requires the full freedesktop-sdk bootstrap chain when the local cache is
-cold, and `cache.freedesktop-sdk.io:11001` (FDSDK's own recommended remote,
-unrelated to krytis's Buildbarn) has every bootstrap **source** cached but
-zero bootstrap **artifacts** cached — every artifact pull attempt reports
-"does not have artifact cached" while the matching source pulls succeed.
-That's suspicious on its own (a cache serving sources but no artifacts is
-unusual) and orthogonal to #340 — worth a separate look, but it means a full
-artifact-push proof here means an from-scratch SDK build, not attempted in
-this session.
+**Artifact push/pull is now verified end-to-end** against bow, and
+#348 (freedesktop-sdk artifact cache appeared empty) has a confirmed root
+cause — see below.
+
+### Why every freedesktop-sdk artifact pull missed (#348) — not a broken cache, an `x86_64_v3` cache-key divergence
+
+Initial diagnosis (#348) assumed `cache.freedesktop-sdk.io:11001` had lost
+its artifact index since it served every bootstrap **source** but zero
+bootstrap **artifacts**. Retested against `gbm.gnome.org:11003` directly
+(`bst build core/gum.bst` with only that remote configured): same result
+— every single FDSDK bootstrap/component artifact pull was skipped
+("does not have artifact cached"), across the *entire* dependency chain, not
+just bootstrap. That ruled out "one broken mirror" and pointed at something
+structural common to every krytis build.
+
+krytis's `project.conf` sets the freedesktop-sdk `x86_64_v3` option to
+`true` project-wide (`elements/freedesktop-sdk.bst`, `project.conf`) —
+AVX2 (`-march=x86-64-v3`) codegen for the whole SDK. Public FDSDK caches
+almost certainly serve the upstream default (baseline `x86_64`, no AVX2).
+BuildStream's cache key for a compiled element incorporates every variable
+that affects its build output, so `x86_64_v3=true` changes the cache key of
+**every single compiled element in the graph**, all the way down to
+`bootstrap/gcc.bst` itself — while leaving *sources* (tarballs/git
+checkouts, which don't depend on compiler flags) completely unaffected.
+That's exactly the pattern observed: 100% source hits, 0% artifact hits,
+regardless of which public remote was tried.
+
+Confirmed empirically: `bst build -o x86_64_v3 false core/gum.bst` against
+`gbm.gnome.org:11003` alone pulled all 16 required FDSDK bootstrap/component
+artifacts cleanly (0 built) and finished in 67s total — versus the >500s,
+still-incomplete from-scratch build under `x86_64_v3=true` attempted
+earlier. **Conclusion: krytis can never get artifact-cache hits from any
+public FDSDK cache for compiled elements as long as `x86_64_v3` stays
+enabled** — every cold build rebuilds the whole SDK from scratch, and bow's
+Buildbarn cache (populated by krytis's own `x86_64_v3` builds via
+`cache-warm.yml`) is the *only* cache that will ever have matching keys.
+This isn't a bug to fix; it's the reason the Buildbarn cache work (#234)
+exists in the first place.
+
+### Full artifact push/pull round-trip verified against bow
+
+Using the `-o x86_64_v3 false` override purely as a way to get a *fast*
+artifact build for the test (not a project-wide change — real krytis builds
+still use `x86_64_v3=true`): built `core/gum.bst` in 67s pulling FDSDK
+deps from `gbm.gnome.org`, then `bst artifact push core/gum.bst` against
+bow (push token) succeeded, then wiped `~/.cache/buildstream` completely
+and `bst artifact pull core/gum.bst` against bow (pull token) pulled it
+back in ~7s — confirming both `type: index` (bb-asset) and `type: storage`
+(bb-storage) round-trip correctly for artifacts, matching the source-cache
+verification above.
+
+One more command-composition gotcha found doing this: `BST_FLAGS` (additive,
+appended after the task's `DEFAULT_FLAGS`) isn't reliable for overriding an
+already-set flag like `-o x86_64_v3 true` — use `BST_FLAGS_OVERRIDE` instead
+to fully replace the default flag set when a test needs to override
+something the task sets by default:
+```bash
+BST_FLAGS_OVERRIDE="-o x86_64_v3 false --no-interactive --config /src/.buildbarn-test/pull-artifact-only.conf" \
+  mise run bst --container -- artifact pull core/gum.bst
+```
 
 ## Workflow Runner Choices
 
