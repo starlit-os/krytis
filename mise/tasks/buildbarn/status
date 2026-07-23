@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Show Buildbarn CAS service status (rootless, systemctl --user)"
+
+set -euo pipefail
+
+systemctl --user status --no-pager bb-storage.service bb-asset.service

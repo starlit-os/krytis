@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#MISE description="Generate the local krytis Buildbarn CA + server/ci-push/pull certs (idempotent)"
+
+set -euo pipefail
+
+CERT_DIR="${HOME}/.local/share/buildbarn/certs"
+mkdir -p "${CERT_DIR}"
+cd "${CERT_DIR}"
+
+if [ -f ca.crt ]; then
+    echo "==> CA already exists at ${CERT_DIR}/ca.crt — skipping. Remove it to regenerate everything."
+    exit 0
+fi
+
+echo "==> Generating CA..."
+openssl genrsa -out ca.key 4096 2>/dev/null
+openssl req -x509 -new -key ca.key -sha256 -days 3650 -out ca.crt \
+    -subj "/CN=krytis-buildbarn-ca"
+
+echo "==> Generating server cert (bb-storage / bb-asset share this identity)..."
+# Include this host's actual name(s) in the SAN, not just the in-container
+# aliases — otherwise a client connecting via the LAN hostname (as
+# project.conf's source-caches: entry does) fails TLS verification with
+# "Peer name <host> is not in peer certificate", even though the TCP
+# connection itself succeeds.
+HOST_SAN="DNS:$(hostname),DNS:$(hostname -f 2>/dev/null || hostname)"
+openssl genrsa -out server.key 2048 2>/dev/null
+openssl req -new -key server.key -out server.csr -subj "/CN=bb-storage.krytis.internal"
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out server.crt -days 825 -sha256 \
+    -extfile <(printf "subjectAltName=DNS:localhost,DNS:bb-storage,DNS:bb-asset,%s,IP:127.0.0.1" "${HOST_SAN}")
+rm -f server.csr
+
+echo "==> Generating CI push cert (SAN spiffe://krytis/ci-push)..."
+openssl genrsa -out ci-push.key 2048 2>/dev/null
+openssl req -new -key ci-push.key -out ci-push.csr -subj "/CN=krytis-ci-push"
+openssl x509 -req -in ci-push.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out ci-push.crt -days 825 -sha256 \
+    -extfile <(printf "subjectAltName=URI:spiffe://krytis/ci-push")
+rm -f ci-push.csr
+
+echo "==> Generating pull cert (SAN spiffe://krytis/pull)..."
+openssl genrsa -out pull.key 2048 2>/dev/null
+openssl req -new -key pull.key -out pull.csr -subj "/CN=krytis-pull"
+openssl x509 -req -in pull.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out pull.crt -days 825 -sha256 \
+    -extfile <(printf "subjectAltName=URI:spiffe://krytis/pull")
+rm -f pull.csr
+
+chmod 600 ca.key server.key ci-push.key pull.key
+echo "==> Done. Certs written to ${CERT_DIR}."
+echo "    ca.key can be moved offline now — only needed to reissue/add certs."
+echo "    IMPORTANT: copy ${CERT_DIR}/ca.crt to quadlet/buildbarn/certs/ca.crt"
+echo "    in the repo (git add + commit) so project.conf's server-cert reference"
+echo "    matches this CA. Regenerating the CA anywhere invalidates every"
+echo "    previously issued cert and the committed ca.crt goes stale."

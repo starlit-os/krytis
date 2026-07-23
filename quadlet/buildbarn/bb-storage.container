@@ -1,0 +1,27 @@
+[Unit]
+Description=krytis Buildbarn storage (CAS + AC + FSAC)
+
+[Container]
+Image=ghcr.io/buildbarn/bb-storage@sha256:155fa806de0933e6222681353e2e9fe2f51bd2a78f88dd254ae0b5989fb8e585
+ContainerName=bb-storage
+# Host networking, not a custom bridge network: rootless bridge (netavark)
+# requires nft/iptables NAT setup that isn't available on every host — see
+# docs/skills/ci-runner.md. gRPC listens directly on :7982/:9981 per
+# config/storage.jsonnet (there's no port remapping under Network=host, so
+# the jsonnet config's listenAddresses ARE the externally-reachable ports).
+Network=host
+# The binary takes the config path as a bare positional argument, not
+# "-config <path>" — passing "-config" makes it print a usage error.
+Exec=/config/storage.jsonnet
+
+Volume=%h/.local/share/buildbarn/config:/config:ro,Z
+Volume=%h/.local/share/buildbarn/certs:/certs:ro,Z
+Volume=buildbarn-storage-cas.volume:/data/storage-cas
+Volume=buildbarn-storage-ac.volume:/data/storage-ac
+Volume=buildbarn-storage-fsac.volume:/data/storage-fsac
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

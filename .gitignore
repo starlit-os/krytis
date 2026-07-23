@@ -15,6 +15,9 @@
 .debug-out/
 debug-session/
 
+# Ad-hoc local Buildbarn push/pull test config (tokens, never committed)
+.buildbarn-test/
+
 # BST artifact checkouts — can be 4+ GB and 70k+ files.
 # Always check out to /tmp or a hidden directory listed here,
 # never directly into the repo tree.

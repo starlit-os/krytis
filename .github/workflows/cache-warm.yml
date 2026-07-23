@@ -43,6 +43,9 @@ jobs:
         run: mise run generate-image-version
 
       - name: Configure BuildStream
+        env:
+          BUILDBARN_PUSH_TOKEN: ${{ secrets.BUILDBARN_PUSH_TOKEN }}
+          BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
         run: |
           mkdir -p ~/.config
           cat > ~/.config/buildstream.conf <<'EOF'
@@ -57,6 +60,69 @@ jobs:
           cache:
             quota: 50G
           EOF
+
+          # Wire krytis's bow Buildbarn cache into user config (#340). Not
+          # declared in project.conf at all — bow requires a bearer token for
+          # every RPC, read or write, and no token is ever committed to this
+          # repo, so a project.conf entry could never authenticate. Push and
+          # pull are minted as separate JWT roles (materia's
+          # `mise buildbarn:mint-token --role push|pull`); prefer push when
+          # available since a push-capable connection also serves reads,
+          # falling back to a pull-only token so cache-warm still benefits
+          # from bow's existing cache even when push isn't configured (e.g.
+          # secret not yet provisioned, or rotated out). Both degrade
+          # gracefully to a plain build with no bow entries if neither secret
+          # is set.
+          if [ -n "${BUILDBARN_PUSH_TOKEN}" ]; then
+            TOKEN_FILE="${RUNNER_TEMP}/buildbarn-token"
+            printf '%s' "${BUILDBARN_PUSH_TOKEN}" > "${TOKEN_FILE}"
+            chmod 600 "${TOKEN_FILE}"
+            PUSH_FLAG="true"
+            echo "::notice::Buildbarn push wired — sources/artifacts will push to bow as they build"
+          elif [ -n "${BUILDBARN_PULL_TOKEN}" ]; then
+            TOKEN_FILE="${RUNNER_TEMP}/buildbarn-token"
+            printf '%s' "${BUILDBARN_PULL_TOKEN}" > "${TOKEN_FILE}"
+            chmod 600 "${TOKEN_FILE}"
+            PUSH_FLAG="false"
+            echo "::notice::Buildbarn pull wired — cache-warm will read from bow but not push"
+          else
+            TOKEN_FILE=""
+            echo "::warning::Neither BUILDBARN_PUSH_TOKEN nor BUILDBARN_PULL_TOKEN set — cache-warm will build without bow"
+          fi
+
+          if [ -n "${TOKEN_FILE}" ]; then
+            cat >> ~/.config/buildstream.conf <<EOF2
+          artifacts:
+            servers:
+            - url: https://bst-cache.ririi.dev:7981
+              type: index
+              push: ${PUSH_FLAG}
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+            - url: https://bst-cache.ririi.dev:7982
+              type: storage
+              push: ${PUSH_FLAG}
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+
+          source-caches:
+            servers:
+            - url: https://bst-cache.ririi.dev:7981
+              type: index
+              push: ${PUSH_FLAG}
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+            - url: https://bst-cache.ririi.dev:7982
+              type: storage
+              push: ${PUSH_FLAG}
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+          EOF2
+          fi
 
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
