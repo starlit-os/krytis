@@ -17,4 +17,4 @@ variables:
 sources:
 - kind: tar
   url: codeberg_files:fabiscafe/game-devices-udev/archive/1.0.tar.gz
-  ref: 642315c110f427d0765abe66369f3080604c3fb7243c07d1aa77303b31f6dc6d
+  ref: ac733ea6babb6623e1ac76eceac9b494255ae312d1e7c3fde011ac50ee99f6c5

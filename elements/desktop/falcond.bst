@@ -63,7 +63,7 @@ sources:
   # translate-c@46b5609b5ac4c0a896217d1d984f3ae50e4810b5 — Zig C-to-Zig translator
   - kind: remote
     url: codeberg_files:ziglang/translate-c/archive/46b5609b5ac4c0a896217d1d984f3ae50e4810b5.tar.gz
-    ref: 4f50eeaa6bfd68fad382a94b6693de5eb86f42474b496b725fab923f9c0eaf1a
+    ref: dca3cc4fd9c5d03e7efe0fe52e0876dc173ee62e279a73f98864ce2014868771
     directory: zig-deps-git
 
   # aro (arocc) @5f5a050569a95ecc40a426f0c3666ae7ef987ede — C compiler frontend, dep of translate-c
