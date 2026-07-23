@@ -614,6 +614,37 @@ BST_FLAGS_OVERRIDE="-o x86_64_v3 false --no-interactive --config /src/.buildbarn
   mise run bst --container -- artifact pull core/gum.bst
 ```
 
+### `cache-warm.yml` pushes into bow when `BUILDBARN_PUSH_TOKEN` is set
+
+`cache-warm.yml`'s original scope (#340) included wiring the warm-cache
+build to *push* krytis-built sources/artifacts into bow as it builds, not
+just pull from it — this was missed in the initial `project.conf` wiring
+(#339/#340 only did the pull side) and added separately once the gap was
+noticed. The mechanism: BuildStream pushes each artifact to any
+push-enabled remote as soon as that element finishes building, so a normal
+`cache-warm` run incrementally populates bow over the course of the build
+— no separate "push everything at the end" step needed.
+
+The "Configure BuildStream" step writes `${{ secrets.BUILDBARN_PUSH_TOKEN }}`
+to a file under `$RUNNER_TEMP` (`printf '%s'`, not `echo`, to avoid a
+trailing newline in the token) and appends push-enabled `artifacts:`/
+`source-caches:` blocks to the user `buildstream.conf`, pointing at the same
+`bst-cache.ririi.dev:7981`/`7982` bow endpoints `project.conf` already
+declares read-only. User-config remotes are tried before project-recommended
+ones (see BuildStream's `override-project-caches` semantics), so these
+push-capable entries take priority without needing `override-project-caches:
+true` — project.conf's existing pull-only bow/gbm/bluefin entries remain as
+fallback.
+
+**Degrades gracefully if the secret is missing**: the whole push block is
+guarded by `if [ -n "${BUILDBARN_PUSH_TOKEN}" ]` — an unset secret means
+`cache-warm` falls back to exactly its old pull-only behavior instead of
+failing. The secret itself (`BUILDBARN_PUSH_TOKEN`, an EdDSA JWT with
+`role: push`, minted via `mise buildbarn:mint-token --role push` from the
+materia repo) has to be added by a human through the GitHub repo settings
+UI — provisioning a production secret is a Security Gate item per AGENTS.md,
+not something to wire or set autonomously.
+
 ## Workflow Runner Choices
 
 | Workflow | Runner | Rationale |

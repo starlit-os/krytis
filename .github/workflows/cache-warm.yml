@@ -43,6 +43,8 @@ jobs:
         run: mise run generate-image-version
 
       - name: Configure BuildStream
+        env:
+          BUILDBARN_PUSH_TOKEN: ${{ secrets.BUILDBARN_PUSH_TOKEN }}
         run: |
           mkdir -p ~/.config
           cat > ~/.config/buildstream.conf <<'EOF'
@@ -57,6 +59,53 @@ jobs:
           cache:
             quota: 50G
           EOF
+
+          # Push krytis-built sources/artifacts into the bow Buildbarn cache as
+          # they build (#340) — additive alongside project.conf's read-only bow
+          # entries, tried first since user-config remotes are consulted before
+          # project-recommended ones. Skipped (build-only, no push) if the
+          # BUILDBARN_PUSH_TOKEN secret isn't configured, so a missing secret
+          # degrades gracefully instead of breaking the warm build.
+          if [ -n "${BUILDBARN_PUSH_TOKEN}" ]; then
+            TOKEN_FILE="${RUNNER_TEMP}/buildbarn-push-token"
+            printf '%s' "${BUILDBARN_PUSH_TOKEN}" > "${TOKEN_FILE}"
+            chmod 600 "${TOKEN_FILE}"
+
+            cat >> ~/.config/buildstream.conf <<EOF2
+          artifacts:
+            servers:
+            - url: https://bst-cache.ririi.dev:7981
+              type: index
+              push: true
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+            - url: https://bst-cache.ririi.dev:7982
+              type: storage
+              push: true
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+
+          source-caches:
+            servers:
+            - url: https://bst-cache.ririi.dev:7981
+              type: index
+              push: true
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+            - url: https://bst-cache.ririi.dev:7982
+              type: storage
+              push: true
+              auth:
+                server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
+                access-token: ${TOKEN_FILE}
+          EOF2
+            echo "::notice::Buildbarn push wired — sources/artifacts will push to bow as they build"
+          else
+            echo "::warning::BUILDBARN_PUSH_TOKEN not set — cache-warm will build locally without pushing to bow"
+          fi
 
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
