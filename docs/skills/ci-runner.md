@@ -129,6 +129,12 @@ Mise's experimental `[deps.uv]` feature (`outputs = [".venv/"]`) skips `uv sync`
 
 Don't rely on `[deps.uv]` auto-run for correctness in CI.
 
+### `bst` is not on PATH — use `uv run bst`
+
+`bst` is installed by `uv sync` into the project `.venv`; it is not placed on PATH. CI steps that call the bare `bst` binary fail with `bst: command not found` (exit 127). This bit the `cache-warm` workflow, which invoked `bst build …` / `bst show …` directly while `track-bst-sources.yml` correctly used `uv run bst …`.
+
+**Convention:** every CI step that runs BuildStream must invoke it as `uv run bst …` (or `mise bst …`, which wraps the same thing). Never assume `bst` is on PATH.
+
 ---
 
 ## GitHub Actions: SHA Pinning and Org Allowlist
