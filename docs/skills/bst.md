@@ -428,6 +428,35 @@ shape. When adding or reviewing a `track:` glob, check it against the upstream's
 list (`git ls-remote --tags <url>`) rather than assuming the glob is selective enough, and
 never point `track:` at a branch name when tag-pinned stability is the goal.
 
+### Commit-pinned archive checksums can drift even though the commit is immutable — verify via `git clone`, don't blind-repin
+
+A `kind: tar`/`kind: remote` source pinned to a git-forge-generated `/archive/<sha>.tar.gz`
+URL (GitHub, Gitea, Codeberg) can start failing its `ref:` sha256 check even when the URL's
+commit SHA has never changed and the upstream repo hasn't force-pushed anything. The forge
+regenerates that tarball on every request rather than serving an immutable blob, and can
+change the resulting bytes (gzip compression level/metadata, archive format version) across
+a server upgrade — the commit's actual tree contents are unaffected. Hit on `falcond.bst`'s
+`translate-c` zig-dep and `game-devices-udev.bst`'s source, both pinned to Codeberg commit
+archives, both failing with a `ref:` mismatch against a checksum that had built cleanly for
+months.
+
+**Don't just re-run `sha256sum` on the new download and re-pin it — that only proves the
+download is reproducible right now, not that its contents match what the commit SHA is
+supposed to contain** (a compromised or mis-configured forge could serve different content
+for the same nominal ref). Verify independently instead: clone the repo, checkout the exact
+pinned commit SHA, extract the downloaded tarball, and diff the trees:
+
+```bash
+git clone <repo-url> check && cd check && git checkout <pinned-sha>
+mkdir ../extracted && tar xzf <downloaded>.tar.gz -C ../extracted --strip-components=1
+diff -rq . ../extracted --exclude=.git
+```
+
+Empty diff confirms it's pure archive-regeneration drift (safe to re-pin `ref:` to the new
+sha256) rather than a supply-chain integrity problem (stop and investigate/escalate if the
+trees don't match). This is a repin-only fix — no `track:`/update-path change needed, since
+the commit SHA in the URL is unchanged.
+
 ### tar → git_repo switch when releases appear
 
 A `kind: tar` element pinned to a commit SHA (because the upstream had no release
