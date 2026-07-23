@@ -67,7 +67,7 @@ jobs:
       - name: Build image
         run: |
           set +e
-          bst -o x86_64_v3 true --no-interactive build oci/krytis/image.bst
+          uv run bst -o x86_64_v3 true --no-interactive build oci/krytis/image.bst
           rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::warning::Cache warm build failed (rc=${rc}) — non-blocking"
@@ -83,5 +83,5 @@ jobs:
       - name: Report cached elements
         if: always()
         run: |
-          CACHED=$(bst show --deps all --format '%{name} %{state}' oci/krytis/image.bst 2>/dev/null | grep -c "cached" || echo 0)
+          CACHED=$(uv run bst show --deps all --format '%{name} %{state}' oci/krytis/image.bst 2>/dev/null | grep -c "cached" || echo 0)
           echo "::notice::Cached elements: ${CACHED}"
