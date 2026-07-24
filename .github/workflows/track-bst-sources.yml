@@ -58,7 +58,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -159,7 +159,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -254,7 +254,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -349,7 +349,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -444,7 +444,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -541,7 +541,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -725,7 +725,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -854,7 +854,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -910,7 +910,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1005,7 +1005,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1098,7 +1098,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1191,7 +1191,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1284,7 +1284,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1383,7 +1383,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1481,7 +1481,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1576,7 +1576,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1671,7 +1671,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
@@ -1750,7 +1750,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup mise
-        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        uses: jdx/mise-action@f10502fc09dadecfefb962fff68ce77213930204 # v4.2.2
         with:
           experimental: true
 
