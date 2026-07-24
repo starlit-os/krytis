@@ -592,6 +592,58 @@ Buildbarn cache (populated by krytis's own `x86_64_v3` builds via
 This isn't a bug to fix; it's the reason the Buildbarn cache work (#234)
 exists in the first place.
 
+### `max-jobs` auto-detection makes bow's own cache runner-CPU-count-dependent (Blacksmith vs self-hosted)
+
+A second, independent cache-key divergence, found when testing `cache-warm.yml`
+on a Blacksmith-hosted runner (`blacksmith-8vcpu-ubuntu-2404`) after it had
+already been populating bow from the self-hosted runner (`VM_CPUS=4`): the
+Blacksmith run showed **zero** cache hits against bow for the *entire* build
+(`837 waiting/fetch-needed, 0 cached`), even though it built the exact same
+commit the self-hosted runner had just successfully pushed to bow from.
+Confirmed byte-identical element/project.conf state between the two runs
+(same tree, only `runs-on:` differed) before looking elsewhere.
+
+Root cause, confirmed by reading BuildStream's own source
+(`buildstream/_context.py`):
+
+```python
+return self.build_max_jobs or self.platform.get_cpu_count(8)
+```
+
+`max-jobs` defaults to the **auto-detected host CPU count** (capped at 8)
+unless explicitly pinned via `buildstream.conf`'s `build: { max-jobs: N }` —
+`cache-warm.yml`'s "Configure BuildStream" step never set it. freedesktop-sdk's
+own `meson-conf.yml` bakes the resolved value straight into the cache key:
+
+```yaml
+environment:
+  LTOJOBS: "%{max-jobs}"
+```
+
+Under `environment:` (cache-key-affecting), not `environment-nocache:`
+(explicitly excluded) — so every meson-built element's key depends on
+whatever `max-jobs` resolves to on the machine that built it. Self-hosted
+(`VM_CPUS=4`) → `max-jobs=4` → `LTOJOBS=4`; Blacksmith (8 vCPU) →
+`max-jobs=8` → `LTOJOBS=8`. Two completely different literal environment
+values baked into the same nominal element, for every meson-built element
+in the graph (most of freedesktop-sdk) — same failure *shape* as the
+`x86_64_v3` divergence above (100% miss across compiled elements), different
+root cause (runner core count, not a project option), and unlike
+`x86_64_v3` this one is *invisible* until you actually switch which runner
+executes `cache-warm.yml`, since a single consistent runner never notices
+its own cache disagreeing with itself.
+
+**Fix:** pin `build: { max-jobs: 4 }` in `cache-warm.yml`'s generated
+`buildstream.conf`, matching bow's already-populated `max-jobs=4` cache
+(from the self-hosted runner) rather than whatever the executing runner's
+actual core count happens to be. Changing that pinned value in the future
+invalidates bow's entire compiled-artifact cache for every meson element —
+treat it the same as changing `x86_64_v3`: a deliberate, cache-busting
+decision, not a casual tune-up. This only fixes `cache-warm.yml`'s own
+reproducibility; a local developer machine with a different core count
+would hit the same divergence against bow unless it also pins `max-jobs`
+in its own `buildstream.conf`.
+
 ### Full artifact push/pull round-trip verified against bow
 
 Using the `-o x86_64_v3 false` override purely as a way to get a *fast*
