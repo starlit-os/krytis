@@ -17,6 +17,8 @@ depends:
 - freedesktop-sdk.bst:components/polkit.bst
 - freedesktop-sdk.bst:components/wireplumber.bst
 - freedesktop-sdk.bst:components/tomlplusplus.bst
+- freedesktop-sdk.bst:components/libsecret.bst
+- desktop/libsodium.bst
 - desktop/libqalculate.bst
 - desktop/md4c.bst
 - desktop/sdbus-cpp.bst

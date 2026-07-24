@@ -29,8 +29,25 @@ or `track-mise` CI job is needed. A matrix entry in the `track` job in
 `desktop/noctalia.bst` also uses `git_repo` + `track: v*`. The v5.0.0-beta2 re-pin
 (99 commits past the old `main` pin) changed the upstream dependency surface —
 upstream un-vendored `md4c`/`tomlplusplus` from `third_party/` and added
-`nlohmann_json` and stb header requirements. See `bst.md` § "tar → git_repo switch"
-for how to diff the dependency surface before re-pinning. Mapping:
+`nlohmann_json` and stb header requirements. The v5.0.0-beta.4 re-pin (#352)
+added two more required deps (`src/security/secret_store.cpp`,
+`encrypted_file_store.cpp`, `calendar_credential_store.cpp` — new
+credential/secret encryption features): `libsecret-1` (already shipped by
+freedesktop-sdk) and `libsodium` (not shipped by either junction — added as a
+new krytis-owned element, `desktop/libsodium.bst`, autotools, same
+not-in-fdsdk/gnome-build-meta pattern as `md4c.bst`/`stb.bst`). See `bst.md`
+§ "tar → git_repo switch" for how to diff the dependency surface before
+re-pinning.
+
+**meson aborts configure at the first missing `dependency()` call, not all of
+them at once.** A version bump that adds N new deps takes N build-fix-rebuild
+cycles to fully surface, not one — each fix only reveals the *next* missing
+dependency (e.g. #352 hit `libsecret-1` first, and only after adding that did
+`libsodium` show up as the next failure). Don't stop at the first fix and
+assume the build is green; rebuild after each addition until it actually
+succeeds end-to-end.
+
+Mapping:
 
 | Upstream requirement | Provided by | Dep kind | Why |
 |---|---|---|---|
@@ -39,6 +56,8 @@ for how to diff the dependency surface before re-pinning. Mapping:
 | `dependency('tomlplusplus')` | `freedesktop-sdk.bst:components/tomlplusplus.bst` | `depends` | **not** header-only — fdsdk builds it as `libtomlplusplus.so.3` (`TOML_SHARED_LIB=1` in noctalia's own meson flags) |
 | `has_header('stb/…')` | `desktop/stb.bst` (manual, headers → `/usr/include/stb/`) | `build-depends` | genuinely header-only — no `.so` in the artifact |
 | `dependency('libwebp')` | already in closure (present since old pin) | — | — |
+| `dependency('libsecret-1', version: '>=0.20')` | `freedesktop-sdk.bst:components/libsecret.bst` | `depends` | shared lib (`libsecret-1.so`), linked at runtime |
+| `dependency('libsodium', version: '>=1.0.18')` | `desktop/libsodium.bst` (autotools, `kind: tar` release asset, `mise run libsodium-update`) | `depends` | shared lib (`libsodium.so.26`); not shipped by either junction, no build-system deps of its own |
 
 **Don't assume "meson `dependency()` on a library with an upstream header-only
 design" means `build-depends`-only.** toml++ *is* header-only upstream, but fdsdk's
