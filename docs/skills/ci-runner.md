@@ -597,11 +597,20 @@ exists in the first place.
 A second, independent cache-key divergence, found when testing `cache-warm.yml`
 on a Blacksmith-hosted runner (`blacksmith-8vcpu-ubuntu-2404`) after it had
 already been populating bow from the self-hosted runner (`VM_CPUS=4`): the
-Blacksmith run showed **zero** cache hits against bow for the *entire* build
-(`837 waiting/fetch-needed, 0 cached`), even though it built the exact same
-commit the self-hosted runner had just successfully pushed to bow from.
-Confirmed byte-identical element/project.conf state between the two runs
-(same tree, only `runs-on:` differed) before looking elsewhere.
+Blacksmith run initially showed **zero** cache hits against bow for the
+entire build, even though it built the exact same commit the self-hosted
+runner had just successfully pushed to bow from. Confirmed byte-identical
+element/project.conf state between the two runs (same tree, only `runs-on:`
+differed) before looking elsewhere.
+
+**Caveat on "zero cache hits" as a diagnostic signal:** the *initial*
+pipeline table (`waiting`/`fetch needed`/`cached` counts printed right after
+"Query cache") only reflects the **local** BuildStream cache, which is
+always empty on a fresh CI runner regardless of runner identity — it does
+**not** indicate remote (bow) hit/miss. The real signal is the per-element
+`pull:<element>` log lines that appear as the build actually processes each
+element (`INFO Pulled artifact X <- https://...` vs `INFO ... does not have
+artifact X cached`). Don't conflate the two when diagnosing a similar report.
 
 Root cause, confirmed by reading BuildStream's own source
 (`buildstream/_context.py`):
@@ -622,27 +631,50 @@ environment:
 
 Under `environment:` (cache-key-affecting), not `environment-nocache:`
 (explicitly excluded) — so every meson-built element's key depends on
-whatever `max-jobs` resolves to on the machine that built it. Self-hosted
-(`VM_CPUS=4`) → `max-jobs=4` → `LTOJOBS=4`; Blacksmith (8 vCPU) →
-`max-jobs=8` → `LTOJOBS=8`. Two completely different literal environment
-values baked into the same nominal element, for every meson-built element
-in the graph (most of freedesktop-sdk) — same failure *shape* as the
-`x86_64_v3` divergence above (100% miss across compiled elements), different
-root cause (runner core count, not a project option), and unlike
-`x86_64_v3` this one is *invisible* until you actually switch which runner
-executes `cache-warm.yml`, since a single consistent runner never notices
-its own cache disagreeing with itself.
+whatever `max-jobs` resolves to on the machine that built it.
 
-**Fix:** pin `build: { max-jobs: 4 }` in `cache-warm.yml`'s generated
-`buildstream.conf`, matching bow's already-populated `max-jobs=4` cache
-(from the self-hosted runner) rather than whatever the executing runner's
-actual core count happens to be. Changing that pinned value in the future
-invalidates bow's entire compiled-artifact cache for every meson element —
-treat it the same as changing `x86_64_v3`: a deliberate, cache-busting
-decision, not a casual tune-up. This only fixes `cache-warm.yml`'s own
-reproducibility; a local developer machine with a different core count
-would hit the same divergence against bow unless it also pins `max-jobs`
-in its own `buildstream.conf`.
+**Fix:** pinned `build: { max-jobs: 4 }` in `cache-warm.yml`'s generated
+`buildstream.conf`. Changing that pinned value in the future invalidates
+bow's entire compiled-artifact cache for every meson element — treat it the
+same as changing `x86_64_v3`: a deliberate, cache-busting decision, not a
+casual tune-up. This only fixes `cache-warm.yml`'s own reproducibility; a
+local developer machine with a different core count would hit the same
+divergence against bow unless it also pins `max-jobs` in its own
+`buildstream.conf`.
+
+**Verified effective** by a full element-by-element cache-key diff between
+a self-hosted run and a post-fix Blacksmith run (same commit, `runs-on:`
+the only difference): **829 of 837 elements (99%) now compute byte-identical
+keys.** The 8 that still differ are *expected, not a bug*:
+
+```
+core/os-release.bst, oci/os-release.bst, core/initramfs.bst,
+oci/krytis/stack.bst, oci/krytis/manifest.bst, oci/krytis/runtime.bst,
+oci/krytis/filesystem.bst, oci/krytis/image.bst
+```
+
+All 8 sit downstream of `mise run generate-image-version`, which bakes a
+build timestamp into the image version string — every independent build run
+gets a unique version stamp, so these 8 (and only these 8, the very top of
+the graph) can never cache-match across separate runs, on any runner.
+`oci/krytis/image.bst` itself will never be a genuine bow hit across builds;
+that's inherent to versioning each build uniquely, not something to fix.
+
+**A third, unrelated failure mode looks identical in the log but isn't a
+key mismatch at all:** a `does not have artifact <hash> cached` message
+doesn't by itself prove a key divergence — confirm the hash actually differs
+from a known-good run before assuming the environment is at fault. Case in
+point: `freedesktop-sdk.bst:components/expat.bst` (`b07b1a0a...`) reported
+as a bow miss on Blacksmith even after the `max-jobs` fix, but its key was
+confirmed byte-identical to the self-hosted run's key for the same element.
+The actual cause: the self-hosted run's log showed `expat.bst` as `cached`
+**before any build/pull activity even ran**, meaning it came from
+self-hosted's persistent local disk cache (volume-mounted across runs, see
+above), not from bow — so BuildStream never triggered a build+push cycle for
+it on self-hosted, and bow's remote CAS genuinely never received that
+artifact. This is an incremental cache-population gap (bow hasn't been
+fully warmed yet), not a correctness bug; it resolves as future `cache-warm`
+runs actually build and push whatever's still missing.
 
 ### Full artifact push/pull round-trip verified against bow
 
