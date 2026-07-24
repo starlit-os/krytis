@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   warm-cache:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 360
     steps:
       - name: Checkout repository
@@ -59,6 +59,20 @@ jobs:
             verbose: False
           cache:
             quota: 50G
+          build:
+            # Pinned, not auto-detected — freedesktop-sdk's meson-conf.yml
+            # bakes %{max-jobs} into LTOJOBS under environment: (cache-key
+            # affecting, unlike environment-nocache:), so BuildStream's
+            # default of "auto-detect host CPU count, capped at 8" makes
+            # every meson-built element's cache key depend on the runner's
+            # core count. An 8-vCPU runner and a 4-vCPU runner building the
+            # exact same commit compute completely different keys for the
+            # entire meson-built portion of the graph, and neither can ever
+            # hit bow's cache populated by the other. Pinned to 4 to match
+            # what bow's cache has been populated with by the self-hosted
+            # runner (VM_CPUS=4) — changing this value invalidates bow's
+            # entire compiled-artifact cache for every meson element.
+            max-jobs: 4
           EOF
 
           # Wire krytis's bow Buildbarn cache into user config (#340). Not
