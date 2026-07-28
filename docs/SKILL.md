@@ -13,6 +13,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
+| Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |

@@ -202,9 +202,26 @@ bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section)
 
 If CI signing is not ready, the unsigned image must **not** be published to the public registry — it stays as `localhost/krytis-input:latest` (the BST output) and `localhost/krytis:latest` (lint-only). Only the sealed image is published.
 
-### 5. Breakage gate: fido2-luks / TPM (#312)
+### 5. Breakage gate: fido2-luks / TPM (#312) — RESOLVED
 
-Adding a signed UKI changes PCR measurements (PCR 4 = boot manager, PCR 7 = secure boot policy), which can break TPM-based LUKS unlock. krytis ships `30-fido2-luks.toml`. This is a Breakage Gate per AGENTS.md — #312 must be cleared before the full boot chain is verified. `ukify --measure` and `systemd-tpm2-*` service handling are in scope. travier's `uki.sh` uses `--measure` and masks several `systemd-tpm2-*` services as a workaround.
+**Resolution: gate cleared. No code changes required.**
+
+**Verified fleet state:** all deployed krytis LUKS volumes are passphrase-only or FIDO2-enrolled (`systemd-cryptenroll --fido2-device=auto`). **Zero TPM-bound volumes exist.** No TPM kargs (`tpm2-device=`, `tpm2-pcrs=`) are shipped anywhere in the repo; the only LUKS karg is `30-fido2-luks.toml`'s `rd.luks.options=fido2-device=auto`. The image carries `tpm2-tss`/`tpm2-tools`/`tpm2-pkcs11` in the base stack but ships no TPM enrollment tooling — nothing in krytis produces a TPM-bound slot, so the population stays empty unless a user hand-runs `systemd-cryptenroll --tpm2-device`.
+
+**Why PCR changes are harmless here:** PCR measurements (PCR 4 = boot manager, PCR 7 = secure boot policy, PCR 11 = UKI sections) are only read by TPM-bound unseal operations. Both unlock paths krytis actually uses ignore them:
+
+- **FIDO2** unlock runs the LUKS2-token-plugin path (`attach_luks2_by_fido2_via_plugin()` — see `docs/skills/fido2.md`) — a challenge-response with the security key, no TPM involvement at any point.
+- **Passphrase** unlock is a plain KDF against the LUKS header — cryptographically independent of PCR state.
+
+Enabling secure boot and switching to a signed UKI flips PCR 7 (and changes PCR 4's extension sequence) — with no TPM-bound enrollments, nothing observes the change. No re-enrollment, no lockout risk on seal.
+
+**`ukify --measure`: not added.** `--measure` exists to populate PCR 11 for TPM-based attestation/unlock flows. With no TPM-bound volumes and no TPM feature on the roadmap it buys nothing, and it would make PCR 11 part of the boot contract that a future TPM design must inherit. Re-evaluate inside a future TPM-LUKS issue, where PCR selection (7+11 vs others) can be designed as a whole.
+
+**`systemd-tpm2-*` service masking: not applied.** travier masks `systemd-tpm2-setup-early.service`, `systemd-tpm2-setup.service`, `systemd-pcrphase.service`, `systemd-pcrproduct.service` to work around specific hardware TPM hangs across a large Fedora Atomic fleet. krytis has no observed failures from these units; masking four units "just in case" is a cargo-culted workaround a future TPM feature would have to unmask and debug. Escalation rule: if sealed-boot verification or real hardware shows any `systemd-tpm2-*`/`systemd-pcr*` unit failing or hanging, mask per travier's list and fold the finding into the future TPM-LUKS issue.
+
+**Residual verification (folded into #32's acceptance criteria):** the real regression risk for FIDO2 under a UKI is the cmdline bake, not PCRs — `rd.luks.options=fido2-device=auto` must appear inside the signed PE's `.cmdline` section (`ukify inspect` / `objdump -s -j .cmdline`), and FIDO2 unlock must be confirmed on a sealed deployment on real hardware (enroll via `mise fido2:enroll-luks`, reboot, key-touch unlock with no passphrase fallback). Also confirm no `systemd-tpm2-*`/`systemd-pcr*` unit enters `systemctl --failed` under the sealed flow.
+
+**Forward guidance:** TPM-bound LUKS support is deferred to a dedicated backlog issue (PCR selection, `--measure` re-evaluation, re-enrollment UX after key/db rotation or firmware updates, travier-mask re-evaluation, swtpm QEMU testing). Until that lands, users must not enroll TPM slots on krytis volumes — a db key rotation or UKI layout change would invalidate PCR policy and require re-enrollment.
 
 ## Status in sibling / reference projects
 
@@ -246,9 +263,9 @@ Generate `.auth` files from PEM keys using efitools (`cert-to-efi-sig-list` + `s
 
 For QEMU testing: `virt-fw-vars` to bake keys into OVMF vars.
 
-### 5. fido2-luks / TPM Breakage Gate — #312
+### 5. fido2-luks / TPM Breakage Gate — #312 ✅ RESOLVED
 
-Analyze PCR impact of signed UKI on TPM-bound LUKS. Evaluate `ukify --measure` and `systemd-tpm2-*` service handling. Must be cleared before full boot chain verification.
+Gate cleared: no TPM-bound deployments exist, so signed-UKI PCR changes cannot lock out LUKS unlock (FIDO2/passphrase paths ignore PCRs). No `--measure`, no `systemd-tpm2-*` masking. Residual verification (cmdline bake + hardware FIDO2 check) folded into #32. TPM-bound LUKS support is deferred to a backlog issue. See decision 5 above.
 
 ### 6. ~~CachyOS kernel module signing~~ — dropped (#34)
 
