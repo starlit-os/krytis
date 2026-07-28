@@ -61,3 +61,7 @@ Two more issues surface only after the rootfs fix, both worth checking on any fu
 - **The systemd-boot binary to sign is at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`, not `/boot/EFI/systemd/systemd-bootx64.efi`.** The latter path only exists on a target system after `bootctl install`/`bootc install` has populated the ESP — it's never present inside the container image itself. Sign the source path (`sbsign` needs a distinct output file, so sign to `.signed` and `mv` over the original) so the pre-signed binary is what gets installed later.
 
 Verified end-to-end on real keys: `objcopy -O binary --only-section=.cmdline` on the resulting UKI showed `quiet splash rd.luks.options=fido2-device=auto composefs=<64-char digest>`, and `sbverify --cert db.crt` passed for both the UKI and the signed systemd-boot binary.
+
+## Sealed images push under `:sealed` tags, never `:latest`
+
+`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces. A sealed/UKI image needs `bootc install --composefs-backend --boot=uki` on the target, which a plain bootc install doesn't do — silently reusing `:latest` for the sealed variant would mean anyone pulling `:latest` expecting the ordinary install path gets an image that can't be installed the same way. Keep the tag suffix whenever adding new push variants.
