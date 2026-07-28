@@ -369,6 +369,7 @@ mise/tasks/
 ├── bst
 ├── validate
 ├── generate-image-version
+├── generate-keys            # ensure secure boot keys exist (pull from Proton Pass or generate)
 ├── load-image
 ├── lint
 ├── push                     # tag + push to ghcr.io/starlit-os/krytis
@@ -439,6 +440,22 @@ Secrets that must never enter the repo (e.g. signing keys) are retrieved with [`
 - Tasks that consume secrets (e.g. `mise/tasks/pull-keys`, #311) loop over the `fnox.toml` secret names, redirect `fnox get` output to the destination file, and validate the result (`openssl x509 -noout`, `openssl rsa -check`) — a fnox misconfiguration or an empty vault field fails loudly instead of writing a garbage key file.
 - Retrieved secrets land in a gitignored path (e.g. `files/boot-keys/`), never committed.
 - `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (`pass-cli = "latest"`) in the project `mise.toml` — same dev-host-tooling pattern as `just`. `mise install` then provisions it automatically; no manual download step.
+
+### Testing secret-consuming tasks without a live vault
+
+`mise run` reorders `PATH` so mise-installed tool shims take precedence over any prefix you export (e.g. `PATH=/mock/bin:$PATH mise run generate-keys` still resolves `fnox` from the mise install dir). To mock a secret backend for task testing, shadow the binary at its mise install path instead:
+
+```bash
+FNOX_BIN=$(mise where fnox)/fnox          # or ~/.local/share/mise/installs/fnox/latest/fnox
+cp "$FNOX_BIN" /tmp/fnox-real-backup       # back up first
+cp /path/to/mock-fnox "$FNOX_BIN"
+# ... run tests ...
+cp /tmp/fnox-real-backup "$FNOX_BIN"      # restore
+```
+
+`openssl rsa -check -noout` prints "RSA key ok" to **stdout** on success — pipe validation probes through `>/dev/null 2>&1` (not just `2>/dev/null`) or the task output gets polluted with per-key confirmation lines.
+
+`fnox get <SECRET> --non-interactive` is the correct vault-probe for scripted checks — it fails cleanly without prompting when `pass-cli` is logged out or its local store is broken, instead of hanging on a browser-auth flow. Use it for any "is the vault reachable?" gate before deciding whether to pull keys or generate fresh ones (see `mise/tasks/generate-keys`, #31).
 
 `usage lint` cannot parse plain bash task files without `#USAGE` annotations (it expects a KDL spec) — this is expected and not a lint failure; it applies equally to every existing task that has no `#USAGE` block (e.g. `symbols-nerd-font-update`).
 
