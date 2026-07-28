@@ -18,6 +18,23 @@ if [[ "$SEALED" -eq 1 ]]; then
   SOURCE_TAG="localhost/krytis:sealed"
   DEST_VERSION_TAG="${REGISTRY}:${VERSION}-sealed"
   DEST_LATEST_TAG="${REGISTRY}:sealed"
+
+  if ! podman image exists localhost/krytis:latest; then
+    echo "==> ERROR: localhost/krytis:latest not found locally — run mise build first (needed as the freshness reference for --sealed)" >&2
+    exit 1
+  fi
+
+  LATEST_CREATED=$(date -d "$(podman inspect localhost/krytis:latest --format '{{.Created}}')" +%s)
+  if podman image exists "$SOURCE_TAG"; then
+    SEALED_CREATED=$(date -d "$(podman inspect "$SOURCE_TAG" --format '{{.Created}}')" +%s)
+  else
+    SEALED_CREATED=0
+  fi
+
+  if [[ "$SEALED_CREATED" -lt "$LATEST_CREATED" ]]; then
+    echo "==> ${SOURCE_TAG} is missing or older than localhost/krytis:latest — running mise run seal-uki..."
+    ./mise/tasks/seal-uki
+  fi
 else
   SOURCE_TAG="localhost/krytis:latest"
   DEST_VERSION_TAG="${REGISTRY}:${VERSION}"
