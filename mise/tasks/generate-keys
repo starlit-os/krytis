@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#MISE description="Ensure secure boot keys exist in files/boot-keys/ — pull from Proton Pass when available, generate otherwise"
+#USAGE flag "--vendor <vendor>" default="Krytis" help="Vendor name in generated certificate CNs"
+
+set -euo pipefail
+
+VENDOR="${usage_vendor:-Krytis}"
+KEY_DIR="files/boot-keys"
+
+mkdir -p "${KEY_DIR}/extra-db"
+
+# Map fnox secret names to boot-keys filenames
+declare -A KEYS=(
+    [PK_KEY]=PK.key    [PK_CRT]=PK.crt
+    [KEK_KEY]=KEK.key  [KEK_CRT]=KEK.crt
+    [DB_KEY]=db.key    [DB_CRT]=db.crt
+)
+
+file_ok() {
+    # $1 = path, $2 = kind (key|crt) — present, non-empty, and openssl-valid
+    [ -s "$1" ] || return 1
+    case "$2" in
+        key) openssl rsa -check -in "$1" -noout >/dev/null 2>&1 || openssl ec -check -in "$1" -noout >/dev/null 2>&1 ;;
+        crt) openssl x509 -noout -in "$1" >/dev/null 2>&1 ;;
+    esac
+}
+
+pair_matches() {
+    # $1 = private key, $2 = cert — cert's public key matches the private key
+    local kpub cpub
+    kpub=$(openssl pkey -in "$1" -pubout 2>/dev/null) || return 1
+    cpub=$(openssl x509 -in "$2" -pubkey -noout 2>/dev/null) || return 1
+    [ "$kpub" = "$cpub" ]
+}
+
+# --- On-disk state ---------------------------------------------------------
+on_disk=()   # complete, valid, matching .key + .crt pairs
+partial=()   # one half present/valid, other missing/invalid — never clobbered
+missing=()   # neither half present
+declare -A origin=()
+
+for key in PK KEK db; do
+    k="${KEY_DIR}/${key}.key"; c="${KEY_DIR}/${key}.crt"
+    if file_ok "$k" key && file_ok "$c" crt && pair_matches "$k" "$c"; then
+        on_disk+=("$key")
+    elif [ -e "$k" ] || [ -e "$c" ]; then
+        partial+=("$key")
+    else
+        missing+=("$key")
+    fi
+done
+
+for key in "${on_disk[@]+"${on_disk[@]}"}"; do origin[$key]="on disk"; done
+
+if [ "${#partial[@]}" -gt 0 ]; then
+    echo "ERROR: incomplete or invalid key pairs on disk: ${partial[*]}" >&2
+    echo "Both ${KEY_DIR}/<KEY>.key and <KEY>.crt must be present, valid, and matching." >&2
+    echo "Complete the set ('mise run pull-keys' or regenerate) or remove the stray files." >&2
+    exit 1
+fi
+
+# --- Proton Pass / fnox state ----------------------------------------------
+# "keys exist" covers keys available through the configured Proton Pass vault,
+# not just files already on disk. Probe the vault only when something is
+# missing — never touch the network on an up-to-date checkout.
+vault_state="not-probed"
+if [ "${#missing[@]}" -gt 0 ]; then
+    if command -v fnox >/dev/null 2>&1 && [ -f fnox.toml ]; then
+        if timeout 60 fnox get "${missing[0]^^}_CRT" --non-interactive >/dev/null 2>&1; then
+            vault_state="reachable"
+        else
+            vault_state="unreachable"
+        fi
+    else
+        vault_state="unconfigured"
+    fi
+fi
+
+if [ "${#missing[@]}" -gt 0 ] && [ "$vault_state" = "unreachable" ]; then
+    cat >&2 <<EOF
+ERROR: Proton Pass is configured (fnox.toml) but the vault is unreachable.
+Missing keys: ${missing[*]} — refusing to generate fresh keys that would fork
+the trust chain from the existing vault key set.
+
+Fix pass-cli (re-run 'pass-cli login'), then re-run this task or
+'mise run pull-keys'. To intentionally start a NEW key set instead, remove
+fnox.toml (or rename the vault item) so Proton Pass is no longer configured.
+EOF
+    exit 1
+fi
+
+# --- Fill in missing keys ---------------------------------------------------
+if [ "${#missing[@]}" -gt 0 ] && [ "$vault_state" = "reachable" ]; then
+    echo "==> Pulling missing keys from Proton Pass: ${missing[*]}"
+    for key in "${missing[@]}"; do
+        for half in KEY CRT; do
+            secret="${key^^}_${half}"
+            dest="${KEY_DIR}/${KEYS[$secret]}"
+            if ! fnox get "$secret" > "$dest"; then
+                rm -f "$dest"
+                echo "ERROR: fnox get ${secret} failed" >&2
+                exit 1
+            fi
+        done
+        if ! file_ok "${KEY_DIR}/${key}.key" key || ! file_ok "${KEY_DIR}/${key}.crt" crt \
+            || ! pair_matches "${KEY_DIR}/${key}.key" "${KEY_DIR}/${key}.crt"; then
+            echo "ERROR: ${key} pulled from Proton Pass failed validation" >&2
+            exit 1
+        fi
+        origin[$key]="Proton Pass"
+    done
+elif [ "${#missing[@]}" -gt 0 ]; then
+    for key in "${missing[@]}"; do
+        echo "==> Generating fresh ${key} key pair (RSA 4096, CN=${VENDOR} ${key} key)"
+        openssl req -new -x509 -newkey rsa:4096 -subj "/CN=${VENDOR} ${key} key/" \
+            -keyout "${KEY_DIR}/${key}.key" -out "${KEY_DIR}/${key}.crt" \
+            -days 3650 -nodes -sha256 2>/dev/null
+        origin[$key]="generated"
+    done
+fi
+
+chmod 600 "${KEY_DIR}"/*.key
+chmod 644 "${KEY_DIR}"/*.crt
+
+# --- Report ------------------------------------------------------------------
+if [ "${#missing[@]}" -eq 0 ]; then
+    echo "Already up to date — all keys present in ${KEY_DIR}/"
+fi
+echo "==> Key status (${KEY_DIR}/):"
+for key in PK KEK db; do
+    echo "    ${key}: ${origin[$key]}"
+done
+echo "    extra-db/: present"
+case "$vault_state" in
+    reachable)    echo "    Proton Pass: reachable (configured in fnox.toml)" ;;
+    unreachable)  echo "    Proton Pass: configured but unreachable (pass-cli auth needed)" ;;
+    unconfigured) echo "    Proton Pass: not configured on this machine" ;;
+    *)            echo "    Proton Pass: configured (availability not checked — keys already present)" ;;
+esac
