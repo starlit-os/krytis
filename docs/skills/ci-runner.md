@@ -762,8 +762,10 @@ autonomously.
 
 | Workflow | Runner | Rationale |
 |---|---|---|
-| `cache-warm.yml` | `[self-hosted, linux, x64]` | Needs local BST cache volume mount and full disk |
+| `cache-warm.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith by default since #351; self-hosted override exists to keep bow's cache-key shape aligned with the host that originally populated it (`VM_CPUS=4`), to prime bow ahead of a heavy element update, or to reproduce a build on the real hardware |
 | `track-bst-sources.yml` | `ubuntu-24.04` | Lightweight; must run when local machine is off |
+
+The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes, since that's what determines the meson-built cache-key shape, not the runner's actual core count (see below).
 
 ## `max-jobs` should only be set high when remote-execution is on
 

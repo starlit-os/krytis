@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 6 * * 1-5'
   workflow_dispatch:
+    inputs:
+      force_self_hosted:
+        description: 'Run on the self-hosted runner instead of Blacksmith'
+        type: boolean
+        default: false
 
 permissions: read-all
 
@@ -13,7 +18,11 @@ concurrency:
 
 jobs:
   warm-cache:
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
+    # runner (VM_CPUS=4) to keep bow's cache-key shape aligned, prime the
+    # cache for a heavy element update, or debug on the real hardware.
+    # max-jobs stays pinned to 4 either way — see the comment below.
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_self_hosted) && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 360
     steps:
       - name: Checkout repository
