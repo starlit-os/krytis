@@ -13,6 +13,12 @@ depends:
   # greetd + cage + wlr-randr + noctalia-greeter + PAM/config files.
   - config/greetd-config.bst
 
+  # Seeds /var/lib/noctalia-greeter/greeter.toml (hide_logo = true) once via
+  # a ConditionPathExists-gated oneshot unit. /var is runtime state in the
+  # bootc composefs layout, so the config cannot be baked into the image.
+  # Closes #296.
+  - config/greeter-config-seed.bst
+
   # ── Compositor ─────────────────────────────────────────────────────────
   - desktop/niri.bst
 

@@ -123,11 +123,24 @@ better than the old `no-brand-logo.patch` it replaced.
 The greeter reads its config from `/var/lib/noctalia-greeter/greeter.toml`
 (`packageConfPath()` → `syncedDataDirectory() / "greeter.toml"`). This is **mutable runtime
 state** — `saveGreeterPreferences()` does read-modify-write on it to persist the user's
-last session and color scheme. See issue #296 for why seeding `hide_logo = true` is not
-trivial in a bootc composefs layout (bootc flags non-dir files in `/var`; `tmpfiles.d` `w`
-won't create the file, `f` clobbers user prefs on every boot) and the planned oneshot-unit
-approach. As of the `git_repo` switch, the logo is **visible** — the old patch was dropped
-without a replacement pending #296.
+last session and color scheme. With no `greeter.toml` at all the greeter uses built-in
+defaults (`hideLogo = false`), so the logo shows — an absent file does not hide it.
+
+Seeding is done by `config/greeter-config-seed.bst` (closes #296): a read-only template at
+`/usr/share/noctalia-greeter/greeter.toml` (`hide_logo = true`) plus a oneshot
+`greeter-config-seed.service` gated on `ConditionPathExists=!/var/lib/noctalia-greeter/greeter.toml`
+that `install -D -o greeter -g greeter`s the template into place once, then never runs
+again. The unit orders `After=systemd-tmpfiles-setup.service systemd-sysusers.service`
+(the tmpfiles `d` line and `greeter` user both come from `greetd-config.bst`) and
+`Before=greetd.service` so the seed lands before the greeter's first read. Pattern notes:
+
+- `/var` is writable runtime state in the bootc composefs layout; bootc flags non-dir
+  files baked into the OCI layer's `/var`, so the file cannot be shipped there directly.
+- `tmpfiles.d` is not a fit: `w` won't create the file on first boot and `f` truncates
+  on **every** boot, clobbering the user's saved greeter preferences.
+- Same ConditionPathExists-gated oneshot pattern as `config/flatpak-preinstall.bst`.
+- Changing the shipped default later requires a new migration: existing deployments
+  already have the file, so the gate skips them by design.
 
 ### Carrying a local patch (if needed again)
 
