@@ -69,18 +69,16 @@ jobs:
           cache:
             quota: 50G
           build:
-            # Pinned, not auto-detected — freedesktop-sdk's meson-conf.yml
-            # bakes %{max-jobs} into LTOJOBS under environment: (cache-key
-            # affecting, unlike environment-nocache:), so BuildStream's
-            # default of "auto-detect host CPU count, capped at 8" makes
-            # every meson-built element's cache key depend on the runner's
-            # core count. An 8-vCPU runner and a 4-vCPU runner building the
-            # exact same commit compute completely different keys for the
-            # entire meson-built portion of the graph, and neither can ever
-            # hit bow's cache populated by the other. Pinned to 4 to match
-            # what bow's cache has been populated with by the self-hosted
-            # runner (VM_CPUS=4) — changing this value invalidates bow's
-            # entire compiled-artifact cache for every meson element.
+            # Pinned (not auto-detected) purely for reproducible local build
+            # parallelism across runners of different core counts. Does NOT
+            # affect cache-key matching: max-jobs's runtime env vars
+            # (MAKEFLAGS/JOBS for autotools/meson, LTOJOBS for freedesktop-sdk's
+            # own meson-conf.yml) are all explicitly excluded from the cache
+            # key via environment-nocache — verified against the pinned
+            # freedesktop-sdk ref and the upstream buildstream_plugins package
+            # (see docs/skills/ci-runner.md § max-jobs does NOT affect cache
+            # keys). An earlier version of this comment claimed the opposite
+            # and was wrong — corrected 2026-07-29.
             max-jobs: 4
           EOF
 
