@@ -2,11 +2,13 @@
 #MISE description="Push krytis image to ghcr.io/starlit-os/krytis — run mise build first (or mise run seal-uki --sealed)"
 #USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path to push to"
 #USAGE flag "--sealed" help="Push the signed UKI image (localhost/krytis:sealed) instead of the unsigned one"
+#USAGE flag "--skip-sbom" help="Skip SBOM generation and OCI-referrer attach (#40) — faster iteration, no supply-chain artifact"
 
 set -euo pipefail
 
 REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
 SEALED=$([[ "${usage_sealed:-}" == "true" ]] && echo 1 || echo 0)
+SKIP_SBOM=$([[ "${usage_skip_sbom:-}" == "true" ]] && echo 1 || echo 0)
 VERSION=$(grep '^image-version:' include/image-version.yml | awk '{print $2}' | tr -d "'")
 
 if [[ -z "$VERSION" ]]; then
@@ -70,9 +72,33 @@ podman tag "$SOURCE_TAG" "$DEST_VERSION_TAG"
 podman tag "$SOURCE_TAG" "$DEST_LATEST_TAG"
 
 echo "==> Pushing ${DEST_VERSION_TAG}..."
-podman push "$DEST_VERSION_TAG"
+DIGEST_FILE=$(mktemp)
+podman push --digestfile "$DIGEST_FILE" "$DEST_VERSION_TAG"
 
 echo "==> Pushing ${DEST_LATEST_TAG}..."
 podman push "$DEST_LATEST_TAG"
 
 echo "==> Done: pushed ${DEST_VERSION_TAG} and ${DEST_LATEST_TAG}"
+
+if [[ "$SKIP_SBOM" -eq 0 ]]; then
+  # Both tags above are pushed from the same SOURCE_TAG image ID, so they
+  # share one content-addressed manifest digest — attach the SBOM once.
+  DIGEST=$(cat "$DIGEST_FILE")
+  rm -f "$DIGEST_FILE"
+
+  echo "==> Generating SBOM (#40)..."
+  ./mise/tasks/sbom --output krytis.spdx.json
+
+  echo "==> Attaching SBOM as OCI referrer to ${REGISTRY}@${DIGEST}..."
+  echo "$TOKEN" | oras login ghcr.io --username "$GH_USER" --password-stdin
+  oras attach \
+    --artifact-type application/vnd.spdx+json \
+    "${REGISTRY}@${DIGEST}" \
+    krytis.spdx.json:application/vnd.spdx+json
+
+  echo "==> Done: SBOM attached to ${REGISTRY}@${DIGEST}"
+  echo "    Note: SBOM/image signing is tracked separately in #60 (cosign keyless) — not wired in here."
+else
+  rm -f "$DIGEST_FILE"
+  echo "==> Skipped SBOM attach (--skip-sbom)"
+fi

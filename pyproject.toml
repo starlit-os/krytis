@@ -14,4 +14,8 @@ dependencies = [
   "requests",
   # required by buildstream-plugins-community cargo2 source plugin
   "tomlkit",
+  # SBOM generation (#40). Not yet published to PyPI — pinned to a commit on
+  # main (2026-04-01), matches the pin dakota (../dakota) verified working.
+  # Bump deliberately; re-verify `mise run sbom` after any bump.
+  "buildstream-sbom @ git+https://gitlab.com/BuildStream/buildstream-sbom.git@0706fec3bedf6f73bd9d2fed32c2aed585feef8d",
 ]
