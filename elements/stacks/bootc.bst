@@ -11,3 +11,4 @@ depends:
   - core/bootc.bst
   - core/efibootmgr.bst
   - config/bootc.bst
+  - config/secureboot-loader-conf.bst
