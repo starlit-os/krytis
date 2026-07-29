@@ -13,6 +13,18 @@ set -euo pipefail
 
 CONTAINER="${usage_container:-false}"
 OUTPUT="${usage_output:-krytis.spdx.json}"
+# Consume --container/--output if passed as literal args from a parent task
+# (mise does not parse a child script's #USAGE header when called directly
+# via ./mise/tasks/sbom — a caller declaring its own same-named flag would
+# otherwise leak its default through env-var inheritance and silently
+# override this explicit flag). See docs/skills/mise.md § Propagating flags
+# through tasks that call other tasks.
+while [ "${1:-}" = "--container" ] || [ "${1:-}" = "--output" ]; do
+    case "$1" in
+        --container) CONTAINER=true; shift ;;
+        --output) OUTPUT="$2"; shift 2 ;;
+    esac
+done
 # BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default
 # for machines without native BST host deps. Explicit --container always wins.
 if [ "$CONTAINER" != "true" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
