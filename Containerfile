@@ -9,24 +9,22 @@ RUN bootc container lint
 # Conditional secure boot sealing — gated by build arg.
 # mise build (unsigned) skips this; mise run seal-uki enables it.
 #
-# A second stage is required: `bootc container ukify` refuses to compute the
-# composefs digest against the currently-building (active/mutable) rootfs and
-# needs a separate, already-completed image bind-mounted as --rootfs. See
-# docs/skills/secure-boot.md § bootc container ukify needs a separate rootfs.
+# Stage 2 (sealed): prepare the FINAL rootfs contents — sign systemd-boot —
+# BEFORE the composefs digest is computed (see Containerfile.seal-uki, which
+# picks up from this stage as a squashed, standalone image). `bootc install
+# to-disk` recomputes the digest over whatever image it installs and
+# verifies it against the composefs= parameter baked into the UKI; if the
+# rootfs mutates between ukify and the final image, the digests differ and
+# install fails with "The UKI has the wrong composefs= parameter". This is
+# the LAST stage in this file on purpose — see docs/skills/secure-boot.md
+# § `bootc container ukify` must run in a throwaway stage, never the final
+# image for why UKI generation moved to a separate Containerfile entirely.
 FROM base AS sealed
 ARG SEAL_SECURE_BOOT=false
 
 RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
-    --mount=type=secret,id=kek_key --mount=type=secret,id=kek_crt \
-    --mount=type=secret,id=pk_key --mount=type=secret,id=pk_crt \
-    --mount=type=bind,from=base,target=/target \
     if [ "$SEAL_SECURE_BOOT" = "true" ]; then \
-        mkdir -p /var/tmp /boot/EFI/Linux && \
-        bootc container ukify --rootfs /target -- \
-            --secureboot-private-key /run/secrets/db_key \
-            --secureboot-certificate /run/secrets/db_crt \
-            --signtool sbsign \
-            --output /boot/EFI/Linux/krytis.efi && \
+        mkdir -p /var/tmp && \
         sbsign --key /run/secrets/db_key --cert /run/secrets/db_crt \
             --output /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed \
             /usr/lib/systemd/boot/efi/systemd-bootx64.efi && \
