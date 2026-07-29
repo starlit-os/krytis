@@ -1726,3 +1726,69 @@ variables:
 ```
 
 efibootmgr bakes this into the binary as the default `--loader` path (`\EFI\krytis\grub.efi`, verify with `--help`). Krytis boots via UKI (see `docs/plan/secure-boot-uki.md`), not grub, so this default loader path is currently unused at boot time — but keep it consistent for any future element that needs a reserved ESP dirname, so they don't disagree with each other.
+
+## Building a headless QEMU + OVMF + virt-firmware toolchain for `mise run boot-test`/`boot-vm`
+
+`elements/dev/{qemu,ovmf,virt-firmware}.bst` provide the host-side VM testing
+tooling `mise/tasks/{boot-vm,boot-test,generate-ovmf-vars}` expect
+(`qemu-system-x86_64`, secure-boot-capable OVMF firmware, `virt-fw-vars`).
+Three non-obvious build issues surfaced writing them:
+
+**Don't depend on `gnome-build-meta.bst:core-deps/qemu.bst`.** It's GNOME's
+own interactive-desktop-VM recipe — GTK+SDL+spice+virglrenderer+usbredir+
+smartcard+pipewire, none of which `-nographic`/monitor-socket/user-netdev
+headless testing uses. Build against freedesktop-sdk's own components
+directly (`glib`, `pixman`, `libslirp`, `liburing`, `dtc`) instead of pulling
+that whole GUI stack in for a CI-style testing tool.
+
+**`dtc` (device tree compiler) is required unconditionally, not just for
+ARM/FDT targets.** QEMU's meson.build checks the `dtc` subproject regardless
+of `--target-list`; omitting `freedesktop-sdk.bst:components/dtc.bst` from
+`depends` fails with `ERROR: Subproject dtc is buildable: NO` followed by a
+git-fetch attempt against the sandbox's offline network.
+
+**Pin QEMU to a version that predates the `qemu.qmp` PyPI build dependency.**
+Some QEMU 11.x releases' configure/meson step tries to `pip install
+qemu.qmp==0.0.5` at configure time for QAPI codegen tooling, which fails
+outright in BST's offline sandbox (`Could not provide build dependency
+'qemu.qmp==0.0.5'`) — no `python3-qemu-qmp` freedesktop-sdk component exists
+to satisfy it locally. `10.1.3` (the exact version
+`gnome-build-meta.bst:core-deps/qemu.bst` already pins) predates this and
+builds cleanly. The `qemu-update` mise task deliberately restricts its
+version-track glob to the `10.x` series for this reason — widening it will
+silently reintroduce the build failure. Revisit once a freedesktop-sdk
+`python3-qemu-qmp` component exists.
+
+**QEMU's `Makefile` doesn't inherit the autotools plugin's `MAKEFLAGS`
+parallelism.** The `autotools` BST plugin sets `MAKEFLAGS: -j%{max-jobs}` in
+`environment:` by default, but QEMU's generated `Makefile` just wraps a
+single `ninja -C build` recipe — ninja doesn't participate in GNU make's
+jobserver protocol, so the build silently runs single-threaded (one `cc1`
+process, ~10-20x slower than available cores). Fix: override the `make-args`
+variable explicitly with `-j$(nproc)` (shell-evaluated at command-execution
+time inside the sandbox, not a BST variable substitution) — check `ps aux |
+grep cc1` mid-build to confirm parallelism actually kicked in rather than
+trusting the default.
+
+**`freedesktop-sdk.bst:components/ovmf-maybe.bst` always builds with
+`-D SECURE_BOOT_ENABLE`.** Unlike Fedora's `edk2-ovmf` package, which ships
+separate secboot/non-secboot `OVMF_CODE.fd` variants, freedesktop-sdk's
+`ovmf.bst` has exactly one build output regardless of filename — its `opts`
+variable hardcodes `SECURE_BOOT_ENABLE` unconditionally. A thin repackaging
+wrapper (`kind: manual`, `build-depends: [ovmf-maybe.bst]`, no `sources:`)
+can safely alias that single build under both the plain (`OVMF_CODE.fd`) and
+secboot (`OVMF_CODE_4M.secboot.fd`) filenames a downstream task searches
+for — whether Secure Boot is actually enrolled/enforced at runtime is
+entirely determined by the vars file `virt-fw-vars` bakes, not by which
+CODE.fd name you point QEMU at.
+
+**`kind: manual` doesn't automatically wire up `freedesktop-sdk-stripper`.**
+Unlike `kind: autotools`/`kind: pyproject` (which template in the standard
+strip-and-integrate pipeline), a hand-written `kind: manual` element that
+only repackages pre-built files (no compilation of its own) fails post-build
+with `freedesktop-sdk-stripper: command not found` (exit 127) unless you
+either add `components/stripper.bst` as a build-dependency or — the correct
+fix when there's genuinely nothing to strip (firmware `.fd` volumes aren't
+ELF binaries) — set `strip-binaries: ''` in `variables:` and
+`strip-commands: [':']` in `config:` to no-op it, same pattern already used
+for pre-built `.deb`/tarball apps (see § .deb extraction in BST sandbox).
