@@ -3,12 +3,16 @@
 #USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path to push to"
 #USAGE flag "--sealed" help="Push the signed UKI image (localhost/krytis:sealed) instead of the unsigned one"
 #USAGE flag "--skip-sbom" help="Skip SBOM generation and OCI-referrer attach (#40) — faster iteration, no supply-chain artifact"
+#USAGE flag "--skip-vuln-scan" help="Skip Grype vulnerability scan and OCI-referrer attach (#41) — faster iteration, no scan artifact"
+#USAGE flag "--fail-on <severity>" help="Exit non-zero if the vuln scan finds a vulnerability >= this severity (negligible|low|medium|high|critical). Default: warn-only, never fails the push"
 
 set -euo pipefail
 
 REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
 SEALED=$([[ "${usage_sealed:-}" == "true" ]] && echo 1 || echo 0)
 SKIP_SBOM=$([[ "${usage_skip_sbom:-}" == "true" ]] && echo 1 || echo 0)
+SKIP_VULN_SCAN=$([[ "${usage_skip_vuln_scan:-}" == "true" ]] && echo 1 || echo 0)
+FAIL_ON="${usage_fail_on:-}"
 VERSION=$(grep '^image-version:' include/image-version.yml | awk '{print $2}' | tr -d "'")
 
 if [[ -z "$VERSION" ]]; then
@@ -98,7 +102,41 @@ if [[ "$SKIP_SBOM" -eq 0 ]]; then
 
   echo "==> Done: SBOM attached to ${REGISTRY}@${DIGEST}"
   echo "    Note: SBOM/image signing is tracked separately in #60 (cosign keyless) — not wired in here."
+
+  if [[ "$SKIP_VULN_SCAN" -eq 0 ]]; then
+    echo "==> Preparing SBOM for vulnerability scanning (#41)..."
+    uv run python3 scripts/enrich-sbom-purls.py krytis.spdx.json krytis.enriched.spdx.json
+
+    FAIL_FLAG=()
+    if [[ -n "$FAIL_ON" ]]; then
+      FAIL_FLAG=(-f "$FAIL_ON")
+    fi
+
+    echo "==> Scanning with Grype..."
+    set +e
+    grype "sbom:krytis.enriched.spdx.json" -o "json=krytis.grype.json" -o table "${FAIL_FLAG[@]}"
+    GRYPE_EXIT=$?
+    set -e
+
+    echo "==> Attaching vulnerability report as OCI referrer to ${REGISTRY}@${DIGEST}..."
+    oras attach \
+      --artifact-type application/vnd.grype.report+json \
+      "${REGISTRY}@${DIGEST}" \
+      krytis.grype.json:application/vnd.grype.report+json
+
+    if [[ "$GRYPE_EXIT" -eq 2 ]]; then
+      echo "==> ERROR: Grype found vulnerabilities >= ${FAIL_ON} severity — see krytis.grype.json" >&2
+      exit 1
+    elif [[ "$GRYPE_EXIT" -ne 0 ]]; then
+      echo "==> ERROR: Grype exited unexpectedly (code ${GRYPE_EXIT})" >&2
+      exit "$GRYPE_EXIT"
+    fi
+    echo "==> Done: vulnerability report attached to ${REGISTRY}@${DIGEST}"
+  else
+    echo "==> Skipped vulnerability scan (--skip-vuln-scan)"
+  fi
 else
   rm -f "$DIGEST_FILE"
   echo "==> Skipped SBOM attach (--skip-sbom)"
+  echo "    Note: vulnerability scan also skipped — it scans the SBOM generated here."
 fi

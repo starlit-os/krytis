@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#MISE description="Scan the krytis SBOM for known CVEs via Grype (#41)"
+#MISE depends=["generate-image-version"]
+#USAGE flag "--container" help="Generate the SBOM via the pinned bst2 podman container instead of native buildstream-sbom"
+#USAGE flag "--fail-on <severity>" help="Exit non-zero if a vulnerability >= this severity is found (negligible|low|medium|high|critical). Default: warn-only, never fails on findings."
+#USAGE flag "--output <path>" default="krytis.grype.json" help="JSON report output path"
+
+# Scans the buildstream-sbom SPDX output (#40) after two preprocessing steps
+# (scripts/enrich-sbom-purls.py) that are required for usable results, not
+# optional polish — verified against a real krytis SBOM:
+#   1. Drops ~850 unversioned "element wrapper" packages. Without them Grype
+#      has nothing to bound a match against and flags bare element names
+#      against unrelated-ecosystem advisories (e.g. the C freedesktop-sdk
+#      openssl.bst element matched against a Rust openssl *crate* GHSA
+#      advisory by name collision alone). This was the entire false-positive
+#      class in a raw scan.
+#   2. Drops ~300 packages whose versionInfo is a content hash, not a real
+#      version (BST elements/patches pinned by hash) — a hash can never
+#      satisfy a semver constraint, so any match against one is spurious.
+# Also adds purls for cargo2/pypi packages (~74% of the graph) so Grype
+# matches them precisely instead of via unscoped name+version CPE fallback.
+# See docs/skills/sbom.md for the full investigation and verified before/
+# after numbers.
+set -euo pipefail
+
+CONTAINER=${usage_container:+--container}
+FAIL_ON="${usage_fail_on:-}"
+OUTPUT="${usage_output:-krytis.grype.json}"
+SBOM_PATH="krytis.spdx.json"
+ENRICHED_PATH="krytis.enriched.spdx.json"
+
+echo "==> Generating fresh SBOM..."
+./mise/tasks/sbom ${CONTAINER:-} --output "$SBOM_PATH"
+
+echo "==> Preparing SBOM for vulnerability scanning (#41)..."
+uv run python3 scripts/enrich-sbom-purls.py "$SBOM_PATH" "$ENRICHED_PATH"
+
+FAIL_FLAG=()
+if [ -n "$FAIL_ON" ]; then
+    FAIL_FLAG=(-f "$FAIL_ON")
+fi
+
+echo "==> Scanning with Grype..."
+set +e
+grype "sbom:${ENRICHED_PATH}" -o "json=${OUTPUT}" -o table "${FAIL_FLAG[@]}"
+GRYPE_EXIT=$?
+set -e
+
+echo "==> Report written to: $(pwd)/${OUTPUT}"
+
+if [ "$GRYPE_EXIT" -eq 2 ]; then
+    echo "==> ERROR: Grype found vulnerabilities >= ${FAIL_ON} severity — see ${OUTPUT}" >&2
+    exit 1
+elif [ "$GRYPE_EXIT" -ne 0 ]; then
+    echo "==> ERROR: Grype exited unexpectedly (code ${GRYPE_EXIT})" >&2
+    exit "$GRYPE_EXIT"
+fi
