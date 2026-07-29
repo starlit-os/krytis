@@ -28,6 +28,19 @@ fi
 # systemd.firstboot=no is intentionally absent: firstboot runs on every fresh disk install.
 # Re-add once the installer handles first-run setup and the greeter becomes the entry point.
 echo "==> Installing localhost/krytis:latest → ${DISK} (filesystem: ${FS})..."
+# UKI/sealed images reject install-time --karg: the kernel cmdline is already
+# baked into the UKI at build time (via /usr/lib/bootc/kargs.d/*.toml, applied
+# during `bootc container ukify`), and `bootc install to-disk` errors with
+# "Cannot use externally specified kernel arguments with UKI" if any are
+# passed. Non-UKI images have no baked cmdline, so they still need the
+# console args for serial+TTY output in QEMU. Detect a UKI image by checking
+# for the signed UKI the Containerfile produces.
+IS_UKI=$(podman run --rm --entrypoint /bin/sh localhost/krytis:latest -c \
+    'ls /boot/EFI/Linux/*.efi >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null || echo no)
+KARGS=()
+if [ "${IS_UKI}" != "yes" ]; then
+    KARGS=(--karg console=ttyS0 --karg console=tty1)
+fi
 sudo podman run \
     --rm --privileged --pid=host \
     -v /var/lib/containers:/var/lib/containers \
@@ -41,7 +54,6 @@ sudo podman run \
         --filesystem "${FS}" \
         --wipe \
         --bootloader systemd \
-        --karg console=ttyS0 \
-        --karg console=tty1
+        "${KARGS[@]}"
 
 echo "==> Done: ${DISK}"
