@@ -11,6 +11,7 @@
 *.raw
 *.tar
 .ovmf-vars.fd
+.ovmf-vars-secure.fd
 .build-out
 
 # mise load-image's cache-key/podman-image-ID marker (see docs/skills/mise.md
