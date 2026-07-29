@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #MISE description="Boot bootable.raw in QEMU (native KVM+UEFI) or qemux/qemu-docker fallback"
 #USAGE flag "--disk <path>" default="bootable.raw" help="Disk image to boot"
+#USAGE flag "--secure" help="Boot with OVMF secure boot enabled (requires 'mise run generate-ovmf-vars' first)"
 
 set -euo pipefail
 
 DISK="${usage_disk:-bootable.raw}"
+SECURE="${usage_secure:-}"
 
 if [ ! -e "${DISK}" ]; then
     echo "ERROR: ${DISK} not found — run 'mise run generate-disk' first." >&2
@@ -16,41 +18,64 @@ DISK=$(realpath "${DISK}")
 if command -v qemu-system-x86_64 &>/dev/null; then
     echo "==> Using native qemu-system-x86_64..."
 
-    OVMF_CODE=""
-    for candidate in \
-            /usr/share/edk2/ovmf/OVMF_CODE.fd \
-            /usr/share/OVMF/OVMF_CODE.fd \
-            /usr/share/OVMF/OVMF_CODE_4M.fd \
-            /usr/share/edk2/x64/OVMF_CODE.4m.fd \
-            /usr/share/qemu/OVMF_CODE.fd; do
-        [ -f "${candidate}" ] && OVMF_CODE="${candidate}" && break
-    done
-    if [ -z "${OVMF_CODE}" ]; then
-        echo "ERROR: OVMF firmware not found. Install edk2-ovmf (Fedora) or ovmf (Debian/Ubuntu)." >&2
-        exit 1
-    fi
-
-    # OVMF_VARS must be writable — keep a local copy so EFI state persists across boots
-    OVMF_VARS=".ovmf-vars.fd"
-    if [ ! -e "${OVMF_VARS}" ]; then
-        OVMF_VARS_SRC=""
+    if [ "${SECURE}" = "true" ]; then
+        OVMF_CODE=""
         for candidate in \
-                /usr/share/edk2/ovmf/OVMF_VARS.fd \
-                /usr/share/OVMF/OVMF_VARS.fd \
-                /usr/share/OVMF/OVMF_VARS_4M.fd \
-                /usr/share/edk2/x64/OVMF_VARS.4m.fd \
-                /usr/share/qemu/OVMF_VARS.fd; do
-            [ -f "${candidate}" ] && OVMF_VARS_SRC="${candidate}" && break
+                /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd \
+                /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
+                /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd \
+                /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
+            [ -f "${candidate}" ] && OVMF_CODE="${candidate}" && break
         done
-        if [ -z "${OVMF_VARS_SRC}" ]; then
-            echo "ERROR: OVMF_VARS not found alongside OVMF_CODE." >&2
+        if [ -z "${OVMF_CODE}" ]; then
+            echo "ERROR: OVMF secure boot firmware not found. Install edk2-ovmf's secboot variant." >&2
             exit 1
         fi
-        cp "${OVMF_VARS_SRC}" "${OVMF_VARS}"
+        OVMF_VARS=".ovmf-vars-secure.fd"
+        if [ ! -e "${OVMF_VARS}" ]; then
+            echo "ERROR: ${OVMF_VARS} not found — run 'mise run generate-ovmf-vars' first." >&2
+            exit 1
+        fi
+        MACHINE_ARGS="q35,smm=on"
+        FLASH_SECURE_ARGS=(-global driver=cfi.pflash01,property=secure,value=on)
+    else
+        OVMF_CODE=""
+        for candidate in \
+                /usr/share/edk2/ovmf/OVMF_CODE.fd \
+                /usr/share/OVMF/OVMF_CODE.fd \
+                /usr/share/OVMF/OVMF_CODE_4M.fd \
+                /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+                /usr/share/qemu/OVMF_CODE.fd; do
+            [ -f "${candidate}" ] && OVMF_CODE="${candidate}" && break
+        done
+        if [ -z "${OVMF_CODE}" ]; then
+            echo "ERROR: OVMF firmware not found. Install edk2-ovmf (Fedora) or ovmf (Debian/Ubuntu)." >&2
+            exit 1
+        fi
+
+        OVMF_VARS=".ovmf-vars.fd"
+        if [ ! -e "${OVMF_VARS}" ]; then
+            OVMF_VARS_SRC=""
+            for candidate in \
+                    /usr/share/edk2/ovmf/OVMF_VARS.fd \
+                    /usr/share/OVMF/OVMF_VARS.fd \
+                    /usr/share/OVMF/OVMF_VARS_4M.fd \
+                    /usr/share/edk2/x64/OVMF_VARS.4m.fd \
+                    /usr/share/qemu/OVMF_VARS.fd; do
+                [ -f "${candidate}" ] && OVMF_VARS_SRC="${candidate}" && break
+            done
+            if [ -z "${OVMF_VARS_SRC}" ]; then
+                echo "ERROR: OVMF_VARS not found alongside OVMF_CODE." >&2
+                exit 1
+            fi
+            cp "${OVMF_VARS_SRC}" "${OVMF_VARS}"
+        fi
+        MACHINE_ARGS=""
+        FLASH_SECURE_ARGS=()
     fi
 
     echo "==> Booting ${DISK}"
-    echo "    RAM: ${VM_RAM}M  CPUs: ${VM_CPUS}  Firmware: ${OVMF_CODE}"
+    echo "    RAM: ${VM_RAM}M  CPUs: ${VM_CPUS}  Firmware: ${OVMF_CODE}  Secure boot: ${SECURE:-false}"
     echo "    SSH forward: localhost:2222 → guest:22"
     echo "    Serial console on stdio (ttyS0) — Ctrl-A x to quit QEMU"
     echo ""
@@ -60,6 +85,8 @@ if command -v qemu-system-x86_64 &>/dev/null; then
         -m "${VM_RAM}" \
         -cpu host \
         -smp "${VM_CPUS}" \
+        ${MACHINE_ARGS:+-machine "${MACHINE_ARGS}"} \
+        "${FLASH_SECURE_ARGS[@]}" \
         -drive "file=${DISK},format=raw,if=virtio" \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
@@ -75,6 +102,10 @@ if command -v qemu-system-x86_64 &>/dev/null; then
         -mon chardev=char0
 
 else
+    if [ "${SECURE}" = "true" ]; then
+        echo "ERROR: --secure requires native qemu-system-x86_64 (q35+SMM) — the qemux/qemu-docker fallback doesn't support it." >&2
+        exit 1
+    fi
     echo "==> qemu-system-x86_64 not found, falling back to ghcr.io/qemus/qemu..."
 
     PORT=8006
