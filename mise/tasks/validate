@@ -2,14 +2,18 @@
 #MISE description="Validate BST element graph — verify key stacks and OCI pipeline resolve"
 #MISE depends=["generate-image-version"]
 #USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+#USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
+#USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
 
 set -euo pipefail
 CONTAINER=${usage_container:+--container}
+PUSH=${usage_push:+--push}
+PULL=${usage_pull:+--pull}
 # BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default.
 # Explicit --container above always wins.
 if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
     CONTAINER=--container
 fi
-./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/base-system.bst
-./mise/tasks/bst ${CONTAINER:-} show --deps all stacks/bootc.bst
-./mise/tasks/bst ${CONTAINER:-} show --deps all oci/krytis/image.bst
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all stacks/base-system.bst
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all stacks/bootc.bst
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all oci/krytis/image.bst

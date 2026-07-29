@@ -2,6 +2,8 @@
 #MISE description="Run any bst command (native uv venv by default; --container for podman)"
 #MISE depends=["generate-image-version"]
 #USAGE flag "--container" help="Use the pinned bst2 podman container instead of native BST"
+#USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access (BUILDBARN_PUSH_TOKEN env var or fnox)"
+#USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access (BUILDBARN_PULL_TOKEN env var or fnox)"
 #USAGE arg "<args>" var=#true help="bst subcommand and arguments (e.g. build stacks/base-system.bst)"
 
 # BST_FLAGS: appended to default flags; BST_FLAGS_OVERRIDE: replaces all defaults.
@@ -17,15 +19,23 @@ else
     FLAGS="${DEFAULT_FLAGS} ${BST_FLAGS:-}"
 fi
 
-# usage_container is set by mise when invoked via `mise run bst --container` (and
-# is inherited by child processes, so a parent task like validate may also set it).
-# When a parent task passes --container as a literal first arg to this script,
-# consume it here regardless — mise already stripped it from $@ for the direct case.
+# usage_container/usage_push/usage_pull are set by mise when invoked directly
+# (and inherited by child processes, so a parent task like validate may also
+# set them). When a parent task passes one of these as a literal first arg to
+# this script, consume it here regardless — mise already stripped it from $@
+# for the direct-invocation case. See docs/skills/mise.md § Propagating flags
+# through tasks that call other tasks.
 CONTAINER="${usage_container:-false}"
-if [ "${1:-}" = "--container" ]; then
-    CONTAINER=true
+PUSH="${usage_push:-false}"
+PULL="${usage_pull:-false}"
+while [ "${1:-}" = "--container" ] || [ "${1:-}" = "--push" ] || [ "${1:-}" = "--pull" ]; do
+    case "$1" in
+        --container) CONTAINER=true ;;
+        --push) PUSH=true ;;
+        --pull) PULL=true ;;
+    esac
     shift
-fi
+done
 
 # BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default for
 # machines without native BST host deps. Explicit --container (above) always wins.
@@ -33,22 +43,115 @@ if [ "$CONTAINER" != "true" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
     CONTAINER=true
 fi
 
+if [ "$PUSH" = "true" ] && [ "$PULL" = "true" ]; then
+    echo "ERROR: --push and --pull are mutually exclusive — a push-capable bow connection already serves reads." >&2
+    exit 1
+fi
+
+# Wire krytis's bow Buildbarn cache when --push/--pull is requested. Neither
+# flag -> no bow entries at all (today's default: public freedesktop-sdk/gnome
+# caches from project.conf only). bow is deliberately never declared in
+# project.conf itself — see docs/skills/ci-runner.md and cache-warm.yml.
+BOW_CONFIG=""
+BOW_TOKEN_FILE=""
+cleanup_bow() {
+    local rc=$?
+    [ -n "$BOW_TOKEN_FILE" ] && rm -f "$BOW_TOKEN_FILE"
+    [ -n "$BOW_CONFIG" ] && rm -f "$BOW_CONFIG"
+    exit "$rc"
+}
+trap cleanup_bow EXIT
+
+if [ "$PUSH" = "true" ] || [ "$PULL" = "true" ]; then
+    if [ "$PUSH" = "true" ]; then
+        ROLE="push"; TOKEN_VAR="BUILDBARN_PUSH_TOKEN"
+    else
+        ROLE="pull"; TOKEN_VAR="BUILDBARN_PULL_TOKEN"
+    fi
+
+    TOKEN="${!TOKEN_VAR:-}"
+    if [ -z "$TOKEN" ]; then
+        if command -v fnox >/dev/null 2>&1 && [ -f fnox.toml ]; then
+            TOKEN=$(fnox get "$TOKEN_VAR") || {
+                echo "ERROR: fnox get ${TOKEN_VAR} failed. Set ${TOKEN_VAR} directly or fix fnox/pass-cli auth." >&2
+                exit 1
+            }
+        else
+            echo "ERROR: ${TOKEN_VAR} not set and fnox is not configured. Export ${TOKEN_VAR} or set up fnox.toml." >&2
+            exit 1
+        fi
+    fi
+
+    BOW_TOKEN_FILE=$(mktemp)
+    chmod 600 "$BOW_TOKEN_FILE"
+    printf '%s' "$TOKEN" > "$BOW_TOKEN_FILE"
+
+    PUSH_BOOL=$([ "$ROLE" = "push" ] && echo true || echo false)
+    BOW_CONFIG=$(mktemp)
+    chmod 600 "$BOW_CONFIG"
+    cat > "$BOW_CONFIG" <<EOF
+cache:
+  quota: ${BST_CACHE_QUOTA}
+build:
+  max-jobs: 4
+artifacts:
+  servers:
+  - url: https://bst-cache.ririi.dev:7981
+    type: index
+    push: ${PUSH_BOOL}
+    auth:
+      server-cert: __CERT_PATH__
+      access-token: __TOKEN_PATH__
+  - url: https://bst-cache.ririi.dev:7982
+    type: storage
+    push: ${PUSH_BOOL}
+    auth:
+      server-cert: __CERT_PATH__
+      access-token: __TOKEN_PATH__
+source-caches:
+  servers:
+  - url: https://bst-cache.ririi.dev:7981
+    type: index
+    push: ${PUSH_BOOL}
+    auth:
+      server-cert: __CERT_PATH__
+      access-token: __TOKEN_PATH__
+  - url: https://bst-cache.ririi.dev:7982
+    type: storage
+    push: ${PUSH_BOOL}
+    auth:
+      server-cert: __CERT_PATH__
+      access-token: __TOKEN_PATH__
+EOF
+fi
+
 if [ "$CONTAINER" = "true" ]; then
     mkdir -p "${HOME}/.cache/buildstream"
+    EXTRA_MOUNTS=()
+    CONFIG_ARGS=()
+    if [ -n "$BOW_CONFIG" ]; then
+        sed -i 's#__CERT_PATH__#/src/quadlet/buildbarn/certs/bow-server.crt#; s#__TOKEN_PATH__#/run/secrets/buildbarn-token#' "$BOW_CONFIG"
+        EXTRA_MOUNTS=(-v "${BOW_CONFIG}:/run/secrets/buildstream-bow.conf:ro" -v "${BOW_TOKEN_FILE}:/run/secrets/buildbarn-token:ro")
+        CONFIG_ARGS=(--config /run/secrets/buildstream-bow.conf)
+    fi
     # word-splitting on FLAGS is intentional (space-separated option flags)
     # shellcheck disable=SC2086
-    exec podman run --rm \
+    # Not exec'd: the bow temp token/config files (if any) must be cleaned up
+    # by the trap below, which exec would bypass by replacing this process.
+    podman run --rm \
         --privileged \
         --device /dev/fuse \
         --network=host \
         --memory "${BST_MEMORY_LIMIT}" \
         -v "$(pwd):/src:rw" \
         -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
+        "${EXTRA_MOUNTS[@]}" \
         -w /src \
         "${BST2_IMAGE}" \
         bash -c 'mkdir -p /root/.config/buildstream
 printf "cache:\n  quota: %s\n" "$1" > /root/.config/buildstream/user.conf
-shift; bst --colors "$@"' -- "${BST_CACHE_QUOTA}" ${FLAGS} "$@"
+shift; bst --colors "$@"' -- "${BST_CACHE_QUOTA}" "${CONFIG_ARGS[@]}" ${FLAGS} "$@"
+    exit $?
 fi
 
 # Native path: write quota to user.conf if not already set.
@@ -58,5 +161,13 @@ if ! grep -q "quota:" "${USER_CONF}" 2>/dev/null; then
     printf '\ncache:\n  quota: %s\n' "${BST_CACHE_QUOTA}" >> "${USER_CONF}"
 fi
 
+CONFIG_ARGS=()
+if [ -n "$BOW_CONFIG" ]; then
+    sed -i "s#__CERT_PATH__#$(pwd)/quadlet/buildbarn/certs/bow-server.crt#; s#__TOKEN_PATH__#${BOW_TOKEN_FILE}#" "$BOW_CONFIG"
+    CONFIG_ARGS=(--config "$BOW_CONFIG")
+fi
+
+# Not exec'd here either, for the same reason as the container path above.
 # shellcheck disable=SC2086
-exec uv run bst --colors ${FLAGS} "$@"
+uv run bst --colors "${CONFIG_ARGS[@]}" ${FLAGS} "$@"
+exit $?
