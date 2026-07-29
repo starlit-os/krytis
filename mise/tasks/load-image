@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 #MISE description="Build oci/krytis/image.bst and load the result into podman local storage"
 #USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+#USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
+#USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
 
 set -euo pipefail
 CONTAINER=${usage_container:+--container}
+PUSH=${usage_push:+--push}
+PULL=${usage_pull:+--pull}
 # BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default.
 # Explicit --container above always wins.
 if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
@@ -11,9 +15,9 @@ if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
 fi
 
 echo "==> Building oci/krytis/image.bst..."
-./mise/tasks/bst ${CONTAINER:-} build oci/krytis/image.bst
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build oci/krytis/image.bst
 
 echo "==> Loading into podman..."
-./mise/tasks/bst ${CONTAINER:-} artifact checkout --tar - oci/krytis/image.bst | podman load
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} artifact checkout --tar - oci/krytis/image.bst | podman load
 
 echo "==> Done: localhost/krytis-input:latest"

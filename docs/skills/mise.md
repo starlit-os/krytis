@@ -215,6 +215,38 @@ mise bst build stacks/base-system.bst
 BST_FLAGS="--config /src/buildstream-ci.conf" mise bst build stacks/base-system.bst
 ```
 
+### `--push`/`--pull` — opt-in bow Buildbarn cache
+
+`bst`, `validate`, `load-image`, and `build` all accept `--push` and `--pull` (mutually
+exclusive). Neither flag → today's default, public freedesktop-sdk/gnome caches only
+(bow is never declared in `project.conf` itself — see `docs/skills/ci-runner.md`). With
+one of the flags, the task resolves a bow JWT (`BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
+env var first, else `fnox get` — see `fnox.toml`'s `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
+entries, sourced from the Krytis vault's "Buildbarn" item), writes a temp
+`buildstream.conf` wiring `https://bst-cache.ririi.dev:7981`/`:7982` (index/storage,
+`quadlet/buildbarn/certs/bow-server.crt` for TLS), and passes it via `bst --config` —
+never touching `~/.config/buildstream.conf`/`~/.config/buildstream/user.conf` on the
+host, and never mounting a persistent secret into the ephemeral `--container` build.
+`--push` also serves reads (a push-capable connection satisfies pulls too), so prefer
+it when you have push access; `--pull` is the read-only fallback.
+
+```bash
+mise bst --container --pull show --deps all stacks/base-system.bst
+mise validate --container --push
+mise build --container --pull
+```
+
+**Cleanup is trap-based, not `exec`-based.** Unlike the plain `--container` path (which
+`exec`s straight into `podman run`/`uv run bst` for clean signal passthrough), the
+`--push`/`--pull` path deliberately avoids `exec` for the final invocation — `exec`
+replaces the process image, which would skip the `trap ... EXIT` cleanup of the temp
+token/config files entirely. The trap captures `$?` as its first statement and
+explicitly re-`exit`s with it; a naive `trap 'rm -f ...' EXIT` would silently overwrite
+the real exit code with whatever the cleanup commands' own last exit status happens to
+be (bash trap gotcha — a `[ -n "$VAR" ] && rm -f "$VAR"` that no-ops because `$VAR` is
+empty exits 1, and that 1 becomes the script's reported exit code unless captured and
+re-asserted explicitly).
+
 ## Bootstrap packages (`mise bootstrap`)
 
 System packages required for builds and source tracking live in `[bootstrap.packages]` in `mise.toml`. This makes them available for both local dev setup and CI:
