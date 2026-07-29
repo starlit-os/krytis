@@ -1,7 +1,7 @@
 [providers.protonpass]
 type = "proton-pass"
 vault = "Krytis"
-agent_reason = "krytis secure boot key retrieval"
+agent_reason = "krytis secure boot key + buildbarn cache token retrieval"
 
 [secrets]
 PK_KEY  = { provider = "protonpass", value = "Secure Boot Keys/PK.key" }
@@ -10,3 +10,5 @@ KEK_KEY = { provider = "protonpass", value = "Secure Boot Keys/KEK.key" }
 KEK_CRT = { provider = "protonpass", value = "Secure Boot Keys/KEK.crt" }
 DB_KEY  = { provider = "protonpass", value = "Secure Boot Keys/db.key" }
 DB_CRT  = { provider = "protonpass", value = "Secure Boot Keys/db.crt" }
+BUILDBARN_PULL_TOKEN = { provider = "protonpass", value = "Buildbarn/pull-token" }
+BUILDBARN_PUSH_TOKEN = { provider = "protonpass", value = "Buildbarn/push-token" }
