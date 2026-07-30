@@ -21,6 +21,12 @@ oras = "latest"
 # grype: required by `mise run vuln-scan` / `mise run push` to scan the SBOM
 # for known CVEs (#41). Dev-host tooling only.
 grype = "latest"
+# cosign: required by `mise run sign` to sign the published image and its
+# OCI referrers with Sigstore keyless/OIDC signing (#60). Dev-host tooling
+# only — in CI it needs the `id-token: write` job permission for ambient
+# GitHub Actions OIDC detection; locally it falls back to an interactive
+# browser-based Sigstore login.
+cosign = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"
