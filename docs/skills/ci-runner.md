@@ -592,16 +592,14 @@ Buildbarn cache (populated by krytis's own `x86_64_v3` builds via
 This isn't a bug to fix; it's the reason the Buildbarn cache work (#234)
 exists in the first place.
 
-### `max-jobs` auto-detection makes bow's own cache runner-CPU-count-dependent (Blacksmith vs self-hosted)
+### `max-jobs` does NOT affect cache keys — a prior fix's stated reason was wrong (corrected 2026-07-29)
 
-A second, independent cache-key divergence, found when testing `cache-warm.yml`
+A second cache-key divergence was investigated when testing `cache-warm.yml`
 on a Blacksmith-hosted runner (`blacksmith-8vcpu-ubuntu-2404`) after it had
 already been populating bow from the self-hosted runner (`VM_CPUS=4`): the
 Blacksmith run initially showed **zero** cache hits against bow for the
 entire build, even though it built the exact same commit the self-hosted
-runner had just successfully pushed to bow from. Confirmed byte-identical
-element/project.conf state between the two runs (same tree, only `runs-on:`
-differed) before looking elsewhere.
+runner had just successfully pushed to bow from.
 
 **Caveat on "zero cache hits" as a diagnostic signal:** the *initial*
 pipeline table (`waiting`/`fetch needed`/`cached` counts printed right after
@@ -612,40 +610,82 @@ always empty on a fresh CI runner regardless of runner identity — it does
 element (`INFO Pulled artifact X <- https://...` vs `INFO ... does not have
 artifact X cached`). Don't conflate the two when diagnosing a similar report.
 
-Root cause, confirmed by reading BuildStream's own source
-(`buildstream/_context.py`):
-
-```python
-return self.build_max_jobs or self.platform.get_cpu_count(8)
-```
-
-`max-jobs` defaults to the **auto-detected host CPU count** (capped at 8)
-unless explicitly pinned via `buildstream.conf`'s `build: { max-jobs: N }` —
-`cache-warm.yml`'s "Configure BuildStream" step never set it. freedesktop-sdk's
-own `meson-conf.yml` bakes the resolved value straight into the cache key:
+**The original diagnosis (`max-jobs` bakes into a cache-key-affecting
+`LTOJOBS`/`JOBS` environment variable) is FALSE — verified and retracted.**
+Confirmed directly against the pinned `freedesktop-sdk-25.08.14-0-...` ref's
+own `meson-conf.yml`, and against the upstream `buildstream_plugins`
+package's `autotools.yaml`/`meson.yaml` (the actual source of the `autotools`
+and `meson` element kinds), that the parallelism variable is *deliberately*
+excluded from the cache key in every case:
 
 ```yaml
+# buildstream_plugins/elements/autotools.yaml
+environment:
+  MAKEFLAGS: -j%{max-jobs}
+environment-nocache:
+- MAKEFLAGS
+- V
+
+# buildstream_plugins/elements/meson.yaml
+environment:
+  JOBS: "%{max-jobs}"
+environment-nocache:
+- JOBS
+
+# freedesktop-sdk's own include/_private/meson-conf.yml
 environment:
   LTOJOBS: "%{max-jobs}"
+environment-nocache:
+  (>):
+  - LTOJOBS
 ```
 
-Under `environment:` (cache-key-affecting), not `environment-nocache:`
-(explicitly excluded) — so every meson-built element's key depends on
-whatever `max-jobs` resolves to on the machine that built it.
+Every one of these variables is declared under `environment:` **and then
+explicitly re-listed under `environment-nocache:`** — the opposite of what
+the original write-up claimed. Upstream's own comment on the autotools/meson
+files states the intent directly: "And dont consider MAKEFLAGS/JOBS as
+something which may affect build output." `-j4` vs `-j8` produces
+byte-identical build *output*, just different build *time*; excluding it
+from the cache key is correct BuildStream plugin design, not an oversight.
 
-**Fix:** pinned `build: { max-jobs: 4 }` in `cache-warm.yml`'s generated
-`buildstream.conf`. Changing that pinned value in the future invalidates
-bow's entire compiled-artifact cache for every meson element — treat it the
-same as changing `x86_64_v3`: a deliberate, cache-busting decision, not a
-casual tune-up. This only fixes `cache-warm.yml`'s own reproducibility; a
-local developer machine with a different core count would hit the same
-divergence against bow unless it also pins `max-jobs` in its own
-`buildstream.conf`.
+**Verified empirically**, not just by reading YAML: `bst show --format
+'%{full-key}'` against `freedesktop-sdk.bst:components/m4.bst`,
+`freedesktop-sdk.bst:bootstrap/build/gcc-stage1.bst` (autotools), and
+`freedesktop-sdk.bst:components/systemd-ukify.bst` (meson) all produced
+**byte-identical keys** at `build.max-jobs` values of 1, 4, 8, and 32. This
+also directly answers #337 (FDSDK artifact cache misses): `max-jobs` is not
+and cannot be the explanation there either — #337's own confirmed root cause
+(krytis reads the public, apparently-unpopulated `cache.freedesktop-sdk.io:11001`,
+while FDSDK's own CI writes to the authenticated `:11004`) stands unchanged.
 
-**Verified effective** by a full element-by-element cache-key diff between
+**What this means for the Blacksmith-vs-self-hosted investigation:** the
+stated mechanism was wrong, so whatever actually caused the original
+"zero cache hits" report is back to unexplained. Two candidates, neither
+confirmed:
+
+1. The report was itself a misread of the local-vs-remote-cache caveat
+   documented above — plausible, since that exact confusion is what this
+   section now leads with as a warning.
+2. `build.max-jobs: 4` was pinned as part of a `buildstream.conf` rewrite
+   that also changed something else (scheduler settings, `cache.quota`,
+   generation order) which was the real fix, misattributed to the `max-jobs`
+   line specifically because it was the one deliberately added.
+
+The pin itself (`build: { max-jobs: 4 }` in `cache-warm.yml`'s generated
+`buildstream.conf`) is harmless and can stay — it makes local build
+parallelism reproducible across runners, which is a reasonable thing to
+pin regardless — but do not cite "matches bow's cache key shape" as the
+reason going forward, and do not treat changing it as cache-busting.
+
+**The "829/837 elements now match" and `expat.bst` findings below remain
+useful data points** (a real cache-key diff was run, real numbers came out
+of it) but their causal link to the `max-jobs` pin specifically should be
+treated as unconfirmed, not "verified effective," per the above.
+
+**Verified** by a full element-by-element cache-key diff between
 a self-hosted run and a post-fix Blacksmith run (same commit, `runs-on:`
-the only difference): **829 of 837 elements (99%) now compute byte-identical
-keys.** The 8 that still differ are *expected, not a bug*:
+the only difference): **829 of 837 elements (99%) computed byte-identical
+keys.** The 8 that differed are *expected, not a bug*:
 
 ```
 core/os-release.bst, oci/os-release.bst, core/initramfs.bst,
@@ -665,7 +705,7 @@ key mismatch at all:** a `does not have artifact <hash> cached` message
 doesn't by itself prove a key divergence — confirm the hash actually differs
 from a known-good run before assuming the environment is at fault. Case in
 point: `freedesktop-sdk.bst:components/expat.bst` (`b07b1a0a...`) reported
-as a bow miss on Blacksmith even after the `max-jobs` fix, but its key was
+as a bow miss on Blacksmith even after the `max-jobs` pin, but its key was
 confirmed byte-identical to the self-hosted run's key for the same element.
 The actual cause: the self-hosted run's log showed `expat.bst` as `cached`
 **before any build/pull activity even ran**, meaning it came from
@@ -675,6 +715,7 @@ it on self-hosted, and bow's remote CAS genuinely never received that
 artifact. This is an incremental cache-population gap (bow hasn't been
 fully warmed yet), not a correctness bug; it resolves as future `cache-warm`
 runs actually build and push whatever's still missing.
+
 
 ### Full artifact push/pull round-trip verified against bow
 
@@ -765,7 +806,7 @@ autonomously.
 | `cache-warm.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith by default since #351; self-hosted override exists to keep bow's cache-key shape aligned with the host that originally populated it (`VM_CPUS=4`), to prime bow ahead of a heavy element update, or to reproduce a build on the real hardware |
 | `track-bst-sources.yml` | `ubuntu-24.04` | Lightweight; must run when local machine is off |
 
-The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes, since that's what determines the meson-built cache-key shape, not the runner's actual core count (see below).
+The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes — this does not affect cache-key matching (`max-jobs` is excluded from cache keys, see above), it's kept purely for reproducible local build parallelism across runners.
 
 ## `max-jobs` should only be set high when remote-execution is on
 
