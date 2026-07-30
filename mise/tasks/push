@@ -5,6 +5,7 @@
 #USAGE flag "--skip-sbom" help="Skip SBOM generation and OCI-referrer attach (#40) — faster iteration, no supply-chain artifact"
 #USAGE flag "--skip-vuln-scan" help="Skip Grype vulnerability scan and OCI-referrer attach (#41) — faster iteration, no scan artifact"
 #USAGE flag "--fail-on <severity>" help="Exit non-zero if the vuln scan finds a vulnerability >= this severity (negligible|low|medium|high|critical). Default: warn-only, never fails the push"
+#USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Write image_digest/sbom_digest/vuln_digest here for mise run sign (#60) to consume"
 
 set -euo pipefail
 
@@ -13,6 +14,7 @@ SEALED=$([[ "${usage_sealed:-}" == "true" ]] && echo 1 || echo 0)
 SKIP_SBOM=$([[ "${usage_skip_sbom:-}" == "true" ]] && echo 1 || echo 0)
 SKIP_VULN_SCAN=$([[ "${usage_skip_vuln_scan:-}" == "true" ]] && echo 1 || echo 0)
 FAIL_ON="${usage_fail_on:-}"
+OUT_DIGESTS="${usage_digest_file:-krytis-push-digests.env}"
 VERSION=$(grep '^image-version:' include/image-version.yml | awk '{print $2}' | tr -d "'")
 
 if [[ -z "$VERSION" ]]; then
@@ -84,24 +86,29 @@ podman push "$DEST_LATEST_TAG"
 
 echo "==> Done: pushed ${DEST_VERSION_TAG} and ${DEST_LATEST_TAG}"
 
-if [[ "$SKIP_SBOM" -eq 0 ]]; then
-  # Both tags above are pushed from the same SOURCE_TAG image ID, so they
-  # share one content-addressed manifest digest — attach the SBOM once.
-  DIGEST=$(cat "$DIGEST_FILE")
-  rm -f "$DIGEST_FILE"
+# Both tags above are pushed from the same SOURCE_TAG image ID, so they
+# share one content-addressed manifest digest — capture it once, regardless
+# of whether SBOM/vuln-scan run, so `mise run sign` (#60) always has an
+# image digest to work with.
+IMAGE_DIGEST=$(cat "$DIGEST_FILE")
+rm -f "$DIGEST_FILE"
+echo "image_digest=${IMAGE_DIGEST}" > "$OUT_DIGESTS"
+echo "==> Image digest: ${IMAGE_DIGEST} (written to ${OUT_DIGESTS})"
 
+if [[ "$SKIP_SBOM" -eq 0 ]]; then
   echo "==> Generating SBOM (#40)..."
   ./mise/tasks/sbom --output krytis.spdx.json
 
-  echo "==> Attaching SBOM as OCI referrer to ${REGISTRY}@${DIGEST}..."
+  echo "==> Attaching SBOM as OCI referrer to ${REGISTRY}@${IMAGE_DIGEST}..."
   echo "$TOKEN" | oras login ghcr.io --username "$GH_USER" --password-stdin
-  oras attach \
+  SBOM_DIGEST=$(oras attach \
     --artifact-type application/vnd.spdx+json \
-    "${REGISTRY}@${DIGEST}" \
-    krytis.spdx.json:application/vnd.spdx+json
+    --format go-template --template '{{.digest}}' \
+    "${REGISTRY}@${IMAGE_DIGEST}" \
+    krytis.spdx.json:application/vnd.spdx+json)
+  echo "sbom_digest=${SBOM_DIGEST}" >> "$OUT_DIGESTS"
 
-  echo "==> Done: SBOM attached to ${REGISTRY}@${DIGEST}"
-  echo "    Note: SBOM/image signing is tracked separately in #60 (cosign keyless) — not wired in here."
+  echo "==> Done: SBOM attached to ${REGISTRY}@${SBOM_DIGEST}"
 
   if [[ "$SKIP_VULN_SCAN" -eq 0 ]]; then
     echo "==> Preparing SBOM for vulnerability scanning (#41)..."
@@ -118,11 +125,15 @@ if [[ "$SKIP_SBOM" -eq 0 ]]; then
     GRYPE_EXIT=$?
     set -e
 
-    echo "==> Attaching vulnerability report as OCI referrer to ${REGISTRY}@${DIGEST}..."
-    oras attach \
+    echo "==> Attaching vulnerability report as OCI referrer to ${REGISTRY}@${IMAGE_DIGEST}..."
+    VULN_DIGEST=$(oras attach \
       --artifact-type application/vnd.grype.report+json \
-      "${REGISTRY}@${DIGEST}" \
-      krytis.grype.json:application/vnd.grype.report+json
+      --format go-template --template '{{.digest}}' \
+      "${REGISTRY}@${IMAGE_DIGEST}" \
+      krytis.grype.json:application/vnd.grype.report+json)
+    echo "vuln_digest=${VULN_DIGEST}" >> "$OUT_DIGESTS"
+
+    echo "==> Done: vulnerability report attached to ${REGISTRY}@${VULN_DIGEST}"
 
     if [[ "$GRYPE_EXIT" -eq 2 ]]; then
       echo "==> ERROR: Grype found vulnerabilities >= ${FAIL_ON} severity — see krytis.grype.json" >&2
@@ -131,12 +142,13 @@ if [[ "$SKIP_SBOM" -eq 0 ]]; then
       echo "==> ERROR: Grype exited unexpectedly (code ${GRYPE_EXIT})" >&2
       exit "$GRYPE_EXIT"
     fi
-    echo "==> Done: vulnerability report attached to ${REGISTRY}@${DIGEST}"
   else
     echo "==> Skipped vulnerability scan (--skip-vuln-scan)"
   fi
 else
-  rm -f "$DIGEST_FILE"
   echo "==> Skipped SBOM attach (--skip-sbom)"
   echo "    Note: vulnerability scan also skipped — it scans the SBOM generated here."
 fi
+
+echo "==> Digests written to ${OUT_DIGESTS}:"
+cat "$OUT_DIGESTS"

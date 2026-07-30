@@ -139,9 +139,9 @@ Don't rely on `[deps.uv]` auto-run for correctness in CI.
 
 ## GitHub Actions: SHA Pinning and Org Allowlist
 
-### SHA pinning — let the linter handle it
+### SHA pinning — do it by hand; `mise lint` does not auto-pin
 
-Do not manually look up and pin action SHAs when writing a new workflow. Write the version tag (`uses: actions/checkout@v4`) and commit. The linter (`mise lint`) runs `actionlint` which auto-upgrades floating tags to full commit SHAs with a version comment. The pinned SHA lands in the same PR automatically.
+`mise lint` (`mise/tasks/lint`) only runs `podman build` + `bootc container lint` against the `Containerfile` — it does **not** run `actionlint` and does not touch `.github/workflows/` at all (verified by reading `mise/tasks/lint` and `mise.toml`'s `[tools]`: no `actionlint` tool or task exists anywhere in this repo as of 2026-07-30). An earlier version of this doc claimed `mise lint` auto-upgrades floating action tags to pinned SHAs — that was wrong; there is no such safety net. Pin every new `uses:` reference to a full commit SHA with a version comment yourself before committing (`uses: actions/checkout@<sha> # v7`), by copying an existing pinned reference to the same action elsewhere in `.github/workflows/` when one exists, or resolving the tag to its commit SHA via `gh api repos/<owner>/<repo>/commits/<tag>` (or the GitHub UI) otherwise — use the `commits/<tag>` endpoint, not `git/refs/tags/<tag>`: the latter returns the tag *object's* own SHA for an annotated tag (not a valid pin target), while `commits/<tag>` resolves either an annotated or lightweight tag straight to the underlying commit SHA.
 
 ### Org allowlist
 
