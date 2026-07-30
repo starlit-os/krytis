@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#MISE description="Sign the published krytis image + OCI referrers with cosign keyless/OIDC (#60)"
+#USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path the signed artifacts live under"
+#USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Digest file written by mise run push — read image_digest/sbom_digest/vuln_digest from here when the flags below are not given"
+#USAGE flag "--image-digest <digest>" help="sha256 digest of the pushed image manifest — required unless present in --digest-file"
+#USAGE flag "--sbom-digest <digest>" help="sha256 digest of the attached SBOM OCI referrer manifest — signed if given or present in --digest-file"
+#USAGE flag "--vuln-digest <digest>" help="sha256 digest of the attached vulnerability report OCI referrer manifest — signed if given or present in --digest-file"
+
+# Cosign keyless (OIDC) signing (#60). In GitHub Actions, cosign detects the
+# Actions OIDC token ambiently (the job needs `id-token: write`; no explicit
+# token wiring here) and signs via Sigstore's public Fulcio (cert issuance)
+# and Rekor (transparency log) instances — no signing key ever stored in
+# this repo or as a secret. Locally (no GHA ambient credential), cosign
+# falls back to an interactive browser-based Sigstore OIDC login: usable,
+# but the CI path is the intended primary use per #380.
+set -euo pipefail
+
+REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
+DIGEST_FILE="${usage_digest_file:-krytis-push-digests.env}"
+IMAGE_DIGEST="${usage_image_digest:-}"
+SBOM_DIGEST="${usage_sbom_digest:-}"
+VULN_DIGEST="${usage_vuln_digest:-}"
+
+if [[ -f "$DIGEST_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$DIGEST_FILE"
+    : "${IMAGE_DIGEST:=${image_digest:-}}"
+    : "${SBOM_DIGEST:=${sbom_digest:-}}"
+    : "${VULN_DIGEST:=${vuln_digest:-}}"
+fi
+
+if [[ -z "$IMAGE_DIGEST" ]]; then
+    echo "==> ERROR: no image digest given (--image-digest, or image_digest in ${DIGEST_FILE}) — run mise run push first" >&2
+    exit 1
+fi
+
+# Same GITHUB_TOKEN/gh-auth-token resolution as mise/tasks/push, so this
+# task is independently runnable (does not depend on push's oras/podman
+# login side effects surviving in the same shell/job).
+TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+GH_USER=$(gh api user --jq .login 2>/dev/null || echo "token")
+
+echo "==> Logging in to ghcr.io as ${GH_USER} (cosign)..."
+echo "$TOKEN" | cosign login ghcr.io --username "$GH_USER" --password-stdin
+
+sign_ref() {
+    local label="$1" digest="$2"
+    echo "==> Signing ${label} (${REGISTRY}@${digest})..."
+    cosign sign -y "${REGISTRY}@${digest}"
+    echo "==> Signed ${label}"
+}
+
+sign_ref "image" "$IMAGE_DIGEST"
+[[ -n "$SBOM_DIGEST" ]] && sign_ref "SBOM" "$SBOM_DIGEST"
+[[ -n "$VULN_DIGEST" ]] && sign_ref "vulnerability report" "$VULN_DIGEST"
+
+echo "==> Done signing ${REGISTRY}@${IMAGE_DIGEST} and its OCI referrers"
