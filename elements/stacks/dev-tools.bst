@@ -25,3 +25,12 @@ depends:
   - freedesktop-sdk.bst:components/mtools.bst
   - freedesktop-sdk.bst:components/dosfstools.bst
   - freedesktop-sdk.bst:components/rsync.bst
+
+  # ── VM boot testing (mise run boot-vm / boot-test / generate-ovmf-vars) ─
+  # Headless native QEMU + secure-boot-capable OVMF + virt-fw-vars for
+  # #375's automated boot pass/fail and secure boot enrollment testing.
+  # See docs/skills/secure-boot.md and elements/dev/qemu.bst's header for
+  # why this isn't gnome-build-meta's GTK-enabled qemu recipe.
+  - dev/qemu.bst
+  - dev/ovmf.bst
+  - dev/virt-firmware.bst
