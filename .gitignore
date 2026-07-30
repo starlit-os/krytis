@@ -12,6 +12,11 @@
 *.tar
 .ovmf-vars.fd
 .build-out
+
+# mise load-image's cache-key/podman-image-ID marker (see docs/skills/mise.md
+# § Skipping podman load when the artifact is unchanged) — per-workstation
+# state, never committed.
+.load-image-state
 .debug-out/
 debug-session/
 

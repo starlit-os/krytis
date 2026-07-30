@@ -1,23 +1,73 @@
 #!/usr/bin/env bash
 #MISE description="Build oci/krytis/image.bst and load the result into podman local storage"
+#MISE sources=[
+#MISE   "elements/**",
+#MISE   "files/**",
+#MISE   "patches/**",
+#MISE   "project.conf",
+#MISE   "include/aliases.yml",
+#MISE   "include/variables.yml",
+#MISE   ".git/HEAD",
+#MISE   ".git/refs/heads/**",
+#MISE ]
+#MISE outputs=[".load-image-state"]
 #USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
 #USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
 #USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
+#USAGE flag "--force" help="Reload into podman even if oci/krytis/image.bst's cache key hasn't changed"
 
 set -euo pipefail
 CONTAINER=${usage_container:+--container}
 PUSH=${usage_push:+--push}
 PULL=${usage_pull:+--pull}
+FORCE=${usage_force:-false}
 # BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default.
 # Explicit --container above always wins.
 if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
     CONTAINER=--container
 fi
 
+# Raw call, not a #MISE depends — depends is only honored when mise itself
+# dispatches a task, and load-image is commonly run standalone (the
+# documented primary entry point) without `build` in front of it to do this
+# first. Without it, a fresh worktree's first `mise load-image` fails with
+# "Could not find file at /src/include/image-version.yml" (bst's own
+# depends=["generate-image-version"] is equally dormant through the raw
+# call below). See docs/skills/mise.md § Calling other tasks.
+./mise/tasks/generate-image-version
+
 echo "==> Building oci/krytis/image.bst..."
 ./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build oci/krytis/image.bst
+
+STATE_FILE=.load-image-state
+TARGET_TAG=localhost/krytis-input:latest
+
+# oci/krytis/image.bst's full cache key is a pure function of its sources and
+# every build dependency's own key — bst's content-addressed CAS guarantees
+# `bst artifact checkout` for a given key always extracts byte-identical tar
+# content. So if the key matches the key recorded the last time this task
+# loaded successfully, and the podman image loaded under that key is still
+# present in local storage (by ID, not just by tag — catches `podman rmi`,
+# manual re-tagging, or a different image loaded over the same tag), the
+# checkout+load below would produce a no-op and can be skipped.
+KEY=$(./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps none --format '%{full-key}' oci/krytis/image.bst)
+
+if [ "$FORCE" != "true" ] && [ -f "$STATE_FILE" ]; then
+    read -r PREV_KEY PREV_ID < "$STATE_FILE"
+    if [ "$PREV_KEY" = "$KEY" ] && CUR_ID=$(podman image inspect "$TARGET_TAG" --format '{{.Id}}' 2>/dev/null) && [ "$CUR_ID" = "$PREV_ID" ]; then
+        echo "==> ${TARGET_TAG} already matches oci/krytis/image.bst (key ${KEY:0:12}...) — skipping podman load"
+        # Refresh the output mtime so mise's own sources/outputs freshness
+        # check doesn't re-invoke this task on the next run over an
+        # unrelated mtime bump (e.g. a no-op file touch) that didn't change
+        # the cache key.
+        touch "$STATE_FILE"
+        exit 0
+    fi
+fi
 
 echo "==> Loading into podman..."
 ./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} artifact checkout --tar - oci/krytis/image.bst | podman load
 
-echo "==> Done: localhost/krytis-input:latest"
+printf '%s %s\n' "$KEY" "$(podman image inspect "$TARGET_TAG" --format '{{.Id}}')" > "$STATE_FILE"
+
+echo "==> Done: ${TARGET_TAG}"

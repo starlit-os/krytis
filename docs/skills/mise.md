@@ -43,6 +43,64 @@ mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 - `.ovmf-vars.fd` (writable UEFI state) and `bootable.raw` are `.gitignore`d.
 - `VM_RAM` and `VM_CPUS` are overrideable via `mise.toml [env]` or shell export.
 
+### Skipping `podman load` when the artifact is unchanged
+
+`load-image` records `<bst-full-key> <podman-image-id>` in `.load-image-state`
+(gitignored) after every successful load. Before the checkout+`podman load`
+pipe, it recomputes `oci/krytis/image.bst`'s full cache key
+(`bst show --deps none --format '%{full-key}'`) and skips the load if the key
+matches the recorded one *and* `podman image inspect localhost/krytis-input:latest`
+still resolves to the recorded image ID. The ID check (not just tag presence)
+is the safety net — it catches `podman rmi`, manual re-tagging, or a
+different image loaded over that tag between runs. Pass the task's own
+`--force` flag to bypass this check and always reload — `mise build --force`
+forwards it through too (`build` calls `load-image` as a raw subprocess, and
+`usage_force` propagates via the same env-var-inheritance mechanism as
+`--container`/`--push`/`--pull`, verified in the "`usage_container` is
+inherited by child processes" section below).
+
+This is safe because BST's cache key is a pure function of an element's
+sources and every build dependency's own key — `bst artifact checkout` for a
+given key always extracts byte-identical tar content from CAS. `oci/os-release.bst`
+bakes `%{image-version}`/`%{commit}` into the image, so **any** new commit
+changes the key by design (every load is stamped with the commit that
+produced it) — the skip only fires on a genuinely unchanged working tree.
+
+The task also declares `#MISE sources=[...]`/`outputs=[".load-image-state"]`,
+so `mise load-image` (run directly, not through the `build` task's raw
+`./mise/tasks/load-image` call — mise's own dependency-tree files-changed
+check only applies when a task is invoked through `mise run`/`mise <task>`)
+skips even the `bst show` cache-key check when no tracked source changed —
+`stat()` calls only, no container startup. Two things worth knowing if you
+touch this list:
+- **`include/image-version.yml` is deliberately excluded.** It's rewritten
+  unconditionally by `generate-image-version` on every build (mtime always
+  bumps) even though its content is a pure function of `git log -1` — including
+  it would make the freshness check never hit. `.git/HEAD` and
+  `.git/refs/heads/**` are tracked instead: they're the actual signal (any
+  commit, amend, or rebase updates one of them) without the churn.
+- The source globs must cover every local BST source an element in
+  `image.bst`'s dependency closure reads — `kind: local`/`kind: patch`
+  entries only ever point into `elements/**`, `files/**`, or `patches/**` in
+  this repo, so those three plus `project.conf` and `include/{aliases,variables}.yml`
+  are a complete superset. `scripts/` is deliberately excluded — it's
+  downstream tooling (fakecap manifest generation), not a build input.
+
+**`--force` is two independent layers, and the task-level one alone is
+often a no-op.** `mise`'s own `sources`/`outputs` freshness check runs
+*before* the script is even invoked — if nothing tracked changed, mise
+prints `sources up-to-date, skipping` and the script (and its
+`#USAGE flag "--force"`) never runs, silently swallowing a bare
+`mise run load-image --force`. To force past **both** the mise-level
+freshness gate and the task's own bst-key/podman-ID check, use mise's
+native `-f`/`--force` (positioned *before* the task name, since that's
+`mise run`'s own flag) together with the task's `--force` (positioned
+*after*, since that's forwarded to the task's usage parser):
+`mise run --force load-image --force`. Verified live — a bare
+`mise run load-image --force` printed `sources up-to-date, skipping` and
+exited in <1s with no reload; `mise run --force load-image --force`
+reached the real checkout+`podman load` path.
+
 ### `console=` karg ordering matters for interactive services
 
 With multiple `console=` kernel arguments, all consoles receive output, but `/dev/console` (used for interactive input by services like `systemd-firstboot`) maps to the **last** one listed. To keep serial output for native QEMU debugging while making firstboot interactive on VGA/noVNC, put `console=ttyS0` first and `console=tty1` last:
@@ -127,6 +185,49 @@ The env vars from `mise.toml` are already injected when running as a mise task.
 ```
 
 Never use `mise other-task` from inside a task script — it spawns a nested mise process.
+Verified concretely why (`build` → `load-image` was the test case):
+
+- **Flag inheritance silently breaks.** `usage_*` env vars *do* propagate through a
+  raw `./mise/tasks/<name>` subprocess call (confirmed: an outer task's
+  `usage_force=true` reaches an inner raw-called script's `${usage_force}`
+  with zero extra code — this is what makes the `CONTAINER`/`PUSH`/`PULL`/`FORCE`
+  forwarding pattern below work at all). A **nested `mise run <name>`** call does
+  **not** inherit them — mise re-parses the nested task's flags strictly from its
+  own argv, ignoring any ambient `usage_*` in the environment. Switching a caller
+  to nested `mise run load-image` without also explicitly re-passing every flag
+  on that command line (`mise run load-image ${CONTAINER:-} ${PUSH:-} ${PULL:-} ${FORCE:-}`)
+  would silently drop `--container`/`--push`/`--pull`/`--force` — no error, just
+  wrong behavior (e.g. quietly falling back to native BST without `--container`).
+- **Previously-inert `#MISE depends=[...]` would start firing.** `bst`'s own
+  `#MISE depends=["generate-image-version"]` currently has **no effect** through
+  `validate`/`load-image`/`build`'s raw call chains — mise only honors `depends`
+  when it dispatches the task itself. This is why `./mise/tasks/load-image`,
+  run standalone (the documented primary entry point) in a fresh worktree with
+  no prior `generate-image-version` run, used to fail with `Could not find
+  file at /src/include/image-version.yml`: depends never ran. **Fixed with a
+  targeted patch, not nesting** — `load-image` now raw-calls
+  `./mise/tasks/generate-image-version` itself, mirroring how `build` already
+  did. The general pattern (raw calls never honor a callee's `depends`) is
+  still true project-wide; nesting would fix it structurally but is a bigger,
+  riskier change than patching the one entry point that actually needed it.
+- **~200–250ms fixed overhead per nested call** (measured: `mise run
+  generate-image-version` cold and warm both landed at ~245ms — trust check +
+  env/tool resolution re-run from scratch for the child process).
+- **Unlocks the `sources`/`outputs` freshness pre-check for the nested task**
+  (verified: a `mise run` that nests `mise run load-image` correctly hit
+  `sources up-to-date, skipping` in ~0.2s, identical to a top-level call) — this
+  is the upside, and the reason to *consider* nesting despite the above.
+- **Doesn't compose with the parent invocation's own mise flags.** `-j`,
+  `--dry-run`, `--raw`, `--output` etc. passed to the outer `mise run` do not
+  propagate to a nested `mise run` call unless re-passed explicitly — a
+  `mise run --dry-run build` would still execute the nested `load-image` call
+  for real.
+
+Net: nesting is not a drop-in swap. It requires explicitly re-forwarding every
+flag as literal args (turning the currently-inert-for-`load-image` positional
+forwarding into load-bearing code) and accepting that dormant `depends` lists
+wake up. Prefer the raw-call pattern unless a task genuinely needs another
+task's `sources`/`outputs` freshness check or its `depends` graph honored.
 
 ### Supported `#MISE` metadata fields
 
