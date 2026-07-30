@@ -51,6 +51,7 @@ files/boot-keys/
 include/image-version.yml
 *.spdx.json
 krytis.grype.json
+krytis-push-digests.env
 
 # Host-side build tools (compiled ad hoc)
 files/fakecap/fakecap-restore
