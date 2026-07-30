@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#MISE description="Generate an SPDX 2.3 SBOM for oci/krytis/image.bst via buildstream-sbom (#40)"
+#MISE depends=["generate-image-version"]
+#USAGE flag "--container" help="Use the pinned bst2 podman container instead of native buildstream-sbom"
+#USAGE flag "--output <path>" default="krytis.spdx.json" help="Output SPDX JSON path"
+
+# buildstream-sbom shells out to `bst show` internally (see docs/skills/sbom.md),
+# so it needs a `bst` binary on PATH. Native mode gets this for free from the
+# uv venv (buildstream is already a project dependency); --container mode
+# installs buildstream-sbom fresh into the bst2 image, mirroring dakota's
+# `just sbom` recipe. Read-only (bst show), no bow cache wiring needed.
+set -euo pipefail
+
+CONTAINER="${usage_container:-false}"
+OUTPUT="${usage_output:-krytis.spdx.json}"
+# Consume --container/--output if passed as literal args from a parent task
+# (mise does not parse a child script's #USAGE header when called directly
+# via ./mise/tasks/sbom — a caller declaring its own same-named flag would
+# otherwise leak its default through env-var inheritance and silently
+# override this explicit flag). See docs/skills/mise.md § Propagating flags
+# through tasks that call other tasks.
+while [ "${1:-}" = "--container" ] || [ "${1:-}" = "--output" ]; do
+    case "$1" in
+        --container) CONTAINER=true; shift ;;
+        --output) OUTPUT="$2"; shift 2 ;;
+    esac
+done
+# BST_CONTAINER=true in .mise.local.toml [env] is the workstation-wide default
+# for machines without native BST host deps. Explicit --container always wins.
+if [ "$CONTAINER" != "true" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
+    CONTAINER=true
+fi
+
+GIT_SHA=$(git rev-parse HEAD)
+NAMESPACE="https://github.com/starlit-os/krytis/sbom/${GIT_SHA}"
+
+if [ "$CONTAINER" = "true" ]; then
+    echo "==> Generating SBOM via bst2 container..."
+    mkdir -p "${HOME}/.cache/buildstream" "${HOME}/.cache/pip"
+    # --runtime runc: crun 1.21+ breaks buildstream-sbom's internal `bst show`
+    # subprocess with seccomp-BPF/systemd-probe permission errors (dakota
+    # hit this on GHA runners). runc has neither failure mode. Only pass it
+    # when installed — not every podman host ships runc alongside crun, and
+    # plain crun is fine outside the affected GHA image. See docs/skills/sbom.md.
+    RUNTIME_FLAGS=()
+    if command -v runc >/dev/null 2>&1; then
+        RUNTIME_FLAGS=(--runtime runc)
+    fi
+    podman run --rm \
+        --privileged \
+        --device /dev/fuse \
+        --network=host \
+        "${RUNTIME_FLAGS[@]}" \
+        -v "$(pwd):/src:rw" \
+        -v "${HOME}/.cache/buildstream:/root/.cache/buildstream:rw" \
+        -v "${HOME}/.cache/pip:/root/.cache/pip:rw" \
+        -w /src \
+        "${BST2_IMAGE}" \
+        bash -c "
+            pip install --quiet 'buildstream-sbom @ git+https://gitlab.com/BuildStream/buildstream-sbom.git@0706fec3bedf6f73bd9d2fed32c2aed585feef8d'
+            buildstream-sbom -o x86_64_v3 true \
+                --spdx-name krytis \
+                --spdx-namespace '${NAMESPACE}' \
+                --spdx-creator 'Tool: buildstream-sbom' \
+                --spdx-creator 'Organization: starlit-os' \
+                --deps all \
+                --output '/src/${OUTPUT}' \
+                oci/krytis/image.bst
+        "
+else
+    echo "==> Generating SBOM natively (uv run buildstream-sbom)..."
+    uv run buildstream-sbom -o x86_64_v3 true \
+        --spdx-name krytis \
+        --spdx-namespace "${NAMESPACE}" \
+        --spdx-creator "Tool: buildstream-sbom" \
+        --spdx-creator "Organization: starlit-os" \
+        --deps all \
+        --output "${OUTPUT}" \
+        oci/krytis/image.bst
+fi
+
+echo "==> SBOM written to: $(pwd)/${OUTPUT}"
+PKG_COUNT=$(jq '.packages | length' "${OUTPUT}")
+echo "==> Package count: ${PKG_COUNT}"

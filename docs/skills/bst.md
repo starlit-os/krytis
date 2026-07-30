@@ -1467,7 +1467,7 @@ Dependency "<element>.bst" from project "freedesktop-sdk" doesn't use the source
 
 This is **informational only — the build is not affected.** It means an element from the `freedesktop-sdk` junction predates BST 2's source provenance API (the mechanism that records upstream URL/commit/checksum for SBOM generation). As fdsdk updates those elements over time, the warnings disappear on the next junction track. No action needed on the Krytis side.
 
-Relevance: when SBOM generation is implemented (#40), elements emitting this warning will appear as gaps in the SBOM — upstream source info won't be recorded for them. This is a known limitation scoped to junction dependencies.
+Relevance: SBOM generation is implemented (#40, `mise run sbom`) — elements emitting this warning appear as gaps in the SBOM (no upstream source info recorded). This is a known limitation scoped to junction dependencies. See `docs/skills/sbom.md` for the generation/attach flow.
 
 ## Font Installation Pattern
 

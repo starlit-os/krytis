@@ -19,6 +19,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
 | Sync dakota/zirconium-hawaii forks and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
+| Generate or attach the SBOM (`mise run sbom`, `mise run push`) | [`docs/skills/sbom.md`](skills/sbom.md) |
 
 ## Reference Docs
 
