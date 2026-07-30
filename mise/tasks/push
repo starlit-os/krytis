@@ -57,7 +57,19 @@ fi
 # GITHUB_TOKEN is injected by mise hook-env (OAuth) or by CI. Fall back to gh auth token
 # for local dev where mise OAuth is not configured. See mise.jdx.dev/dev-tools/github-tokens.html
 TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
-GH_USER=$(gh api user --jq .login 2>/dev/null || echo "token")
+# GITHUB_ACTOR (always set correctly by GitHub Actions, no API call needed) wins
+# when present. `gh api user` (the local-dev fallback) hits GET /user, which a
+# GitHub Actions installation token (GITHUB_TOKEN) cannot call — it 403s with
+# "Resource not accessible by integration". `gh api` writes that error body to
+# stdout, not just stderr, so a bare `$(gh api user --jq .login 2>/dev/null ||
+# echo "token")` leaks the error JSON concatenated with the "token" fallback
+# into $GH_USER instead of cleanly falling back — use `if !` so a failed
+# substitution is discarded outright, not concatenated. See #389.
+if [ -n "${GITHUB_ACTOR:-}" ]; then
+    GH_USER="$GITHUB_ACTOR"
+elif ! GH_USER=$(gh api user --jq .login 2>/dev/null); then
+    GH_USER="token"
+fi
 
 # Verify write:packages scope before attempting a 4GB push.
 # gh auth token won't have it by default — run: gh auth refresh -s write:packages

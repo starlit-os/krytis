@@ -34,11 +34,15 @@ if [[ -z "$IMAGE_DIGEST" ]]; then
     exit 1
 fi
 
-# Same GITHUB_TOKEN/gh-auth-token resolution as mise/tasks/push, so this
-# task is independently runnable (does not depend on push's oras/podman
-# login side effects surviving in the same shell/job).
+# Same GITHUB_TOKEN/gh-auth-token resolution as mise/tasks/push (see #389),
+# so this task is independently runnable (does not depend on push's oras/
+# podman login side effects surviving in the same shell/job).
 TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
-GH_USER=$(gh api user --jq .login 2>/dev/null || echo "token")
+if [ -n "${GITHUB_ACTOR:-}" ]; then
+    GH_USER="$GITHUB_ACTOR"
+elif ! GH_USER=$(gh api user --jq .login 2>/dev/null); then
+    GH_USER="token"
+fi
 
 echo "==> Logging in to ghcr.io as ${GH_USER} (cosign)..."
 echo "$TOKEN" | cosign login ghcr.io --username "$GH_USER" --password-stdin
