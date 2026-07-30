@@ -53,6 +53,22 @@ jobs:
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
+      - name: Scan for vulnerabilities (pre-build gate)
+        # Runs before the build so a blocking finding aborts here — no BST
+        # build time spent, and mise/tasks/push's own scan-before-push
+        # (below) is the defense-in-depth guarantee that nothing gets
+        # pushed even if this early gate is ever skipped/bypassed (#392).
+        # buildstream-sbom reads static element/source metadata via
+        # `bst show` — it does not require the image to be built.
+        id: vuln-scan
+        run: |
+          if [[ "${{ inputs.report_only }}" == "true" ]]; then
+            echo "::notice::report_only=true — vulnerability scan will not block the build"
+            mise run vuln-scan
+          else
+            mise run vuln-scan --fail-on critical
+          fi
+
       - name: Build oci/krytis/image.bst
         env:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
@@ -71,8 +87,10 @@ jobs:
           fi
 
       - name: Sign image and referrers with cosign (best-effort)
-        # Runs regardless of whether the severity gate above tripped — the
-        # image and referrers already exist on the registry by then.
+        # Runs regardless of whether either severity gate above tripped.
+        # If the pre-build gate or push's own scan-before-push blocked
+        # publish, no image was ever pushed — this step then has nothing
+        # to sign and cleanly no-ops (continue-on-error absorbs its exit).
         # continue-on-error: signing failure never fails this job (#380
         # design decision: parallel/best-effort, matching dakota's
         # publish-sbom job).
@@ -102,7 +120,10 @@ jobs:
         run: |
           if [[ "${{ steps.push.outcome }}" == "success" ]]; then
             echo "::notice::Publish succeeded (severity gate: $([[ '${{ inputs.report_only }}' == 'true' ]] && echo 'report-only' || echo 'blocking at Critical'))"
+          elif [[ "${{ steps.vuln-scan.outcome }}" == "failure" ]]; then
+            echo "::error::Vulnerability scan blocked this run before the build started — see the 'Scan for vulnerabilities (pre-build gate)' step above"
+            exit 1
           else
-            echo "::error::Publish step failed — see logs above (severity gate breach, or an earlier build/push failure)"
+            echo "::error::Publish step failed — see logs above (push's own scan-before-push re-check, or a build/push failure)"
             exit 1
           fi

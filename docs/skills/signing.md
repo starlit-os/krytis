@@ -27,9 +27,9 @@ mise run sign
 
 ## Why Signing Isn't Wired Into `mise/tasks/push`/`mise/tasks/sbom` Directly
 
-Two independent reasons, both from #380's design decisions:
+Two independent reasons — the first reflects #392's push reordering, the second is #380's original design decision:
 
-1. **Severity-gate independence.** `mise run push --fail-on critical` can legitimately `exit 1` (Critical vulnerability found) *after* the image and both referrers already exist on the registry — the push already happened, only the exit code changed. Signing should still run in that case (the artifacts exist and are worth signing regardless of the scan outcome) — a separate task/step makes that trivial: `mise run sign` runs `if: always()` in CI regardless of the previous step's exit code, because it only depends on files being on disk, not the previous step's success.
+1. **Severity-gate independence.** Since #392, `mise run push --fail-on critical` aborts *before* logging in/tagging/pushing anything — a Critical finding means nothing ever reaches the registry. A separate `mise run sign` task still makes sense here: it only depends on `krytis-push-digests.env` existing on disk, not on *why* the previous step succeeded or failed. When push (or the earlier pre-build `mise run vuln-scan --fail-on` gate in CI) blocks, the digest file was never written, so `mise run sign` cleanly reports "no image digest given" and exits — no special-casing needed to distinguish "blocked" from "genuinely nothing to sign yet." `mise run sign` runs `if: always()` in CI for exactly this reason: it's cheap to attempt and self-explains when there's nothing to do.
 2. **Best-effort semantics.** #380's design decision: signing does not block promotion (`continue-on-error: true` in CI, matching dakota's `publish-sbom` job pattern). Keeping it a separate task means a signing failure (e.g. a transient Fulcio/Rekor outage) can't accidentally propagate into `push`'s exit code and be conflated with an actual severity-gate failure.
 
 ## GitHub Actions OIDC (Ambient Credential Detection)
