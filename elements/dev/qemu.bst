@@ -93,5 +93,5 @@ sources:
   # cleanly in this same freedesktop-sdk ecosystem — predates the qemu.qmp
   # requirement. Revisit once freedesktop-sdk ships a python3-qemu-qmp
   # component (none exists as of this writing).
-  url: qemu:qemu-10.1.3.tar.xz
-  ref: fbaa7a0d7a9a1deb5695b125916746ec28fe0de6275d4454f3e3bbaf8b339b53
+  url: qemu:qemu-10.2.4.tar.xz
+  ref: 821b545b92f165e57dddccac5077d76d4d436a226595b8813ad59306bbfd0746
