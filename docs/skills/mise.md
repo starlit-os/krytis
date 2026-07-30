@@ -201,11 +201,15 @@ Verified concretely why (`build` → `load-image` was the test case):
 - **Previously-inert `#MISE depends=[...]` would start firing.** `bst`'s own
   `#MISE depends=["generate-image-version"]` currently has **no effect** through
   `validate`/`load-image`/`build`'s raw call chains — mise only honors `depends`
-  when it dispatches the task itself. This is why `./mise/tasks/load-image`
-  invoked in a fresh worktree with no prior `generate-image-version` run fails
-  with `Could not find file at /src/include/image-version.yml`: depends never
-  ran. Nesting would fix that specific gap but is a real behavior change to
-  every task with a currently-dormant `depends` list, not just this one.
+  when it dispatches the task itself. This is why `./mise/tasks/load-image`,
+  run standalone (the documented primary entry point) in a fresh worktree with
+  no prior `generate-image-version` run, used to fail with `Could not find
+  file at /src/include/image-version.yml`: depends never ran. **Fixed with a
+  targeted patch, not nesting** — `load-image` now raw-calls
+  `./mise/tasks/generate-image-version` itself, mirroring how `build` already
+  did. The general pattern (raw calls never honor a callee's `depends`) is
+  still true project-wide; nesting would fix it structurally but is a bigger,
+  riskier change than patching the one entry point that actually needed it.
 - **~200–250ms fixed overhead per nested call** (measured: `mise run
   generate-image-version` cold and warm both landed at ~245ms — trust check +
   env/tool resolution re-run from scratch for the child process).

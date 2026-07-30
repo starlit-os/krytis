@@ -27,6 +27,15 @@ if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
     CONTAINER=--container
 fi
 
+# Raw call, not a #MISE depends — depends is only honored when mise itself
+# dispatches a task, and load-image is commonly run standalone (the
+# documented primary entry point) without `build` in front of it to do this
+# first. Without it, a fresh worktree's first `mise load-image` fails with
+# "Could not find file at /src/include/image-version.yml" (bst's own
+# depends=["generate-image-version"] is equally dormant through the raw
+# call below). See docs/skills/mise.md § Calling other tasks.
+./mise/tasks/generate-image-version
+
 echo "==> Building oci/krytis/image.bst..."
 ./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build oci/krytis/image.bst
 
