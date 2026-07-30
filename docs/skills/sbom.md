@@ -52,7 +52,7 @@ These elements appear in the SBOM as packages with no recorded upstream URL/comm
 
 Skip with `mise run push --skip-sbom` for fast local iteration.
 
-**Signing is explicitly out of scope here** — tracked separately in #60 (cosign keyless signing), not implemented yet. The SBOM (and the image) are attached/pushed unsigned. Do not add cosign steps to this SBOM flow without checking #60 first; wire signing into whatever `mise run push`/CI mechanism #60 lands, not by extending `mise/tasks/sbom`.
+**Signing is handled separately** — `mise run sign` (#60, see `docs/skills/signing.md`) signs the pushed image and both OCI referrers by digest after `mise run push` completes. Deliberately not built into `mise/tasks/sbom`/`mise/tasks/push` directly: signing needs the three manifest digests `push` already writes to `krytis-push-digests.env`, and keeping it a separate task lets it be best-effort (`.github/workflows/publish.yml` runs it with `continue-on-error: true`) without coupling its failure mode to the SBOM/scan pipeline's.
 
 ## Why Not Krytis's Own CI Build Pipeline (Yet)
 

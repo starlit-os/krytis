@@ -20,6 +20,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
 | Sync dakota/zirconium-hawaii forks and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
 | Generate/attach the SBOM or run the Grype vuln scan (`mise run sbom`, `mise run vuln-scan`, `mise run push`) | [`docs/skills/sbom.md`](skills/sbom.md) |
+| Sign the published image/SBOM/vuln report with cosign, or work on the publish workflow (`mise run sign`, `.github/workflows/publish.yml`) | [`docs/skills/signing.md`](skills/signing.md) |
 
 ## Reference Docs
 
