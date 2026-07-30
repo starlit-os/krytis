@@ -48,7 +48,7 @@ These elements appear in the SBOM as packages with no recorded upstream URL/comm
 
 ## `mise run push` Integration
 
-`mise run push` generates the SBOM and attaches it to the just-pushed image digest as an OCI referrer (`application/vnd.spdx+json`), after both the version and `:latest` tags are pushed. Both tags share one content-addressed manifest digest (same source image, tagged twice), so the SBOM is generated and attached exactly once per push, covering both tags. `oras login` reuses the same GHCR token/user already resolved for `podman login` earlier in the task.
+`mise run push` generates the SBOM (and, unless `--skip-vuln-scan`, the enriched SBOM and Grype report) *before* logging in, tagging, or pushing anything (#392) — a `--fail-on` breach aborts there, before any registry interaction. Once the image is actually pushed, the already-generated `krytis.spdx.json`/`krytis.grype.json` files are attached to the just-pushed image digest as OCI referrers (`application/vnd.spdx+json` / `application/vnd.grype.report+json`) — no regeneration at attach time. Both the version and `:latest` tags share one content-addressed manifest digest (same source image, tagged twice), so each referrer is attached exactly once per push, covering both tags. `oras login` reuses the same GHCR token/user already resolved for `podman login` earlier in the task.
 
 Skip with `mise run push --skip-sbom` for fast local iteration.
 
