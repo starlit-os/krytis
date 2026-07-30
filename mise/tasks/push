@@ -65,10 +65,10 @@ TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
 # echo "token")` leaks the error JSON concatenated with the "token" fallback
 # into $GH_USER instead of cleanly falling back — use `if !` so a failed
 # substitution is discarded outright, not concatenated. See #389.
-if [ -n "${GITHUB_ACTOR:-}" ]; then
-    GH_USER="$GITHUB_ACTOR"
+if [[ -n "${GITHUB_ACTOR:-}" ]]; then
+  GH_USER="$GITHUB_ACTOR"
 elif ! GH_USER=$(gh api user --jq .login 2>/dev/null); then
-    GH_USER="token"
+  GH_USER="token"
 fi
 
 # Verify write:packages scope before attempting a 4GB push.
