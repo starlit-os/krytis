@@ -53,7 +53,11 @@ matches the recorded one *and* `podman image inspect localhost/krytis-input:late
 still resolves to the recorded image ID. The ID check (not just tag presence)
 is the safety net — it catches `podman rmi`, manual re-tagging, or a
 different image loaded over that tag between runs. Pass the task's own
-`--force` flag to bypass this check and always reload.
+`--force` flag to bypass this check and always reload — `mise build --force`
+forwards it through too (`build` calls `load-image` as a raw subprocess, and
+`usage_force` propagates via the same env-var-inheritance mechanism as
+`--container`/`--push`/`--pull`, verified in the "`usage_container` is
+inherited by child processes" section below).
 
 This is safe because BST's cache key is a pure function of an element's
 sources and every build dependency's own key — `bst artifact checkout` for a
@@ -181,6 +185,45 @@ The env vars from `mise.toml` are already injected when running as a mise task.
 ```
 
 Never use `mise other-task` from inside a task script — it spawns a nested mise process.
+Verified concretely why (`build` → `load-image` was the test case):
+
+- **Flag inheritance silently breaks.** `usage_*` env vars *do* propagate through a
+  raw `./mise/tasks/<name>` subprocess call (confirmed: an outer task's
+  `usage_force=true` reaches an inner raw-called script's `${usage_force}`
+  with zero extra code — this is what makes the `CONTAINER`/`PUSH`/`PULL`/`FORCE`
+  forwarding pattern below work at all). A **nested `mise run <name>`** call does
+  **not** inherit them — mise re-parses the nested task's flags strictly from its
+  own argv, ignoring any ambient `usage_*` in the environment. Switching a caller
+  to nested `mise run load-image` without also explicitly re-passing every flag
+  on that command line (`mise run load-image ${CONTAINER:-} ${PUSH:-} ${PULL:-} ${FORCE:-}`)
+  would silently drop `--container`/`--push`/`--pull`/`--force` — no error, just
+  wrong behavior (e.g. quietly falling back to native BST without `--container`).
+- **Previously-inert `#MISE depends=[...]` would start firing.** `bst`'s own
+  `#MISE depends=["generate-image-version"]` currently has **no effect** through
+  `validate`/`load-image`/`build`'s raw call chains — mise only honors `depends`
+  when it dispatches the task itself. This is why `./mise/tasks/load-image`
+  invoked in a fresh worktree with no prior `generate-image-version` run fails
+  with `Could not find file at /src/include/image-version.yml`: depends never
+  ran. Nesting would fix that specific gap but is a real behavior change to
+  every task with a currently-dormant `depends` list, not just this one.
+- **~200–250ms fixed overhead per nested call** (measured: `mise run
+  generate-image-version` cold and warm both landed at ~245ms — trust check +
+  env/tool resolution re-run from scratch for the child process).
+- **Unlocks the `sources`/`outputs` freshness pre-check for the nested task**
+  (verified: a `mise run` that nests `mise run load-image` correctly hit
+  `sources up-to-date, skipping` in ~0.2s, identical to a top-level call) — this
+  is the upside, and the reason to *consider* nesting despite the above.
+- **Doesn't compose with the parent invocation's own mise flags.** `-j`,
+  `--dry-run`, `--raw`, `--output` etc. passed to the outer `mise run` do not
+  propagate to a nested `mise run` call unless re-passed explicitly — a
+  `mise run --dry-run build` would still execute the nested `load-image` call
+  for real.
+
+Net: nesting is not a drop-in swap. It requires explicitly re-forwarding every
+flag as literal args (turning the currently-inert-for-`load-image` positional
+forwarding into load-bearing code) and accepting that dormant `depends` lists
+wake up. Prefer the raw-call pattern unless a task genuinely needs another
+task's `sources`/`outputs` freshness check or its `depends` graph honored.
 
 ### Supported `#MISE` metadata fields
 
