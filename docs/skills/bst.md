@@ -371,6 +371,24 @@ BuildStream's artifact storage only tracks two regular-file modes, like a git tr
 
 If a stricter mode is a hard requirement (not just convention), it needs a boot-time `tmpfiles.d` `z` line (`z /path 0440 root root -`) to fix it up post-checkout — same category of workaround as the `setcap`-at-boot pattern above. Before reaching for that, check whether the looser mode is actually a functional problem: e.g. sudoers.d files at 0644 (vs. the conventional 0440) still load and are honored by both GNU sudo and sudo-rs — they only refuse world-*writable* includes, not world-readable ones (confirmed against sudo-rs's own compliance test suite, `sudo/sudoers/includedir.rs`, `ignores_and_warns_about_file_with_bad_perms`). Root-owned + non-writable is enough; readability weaker than 0440 may just be a minor hardening gap, not a break — evaluate before adding boot-time complexity for it.
 
+## Overriding a Single freedesktop-sdk Component Element
+
+`elements/freedesktop-sdk.bst`'s `config.overrides:` map (a junction-level mechanism) lets krytis substitute one specific upstream element for a local one, project-wide — every dependency reference to that path, from any element, gets transparently redirected, without needing to touch the depending elements themselves. Two existing precedents: `components/sudo.bst: core/sudo-rs.bst` (full reimplementation) and `components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst` (redirect to a different upstream project's already-patched version).
+
+**When freedesktop-sdk's own element has a real bug** (not just "we want different software") and gnome-build-meta already carries an upstream patch for it but doesn't expose the *result* as a referenceable override element (gnome-build-meta's patches are applied to its own internal freedesktop-sdk checkout during its own CI, not published as a standalone element krytis's junction can point at) — the fix is a **local duplicate-with-one-change** element:
+
+1. Copy the upstream `.bst` file verbatim into `elements/core/<name>.bst` (or wherever fits).
+2. Prefix every `depends:`/`build-depends:`/`runtime-depends:` entry that referenced a sibling freedesktop-sdk element with `freedesktop-sdk.bst:` (they're no longer in that project's namespace).
+3. Drop any conditionals keyed on junction-internal option variables (e.g. `target_arch`, set via `freedesktop-sdk.bst`'s own `config.options:` block) that don't apply to krytis's own build — they'll fail with `'target_arch' is undefined` since that variable doesn't exist outside the junction's option-resolution scope.
+4. Add the fixed value/behavior.
+5. Wire it in: `components/<name>.bst: core/<name>.bst` under `elements/freedesktop-sdk.bst`'s `overrides:`.
+
+Verify the override actually resolves (not silently ignored) with `mise bst show freedesktop-sdk.bst:components/<name>.bst` — the dependency graph should list `core/<name>.bst`, not the upstream one, and it should show as `fetch needed`/uncached the first time.
+
+**Concrete case: openssh's missing `sysconfdir`.** freedesktop-sdk's `components/openssh.bst` never sets `sysconfdir` (autotools defaults to `/etc`), so the built `sshd_config` lands at `/etc/sshd_config` instead of `/etc/ssh/sshd_config`, where the compiled-in sshd default (and systemd's `sshd_config.d/` generator drop-ins) actually look. `sshd -T` then fails outright with "No such file or directory" — and under socket activation (`sshd@.service`), the per-connection process dying immediately on that manifests as the client's SSH connection being reset right after the version-banner exchange (`kex_exchange_identification: read: Connection reset by peer`), not as an obviously-broken service. gnome-build-meta already has `patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch` for exactly this, but only applies it to its own checkout. Fixed via `elements/core/openssh.bst` (duplicate + `sysconfdir: '/etc/ssh'` + `freedesktop-sdk.bst:` depends prefixes + dropped the ppc64le-only `target_arch` conditional, since krytis doesn't target ppc64le) + the `overrides:` entry.
+
+**Gotcha while verifying this class of fix:** `mise lint` alone (per its own `#MISE description`) assumes `mise run load-image` already ran — it just does `podman build` against the *existing* `localhost/krytis-input:latest` tag. If that tag predates your element change, `mise lint` will pass while still testing the *old* content, silently. Use `mise run build [--force]` (which chains `generate-image-version` → `load-image` → `lint`) to force a real `oci/krytis/image.bst` rebuild before trusting lint output for an element-level change — `mise bst build <element>` in isolation only proves the element itself builds, not that the full image picked it up.
+
 ## Adding a Package
 
 1. Create `elements/desktop/<name>.bst` (or `elements/deps/`, `elements/config/`, etc. depending on what it is — copy a similar existing element)
