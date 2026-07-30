@@ -27,10 +27,20 @@ config:
   install-commands:
   # postinst creates /usr/bin/warp-terminal at install time on Debian; BST
   # doesn't run maintainer scripts, so the symlink is recreated here.
-  - cp -a opt "%{install-root}/"
+  #
+  # The .deb payload ships under opt/warpdotdev/warp-terminal/, but bootc's
+  # rootfs treats /opt as a symlink to /var/opt (see
+  # /usr/lib/tmpfiles.d/10-bootc.conf), and /var isn't part of the immutable
+  # composefs image — it's fresh, empty runtime state on every boot. Content
+  # staged under /opt never survives into the booted image. Relocate to
+  # /usr/lib/warp-terminal/ instead (same pattern as zed.bst): the `warp`
+  # binary has no RPATH/RUNPATH and no hardcoded /opt/warpdotdev string refs,
+  # so it resolves resources/ relative to itself regardless of install path.
+  - install -d "%{install-root}%{indep-libdir}/warp-terminal"
+  - cp -a opt/warpdotdev/warp-terminal/. "%{install-root}%{indep-libdir}/warp-terminal/"
   - cp -a usr "%{install-root}/"
   - install -d "%{install-root}%{bindir}"
-  - ln -s /opt/warpdotdev/warp-terminal/warp "%{install-root}%{bindir}/warp-terminal"
+  - ln -s "%{indep-libdir}/warp-terminal/warp" "%{install-root}%{bindir}/warp-terminal"
   - "%{install-extra}"
 
 sources:
