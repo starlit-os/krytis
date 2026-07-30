@@ -18,6 +18,9 @@ pass-cli = "latest"
 # oras: required by `mise run push` to attach the SBOM (#40) as an OCI
 # referrer via `oras attach`. Dev-host tooling only.
 oras = "latest"
+# grype: required by `mise run vuln-scan` / `mise run push` to scan the SBOM
+# for known CVEs (#41). Dev-host tooling only.
+grype = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"
