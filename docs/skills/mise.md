@@ -43,6 +43,60 @@ mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 - `.ovmf-vars.fd` (writable UEFI state) and `bootable.raw` are `.gitignore`d.
 - `VM_RAM` and `VM_CPUS` are overrideable via `mise.toml [env]` or shell export.
 
+### Skipping `podman load` when the artifact is unchanged
+
+`load-image` records `<bst-full-key> <podman-image-id>` in `.load-image-state`
+(gitignored) after every successful load. Before the checkout+`podman load`
+pipe, it recomputes `oci/krytis/image.bst`'s full cache key
+(`bst show --deps none --format '%{full-key}'`) and skips the load if the key
+matches the recorded one *and* `podman image inspect localhost/krytis-input:latest`
+still resolves to the recorded image ID. The ID check (not just tag presence)
+is the safety net — it catches `podman rmi`, manual re-tagging, or a
+different image loaded over that tag between runs. Pass the task's own
+`--force` flag to bypass this check and always reload.
+
+This is safe because BST's cache key is a pure function of an element's
+sources and every build dependency's own key — `bst artifact checkout` for a
+given key always extracts byte-identical tar content from CAS. `oci/os-release.bst`
+bakes `%{image-version}`/`%{commit}` into the image, so **any** new commit
+changes the key by design (every load is stamped with the commit that
+produced it) — the skip only fires on a genuinely unchanged working tree.
+
+The task also declares `#MISE sources=[...]`/`outputs=[".load-image-state"]`,
+so `mise load-image` (run directly, not through the `build` task's raw
+`./mise/tasks/load-image` call — mise's own dependency-tree files-changed
+check only applies when a task is invoked through `mise run`/`mise <task>`)
+skips even the `bst show` cache-key check when no tracked source changed —
+`stat()` calls only, no container startup. Two things worth knowing if you
+touch this list:
+- **`include/image-version.yml` is deliberately excluded.** It's rewritten
+  unconditionally by `generate-image-version` on every build (mtime always
+  bumps) even though its content is a pure function of `git log -1` — including
+  it would make the freshness check never hit. `.git/HEAD` and
+  `.git/refs/heads/**` are tracked instead: they're the actual signal (any
+  commit, amend, or rebase updates one of them) without the churn.
+- The source globs must cover every local BST source an element in
+  `image.bst`'s dependency closure reads — `kind: local`/`kind: patch`
+  entries only ever point into `elements/**`, `files/**`, or `patches/**` in
+  this repo, so those three plus `project.conf` and `include/{aliases,variables}.yml`
+  are a complete superset. `scripts/` is deliberately excluded — it's
+  downstream tooling (fakecap manifest generation), not a build input.
+
+**`--force` is two independent layers, and the task-level one alone is
+often a no-op.** `mise`'s own `sources`/`outputs` freshness check runs
+*before* the script is even invoked — if nothing tracked changed, mise
+prints `sources up-to-date, skipping` and the script (and its
+`#USAGE flag "--force"`) never runs, silently swallowing a bare
+`mise run load-image --force`. To force past **both** the mise-level
+freshness gate and the task's own bst-key/podman-ID check, use mise's
+native `-f`/`--force` (positioned *before* the task name, since that's
+`mise run`'s own flag) together with the task's `--force` (positioned
+*after*, since that's forwarded to the task's usage parser):
+`mise run --force load-image --force`. Verified live — a bare
+`mise run load-image --force` printed `sources up-to-date, skipping` and
+exited in <1s with no reload; `mise run --force load-image --force`
+reached the real checkout+`podman load` path.
+
 ### `console=` karg ordering matters for interactive services
 
 With multiple `console=` kernel arguments, all consoles receive output, but `/dev/console` (used for interactive input by services like `systemd-firstboot`) maps to the **last** one listed. To keep serial output for native QEMU debugging while making firstboot interactive on VGA/noVNC, put `console=ttyS0` first and `console=tty1` last:
