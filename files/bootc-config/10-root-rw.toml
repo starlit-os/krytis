@@ -1,0 +1,24 @@
+# Mount the root partition read-write in the initramfs.
+#
+# REQUIRED for a working boot — without it /etc and /var are read-only on the
+# installed system and ~19 units fail (sshd has no host keys, systemd-logind
+# can't create its /var/lib state dir so greetd can't open a session, etc).
+# See docs/skills/bootc-vm.md § /etc and /var need the `rw` karg.
+#
+# krytis uses no root= karg, so systemd-gpt-auto-generator mounts the root
+# partition at /sysroot. It only passes MOUNT_RW when a bare `rw` is on the
+# kernel command line (arg_root_rw starts at -1 and `ro`/`rw` are the only
+# things that set it). bootc's composefs setup-root then derives /etc and /var
+# as open_tree() bind clones of that mount, so they inherit its read-only
+# superblock. Under classic ostree, ostree-remount.service would repair this,
+# but it is ConditionKernelCommandLine=ostree and the composefs backend puts
+# composefs= on the cmdline instead, so it never runs.
+#
+# `/` (the composefs overlay) and `/sysroot` stay read-only regardless: bootc
+# calls set_mount_readonly() on both explicitly. This karg only affects the
+# writability of the /etc and /var bind clones.
+#
+# Freedesktop SDK's own VM boot elements use `rw quiet splash` for the same
+# reason. Applied by bootc at deploy time via /usr/lib/bootc/kargs.d/, and
+# baked into the signed UKI by `bootc container ukify`.
+kargs = ["rw"]
