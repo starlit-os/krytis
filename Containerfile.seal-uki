@@ -1,0 +1,54 @@
+# Phase 2 of sealing: takes the already-squashed `localhost/krytis:sealed-base`
+# (built from Containerfile's `sealed` stage, squashed to a single layer) and
+# adds the signed UKI on top, producing the final `:sealed` image.
+#
+# This is a SEPARATE Containerfile, not additional stages appended to the main
+# one, because `--composefs-backend` (bootc's `Pulling image into composefs
+# repository` step) requires a single-layer image — a multi-layer image fails
+# with "Unexpected EOF in splitstream" (matches dakota#841, documented in
+# docs/plan/composefs-chunkah.md). But `bootc container ukify`'s digest
+# computation must be run against an image whose /tmp and /var/tmp mtimes will
+# be IDENTICAL to what ends up in the final pushed image (see
+# docs/skills/secure-boot.md § `bootc container ukify` must run in a throwaway
+# stage). Squashing itself changes those mtimes (see § `--composefs-backend`
+# requires a single layer, but squashing breaks the UKI digest), so the digest
+# must be computed against an ALREADY-SQUASHED reference, not the pre-squash
+# multi-layer build.
+#
+# Hence the two-phase build in mise/tasks/seal-uki:
+#   1. Build + squash the `sealed` stage alone -> localhost/krytis:sealed-base
+#      (single layer, stable, no UKI yet).
+#   2. This file: compute the UKI against sealed-base (throwaway stage), then
+#      build the final image FROM sealed-base + cp the UKI in, and squash
+#      THIS too -> localhost/krytis:sealed (single layer, digest matches).
+#
+# The image name is hardcoded (not ARG-parameterized) in the --mount=from=
+# below: ARG expansion inside --mount=from= is untested/unconfirmed with the
+# podman/buildah version krytis pins, so this mirrors exactly what was
+# verified rather than introducing an unverified variant. If the sealed-base
+# tag ever needs to change, update both occurrences below together.
+#
+# Verified end-to-end: baked digest and a `podman mount`-based post-commit
+# recompute matched exactly, and the resulting image has exactly 1 layer.
+FROM localhost/krytis:sealed-base AS uki-builder
+ARG SEAL_SECURE_BOOT=false
+
+RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
+    --mount=type=bind,from=localhost/krytis:sealed-base,target=/target \
+    if [ "$SEAL_SECURE_BOOT" = "true" ]; then \
+        mkdir -p /out && \
+        bootc container ukify --rootfs /target -- \
+            --secureboot-private-key /run/secrets/db_key \
+            --secureboot-certificate /run/secrets/db_crt \
+            --signtool sbsign \
+            --output /out/krytis.efi \
+    ; fi
+
+FROM localhost/krytis:sealed-base
+ARG SEAL_SECURE_BOOT=false
+
+RUN --mount=type=bind,from=uki-builder,target=/uki-out \
+    if [ "$SEAL_SECURE_BOOT" = "true" ]; then \
+        mkdir -p /boot/EFI/Linux && \
+        cp /uki-out/out/krytis.efi /boot/EFI/Linux/krytis.efi \
+    ; fi
