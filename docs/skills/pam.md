@@ -56,3 +56,46 @@ Noctalia ships its own polkit agent (`src/dbus/polkit/`). The `show-info` signal
 fdsdk uses an arch-specific libdir: `/usr/lib/x86_64-linux-gnu`. PAM modules must be installed to `/usr/lib/x86_64-linux-gnu/security/`. In BST variables: `pam_moduledir=%{libdir}/security`.
 
 Do not assume `/usr/lib/security/` — that path does not exist in fdsdk images.
+
+## `UsePAM yes` keeps a password path open behind `PasswordAuthentication no`
+
+`PasswordAuthentication no` on its own does **not** disable password login when
+`UsePAM yes` and `KbdInteractiveAuthentication yes` are both set — which is the
+shipped combination. sshd still advertises `keyboard-interactive`, and PAM answers
+it with a password prompt from `pam_unix`. Measured on the krytis image:
+
+```
+# PasswordAuthentication no, KbdInteractiveAuthentication yes, UsePAM yes
+debug1: Authentications that can continue: publickey,keyboard-interactive
+
+# PasswordAuthentication no, KbdInteractiveAuthentication no, UsePAM yes
+debug1: Authentications that can continue: publickey
+```
+
+So key-only SSH requires **both** to be `no`. krytis sets both in
+`elements/config/ssh-auth-policy.bst` → `/etc/ssh/sshd_config.d/10-krytis-auth.conf`
+(#408). Reproduce the check with `ssh -v` against a throwaway container sshd and
+read the `Authentications that can continue:` line — do not infer it from the
+config file.
+
+krytis cannot drop `UsePAM yes`: it is what gives sshd `pam_u2f` and
+`pam_systemd_home`, and `openssh.bst` is built `--with-pam-service=sshd` against
+linux-pam's `/etc/pam.d/sshd`.
+
+### Two consequences of key-only SSH
+
+**Incompatible with homed-managed homes.** `pam_systemd_home` needs the user's
+password to unlock the encrypted home image, so a pubkey-only SSH login has
+nothing to mount it with. Harmless while accounts are created by `useradd` with
+plain home directories (see docs/skills/desktop.md § `/etc/skel`), but it
+constrains any future move to `homectl`. If krytis ever adopts homed for real
+accounts, keyboard-interactive has to come back for SSH.
+
+**No PAM-driven 2FA over SSH.** `pam_u2f` runs in the keyboard-interactive path,
+so disabling it removes FIDO2-via-PAM for SSH specifically (console, sudo, polkit
+and the greeter are unaffected — they do not go through sshd). The replacement is
+native OpenSSH security-key auth: openssh is built `--with-security-key-builtin`
+and advertises `sk-ssh-ed25519@openssh.com` and
+`sk-ecdsa-sha2-nistp256@openssh.com`, which authenticate over **pubkey** and need
+no keyboard-interactive path. `ssh-keygen -t ed25519-sk` is the intended second
+factor for SSH.

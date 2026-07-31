@@ -44,13 +44,13 @@ variables:
   # scratch (contrast with core/sudo-rs.bst, which replaces sudo outright).
   # See docs/skills/bst.md.
   #
-  # KNOWN GAP, deliberately not changed here: the shipped sshd_config has no
-  # `Include /etc/ssh/sshd_config.d/*.conf` line, so the drop-in that
-  # /usr/lib/tmpfiles.d/20-systemd-userdb.conf symlinks into
-  # /etc/ssh/sshd_config.d/ is inert — `sshd -T` reports
-  # `authorizedkeyscommand none`. Adding the Include would switch on
-  # systemd-userdb key lookup, i.e. change authentication behaviour, which
-  # is a Security Gate decision rather than a packaging fix.
+  # Both drop-in directories are made live by the `Include` lines added in
+  # install-commands below (#408). Upstream OpenSSH ships no `Include` and
+  # freedesktop-sdk adds none, so /etc/ssh/{sshd_config.d,ssh_config.d}
+  # existed but was never read — the systemd drop-ins that
+  # /usr/lib/tmpfiles.d/{20-systemd-userdb,20-systemd-ssh-generator}.conf
+  # symlink into them were inert (`sshd -T` reported
+  # `authorizedkeyscommand none`, and `ssh vsock/…` did not resolve).
   sysconfdir: '/etc/ssh'
   # linux-pam provides /etc/pam.d/sshd, so this is the pam service name
   #
@@ -70,6 +70,23 @@ config:
     (>):
     - |
       sed 's/#UsePAM.*/UsePAM yes/' -i "%{install-root}%{sysconfdir}/sshd_config"
+
+      # Make the drop-in directories live (#408). PREPENDED, not appended:
+      # OpenSSH keeps the FIRST value obtained for most keywords, and the
+      # shipped sshd_config already sets AuthorizedKeysFile further down, so an
+      # Include placed after it could never be overridden by a drop-in. The
+      # client ssh_config states the same rule in its own header ("host-specific
+      # definitions should be at the beginning"), and the systemd ssh-proxy
+      # drop-in is exactly such a set of Host blocks.
+      for f in sshd_config ssh_config; do
+          cfg="%{install-root}%{sysconfdir}/${f}"
+          {
+              printf '# Read drop-ins first — OpenSSH keeps the first value obtained.\n'
+              printf 'Include %s/%s.d/*.conf\n\n' "%{sysconfdir}" "${f}"
+              cat "${cfg}"
+          } > "${cfg}.new"
+          mv "${cfg}.new" "${cfg}"
+      done
       install -Dm755 contrib/ssh-copy-id -t "%{install-root}%{bindir}"
       install -Dm644 contrib/ssh-copy-id.1 -t "%{install-root}%{mandir}/man1"
 
