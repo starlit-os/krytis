@@ -438,6 +438,39 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
 
+### An auto-track `ref:` bump never builds the element — upstream dep additions land broken
+
+The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
+`ref:`. It does **not** build the element. So when an upstream release adds a new
+`dependency()` to its `meson.build`/`CMakeLists.txt`, the bump merges green and `mise build`
+is broken on `main` from that moment — for *every* branch, since `mise lint` and
+`mise boot-test` both go through a full build. #400 (`noctalia-greeter` v1.0.0 → v1.1.0) and
+#401 (`noctalia` → v5.0.0-beta.7) did exactly this, costing three new deps across two
+elements (#412).
+
+**When reviewing or merging an auto-track PR on a source-built element, diff the upstream
+build file, not just the ref.** One command answers it:
+
+```bash
+curl -sL https://raw.githubusercontent.com/<owner>/<repo>/<new-tag>/meson.build \
+  | grep -nE "dependency\(|has_header\(|find_program\("
+```
+
+Compare that list against the element's `build-depends`/`depends`. Iterating one
+`bst build` failure at a time costs ~12 minutes per round trip on a warm cache, because meson
+aborts at the *first* missing dependency — reading the upstream build file finds all of them
+at once. Beware the non-`dependency()` forms: noctalia-greeter v1.1.0 also gained a bare
+`cc.has_header('stb/stb_image_resize2.h')` check, which no `dependency(` grep would surface.
+
+Deps satisfied transitively do not need declaring — `libinput`, `egl`, `glesv2` and
+`wayland-server` all resolve for noctalia-greeter through `desktop/wlroots.bst`,
+`extensions/mesa/mesa.bst` and `components/wayland.bst`. Only genuinely new top-level
+dependencies need an entry. Placement follows § C library deps and Mesa: a shared library
+goes in `depends:` (BST stages `depends` at build time too, so headers and `.pc` files are
+there), a genuinely header-only package goes in `build-depends:`. Verify which it is rather
+than guessing — fdsdk builds `tomlplusplus` as `libtomlplusplus.so.3`, so it is a `depends:`
+despite the upstream project being header-only by default.
+
 ### The track job's PR title/version comes from parsing the git-describe `ref:`
 
 `git_repo` refs are git-describe strings — `v5.0.0-beta.6-0-g<sha40>` — and the `track`
@@ -1318,8 +1351,9 @@ m greeter render
 
 ```
 d /var/lib/greetd 0750 greeter greeter -
-d /var/lib/noctalia-greeter 0755 greeter greeter -
 ```
+
+**Name the file after krytis, not after the upstream it configures.** This one is `/usr/lib/tmpfiles.d/krytis-greetd.conf`. It used to be `noctalia-greeter.conf` and also carried `d /var/lib/noctalia-greeter 0755 greeter greeter -` — then noctalia-greeter v1.1.0 started shipping its own `data/tmpfiles.d/noctalia-greeter.conf` with `d /var/lib/noctalia-greeter 0750 greeter greeter -`, and the identical install path became a non-whitelisted overlap that fails `oci/krytis/runtime.bst` at *staging*, not at build. Upstream now owns that directory; krytis declares only `/var/lib/greetd`. Colliding on an upstream-shaped filename is a latent trap for every config element here: whitelisting the overlap would have papered over a genuine mode conflict (0755 vs the tighter 0750) instead of resolving who owns the line.
 
 ## Firmware Elements
 

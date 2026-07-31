@@ -17,6 +17,11 @@ build-depends:
 - freedesktop-sdk.bst:components/scdoc.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 - freedesktop-sdk.bst:extensions/mesa/libdrm.bst
+# stb and nlohmann-json are genuinely header-only (no .so in either
+# artifact), so compile-time only — same call as in desktop/noctalia.bst.
+# Required by upstream meson.build:43 and :60 as of v1.1.0 (#412).
+- desktop/stb.bst
+- freedesktop-sdk.bst:components/nlohmann-json.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
@@ -31,6 +36,11 @@ depends:
 - freedesktop-sdk.bst:components/librsvg.bst
 - freedesktop-sdk.bst:components/glib.bst
 - freedesktop-sdk.bst:components/libepoxy.bst
+# tomlplusplus: fdsdk builds it as a shared library (libtomlplusplus.so.3),
+# so it goes in `depends`, not `build-depends` — same call as in
+# desktop/noctalia.bst. Required by upstream meson.build:42 as of v1.1.0;
+# #400's ref bump landed without it and broke `mise build` on main (#412).
+- freedesktop-sdk.bst:components/tomlplusplus.bst
 - gnome-build-meta.bst:sdk/librsvg.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 - desktop/wlroots.bst

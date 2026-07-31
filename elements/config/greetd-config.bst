@@ -94,11 +94,20 @@ config:
     m greeter render
     EOF
 
+  # Named krytis-greetd.conf, NOT noctalia-greeter.conf: upstream
+  # noctalia-greeter ships its own /usr/lib/tmpfiles.d/noctalia-greeter.conf
+  # as of v1.1.0 (data/tmpfiles.d/, `d /var/lib/noctalia-greeter 0750 greeter
+  # greeter -`), and two elements installing the same path is a
+  # non-whitelisted overlap that fails oci/krytis/runtime.bst at staging.
+  # /var/lib/noctalia-greeter is therefore upstream's to declare — its 0750 is
+  # tighter than the 0755 krytis used to set, and nothing needs the looser
+  # mode: greeter-config-seed.sh runs as root and chowns to greeter itself.
+  # Only /var/lib/greetd is krytis's (greetd's own state dir, from the
+  # sysusers home above).
   - |
     install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/tmpfiles.d/noctalia-greeter.conf" <<'EOF'
+      "%{install-root}%{indep-libdir}/tmpfiles.d/krytis-greetd.conf" <<'EOF'
     d /var/lib/greetd 0750 greeter greeter -
-    d /var/lib/noctalia-greeter 0755 greeter greeter -
     EOF
 
   - |
