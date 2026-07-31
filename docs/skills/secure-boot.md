@@ -62,13 +62,84 @@ Two more issues surface only after the rootfs fix, both worth checking on any fu
 
 Verified end-to-end on real keys: `objcopy -O binary --only-section=.cmdline` on the resulting UKI showed `quiet splash rd.luks.options=fido2-device=auto composefs=<64-char digest>`, and `sbverify --cert db.crt` passed for both the UKI and the signed systemd-boot binary.
 
+## `bootc container ukify` must run in a throwaway stage, never the final image
+
+`bootc install to-disk` recomputes the composefs digest over **whatever image it is installing** and verifies it against the `composefs=` parameter baked into the UKI's `.cmdline` section. If they disagree, install fails late with:
+
+```
+error: Installing to disk: Setting up composefs boot: Setting up UKI boot:
+  Writing krytis.efi to ESP: The UKI has the wrong composefs= parameter
+  (is 'sha512:<uki-baked>', should be sha512:<install-time>)
+```
+
+**A three-stage Containerfile (`sealed` → `uki` where `uki` runs `ukify` against a bind-mount of `sealed`, and `uki` itself becomes the final image) is NOT sufficient** — this looked correct (all rootfs mutations happen before ukify runs, ukify's own output goes only to `/boot/`, which is excluded from the composefs payload) but still produced a digest mismatch every time. The real cause is subtler than stage ordering:
+
+`bootc container ukify`'s digest computation internally creates its own scratch composefs repo via `tempfile::tempdir_in("/var/tmp")` (see bootc's `crates/lib/src/bootc_composefs/digest.rs`) — a real directory create-then-delete in **the calling container's own `/var/tmp`**, which bumps that directory's mtime as a side effect of merely running the tool, separate from whatever `--rootfs` path it's hashing. If `ukify` runs inside the stage that becomes the final image, that mtime bump gets baked into the pushed image's own `/var/tmp` — but the digest was computed by reading `/target` (a bind-mount of `sealed`, a *different*, unperturbed reference), which never saw that bump. The final image and the digest baked into its own UKI permanently disagree.
+
+**Confirmed by direct comparison, not just inference:** built the same content two ways — (a) `ukify --rootfs /target` running live, inside a build stage that becomes the final image, vs. (b) `podman mount` on the *already-committed* image (no rebuild, just a plain OCI-derived view) — and diffed the `--write-dumpfile-to` manifests. Every line matched except two: the mtimes of `/tmp` and `/var/tmp`. That is the entire discrepancy, and it reproduces regardless of how carefully the Containerfile's stage *ordering* is arranged, because the mutation is a side effect of running `ukify` itself, not of anything the Containerfile explicitly writes.
+
+**The actual fix** — a **four-stage** Containerfile, matching bootc's own upstream pattern (`contrib/packaging/seal-uki` runs in a throwaway `tools`-derived stage; `contrib/packaging/finalize-uki`, run in the real final stage, only `cp`'s the resulting file — see `tmt/tests/Dockerfile.upgrade` for the full worked example):
+
+```dockerfile
+FROM base AS sealed                  # stage 2: prepare the FINAL rootfs contents
+RUN ... sbsign ... mv ...            # sign systemd-boot, write any rootfs files
+
+FROM sealed AS uki-builder           # stage 3: THROWAWAY — never becomes final
+ARG SEAL_SECURE_BOOT=false
+RUN --mount=type=bind,from=sealed,target=/target \
+    bootc container ukify --rootfs /target -- --output /out/krytis.efi
+    # uki-builder's OWN /var/tmp gets perturbed here — doesn't matter, this
+    # stage is discarded.
+
+FROM sealed                          # stage 4: the actual final image
+ARG SEAL_SECURE_BOOT=false
+RUN --mount=type=bind,from=uki-builder,target=/uki-out \
+    mkdir -p /boot/EFI/Linux && cp /uki-out/out/krytis.efi /boot/EFI/Linux/krytis.efi
+    # A plain file copy never touches /tmp or /var/tmp, so this stage's rootfs
+    # stays byte-identical (modulo the new file) to what uki-builder hashed.
+```
+
+Verified end-to-end: rebuilt with this structure, extracted the baked digest from the resulting `:sealed` image, then independently recomputed the digest via `podman mount` on that same already-committed image (not a rebuild) — the two matched exactly.
+
+## `--composefs-backend` requires a single layer, but squashing breaks the UKI digest — reconcile with a two-phase build
+
+Two independent, contradictory requirements collide in a sealed build:
+
+1. **`bootc install --composefs-backend` requires a single-layer image.** A multi-layer image fails during `bootc install to-disk` with `Pulling image into composefs repository: Unexpected EOF in splitstream` — this exactly matches a constraint dakota already hit and documented (`docs/plan/composefs-chunkah.md`: "Multi-layer output breaks composefs xattr injection; see dakota#841"). Removing `--squash-all` (the fix from the previous section, on its own) produces a correct digest but an image that can never install via `--composefs-backend`.
+2. **Squashing (`--squash-all`) breaks the digest** (previous section): it rewrites/normalizes file metadata — confirmed specifically to be `/tmp` and `/var/tmp` mtimes — across the whole image at commit time. If squashing happens *after* `ukify` bakes the digest, the pushed image's own metadata diverges from what's baked in its UKI, and install fails with "The UKI has the wrong composefs= parameter" — regardless of the throwaway-stage fix.
+
+Single-layer is non-negotiable (required for install to work at all) and squashing-after-baking is impossible (breaks the digest) — so the resolution is to **squash before baking**: produce a stable, already-squashed single-layer reference first, compute the UKI digest against *that* (not the pre-squash multi-layer build), then squash the final combined result too. Verified this reconciles both constraints simultaneously: the resulting image has exactly 1 layer *and* the baked digest matches a `podman mount`-based post-commit recompute.
+
+This needs **two separate `podman build` invocations** — a single Containerfile can't squash one intermediate stage while leaving others alone; `--squash-all` always applies to the whole build's result:
+
+```bash
+# Phase 1: build + squash just the rootfs-prep stage into a stable reference
+podman build --squash-all --target sealed -t localhost/krytis:sealed-base \
+    --secret id=db_key,src=... [...] -f Containerfile .
+
+# Phase 2 (separate Containerfile.seal-uki): compute the UKI against
+# sealed-base (throwaway uki-builder stage, per the previous section), then
+# build the real final image FROM sealed-base + cp the .efi in, and squash
+# THIS too
+podman build --squash-all -t localhost/krytis:sealed \
+    --secret id=db_key,src=... -f Containerfile.seal-uki .
+```
+
+`mise/tasks/seal-uki` implements this as its two `[1/2]`/`[2/2]` steps. `localhost/krytis:sealed-base` is a legitimate, kept intermediate artifact (not cleaned up) — it's the stable reference the digest was computed against, and rebuilding it before phase 2 would risk a fresh, non-matching squash pass.
+
+`Containerfile.seal-uki` hardcodes the `localhost/krytis:sealed-base` reference in its `--mount=type=bind,from=...` (rather than parameterizing via `ARG`) because ARG-expansion inside `--mount=from=` wasn't verified against the pinned podman/buildah version — if the intermediate tag name ever needs to change, update both `FROM`/`--mount=from=` occurrences together.
+
+`mise/tasks/lint`'s unsigned build still uses a single `--squash-all` pass with no phase split — that's fine there because the unsigned image has no baked digest to invalidate in the first place.
+
+
+
 ## Sealed images push under `:sealed` tags, never `:latest`
 
 `mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces. A sealed/UKI image needs `bootc install --composefs-backend --boot=uki` on the target, which a plain bootc install doesn't do — silently reusing `:latest` for the sealed variant would mean anyone pulling `:latest` expecting the ordinary install path gets an image that can't be installed the same way. Keep the tag suffix whenever adding new push variants.
 
 ## `--squash-all` erases parent/layer provenance — use `.Created` as a content-identity proxy instead
 
-Both `mise lint` and `mise run seal-uki` build the same `Containerfile` with `podman build --squash-all`. Squashing collapses every stage into one layer and drops `.Parent`/`.History` entries that would otherwise reference the `localhost/krytis-input:latest` digest each was built from — `podman inspect --format '{{.Parent}}'` on the result is empty, and `.RootFS.Layers` for `:latest`/`:sealed` share no prefix with `krytis-input`'s own layer list. So there is no queryable link back to "which `krytis-input` build produced this."
+`mise lint` builds `Containerfile` with a single `podman build --squash-all` pass for the unsigned `:latest` image. `mise run seal-uki` also ends up squashed (see § `--composefs-backend` requires a single layer above) but via two separate squash passes across two Containerfiles, not one — the *order* matters there (squash the rootfs-prep stage first, bake the digest against that, squash again for the final image), not just whether squashing happens. Either way, squashing collapses every stage into one layer and drops `.Parent`/`.History` entries that would otherwise reference the `localhost/krytis-input:latest` digest each was built from — `podman inspect --format '{{.Parent}}'` on the result is empty, and `.RootFS.Layers` for `:latest`/`:sealed` share no prefix with `krytis-input`'s own layer list. So there is no queryable link back to "which `krytis-input` build produced this."
 
 `mise run push --sealed` instead compares `podman inspect --format '{{.Created}}'` between `localhost/krytis:latest` and `localhost/krytis:sealed`, auto-running `seal-uki` when `:sealed` is missing or older. This works because podman build is content-addressed: rebuilding `:latest` from byte-identical inputs (same `krytis-input`, same `Containerfile`) reuses the existing image ID and its **original** `Created` timestamp — confirmed by rebuilding twice in a row and seeing an unchanged `Id`/`Created`. Only a genuine content change (new `krytis-input` build, edited `Containerfile`) produces a new image ID with a fresh, current `Created`. That's what makes the comparison a real staleness signal rather than "was the build command merely re-invoked" — don't swap it for wall-clock/`mise run` invocation tracking, which would false-positive on every no-op rebuild.
 

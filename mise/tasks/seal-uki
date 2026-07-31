@@ -7,7 +7,20 @@ if [ ! -f files/boot-keys/db.key ]; then
     mise run pull-keys
 fi
 
-podman build --squash-all -t localhost/krytis:sealed \
+# Two-phase build — see Containerfile.seal-uki's header comment and
+# docs/skills/secure-boot.md § `bootc container ukify` must run in a
+# throwaway stage / § `--composefs-backend` requires a single layer, but
+# squashing breaks the UKI digest for the full reasoning. Short version:
+# `--composefs-backend` requires a single-layer image (multi-layer fails
+# with "Unexpected EOF in splitstream", matching dakota#841), but squashing
+# changes /tmp and /var/tmp mtimes, which breaks the UKI's baked composefs=
+# digest if squashing happens after ukify runs. So: squash first (producing
+# a stable reference), compute the digest against that already-squashed
+# reference, then squash again for the final image — verified to produce a
+# matching digest AND a single-layer image.
+
+echo "==> [1/2] Building + squashing sealed rootfs -> localhost/krytis:sealed-base..."
+podman build --squash-all --target sealed -t localhost/krytis:sealed-base \
     --build-arg SEAL_SECURE_BOOT=true \
     --secret id=db_key,src=files/boot-keys/db.key \
     --secret id=db_crt,src=files/boot-keys/db.crt \
@@ -16,5 +29,12 @@ podman build --squash-all -t localhost/krytis:sealed \
     --secret id=pk_key,src=files/boot-keys/PK.key \
     --secret id=pk_crt,src=files/boot-keys/PK.crt \
     -f Containerfile .
+
+echo "==> [2/2] Building UKI against sealed-base -> localhost/krytis:sealed..."
+podman build --squash-all -t localhost/krytis:sealed \
+    --build-arg SEAL_SECURE_BOOT=true \
+    --secret id=db_key,src=files/boot-keys/db.key \
+    --secret id=db_crt,src=files/boot-keys/db.crt \
+    -f Containerfile.seal-uki .
 
 echo "==> Sealed image built: localhost/krytis:sealed"
