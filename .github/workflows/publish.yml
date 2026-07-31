@@ -87,33 +87,63 @@ jobs:
           fi
 
       - name: Sign image and referrers with cosign (best-effort)
+        id: sign
         # Runs regardless of whether either severity gate above tripped.
         # If the pre-build gate or push's own scan-before-push blocked
         # publish, no image was ever pushed — this step then has nothing
         # to sign and cleanly no-ops (continue-on-error absorbs its exit).
         # continue-on-error: signing failure never fails this job (#380
         # design decision: parallel/best-effort, matching dakota's
-        # publish-sbom job).
+        # publish-sbom job). A transient Fulcio/Rekor outage must not block
+        # promotion of an image that is otherwise fine.
         if: always()
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run sign
 
-      - name: Verify signature (diagnostic, non-blocking)
-        if: always()
-        continue-on-error: true
+      - name: Verify signature
+        # BLOCKING, but only when signing itself reported success (#418).
+        #
+        # Previously this was continue-on-error too, which meant nothing in the
+        # pipeline ever rejected a bad signature — we signed and then ignored
+        # whether the signature was verifiable with our own policy. That is the
+        # gap #418 closes.
+        #
+        # Gating on steps.sign.outcome == 'success' rather than making this
+        # unconditionally blocking is deliberate: it preserves #380's outage
+        # tolerance above. Sign failed (Fulcio/Rekor down, or nothing was
+        # pushed) -> this is skipped and publish still succeeds. Sign claimed
+        # success but the signature cannot be verified against the identity we
+        # expect -> the job fails, which is the only case where a signature
+        # problem is genuinely ours.
+        if: always() && steps.sign.outcome == 'success'
         run: |
-          if [[ -f krytis-push-digests.env ]]; then
-            # shellcheck disable=SC1091
-            source krytis-push-digests.env
+          if [[ ! -f krytis-push-digests.env ]]; then
+            # sign reported success with no digest file: it no-op'd because
+            # nothing was pushed. Nothing to verify, and not a failure.
+            echo "::notice::No digest file — nothing was published, so no signature to verify"
+            exit 0
+          fi
+          # shellcheck disable=SC1091
+          source krytis-push-digests.env
+          verify() {
+            local label="$1" digest="$2"
+            [[ -z "${digest}" ]] && return 0
+            echo "==> Verifying ${label} (${digest})"
+            # --certificate-identity-regexp pins the signature to publish.yml in
+            # THIS repo. Without it, cosign verify accepts any Sigstore identity,
+            # which defeats the point (see docs/skills/signing.md).
             cosign verify \
               --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/.*\$" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              "ghcr.io/starlit-os/krytis@${image_digest}"
-          else
-            echo "::warning::krytis-push-digests.env missing — push step likely failed before writing it"
-          fi
+              "ghcr.io/starlit-os/krytis@${digest}"
+          }
+          # Verify every artifact sign signed, not just the image — an unverifiable
+          # SBOM or vulnerability-report signature is the same class of problem.
+          verify "image" "${image_digest:-}"
+          verify "SBOM" "${sbom_digest:-}"
+          verify "vulnerability report" "${vuln_digest:-}"
 
       - name: Report severity gate outcome
         if: always()
