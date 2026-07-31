@@ -62,6 +62,62 @@ Two more issues surface only after the rootfs fix, both worth checking on any fu
 
 Verified end-to-end on real keys: `objcopy -O binary --only-section=.cmdline` on the resulting UKI showed `quiet splash rd.luks.options=fido2-device=auto composefs=<64-char digest>`, and `sbverify --cert db.crt` passed for both the UKI and the signed systemd-boot binary.
 
+## `bootc container ukify`'s composefs digest needs `O_TMPFILE` — fails on some nested/WSL2 podman setups
+
+`bootc container ukify --rootfs /target` can fail with:
+
+```
+error: Building UKI: Computing composefs digest: Reading container root: Reading container root:
+Ensuring object from file descriptor: Ensuring object from reader: Creating object tmpfile:
+Opening temp file in objects directory: Operation not supported (os error 95)
+```
+
+This is `composefs-rs` trying to `open(O_TMPFILE)` in its temp objects directory and getting
+`ENOTSUP` — confirmed unrelated to `--allow-missing-verity`, `BUILDAH_ISOLATION=chroot` (tried,
+no effect), or anything in the `SEAL_SECURE_BOOT` Containerfile stage itself. Reproduced on a
+WSL2 host running podman with the `overlay` graph driver on an ext4-backed virtual disk — the
+nested container's overlay upper dir apparently doesn't support `O_TMPFILE` in this stack, even
+though the host ext4 filesystem does. Not reproduced on bare-metal Linux CI runners.
+
+**Workaround for verifying `.auth`/signing logic changes without a working `ukify` step:** the
+`.auth` generation commands (`cert-to-efi-sig-list`/`sign-efi-sig-list`) don't depend on `ukify`
+at all — test them directly against a built `localhost/krytis:latest` (which already has
+`efitools` from `elements/stacks/bootc.bst`) with real test keys:
+
+```bash
+podman run --rm -i \
+    -v "$(pwd)/files/boot-keys:/keys:ro" \
+    -v "$(pwd)/files/microsoft-uefi-certs:/ms-certs:ro" \
+    localhost/krytis:latest bash -s <<'SCRIPT'
+set -ex
+mkdir -p /work/auto && cd /work
+GUID=$(cat /proc/sys/kernel/random/uuid)
+openssl x509 -in /keys/PK.crt -outform DER -out PK.der
+openssl x509 -in /keys/KEK.crt -outform DER -out KEK.der
+openssl x509 -in /keys/db.crt -outform DER -out db.der
+cert-to-efi-sig-list PK.der PK.esl
+cert-to-efi-sig-list KEK.der KEK.esl
+cert-to-efi-sig-list db.der db.esl
+for ms in /ms-certs/*.der; do cert-to-efi-sig-list "$ms" ms.esl && cat ms.esl >> db.esl && rm ms.esl; done
+sign-efi-sig-list -g "$GUID" -k /keys/PK.key -c /keys/PK.crt PK PK.esl auto/PK.auth
+sign-efi-sig-list -g "$GUID" -k /keys/PK.key -c /keys/PK.crt KEK KEK.esl auto/KEK.auth
+sign-efi-sig-list -g "$GUID" -k /keys/KEK.key -c /keys/KEK.crt db db.esl auto/db.auth
+sig-list-to-certs db.esl db-check   # sanity: should print one "X509 Header" block per bundled cert
+SCRIPT
+```
+
+Verified this way: `PK.auth`/`KEK.auth`/`db.auth` all generate without error, and
+`sig-list-to-certs` against `db.esl` (before signing) printed exactly 3 `X509 Header` blocks —
+krytis's own db cert plus the 2 bundled Microsoft CAs — confirming the Microsoft-cert-bundling
+loop concatenates into the same `db.esl` correctly. This does **not** substitute for a full
+`mise run seal-uki` + `sbverify` + firmware-enrollment run (still required before considering
+the Containerfile change fully verified), but it does isolate "is my new shell logic correct"
+from "does `ukify` work in this environment" when the two would otherwise be conflated by one
+failing `RUN` step.
+
+`sig-list-to-certs`'s own extracted `.der` files come out 0 bytes in this efitools version —
+a tool quirk, not a bug in the `.esl`; the header count (`X509 Header sls=N`) printed to stderr
+is the reliable signal, not the output file sizes.
 ## `bootc container ukify` must run in a throwaway stage, never the final image
 
 `bootc install to-disk` recomputes the composefs digest over **whatever image it is installing** and verifies it against the `composefs=` parameter baked into the UKI's `.cmdline` section. If they disagree, install fails late with:

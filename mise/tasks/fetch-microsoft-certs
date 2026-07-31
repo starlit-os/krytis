@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="Fetch Microsoft UEFI CA certificates into files/microsoft-uefi-certs/ (public, committed)"
+
+set -euo pipefail
+
+CERTS_DIR="files/microsoft-uefi-certs"
+mkdir -p "$CERTS_DIR"
+
+# Microsoft Corporation UEFI CA 2011 (third-party binaries: Option ROMs, shim, etc.)
+# fwlink verified live 2026-07-29 -> https://www.microsoft.com/pkiops/certs/MicCorUEFCA2011_2011-06-27.crt
+curl -sSfL "https://go.microsoft.com/fwlink/p/?LinkID=321194" -o "$CERTS_DIR/microsoft-uefi-ca-2011.der"
+# Microsoft Corporation UEFI CA 2023 (successor, some newer firmware requires it)
+# fwlink verified live 2026-07-29 -> https://www.microsoft.com/pkiops/certs/windows%20uefi%20ca%202023.crt
+curl -sSfL "https://go.microsoft.com/fwlink/?linkid=2239776" -o "$CERTS_DIR/microsoft-uefi-ca-2023.der"
+
+for cert in "$CERTS_DIR"/*.der; do
+    openssl x509 -inform DER -in "$cert" -noout || { echo "ERROR: $cert is not a valid DER cert" >&2; exit 1; }
+done
+
+echo "==> Microsoft UEFI CA certs in $CERTS_DIR/:"
+for cert in "$CERTS_DIR"/*.der; do
+    echo "    $(basename "$cert"): $(openssl x509 -inform DER -in "$cert" -noout -subject -sha256 -fingerprint | tr '\n' ' ')"
+done

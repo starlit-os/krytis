@@ -173,6 +173,8 @@ krytis's boot flow uses `bootc install --bootloader systemd`, which installs `sy
 
 ### 3. Key enrollment: systemd-boot native (#309)
 
+See `docs/secure-boot-enrollment.md` for the real-hardware step-by-step.
+
 **Decision:** Use systemd-boot's native key enrollment via `loader/keys/` on the ESP, automated by bootc's `/usr/lib/bootc/install/secureboot-keys` mechanism.
 
 bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section): place signed EFI signature lists (`.auth` files) at `/usr/lib/bootc/install/secureboot-keys/auto/` in the image. At `bootc install --bootloader systemd` time, bootc copies them to `ESP/loader/keys/auto/`. systemd-boot enrolls them at first boot.

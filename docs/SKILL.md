@@ -27,6 +27,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Topic | File |
 |---|---|
 | Agent workflow, decision gates, skill mandate | [`AGENTS.md`](../AGENTS.md) |
+| Enroll secure boot keys on real hardware | [`docs/secure-boot-enrollment.md`](../secure-boot-enrollment.md) |
 
 ## Full Skill Index
 
