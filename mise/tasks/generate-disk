@@ -3,12 +3,41 @@
 #USAGE flag "--filesystem <fs>" default="btrfs" help="Root filesystem type (btrfs or ext4)"
 #USAGE flag "--disk <path>" default="bootable.raw" help="Output disk image path"
 #USAGE flag "--size <size>" default="30G" help="Sparse disk image size passed to fallocate"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install"
+#USAGE flag "--root-ssh-key <path>" help="Inject this public key as root's authorized_keys (test-only; uses bootc's --root-ssh-authorized-keys)"
 
 set -euo pipefail
 
-FS="${usage_filesystem:-btrfs}"
-DISK="${usage_disk:-bootable.raw}"
-SIZE="${usage_size:-30G}"
+# When this script is invoked directly by another mise task (e.g. boot-test
+# does `./mise/tasks/generate-disk --image X --disk Y`), mise doesn't parse
+# OUR #USAGE annotations for the child call — it just runs us with the literal
+# flags as positional args, while ALSO leaving the PARENT's usage_* env vars in
+# our environment (see docs/skills/mise.md § Propagating flags through tasks
+# that call other tasks). If the parent's usage_* values differ from what the
+# parent forwarded positionally (e.g. usage_disk defaulted to bootable.raw on
+# the parent but it forwarded --disk /tmp/.../test.raw), the env var wins and
+# silently overrides the forwarded flag unless we consume it first.
+#
+# Consume our own --flag value pairs from $@ before falling back to usage_*.
+# Mirrors mise/tasks/bst's flag-consumption pattern. Unknown args are left in
+# $@ untouched rather than rejected, matching that same precedent.
+CLI_FS=""; CLI_DISK=""; CLI_SIZE=""; CLI_IMAGE=""; CLI_ROOT_SSH_KEY=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --filesystem)  CLI_FS="$2"; shift 2 ;;
+        --disk)        CLI_DISK="$2"; shift 2 ;;
+        --size)        CLI_SIZE="$2"; shift 2 ;;
+        --image)       CLI_IMAGE="$2"; shift 2 ;;
+        --root-ssh-key) CLI_ROOT_SSH_KEY="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+FS="${CLI_FS:-${usage_filesystem:-btrfs}}"
+DISK="${CLI_DISK:-${usage_disk:-bootable.raw}}"
+SIZE="${CLI_SIZE:-${usage_size:-30G}}"
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+ROOT_SSH_KEY="${CLI_ROOT_SSH_KEY:-${usage_root_ssh_key:-}}"
 
 if [ ! -e "${DISK}" ]; then
     echo "==> Creating ${SIZE} sparse disk image at ${DISK}..."
@@ -16,32 +45,67 @@ if [ ! -e "${DISK}" ]; then
 fi
 
 # rootless and rootful podman have separate image stores; copy so bootc can find itself
-ROOTLESS_ID=$(podman image inspect --format '{{.Id}}' localhost/krytis:latest 2>/dev/null || true)
-ROOT_ID=$(sudo podman image inspect --format '{{.Id}}' localhost/krytis:latest 2>/dev/null || true)
+ROOTLESS_ID=$(podman image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || true)
+ROOT_ID=$(sudo podman image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || true)
 if [ -n "${ROOTLESS_ID}" ] && [ "${ROOTLESS_ID}" = "${ROOT_ID}" ]; then
     echo "==> Root podman store already has the current image, skipping copy."
 else
-    echo "==> Copying localhost/krytis:latest to root podman store..."
-    podman save --format oci-archive localhost/krytis:latest | sudo podman load
+    echo "==> Copying ${IMAGE} to root podman store..."
+    podman save --format oci-archive "${IMAGE}" | sudo podman load
 fi
 
 # systemd.firstboot=no is intentionally absent: firstboot runs on every fresh disk install.
 # Re-add once the installer handles first-run setup and the greeter becomes the entry point.
-echo "==> Installing localhost/krytis:latest → ${DISK} (filesystem: ${FS})..."
+echo "==> Installing ${IMAGE} → ${DISK} (filesystem: ${FS})..."
+# UKI/sealed images reject install-time --karg: the kernel cmdline is already
+# baked into the UKI at build time (via /usr/lib/bootc/kargs.d/*.toml, applied
+# during `bootc container ukify`), and `bootc install to-disk` errors with
+# "Cannot use externally specified kernel arguments with UKI" if any are
+# passed. Non-UKI images have no baked cmdline, so they still need the
+# console args for serial+TTY output in QEMU. Detect a UKI image by checking
+# for the signed UKI the Containerfile produces.
+IS_UKI=$(podman run --rm --entrypoint /bin/sh "${IMAGE}" -c \
+    'ls /boot/EFI/Linux/*.efi >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null || echo no)
+KARGS=()
+if [ "${IS_UKI}" != "yes" ]; then
+    KARGS=(--karg console=ttyS0 --karg console=tty1)
+fi
+# Mount the disk image's PARENT directory at /data, and address the file by
+# basename inside the container. The previous form mounted $(pwd) and passed
+# --via-loopback "/data/${DISK}" verbatim, which silently broke for any
+# DISK outside the current working directory (e.g. boot-test now places it
+# under /var/tmp/krytis-boot-test.*/test.raw): the container then queried
+# /data//var/tmp/... , which doesn't exist because /var/tmp was never
+# mounted. This form works for both absolute and relative DISK paths.
+DISK_DIR=$(dirname "${DISK}")
+DISK_NAME=$(basename "${DISK}")
+
+# Optional test-only SSH key injection, via bootc's built-in
+# --root-ssh-authorized-keys (writes /etc/tmpfiles.d/bootc-root-ssh.conf so
+# the key is applied on first boot). The key file is staged into the same
+# mounted parent dir as the disk so the container can read it.
+SSH_KEY_ARGS=()
+if [ -n "${ROOT_SSH_KEY}" ]; then
+    [ -f "${ROOT_SSH_KEY}" ] || { echo "ERROR: --root-ssh-key file not found: ${ROOT_SSH_KEY}" >&2; exit 1; }
+    cp "${ROOT_SSH_KEY}" "${DISK_DIR}/.boot-test-root-ssh.pub"
+    SSH_KEY_ARGS=(--root-ssh-authorized-keys "/data/.boot-test-root-ssh.pub")
+fi
 sudo podman run \
     --rm --privileged --pid=host \
     -v /var/lib/containers:/var/lib/containers \
     -v /dev:/dev \
-    -v "$(pwd):/data" \
+    -v "${DISK_DIR}:/data" \
     --security-opt label=type:unconfined_t \
-    localhost/krytis:latest \
+    "${IMAGE}" \
     bootc install to-disk \
         --composefs-backend \
-        --via-loopback "/data/${DISK}" \
+        --via-loopback "/data/${DISK_NAME}" \
         --filesystem "${FS}" \
         --wipe \
         --bootloader systemd \
-        --karg console=ttyS0 \
-        --karg console=tty1
+        "${KARGS[@]}" \
+        "${SSH_KEY_ARGS[@]}"
+
+rm -f "${DISK_DIR}/.boot-test-root-ssh.pub"
 
 echo "==> Done: ${DISK}"

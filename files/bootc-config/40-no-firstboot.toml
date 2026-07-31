@@ -1,0 +1,24 @@
+# Skip systemd's "Initial Setup" questionnaire.
+#
+# systemd-firstboot.service is ConditionPathIsReadWrite=/etc + ConditionFirstBoot=yes
+# and is ordered Before=sysinit.target, with StandardInput=tty. Its ExecStart
+# passes --prompt-root-password, and the image ships root as
+# `root:!unprovisioned` in /etc/shadow, which firstboot reads as "no password
+# set" — so it prompts. Nothing answers on a headless or graphical-only boot, so
+# sysinit.target never completes and the entire boot stalls: greetd, sshd,
+# logind, networking — nothing after sysinit ever starts.
+#
+# This was latent until the `rw` karg landed (see 10-root-rw.toml): with /etc
+# read-only, ConditionPathIsReadWrite=/etc failed and the unit was silently
+# skipped. Making /etc writable is what turned it into a hard boot blocker.
+#
+# The greeter is krytis's first-run entry point (greetd + noctalia-greeter), so
+# a console questionnaire ahead of it is wrong regardless — locale, timezone,
+# hostname and machine-id are already provisioned in the image, and root stays
+# locked by design. `systemd.firstboot=no` makes PID 1 treat this as a non-first
+# boot, so ConditionFirstBoot=yes fails and the unit is skipped cleanly.
+#
+# NOTE: this cannot be an install-time `bootc install --karg`: UKI images reject
+# externally specified kernel arguments ("Cannot use externally specified kernel
+# arguments with UKI"), so it has to be baked here. See mise/tasks/generate-disk.
+kargs = ["systemd.firstboot=no"]

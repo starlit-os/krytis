@@ -50,4 +50,5 @@ config:
     components/frei0r.bst: overrides/frei0r.bst
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
+    components/openssh.bst: core/openssh.bst
     extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst

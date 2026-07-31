@@ -111,6 +111,13 @@ With multiple `console=` kernel arguments, all consoles receive output, but `/de
 
 Reversing the order (tty1 first, ttyS0 last) breaks interactive firstboot on the VGA display.
 
+**Only relevant to non-UKI images now.** The shipped (UKI) image bakes
+`systemd.firstboot=no` via `kargs.d`, so `systemd-firstboot.service` is skipped
+entirely — it would otherwise block `sysinit.target` forever prompting for a root
+password. UKI images also reject install-time `--karg` outright. See
+docs/skills/bootc-vm.md § `systemd-firstboot` blocks the boot once `/etc` is
+writable.
+
 ### `git push` fails with "gh: not found" after a `gh` version bump
 
 `~/.gitconfig`'s `credential.https://github.com.helper` can hardcode an *absolute* path to
