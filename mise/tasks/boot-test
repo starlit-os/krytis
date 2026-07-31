@@ -1,0 +1,394 @@
+#!/usr/bin/env bash
+#MISE description="Automated boot pass/fail: install, boot headless, assert health, shut down"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install and boot"
+#USAGE flag "--secure" help="Boot with OVMF secure boot enabled (requires 'mise run generate-ovmf-vars' first)"
+#USAGE flag "--filesystem <fs>" default="btrfs" help="Root filesystem type (btrfs or ext4)"
+#USAGE flag "--expect-fail" help="Invert the result: a successful boot is the failure (secure boot negative test)"
+#USAGE flag "--debug-keep" help="On failure, keep WORKDIR (disk image, serial log, keys) instead of deleting it, for post-mortem inspection"
+#USAGE flag "--reuse-disk <path>" help="Boot this already-installed raw disk instead of running generate-disk. Skips the only step that needs root, so the boot+assert cycle runs unprivileged."
+
+set -euo pipefail
+
+# When this script is invoked directly (e.g. `bash -x mise/tasks/boot-test
+# --image X --secure`), mise doesn't parse OUR #USAGE annotations for the
+# child call — it just runs us with the literal flags as positional args,
+# while ALSO leaving any PARENT task's usage_* env vars in our environment
+# (see docs/skills/mise.md § Propagating flags through tasks that call other
+# tasks, and the same fix applied to generate-disk). If we only read usage_*
+# and never consume positional flags, every flag silently falls back to its
+# default and the run behaves nothing like what was asked — exactly what
+# happened when this was invoked via `bash -x` with --image/--secure/--debug-keep.
+#
+# Consume our own flags from $@ before falling back to usage_*.
+CLI_IMAGE=""; CLI_FS=""; CLI_SECURE=""; CLI_EXPECT_FAIL=""; CLI_DEBUG_KEEP=""; CLI_REUSE_DISK=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)       CLI_IMAGE="$2"; shift 2 ;;
+        --filesystem)  CLI_FS="$2"; shift 2 ;;
+        --secure)      CLI_SECURE=true; shift ;;
+        --expect-fail) CLI_EXPECT_FAIL=true; shift ;;
+        --debug-keep)  CLI_DEBUG_KEEP=true; shift ;;
+        --reuse-disk)  CLI_REUSE_DISK="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+SECURE="${CLI_SECURE:-${usage_secure:-}}"
+FS="${CLI_FS:-${usage_filesystem:-btrfs}}"
+EXPECT_FAIL="${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}"
+DEBUG_KEEP="${CLI_DEBUG_KEEP:-${usage_debug_keep:-}}"
+REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+
+# generate-disk is the ONLY part of boot-test that needs root, and it is
+# irreducibly privileged: `bootc install to-disk --via-loopback` has to create a
+# loop device and mount a btrfs/ext4 filesystem, and neither is possible without
+# CAP_SYS_ADMIN in the initial user namespace. btrfs, ext4 and vfat do not set
+# FS_USERNS_MOUNT, so a rootless userns can only mount tmpfs; /dev/loop-control
+# is likewise off limits. No amount of `podman unshare` changes that.
+#
+# Everything after the install — boot, credential injection, SSH probe, health
+# assertions, teardown — is unprivileged. --reuse-disk splits the two so the
+# boot+assert cycle can be iterated without sudo against a disk installed once.
+# We always boot a copy, so the source disk is never mutated.
+#
+# LIMITATION, and it has already bitten once: a disk that has booted before is
+# no longer a first-boot disk. It carries persisted /etc/ssh/ssh_host_* and a
+# committed /etc/machine-id, so `ssh-keygen -A` has nothing left to write (sshd
+# starts even with a read-only /etc) and ConditionFirstBoot=no (systemd-firstboot
+# is skipped). --reuse-disk therefore CANNOT validate anything that only happens
+# on first boot — host-key generation, firstboot, /etc and /var writability, or
+# any kargs.d change affecting them. Use it to iterate on boot-test itself and on
+# steady-state health; use a full `mise boot-test` on a freshly installed disk to
+# validate boot behaviour. Both #396 kargs fall squarely in the second category.
+if [ -n "${REUSE_DISK}" ]; then
+    [ -f "${REUSE_DISK}" ] || { echo "ERROR: --reuse-disk file not found: ${REUSE_DISK}" >&2; exit 1; }
+fi
+
+if ! command -v qemu-system-x86_64 &>/dev/null; then
+    echo "ERROR: boot-test requires native qemu-system-x86_64 (headless, monitor-controlled) — the qemux/qemu-docker fallback isn't supported." >&2
+    exit 1
+fi
+
+# Use /var/tmp, not /tmp: the disk image (default 15G sparse) is too large
+# for /tmp, which is a per-user-quota-limited tmpfs here (systemd's tmp.mount
+# with usrquota, ~12.8G effective limit). fallocate of a 15G file there fails
+# with "Disk quota exceeded" once prior usage is accounted for. /var/tmp is
+# backed by the real disk and has no such per-user quota. Everything else in
+# WORKDIR (vars.fd copies, monitor socket, serial log, pidfile) is small, so
+# keeping them together under the same WORKDIR is fine.
+WORKDIR=$(mktemp -d /var/tmp/krytis-boot-test.XXXXXX)
+trap 'rm -rf "${WORKDIR}"' EXIT
+
+DISK="${WORKDIR}/test.raw"
+MONITOR_SOCK="${WORKDIR}/monitor.sock"
+SSH_PORT=2299
+while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT + 1)); done
+
+# Ephemeral, test-only SSH keypair, discarded with WORKDIR on exit.
+ssh-keygen -t ed25519 -N '' -C 'krytis-boot-test ephemeral' -f "${WORKDIR}/id_boottest" -q
+
+if [ -n "${REUSE_DISK}" ]; then
+    echo "==> [1/5] Reusing ${REUSE_DISK} (no install, no root)..."
+    # Reflink where the filesystem supports it so a 15G image costs nothing, and
+    # so the source disk is never mutated by the boot.
+    cp --reflink=auto "${REUSE_DISK}" "${DISK}"
+else
+    echo "==> [1/5] Installing ${IMAGE} → ${DISK} (filesystem: ${FS})..."
+    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size 15G
+fi
+
+# Everything SSH is provisioned as systemd credentials handed to the guest over
+# SMBIOS type 11, NOT by mutating the installed disk. systemd-debug-generator
+# turns systemd.extra-unit.<name>/systemd.unit-dropin.<unit> credentials into
+# real units at boot, so a single QEMU flag can enable a service or override its
+# ExecStart for exactly one boot. Credentials are not part of the signed kernel
+# cmdline, so this works unchanged under --secure.
+#
+# This replaces the previous approach: sudo losetup + mount the root partition +
+# `find -maxdepth 6 -name tmpfiles.d | head -1` to guess the deployed /etc +
+# hand-place a multi-user.target.wants symlink, plus generate-disk --root-ssh-key
+# (bootc's --root-ssh-authorized-keys) for the key. The find heuristic picks
+# whichever tmpfiles.d it happens to enumerate first, and on the one
+# --composefs-backend install inspected, bootc's promised
+# /etc/tmpfiles.d/bootc-root-ssh.conf was not present in the deployed /etc and
+# /root/.ssh/authorized_keys was missing — unexplained, so boot-test no longer
+# depends on it (generate-disk keeps the flag; it is just unused here). Result:
+# boot-test needs root for nothing except generate-disk itself.
+#
+# See docs/skills/bootc-vm.md § Reading a stalled guest without root.
+echo "==> [1b/5] Preparing guest credentials (sshd enable + authorized key + probe)..."
+
+# sshd.service ships disabled by preset ("OpenSSH server is not requirements for
+# desktop applications"). A Wants= drop-in on multi-user.target pulls it in for
+# this boot without touching the image or the deployment's /etc.
+printf '[Unit]\nWants=sshd.service krytis-boot-probe.service\n' > "${WORKDIR}/mu-dropin.conf"
+
+# Point sshd at the ephemeral key via its credential directory. Same idiom
+# systemd-ssh-generator uses for its own generated sshd template, so the quoting
+# and ${CREDENTIALS_DIRECTORY} expansion are known-good. sshd.service's existing
+# ExecStartPre=ssh-keygen -A generates the host keys (which requires the `rw`
+# karg — see docs/skills/bootc-vm.md § /etc and /var need the `rw` karg).
+cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
+[Service]
+ImportCredential=krytis.boottest_authorized_keys
+ExecStart=
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/krytis.boottest_authorized_keys"
+DROPIN
+
+# Always-on failure diagnostics: dump the guest's state to /dev/ttyS0, which QEMU
+# writes to serial.log, so a failing run prints something actionable instead of
+# just firmware banners. DefaultDependencies=no + Type=simple with no After= is
+# deliberate: a unit ordered after sysinit.target/basic.target never runs when the
+# boot stalls before them, which is exactly when the dump is needed.
+cat > "${WORKDIR}/probe.service" <<'PROBE'
+[Unit]
+Description=krytis boot-test diagnostics
+DefaultDependencies=no
+[Service]
+Type=simple
+ExecStart=/bin/bash /run/credentials/krytis-boot-probe.service/probe.sh
+ImportCredential=probe.sh
+StandardOutput=file:/dev/ttyS0
+StandardError=file:/dev/ttyS0
+PROBE
+
+cat > "${WORKDIR}/probe.sh" <<'PROBESH'
+#!/bin/bash
+sleep 50
+echo "===KRYTIS-BOOT-TEST-DIAGNOSTICS==="
+echo "--- is-system-running ---";   systemctl is-system-running
+echo "--- pending jobs ---";        systemctl list-jobs --no-pager | head -25
+echo "--- activating units ---";    systemctl list-units --state=activating --no-pager | head -15
+echo "--- failed units ---";        systemctl --no-pager --no-legend --failed
+# findmnt takes at most one target, so filter its full table instead of listing
+# several mountpoints (which silently prints nothing).
+echo "--- mounts ---";              findmnt -A -o TARGET,SOURCE,FSTYPE,OPTIONS | grep -E '^/(etc|var|sysroot)?( |$)'
+echo "--- sshd ---";                systemctl status sshd.service --no-pager | head -20
+echo "--- listening ---";           ss -tlnp | head -15
+echo "--- errors ---";              journalctl -b --no-pager -p err | tail -40
+echo "===KRYTIS-BOOT-TEST-DIAGNOSTICS-END==="
+PROBESH
+
+cred_b64() { base64 -w0 < "$1"; }
+CRED_ARGS=(
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")"
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")"
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.extra-unit.krytis-boot-probe.service=$(cred_b64 "${WORKDIR}/probe.service")"
+    -smbios "type=11,value=io.systemd.credential.binary:probe.sh=$(cred_b64 "${WORKDIR}/probe.sh")"
+    -smbios "type=11,value=io.systemd.credential.binary:krytis.boottest_authorized_keys=$(cred_b64 "${WORKDIR}/id_boottest.pub")"
+)
+
+OVMF_CODE="" ; OVMF_VARS_SRC=""
+if [ "${SECURE}" = "true" ]; then
+    for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
+             /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
+        [ -f "$c" ] && OVMF_CODE="$c" && break
+    done
+    [ -f ".ovmf-vars-secure.fd" ] || { echo "ERROR: .ovmf-vars-secure.fd missing — run 'mise run generate-ovmf-vars' first." >&2; exit 1; }
+    cp ".ovmf-vars-secure.fd" "${WORKDIR}/vars.fd"
+    MACHINE_ARGS="q35,smm=on"
+    FLASH_SECURE_ARGS=(-global driver=cfi.pflash01,property=secure,value=on)
+else
+    for c in /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd \
+             /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/qemu/OVMF_CODE.fd; do
+        [ -f "$c" ] && OVMF_CODE="$c" && break
+    done
+    for c in /usr/share/edk2/ovmf/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd \
+             /usr/share/edk2/x64/OVMF_VARS.4m.fd /usr/share/qemu/OVMF_VARS.fd; do
+        [ -f "$c" ] && OVMF_VARS_SRC="$c" && break
+    done
+    cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars.fd"
+    MACHINE_ARGS=""
+    FLASH_SECURE_ARGS=()
+fi
+[ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF firmware not found." >&2; exit 1; }
+
+echo "==> [2/5] Booting headless (secure=${SECURE:-false})..."
+qemu-system-x86_64 \
+    -enable-kvm -m "${VM_RAM}" -cpu host -smp "${VM_CPUS}" \
+    ${MACHINE_ARGS:+-machine "${MACHINE_ARGS}"} \
+    "${FLASH_SECURE_ARGS[@]}" \
+    -drive "file=${DISK},format=raw,if=virtio" \
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+    -device virtio-net-pci,netdev=net0 \
+    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+    "${CRED_ARGS[@]}" \
+    -display none \
+    -serial "file:${WORKDIR}/serial.log" \
+    -monitor "unix:${MONITOR_SOCK},server,nowait" \
+    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+
+# Read the pidfile into a variable straight away and never rely on the file
+# again. Teardown used to test `[ -f "${WORKDIR}/qemu.pid" ]`, so anything that
+# removed WORKDIR while the VM was up (a concurrent `rm -rf /var/tmp/krytis-*`,
+# an over-eager cleanup script, a full disk) left the guest orphaned and running
+# forever — qemu keeps the deleted files alive through its open fds, so it
+# happily carries on with no pidfile, no monitor socket and no serial log.
+QEMU_PID=$(cat "${WORKDIR}/qemu.pid" 2>/dev/null || true)
+[ -n "${QEMU_PID}" ] || { echo "ERROR: qemu launched but wrote no pidfile — refusing to continue with an untrackable VM." >&2; exit 1; }
+
+# Ask QEMU nicely over the HMP monitor before killing it. socat isn't a declared
+# dependency (and isn't installed on the dev box), so drive the unix socket from
+# python3 — which mise already requires — instead of silently no-opping.
+monitor_cmd() {
+    [ -S "${MONITOR_SOCK}" ] || return 0
+    python3 - "${MONITOR_SOCK}" "$1" <<'PY' 2>/dev/null || true
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(5)
+s.connect(sys.argv[1])
+time.sleep(0.3)
+try:
+    s.recv(65536)
+except OSError:
+    pass
+s.sendall(sys.argv[2].encode() + b"\n")
+time.sleep(0.5)
+s.close()
+PY
+}
+
+cleanup() {
+    monitor_cmd system_powerdown
+    [ -S "${MONITOR_SOCK}" ] && sleep 3
+    kill -9 "${QEMU_PID}" 2>/dev/null || true
+    if [ "${DEBUG_KEEP}" = "true" ] && [ -n "${BOOT_TEST_FAILED:-}" ]; then
+        echo "==> --debug-keep: preserving WORKDIR at ${WORKDIR}" >&2
+        return
+    fi
+    rm -rf "${WORKDIR}"
+}
+trap cleanup EXIT
+
+# 240s, not 120s: OVMF spends a variable, sometimes multi-tens-of-seconds spell
+# probing Boot0002 "UEFI Misc Device" before it even reaches Boot0004 "Linux Boot
+# Manager", and that eats most of a 120s budget on --secure runs. The loop exits
+# as soon as SSH answers, so a healthy boot is not slowed down by the larger cap.
+SSH_WAIT=240
+echo "==> [3/5] Waiting for SSH (up to ${SSH_WAIT}s)..."
+SSH_UP=false
+for _ in $(seq 1 $((SSH_WAIT / 2))); do
+    if ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+           -o ConnectTimeout=2 -o BatchMode=yes -o IdentitiesOnly=yes \
+           -i "${WORKDIR}/id_boottest" root@localhost true 2>/dev/null; then
+        SSH_UP=true
+        break
+    fi
+    sleep 2
+done
+
+if [ "${SSH_UP}" != "true" ] && [ "${EXPECT_FAIL}" != "true" ]; then
+    # Print the serial log BEFORE the EXIT trap deletes WORKDIR — the previous
+    # ordering ran cleanup first, so this always printed nothing. The log holds
+    # the guest diagnostics dumped by the injected krytis-boot-probe unit.
+    BOOT_TEST_FAILED=1
+    echo "==> FAIL: SSH never came up within ${SSH_WAIT}s." >&2
+    if [ ! -d "${WORKDIR}" ]; then
+        # Distinguish "the image is broken" from "our own scratch dir vanished".
+        # Getting this wrong costs a lot of time: the guest may be perfectly
+        # healthy and unreachable only because the private key we authenticate
+        # with was deleted underneath us. qemu holds the removed files open, so
+        # the log is still recoverable while the process lives.
+        echo "    WORKDIR ${WORKDIR} no longer exists — something deleted it mid-run;" >&2
+        echo "    this says nothing about the image. The SSH probe had no private key" >&2
+        echo "    to offer, so authentication could not have succeeded regardless." >&2
+        echo "    Recover the serial log from the still-running VM with:" >&2
+        echo "      cat /proc/${QEMU_PID}/fd/\$(ls -l /proc/${QEMU_PID}/fd | awk '/serial\\.log/{print \$9}')" >&2
+    elif [ ! -s "${WORKDIR}/serial.log" ]; then
+        echo "    Serial log is empty — qemu produced no output at all." >&2
+    else
+        echo "    Serial log:" >&2
+        cat "${WORKDIR}/serial.log" >&2 || true
+        if ! grep -q 'KRYTIS-BOOT-TEST-DIAGNOSTICS' "${WORKDIR}/serial.log"; then
+            echo "    (no guest diagnostics in the log: the injected probe unit never ran," >&2
+            echo "     so the guest did not get as far as starting units — look at" >&2
+            echo "     firmware/UKI/secure boot, not at the OS.)" >&2
+        fi
+    fi
+    exit 1
+fi
+
+if [ "${SSH_UP}" != "true" ]; then
+    # "No SSH" on its own does not mean "secure boot rejected it" — an image that
+    # fails to boot for any unrelated reason produces exactly the same silence,
+    # which would make this a test that passes for the wrong reason. Require
+    # positive evidence of a signature rejection on the serial console.
+    #
+    # Both the loader and the firmware say so explicitly, verified by booting a
+    # correctly-signed disk with a single byte flipped inside the UKI:
+    #   ../src/boot/boot.c:2820@call_image_start: Error loading EFI binary
+    #     \EFI\Linux\bootc\...efi: Access denied      <- systemd-boot
+    #   BdsDxe: failed to start Boot0002 "...": Access Denied   <- EDK2 BDS
+    # An unsigned bootloader is refused by BDS the same way, one stage earlier.
+    REJECT_RE='[Aa]ccess [Dd]enied|Security Violation'
+    if [ -s "${WORKDIR}/serial.log" ] && grep -qE "${REJECT_RE}" "${WORKDIR}/serial.log"; then
+        echo "==> PASS (expected failure): firmware/loader refused the image:"
+        # Report only lines that both indicate a rejection AND name what was
+        # rejected. The previous form printed a bare "Access Denied" with no
+        # context, then any "failed to load Boot*" line — which swept in the
+        # harmless "UEFI PXEv4 ...: Not Found" the firmware always emits after
+        # exhausting the disk, making an unrelated line look like evidence.
+        EVIDENCE=$(grep -E "${REJECT_RE}" "${WORKDIR}/serial.log" \
+                   | grep -E "Error loading EFI binary|failed to (start|load) Boot" | head -3)
+        [ -n "${EVIDENCE}" ] || EVIDENCE=$(grep -E "${REJECT_RE}" "${WORKDIR}/serial.log" | head -3)
+        printf '%s\n' "${EVIDENCE}" | sed 's/^/    /'
+        exit 0
+    fi
+    BOOT_TEST_FAILED=1
+    echo "==> INCONCLUSIVE (--expect-fail): the VM never reached SSH, but nothing on the" >&2
+    echo "    serial console shows a signature rejection, so this proves nothing about" >&2
+    echo "    secure boot — the image may simply have failed to boot." >&2
+    echo "    Looked for: ${REJECT_RE}" >&2
+    if [ -s "${WORKDIR}/serial.log" ]; then
+        echo "    Serial log:" >&2
+        cat "${WORKDIR}/serial.log" >&2
+    else
+        echo "    Serial log is empty or missing." >&2
+    fi
+    exit 1
+fi
+
+if [ "${EXPECT_FAIL}" = "true" ]; then
+    echo "==> FAIL (expected failure): VM booted despite --expect-fail (secure boot did not reject it)." >&2
+    exit 1
+fi
+
+echo "==> [4/5] Running health assertions..."
+FAILED=0
+
+SSH() { ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o IdentitiesOnly=yes -i "${WORKDIR}/id_boottest" root@localhost "$@"; }
+
+# Capture, then match — do NOT pipe into grep. `systemctl is-system-running`
+# exits non-zero for every state except `running` (1 for `degraded`), so under
+# `set -o pipefail` the pipeline failed on a perfectly acceptable `degraded`
+# system no matter what the text said. Capturing also lets the failure message
+# name the state we actually got.
+SYS_STATE=$(SSH systemctl is-system-running --wait 2>/dev/null || true)
+case "${SYS_STATE}" in
+    running|degraded) ;;
+    *)
+        echo "    FAIL: systemctl is-system-running reported '${SYS_STATE:-<no output>}', want running/degraded" >&2
+        FAILED=1
+        ;;
+esac
+
+BOOTCTL_OUT=$(SSH bootctl status 2>&1 || true)
+if [ "${SECURE}" = "true" ]; then
+    if ! echo "${BOOTCTL_OUT}" | grep -q "Secure Boot: enabled"; then
+        echo "    FAIL: bootctl status does not report Secure Boot: enabled" >&2
+        FAILED=1
+    fi
+fi
+
+echo "==> [5/5] Shutting down..."
+SSH systemctl poweroff &>/dev/null || true
+sleep 5
+
+if [ "${FAILED}" -ne 0 ]; then
+    BOOT_TEST_FAILED=1
+    echo "==> boot-test FAILED"
+    exit 1
+fi
+echo "==> boot-test PASSED"

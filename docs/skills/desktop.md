@@ -974,10 +974,10 @@ supersedes #262's single `proton.conf` vendoring — the full tarball already co
 
 ### Verification (on booted image)
 
-No CI or `mise` task boots the image and checks service health (AGENTS.md's Verification
-gate references `mise boot-test` — that task does not exist as of 2026-07; treat it as
-aspirational, not real, until someone builds it). The fastest real check is a host already
-running krytis (self-hosted dev box) or `mise run boot-vm` + manual login:
+`mise boot-test` (added by #309) boots the image headless, waits for SSH, and asserts
+`systemctl is-system-running` + (with `--secure`) `bootctl status`. For deeper service
+checks beyond that fixed assertion set, a host already running krytis (self-hosted dev
+box) or `mise run boot-vm` + manual login remains the fastest path:
 
 ```bash
 # Daemons actually alive (not just "enabled")

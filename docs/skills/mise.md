@@ -525,6 +525,58 @@ mise/tasks/
 └── game-devices-udev-update # Codeberg source; uses curl+jq not gh api
 ```
 
+## `boot-test` provisions the guest with systemd credentials, not disk edits
+
+`mise boot-test` needs three things inside the guest that the shipped image does
+not provide: sshd enabled (it is `disable sshd.service` by preset), an authorized
+key for root, and useful output when the boot fails. All three are injected as
+**systemd credentials over SMBIOS type 11**, so nothing on the installed disk is
+modified and `boot-test` needs no root beyond `generate-disk` itself.
+
+```bash
+-smbios "type=11,value=io.systemd.credential.binary:<name>=$(base64 -w0 < file)"
+```
+
+`systemd-debug-generator` materialises two credential families as real units at
+boot: `systemd.extra-unit.<name>` (a whole unit file) and
+`systemd.unit-dropin.<unit>` (a drop-in). So:
+
+| Credential | Effect |
+|---|---|
+| `systemd.unit-dropin.multi-user.target` → `Wants=sshd.service …` | enables sshd for one boot; replaces mounting the disk to hand-place a `multi-user.target.wants` symlink |
+| `systemd.unit-dropin.sshd.service` → `ExecStart=` reset + `-o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/…"` | points sshd at the ephemeral key; same idiom `systemd-ssh-generator` uses for its own template |
+| `systemd.extra-unit.krytis-boot-probe.service` + `probe.sh` | dumps guest state to `/dev/ttyS0` → `serial.log`, so failures print something actionable |
+
+Use `io.systemd.credential.binary:` (base64), not `io.systemd.credential:`, so
+multi-line unit files survive. Credentials are **not** part of the signed kernel
+cmdline, so all of this works unchanged under `--secure`.
+
+Two rules learned the hard way — see docs/skills/bootc-vm.md § Reading a stalled
+guest without root for the full write-up:
+
+- A `Wants=` drop-in on `multi-user.target` is what pulls an injected unit in. An
+  `extra-unit` with only `[Install] WantedBy=` is never enabled, so it never runs.
+- The diagnostics unit uses `DefaultDependencies=no` and **no** `After=`. Anything
+  ordered after `sysinit.target`/`basic.target` never runs when the boot stalls
+  before them — which is exactly when you need the dump.
+
+### `socat` is not available — drive the QEMU monitor from python3
+
+`boot-test` used `socat` for `system_powerdown` on the HMP monitor socket. `socat`
+is not in `[bootstrap.packages]` and is not installed on the dev workstation, so
+that path silently no-opped (`|| true`) and every run ended in `kill -9`. Bash
+cannot open a unix socket, so use a short inline `python3` heredoc — python3 is
+already a declared mise tool.
+
+### SSH wait budget must cover firmware, not just the OS
+
+OVMF spends a variable, sometimes multi-tens-of-seconds spell probing
+`Boot0002 "UEFI Misc Device"` before reaching `Boot0004 "Linux Boot Manager"`.
+Disabling the virtio-net option ROM (`romfile=`) does **not** eliminate it. A
+healthy guest answers SSH ~15s after the kernel starts, so the budget is 240s to
+absorb the firmware delay; the poll loop exits on first success, so a fast boot is
+not slowed down.
+
 ## Element update tasks
 
 Update tasks live in `mise/tasks/<name>-update`. Each task:
