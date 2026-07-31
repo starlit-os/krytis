@@ -26,6 +26,9 @@ depends:
   - freedesktop-sdk.bst:components/iputils.bst
   - freedesktop-sdk.bst:components/openssh.bst
   - freedesktop-sdk.bst:components/openssh-systemd.bst
+  # Key-only SSH auth, as a drop-in. Requires core/openssh.bst's `Include`
+  # (via the freedesktop-sdk.bst overrides: map) to be read at all — see #408.
+  - config/ssh-auth-policy.bst
   - freedesktop-sdk.bst:components/wpa-supplicant.bst
   - core/pangolin-cli.bst
 
