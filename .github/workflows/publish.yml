@@ -7,6 +7,10 @@ on:
         description: 'Report vulnerabilities without blocking the run (default: block on Critical)'
         type: boolean
         default: false
+      allow_branch_publish:
+        description: 'Permit publishing from a ref other than main (CI testing). The resulting :latest will NOT satisfy the strict main-pinned verification policy — re-publish from main afterwards.'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,6 +30,33 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 420
     steps:
+      - name: Gate on ref (only main may publish)
+        # FIRST, before build or push. `mise run push` always tags :latest and
+        # runs at step ~9, while signature verification runs at ~13 — so a
+        # main-pinned verify alone would publish :latest publicly and only then
+        # fail. Refusing here means a wrong-ref dispatch costs nothing and the
+        # error names the actual cause instead of surfacing as a signature
+        # problem.
+        #
+        # allow_branch_publish exists because testing changes to this workflow
+        # requires dispatching it from a branch (that is how #421 itself was
+        # validated). It is opt-in and loud rather than the default.
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            echo "::notice::Publishing from main — signatures will satisfy the strict verification policy"
+            exit 0
+          fi
+          if [[ "${{ inputs.allow_branch_publish }}" != "true" ]]; then
+            echo "::error::Refusing to publish from '${{ github.ref_name }}'. Only main may publish."
+            echo "  Nothing has been built or pushed."
+            echo "  To publish from a branch anyway (CI testing), re-dispatch with allow_branch_publish=true."
+            exit 1
+          fi
+          echo "::warning::Publishing from '${{ github.ref_name }}', not main. \
+          The resulting ghcr.io/starlit-os/krytis:latest will be signed with a \
+          non-main identity and will NOT verify against the strict policy in \
+          docs/skills/signing.md. Re-publish from main afterwards."
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -131,11 +162,19 @@ jobs:
             local label="$1" digest="$2"
             [[ -z "${digest}" ]] && return 0
             echo "==> Verifying ${label} (${digest})"
-            # --certificate-identity-regexp pins the signature to publish.yml in
-            # THIS repo. Without it, cosign verify accepts any Sigstore identity,
-            # which defeats the point (see docs/skills/signing.md).
+            # Pin the signature to publish.yml in THIS repo at THIS ref. The
+            # previous `@refs/heads/.*` accepted a signature from any branch,
+            # so the check proved "some branch of this repo signed it" rather
+            # than naming one — and the run that validated #421 was itself a
+            # branch publish, which is how that was noticed.
+            #
+            # github.ref_name resolves to `main` on the normal path, so this IS
+            # main-pinning there; on an opt-in branch publish it pins to that
+            # branch, which is still tighter than the old wildcard. The "only
+            # main may publish" policy is enforced by the ref gate at the top of
+            # this job, not here — one job, one place.
             cosign verify \
-              --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/.*\$" \
+              --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/${{ github.ref_name }}\$" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "ghcr.io/starlit-os/krytis@${digest}"
           }

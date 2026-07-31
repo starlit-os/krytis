@@ -49,12 +49,36 @@ Locally (no ambient GHA credential), `cosign sign -y` falls back to an interacti
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp '^https://github\.com/starlit-os/krytis/\.github/workflows/publish\.yml@refs/heads/.*$' \
+  --certificate-identity-regexp '^https://github\.com/starlit-os/krytis/\.github/workflows/publish\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/starlit-os/krytis@<digest>
 ```
 
-The `--certificate-identity-regexp` constrains verification to signatures produced specifically by `publish.yml` running in `starlit-os/krytis` — without it, `cosign verify` would accept a signature from *any* Sigstore-issued identity, which defeats the point of checking provenance.
+`--certificate-identity-regexp` constrains verification to signatures produced by
+`publish.yml` running in `starlit-os/krytis` — without it, `cosign verify` accepts a
+signature from *any* Sigstore-issued identity, which defeats the point of checking
+provenance.
+
+**Note the `@refs/heads/main$` anchor.** This previously ended `@refs/heads/.*`, which
+accepted a signature from *any* branch of the repo — so the check proved "some branch of
+this repo signed it" rather than naming one. That was noticed when a deliberately-wrong
+regexp reported the real SAN of the then-current `:latest`:
+
+```
+got "https://github.com/starlit-os/krytis/.github/workflows/publish.yml@refs/heads/392-scan-before-build-not-after-push"
+```
+
+i.e. the published `:latest` had been signed from a feature branch. `publish.yml` now
+refuses to publish from a non-`main` ref unless `allow_branch_publish=true` is passed
+explicitly, and that gate runs **before** the build — because `mise run push` always tags
+`:latest` and runs long before verification, so a post-hoc check would publish first and
+fail second.
+
+**Consequence of an opt-in branch publish:** the resulting `:latest` is signed with a
+non-`main` identity and will **not** satisfy the command above. Re-publish from `main`
+afterwards. There is currently no way to test-publish without moving `:latest`
+(`mise run push` has no `--skip-latest`), which is the sharp edge here — worth a flag if
+branch publishes become routine.
 
 ## `cosign login` vs. relying on `oras`/`podman` login side effects
 
@@ -75,6 +99,8 @@ distinction matters:
 | Signing failed (Fulcio/Rekor outage, or nothing was pushed) | verify **skipped**, publish still succeeds — preserves #380's best-effort tolerance |
 | Signing succeeded, signature verifies | publish succeeds |
 | Signing succeeded, signature does **not** verify against the expected identity | publish **fails** — the only case where the signature problem is genuinely ours |
+
+The identity is pinned to the run's own ref (`main` on the normal path — see § Verifying a Signature), and the "only main may publish" policy is enforced by a ref gate that runs before the build.
 
 It verifies every artifact `sign` signed (image, SBOM, vulnerability report), not just the
 image: an unverifiable referrer signature is the same class of problem.
