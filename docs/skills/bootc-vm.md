@@ -167,6 +167,51 @@ Useful for setting a root password or unlocking accounts without rebuilding.
 
 ## Boot debug techniques
 
+### An EMPTY serial log is never an image bug — read it as "firmware never printed"
+
+`boot-test` failing with
+
+```
+==> FAIL: SSH never came up within 240s.
+    Serial log is empty — qemu produced no output at all.
+```
+
+looks identical to a broken image and is not one. Zero serial bytes means the *firmware* never printed, so nothing from the image ever executed. Do not go looking at the OS, the UKI, or composefs.
+
+The cause that actually bit (#414) was the **machine type**: distro edk2 ships `OvmfPkgX64`, which is q35-targeted, and it is completely mute on qemu's default `pc` (i440fx). `boot-test`/`boot-vm` set `MACHINE_ARGS="q35,smm=on"` only on the `--secure` path and used to leave it empty otherwise, so plain `mise boot-test` silently never booted while `--secure` worked — which is why it went unnoticed through a whole run of secure-boot work.
+
+**Isolate it by varying one thing.** Launch qemu with the same firmware wiring and *no disk*, changing only `-machine`:
+
+| `-machine` | serial bytes after 25s |
+|---|---|
+| omitted (default `pc`) | **0** |
+| `q35` | 137 — `>>Start PXE over IPv4.` |
+
+Check the firmware pair too: `OVMF_CODE` + `OVMF_VARS` sizes must sum to the flash size, or OVMF can hang mutely. The 4M pair is `3653632 + 540672 = 4194304`. A 4M `CODE` against a 2M `VARS` is a classic silent hang.
+
+### Test the harness itself, unprivileged, with a blank disk
+
+`--reuse-disk` skips `generate-disk` — the only step needing root — and it accepts **any** file, not just a real installed disk. So a 2 GB file of zeros is enough to exercise everything after the install:
+
+```bash
+truncate -s 2G /tmp/empty-boot.raw
+mise boot-test --reuse-disk /tmp/empty-boot.raw --debug-keep
+```
+
+A healthy harness reaches EDK2's boot manager and says so:
+
+```
+BdsDxe: failed to load Boot0002 "UEFI Misc Device" ...: Not Found
+>>Start PXE over IPv4.
+BdsDxe: No bootable option or device was found.
+```
+
+That output *is* the pass signal for the harness — the run still fails (a blank disk is not bootable), but firmware, serial capture, credential injection and the diagnostics chain are all proven. It is the cheapest available A/B for "is this the image or the harness?", it needs no sudo, and it separates the two in one 240s run instead of a rebuild-and-reinstall cycle.
+
+**Use `--debug-keep`.** Without it the `EXIT` trap deletes `WORKDIR`, taking `serial.log` with it, so a failing run leaves nothing to read.
+
+**Gotcha when running a task from a worktree:** `mise` resolves tasks from the directory it starts in. Launch it with the worktree as the working directory — if the `cd` silently fails, you get the *main* checkout's task and will conclude your fix did nothing. Check the `[boot-test] $ <path>` line mise echoes: it names the script that actually ran.
+
 ### Reading a stalled guest without root
 
 **Use this first.** It works under secure boot, needs no `sudo`, no

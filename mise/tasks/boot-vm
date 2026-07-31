@@ -70,7 +70,10 @@ if command -v qemu-system-x86_64 &>/dev/null; then
             fi
             cp "${OVMF_VARS_SRC}" "${OVMF_VARS}"
         fi
-        MACHINE_ARGS=""
+        # q35, not qemu's default `pc` — see the same comment in boot-test and
+        # #414: distro edk2's OvmfPkgX64 build emits no serial output at all on
+        # i440fx and never boots. smm=on is only needed for --secure.
+        MACHINE_ARGS="q35"
         FLASH_SECURE_ARGS=()
     fi
 

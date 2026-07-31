@@ -199,7 +199,14 @@ else
         [ -f "$c" ] && OVMF_VARS_SRC="$c" && break
     done
     cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars.fd"
-    MACHINE_ARGS=""
+    # q35, not qemu's default `pc` (i440fx). Distro edk2 ships OvmfPkgX64, which
+    # is q35-targeted: on i440fx this firmware emits ZERO serial output and never
+    # boots, so the run dies as a silent 240s SSH timeout that looks exactly like
+    # a broken image. Isolated by varying only -machine with the same firmware and
+    # no disk: default `pc` → 0 serial bytes, `q35` → firmware runs and reaches
+    # boot-device selection. --secure additionally needs smm=on to protect the
+    # varstore; plain boots do not. See #414 and docs/skills/bootc-vm.md.
+    MACHINE_ARGS="q35"
     FLASH_SECURE_ARGS=()
 fi
 [ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF firmware not found." >&2; exit 1; }
@@ -297,7 +304,20 @@ if [ "${SSH_UP}" != "true" ] && [ "${EXPECT_FAIL}" != "true" ]; then
         echo "    Recover the serial log from the still-running VM with:" >&2
         echo "      cat /proc/${QEMU_PID}/fd/\$(ls -l /proc/${QEMU_PID}/fd | awk '/serial\\.log/{print \$9}')" >&2
     elif [ ! -s "${WORKDIR}/serial.log" ]; then
-        echo "    Serial log is empty — qemu produced no output at all." >&2
+        # Zero serial bytes means the FIRMWARE never printed, so nothing from the
+        # image ever executed — this says nothing about the OS. The cause that has
+        # actually bitten (#414) is a machine type the OVMF build does not support:
+        # distro edk2's OvmfPkgX64 is q35-targeted and is mute on i440fx.
+        echo "    Serial log is empty — qemu produced no output at all, i.e. the" >&2
+        echo "    firmware never printed. Nothing from the image ran, so this is NOT" >&2
+        echo "    evidence about the OS. Check, in order:" >&2
+        echo "      1. machine type vs. OVMF build (this task uses -machine ${MACHINE_ARGS})." >&2
+        echo "         Isolate with the same firmware and no disk, varying only -machine;" >&2
+        echo "         0 bytes on 'pc' and output on 'q35' is the #414 signature." >&2
+        echo "      2. OVMF_CODE/OVMF_VARS are a matched pair — their sizes must sum to" >&2
+        echo "         the flash size (4M build: 3653632 + 540672 = 4194304)." >&2
+        echo "         Using: ${OVMF_CODE} + ${OVMF_VARS_SRC:-.ovmf-vars-secure.fd}" >&2
+        echo "      3. /dev/kvm is accessible and -cpu host is valid on this host." >&2
     else
         echo "    Serial log:" >&2
         cat "${WORKDIR}/serial.log" >&2 || true
