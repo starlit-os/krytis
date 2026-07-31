@@ -128,6 +128,26 @@ krytis cannot drop `UsePAM yes`: it is what gives sshd `pam_u2f` and
 `pam_systemd_home`, and `openssh.bst` is built `--with-pam-service=sshd` against
 linux-pam's `/etc/pam.d/sshd`.
 
+### Priority: SSH gaps are low priority — krytis is a desktop, not a server OS
+
+Read this before spending effort on anything in the next two sections.
+
+SSH is **opt-in and not shipped running**. `openssh.preset` contains `disable sshd.service`, nothing pulls it into `multi-user.target`, and there is no `sshd.socket` — so on a default install there is no listener at all. Verify rather than trust this note:
+
+```bash
+podman run --rm localhost/krytis:latest sh -c \
+  'grep -rn sshd /usr/lib/systemd/system-preset/; ls /usr/lib/systemd/system/multi-user.target.wants/ | grep -i ssh'
+```
+
+Consequences for how you triage:
+
+- **Never weaken a desktop-facing posture to fix an SSH-facing gap.** Re-enabling `KbdInteractiveAuthentication` to make homed-over-SSH work would trade a shipped, always-on security property for a path most users never enable. That trade is a Security Gate decision, not a default — and in the homed case it is not even necessary (see below).
+- **Never reorder work to get SSH working.** Greeter, console, sudo and polkit are the paths every user hits on every boot; they come first. An SSH-only defect is not a release blocker.
+- **Lockout recovery is via console**, which is why key-only SSH is an acceptable default here at all. Same reasoning already recorded in `elements/config/ssh-auth-policy.bst`.
+- SSH still has to be *correct* when someone opts in — don't ship knowingly broken config, and don't delete SSH code paths as dead (see the `password-auth` note in `elements/config/u2f-config.bst`). Low priority means "do not let it set the agenda", not "do not care".
+
+#422 (homed SSH fallback shell) is filed under exactly this policy: a real gap, correctly diagnosed, deliberately not urgent.
+
 ### Two consequences of key-only SSH
 
 **Constrains homed-managed homes, but does NOT require keyboard-interactive back.**
