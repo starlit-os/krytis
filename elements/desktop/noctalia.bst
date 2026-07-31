@@ -17,6 +17,11 @@ depends:
 - freedesktop-sdk.bst:components/polkit.bst
 - freedesktop-sdk.bst:components/wireplumber.bst
 - freedesktop-sdk.bst:components/tomlplusplus.bst
+# libical: shared (libical.so), required by upstream meson.build:98 as of
+# v5.0.0-beta.7 — same reasoning as tomlplusplus, so `depends`, not
+# `build-depends`. Added after #401's ref bump landed without it and broke
+# `mise build` on main (#412).
+- freedesktop-sdk.bst:components/libical.bst
 - freedesktop-sdk.bst:components/libsecret.bst
 - desktop/libsodium.bst
 - desktop/libqalculate.bst

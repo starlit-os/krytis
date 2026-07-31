@@ -9,8 +9,9 @@
 # the file on first boot and `f` truncates on every boot, clobbering the
 # user's saved greeter preferences. A ConditionPathExists-gated oneshot unit
 # (same pattern as flatpak-preinstall.bst) seeds once and leaves the mutable
-# file alone. The tmpfiles.d `d` line for /var/lib/noctalia-greeter (in
-# greetd-config.bst) creates the directory this unit writes into.
+# file alone. The tmpfiles.d `d` line for /var/lib/noctalia-greeter comes from
+# upstream noctalia-greeter itself (v1.1.0+) and creates the directory this
+# unit writes into.
 # Closes #296.
 kind: manual
 

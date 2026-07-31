@@ -6,7 +6,8 @@ Documentation=https://github.com/starlit-os/krytis/issues/296
 # preferences must survive reboot and the greeter read-modify-writes the file.
 ConditionPathExists=!/var/lib/noctalia-greeter/greeter.toml
 # systemd-tmpfiles-setup.service creates /var/lib/noctalia-greeter (tmpfiles.d
-# entry shipped by greetd-config.bst); the seed writes into that directory.
+# entry shipped by upstream noctalia-greeter itself since v1.1.0, at
+# /usr/lib/tmpfiles.d/noctalia-greeter.conf); the seed writes into it.
 After=systemd-tmpfiles-setup.service
 # The greeter user is created by sysusers.d (greetd-config.bst).
 After=systemd-sysusers.service

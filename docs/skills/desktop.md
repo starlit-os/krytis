@@ -131,7 +131,8 @@ Seeding is done by `config/greeter-config-seed.bst` (closes #296): a read-only t
 `greeter-config-seed.service` gated on `ConditionPathExists=!/var/lib/noctalia-greeter/greeter.toml`
 that `install -D -o greeter -g greeter`s the template into place once, then never runs
 again. The unit orders `After=systemd-tmpfiles-setup.service systemd-sysusers.service`
-(the tmpfiles `d` line and `greeter` user both come from `greetd-config.bst`) and
+(the `greeter` user comes from `greetd-config.bst`'s sysusers.d; the tmpfiles `d` line for
+`/var/lib/noctalia-greeter` comes from upstream noctalia-greeter itself since v1.1.0) and
 `Before=greetd.service` so the seed lands before the greeter's first read. Pattern notes:
 
 - `/var` is writable runtime state in the bootc composefs layout; bootc flags non-dir
