@@ -17,21 +17,40 @@ runtime-depends:
 
 variables:
   # freedesktop-sdk's own openssh.bst leaves sysconfdir at autotools'
-  # default (/etc), so the installed sshd_config lands at /etc/sshd_config
-  # instead of /etc/ssh/sshd_config, where the compiled-in sshd default
-  # (and systemd's own sshd_config.d/ drop-ins) actually look. sshd then
-  # fails "No such file or directory" on every connection, which under
-  # socket activation (sshd@.service) manifests as the accepted connection
-  # being torn down immediately after the client's version banner
-  # ("kex_exchange_identification: read: Connection reset by peer") rather
-  # than a clean startup failure. gnome-build-meta carries an upstream
-  # patch for exactly this (0003-openssh-Use-etc-ssh-as-sysconfdir.patch)
-  # but it's applied to gnome-build-meta's own freedesktop-sdk checkout,
-  # not exposed as a reusable override element krytis's junction can point
-  # at — so this element duplicates freedesktop-sdk's openssh.bst with the
-  # one variable gnome-build-meta's patch adds, rather than reimplementing
-  # openssh from scratch (contrast with core/sudo-rs.bst, which replaces
-  # sudo outright). See docs/skills/bst.md.
+  # default (/etc). Every compiled-in openssh path derives from it, so the
+  # whole of sshd's configuration and key material lands directly in /etc:
+  # /etc/sshd_config, /etc/moduli, /etc/ssh_host_{rsa,ecdsa,ed25519}_key —
+  # instead of under /etc/ssh/ where admins, `ssh-keygen -A`, backup
+  # tooling and every distro convention expect them. `sshd` itself still
+  # works that way (it looks where it was built to look), so this is a
+  # correctness/expectation bug, NOT a service outage: a user editing
+  # /etc/ssh/sshd_config would silently have no effect.
+  #
+  # NOTE: this was originally committed with the claim that it fixed
+  # "kex_exchange_identification: read: Connection reset by peer" under
+  # socket activation. That was wrong on both counts and the claim has been
+  # retracted — the image ships no sshd.socket/sshd@.service at all (only
+  # sshd.service with ExecStart=sshd -D), and that reset was QEMU SLIRP
+  # hostfwd reporting a closed guest port, caused by the read-only /etc in
+  # #396. See docs/skills/bootc-vm.md § `kex_exchange_identification:
+  # Connection reset` means nothing is listening.
+  #
+  # gnome-build-meta carries an upstream patch for exactly this
+  # (0003-openssh-Use-etc-ssh-as-sysconfdir.patch) but it's applied to
+  # gnome-build-meta's own freedesktop-sdk checkout, not exposed as a
+  # reusable override element krytis's junction can point at — so this
+  # element duplicates freedesktop-sdk's openssh.bst with the one variable
+  # gnome-build-meta's patch adds, rather than reimplementing openssh from
+  # scratch (contrast with core/sudo-rs.bst, which replaces sudo outright).
+  # See docs/skills/bst.md.
+  #
+  # KNOWN GAP, deliberately not changed here: the shipped sshd_config has no
+  # `Include /etc/ssh/sshd_config.d/*.conf` line, so the drop-in that
+  # /usr/lib/tmpfiles.d/20-systemd-userdb.conf symlinks into
+  # /etc/ssh/sshd_config.d/ is inert — `sshd -T` reports
+  # `authorizedkeyscommand none`. Adding the Include would switch on
+  # systemd-userdb key lookup, i.e. change authentication behaviour, which
+  # is a Security Gate decision rather than a packaging fix.
   sysconfdir: '/etc/ssh'
   # linux-pam provides /etc/pam.d/sshd, so this is the pam service name
   #
