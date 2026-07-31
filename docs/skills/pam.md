@@ -130,12 +130,26 @@ linux-pam's `/etc/pam.d/sshd`.
 
 ### Two consequences of key-only SSH
 
-**Incompatible with homed-managed homes.** `pam_systemd_home` needs the user's
-password to unlock the encrypted home image, so a pubkey-only SSH login has
-nothing to mount it with. Harmless while accounts are created by `useradd` with
-plain home directories (see docs/skills/desktop.md § `/etc/skel`), but it
-constrains any future move to `homectl`. If krytis ever adopts homed for real
-accounts, keyboard-interactive has to come back for SSH.
+**Constrains homed-managed homes, but does NOT require keyboard-interactive back.**
+`pam_systemd_home` cannot unlock the home from a pubkey-only login: `pam_sm_open_session`
+issues `RefHome`, which can only take a reference on an *already-active* home, never
+activate an inactive one — activation needs `AcquireHome` from the auth phase that
+pubkey-only SSH skips. So the session starts with no `$HOME` mounted. Harmless while
+accounts are created by `useradd` with plain home directories (see
+docs/skills/desktop.md § `/etc/skel`).
+
+Upstream's answer is **`systemd-home-fallback-shell`**, not re-enabling
+keyboard-interactive. `homectl.c` says so outright: *"if users log into a system via
+ssh … SSH doesn't allow us to ask authentication questions from the PAM session stack,
+and doesn't run the PAM authentication stack … homectl can be invoked as a multi-call
+binary under the name 'systemd-home-fallback-shell'."* `pam_systemd_home` sets
+`XDG_SESSION_INCOMPLETE=1` and, via `fallback_shell_can_work()`, `ACQUIRE_REF_ANYWAY`
+when there is no `PAM_XDISPLAY` and `PAM_TTY` has no colon — i.e. exactly a TTY/SSH
+login. The fallback shell then authenticates interactively, activates the home, and
+execs the real shell. The binary is already in the image at
+`/usr/bin/systemd-home-fallback-shell`; nothing in krytis wires it up yet, which is the
+actual gap — not the SSH auth policy. Verified against systemd v258 source; see
+`## systemd-homed users` above and #422.
 
 **No PAM-driven 2FA over SSH.** `pam_u2f` runs in the keyboard-interactive path,
 so disabling it removes FIDO2-via-PAM for SSH specifically (console, sudo, polkit

@@ -1,11 +1,20 @@
 kind: manual
 
-# Wires pam_u2f into the PAM stacks used by sudo and sshd.
+# Wires pam_u2f into the PAM stacks used by sudo, the greeter and sshd.
 #
 # Service → PAM file used:
 #   sudo  → system-auth  (fdsdk sudo.bst: "auth include system-auth")
 #   sshd  → password-auth
 #   greetd login → /etc/pam.d/greetd (managed by config/greetd-config.bst)
+#
+# password-auth's *auth* block is dormant for sshd as shipped: since #410,
+# config/ssh-auth-policy.bst sets KbdInteractiveAuthentication no (alongside
+# PasswordAuthentication no), and pam_u2f only runs in the keyboard-interactive
+# path — so sshd authenticates over pubkey and never enters this auth stack.
+# The account/password/session blocks still run under UsePAM yes, and the auth
+# block becomes live again for anyone who overrides that drop-in. Keep it
+# correct; do not treat it as dead code. Native sk-* keys are the intended SSH
+# second factor. See docs/skills/pam.md § UsePAM yes.
 #
 # Per-user mode (no authfile=): pam_u2f resolves the authfile from the passwd
 # entry's pw_dir as <home>/.config/Yubico/u2f_keys and open()s it during the
