@@ -866,13 +866,27 @@ jobs:
           BASE_TITLE="${{ matrix.title }}"
           BST_PATH="elements/${{ matrix.element }}"
 
-          # Extract old/new refs for PR body version context
-          OLD_REF=$(git diff -- "$BST_PATH" | grep '^-.*ref:' | grep -oP "ref:\s+\K\S+" || true)
-          NEW_REF=$(git diff -- "$BST_PATH" | grep '^+.*ref:' | grep -oP "ref:\s+\K\S+" || true)
+          # Extract old/new refs for PR body version context. Bracket the diff
+          # marker ([-]/[+]) — bare "^+" is a literal plus only in GNU BRE; other
+          # greps read it as a quantifier on "^" and match every line.
+          OLD_REF=$(git diff -- "$BST_PATH" | grep '^[-].*ref:' | grep -oP "ref:\s+\K\S+" || true)
+          NEW_REF=$(git diff -- "$BST_PATH" | grep '^[+].*ref:' | grep -oP "ref:\s+\K\S+" || true)
 
-          # Extract version from git-describe refs (e.g. "v1.15.2-0-gabcdef" -> "v1.15.2")
-          OLD_VER=$(echo "$OLD_REF" | grep -oP '^v?\d+[\d\.\-]+' | grep '\.' | sed 's/-$//' || true)
-          NEW_VER=$(echo "$NEW_REF" | grep -oP '^v?\d+[\d\.\-]+' | grep '\.' | sed 's/-$//' || true)
+          # Strip the git-describe suffix off a ref to recover the full upstream
+          # tag: "v5.0.0-beta.6-0-g<sha40>" -> "v5.0.0-beta.6". Anchoring on the
+          # "-<offset>-g<sha>" tail keeps pre-release segments (-beta.6, -rc1)
+          # that a "digits and dots only" match truncates, and drops the "-0"
+          # offset that used to leak into titles as "v1.15.2-0".
+          # Plain-SHA refs (branch-tracked elements with no reachable tag, e.g.
+          # desktop/stb.bst) have no suffix to strip and yield an empty string,
+          # so the Version row is omitted rather than showing a bare SHA. The
+          # digit filter drops non-version tags like "release-0-g<sha>".
+          describe_tag() {
+            printf '%s\n' "$1" | grep -oP '^.+(?=-\d+-g[0-9a-f]{7,40}$)' | grep -P '\d' || true
+          }
+
+          OLD_VER=$(describe_tag "$OLD_REF")
+          NEW_VER=$(describe_tag "$NEW_REF")
 
           if [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ] && [ "$OLD_VER" != "$NEW_VER" ]; then
             TITLE="${BASE_TITLE}: ${OLD_VER} -> ${NEW_VER}"

@@ -416,6 +416,34 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
 
+### The track job's PR title/version comes from parsing the git-describe `ref:`
+
+`git_repo` refs are git-describe strings — `v5.0.0-beta.6-0-g<sha40>` — and the `track`
+job derives both the PR title (`… v5.0.0-beta.6 -> v5.0.0-beta.7`) and the **Version** row
+of the body by string-slicing that ref. There is no separate version field to read, so the
+parse has to be anchored on the describe suffix, not on what a version "looks like":
+
+```bash
+# strips "-<offset>-g<sha>"; empty for plain-SHA refs so the row is omitted
+printf '%s\n' "$REF" | grep -oP '^.+(?=-\d+-g[0-9a-f]{7,40}$)' | grep -P '\d'
+```
+
+A "digits, dots and dashes" pattern (`^v?\d+[\d\.\-]+`) looks equivalent and is not — it
+stops at the first letter, so every pre-release tag collapses to its base version
+(`v5.0.0-beta.6` → `v5.0.0`, giving useless `v5.0.0 -> v5.0.0` titles), and it keeps the
+describe offset on stable tags (`v1.15.2-0`). Both symptoms shipped in real PRs
+(starlit-os/krytis#401).
+
+Two constraints on any change here:
+
+- **Plain-SHA refs must yield an empty version.** Branch-tracked elements with no reachable
+  tag (`desktop/stb.bst`, `track: refs/heads/master`) get a bare 40-char SHA as their ref;
+  matching them would print a SHA in the Version row and in the PR title.
+- **Diff-marker greps must bracket the marker** (`grep '^[+].*ref:'`, not `'^+.*ref:'`).
+  A bare `+` after `^` is a literal plus only in GNU BRE; uutils-style greps read it as a
+  quantifier on `^` and match *every* diff line, so `NEW_REF` silently picks up the old ref
+  too. GitHub runners ship GNU grep, so this only bites when reproducing the step locally.
+
 ### Verify a track: glob only matches the intended release channel
 
 A `track:` glob that's too loose, or that names a branch instead of a tag pattern, silently
