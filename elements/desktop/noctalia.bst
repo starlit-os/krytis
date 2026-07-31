@@ -39,7 +39,7 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/noctalia.git
   track: v*
-  ref: v5.0.0-beta.6-0-gd24fe45e9a798317072547fa5d56950607750e68
+  ref: v5.0.0-beta.7-0-gc366a35ffc30b011d03fcd122bbe7d22f932fc57
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test
