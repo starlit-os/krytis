@@ -1,21 +1,123 @@
 #!/usr/bin/env bash
-#MISE description="Enroll a FIDO2 security key for sudo / login (writes to ~/.config/Yubico/u2f_keys)"
+#MISE description="Enroll a FIDO2 security key for login and sudo (homed-aware)"
 
 set -euo pipefail
 
 AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
 ORIGIN="pam://$(hostname)"
 
+# A systemd-homed user needs TWO enrollments of the same key, one per consumer:
+#
+#   login     → homed itself, via `homectl update --fido2-device=auto`
+#               (rp_id io.systemd.home). The token's hmac-secret output IS the
+#               key material that decrypts the home area, so nothing but homed
+#               can consume it. pam_u2f cannot serve homed login at all: the
+#               authfile below lives inside the home, which is still an
+#               unmounted encrypted image during the auth phase.
+#   sudo/polkit → pam_u2f, from the authfile below. That path is fine here
+#               because by then homed has mounted the home.
+#
+# For a classic /etc/passwd user pam_u2f covers both, and homed is skipped.
+# See docs/skills/pam.md and docs/skills/fido2.md.
+is_homed_user() {
+  homectl list --json=short 2>/dev/null |
+    jq -e --arg u "$1" 'any(.[]; .name == $u)' >/dev/null 2>&1
+}
+
+if is_homed_user "$USER"; then
+  HOMED=1
+  MODE="systemd-homed"
+else
+  HOMED=0
+  MODE="classic"
+fi
+
 gum style \
   --foreground 212 --border-foreground 212 --border rounded \
   --align center --padding "0 2" --margin "1 0" \
   "FIDO2 Key Enrollment" \
-  "$(gum style --foreground 240 "user: ${USER}  ·  origin: ${ORIGIN}")"
+  "$(gum style --foreground 240 "user: ${USER}  ·  ${MODE}  ·  origin: ${ORIGIN}")"
 
 gum style --foreground 240 --italic \
-  "  No PIN yet? Set one first: ykman fido access change-pin"
+  "  No PIN yet? Set one first: fido2-token -S <device>"
 echo ""
 
+# ── Capability detection ─────────────────────────────────────────────────────
+# fido2-token -L emits a trailing ':' on the device path — strip it, or -I
+# silently returns nothing and every capability probe reads as unsupported.
+DEVICE=$(fido2-token -L 2>/dev/null | awk '{print $1}' | tr -d ':' | head -1)
+ENROLL_FLAGS=()
+PIN_CAP=no
+UV_CAP=no
+if [[ -n "$DEVICE" ]]; then
+  INFO=$(gum spin --spinner dot --title "Detecting key capabilities..." -- \
+    sh -c "fido2-token -I '$DEVICE' 2>/dev/null"; echo)
+  # -I prints capabilities as one comma-separated "options:" line, not as
+  # individual "key: true" entries.
+  OPTIONS=$(grep "^options:" <<< "$INFO" || true)
+  UV_RETRIES=$(grep "^uv retries:" <<< "$INFO" | awk '{print $NF}')
+
+  grep -qw "clientPin" <<< "$OPTIONS" && { ENROLL_FLAGS+=(-N); PIN_CAP=yes; }
+  if [[ -n "$UV_RETRIES" && "$UV_RETRIES" != "undefined" ]]; then
+    ENROLL_FLAGS+=(-V)
+    UV_CAP=yes
+  fi
+
+  _yn() { [[ "$1" == "yes" ]] \
+    && gum style --foreground 2 "yes" \
+    || gum style --foreground 240 "no"; }
+
+  echo "  PIN (clientPin): $(_yn "$PIN_CAP")    UV (biometric): $(_yn "$UV_CAP")    flags: $(gum style --foreground 212 -- "${ENROLL_FLAGS[*]:-none}")"
+else
+  gum style --foreground 240 "  fido2-token not found — falling back to -N"
+  ENROLL_FLAGS=(-N)
+  PIN_CAP=yes
+fi
+echo ""
+
+# ── 1. Login credential ──────────────────────────────────────────────────────
+if (( HOMED )); then
+  gum style --foreground 220 --bold "  [1/2] Login credential (systemd-homed)"
+
+  EXISTING_HOMED=$(homectl inspect --json=short "$USER" 2>/dev/null |
+    jq -r '(.fido2HmacCredential // []) | length' 2>/dev/null || echo 0)
+  if [[ "$EXISTING_HOMED" -gt 0 ]]; then
+    gum style --foreground 220 \
+      "  ${EXISTING_HOMED} FIDO2 credential(s) already in your home record."
+    gum style --foreground 240 \
+      "  homectl replaces them — the old key will stop unlocking your home."
+    gum confirm --default=false "  Replace the homed FIDO2 enrollment?" \
+      || { gum style --foreground 240 "  Skipping homed enrollment."; SKIP_HOMED=1; }
+  fi
+
+  if [[ -z "${SKIP_HOMED:-}" ]]; then
+    # Mirror the detected capabilities into homed's own flags so both
+    # enrollments demand the same factors. homed defaults are PIN|UP.
+    HOMECTL_FLAGS=(
+      --fido2-device=auto
+      --fido2-with-client-pin="$PIN_CAP"
+      --fido2-with-user-presence=yes
+      --fido2-with-user-verification="$UV_CAP"
+    )
+    gum style --foreground 240 \
+      "  homectl asks for your account password first (it re-keys the home's" \
+      "  LUKS/fscrypt slots), then the key PIN, then a touch."
+    echo ""
+    # No gum spin here: homectl needs the terminal for its own prompts.
+    homectl update "$USER" "${HOMECTL_FLAGS[@]}"
+    echo ""
+    gum style --foreground 2 "  ✓ Login credential enrolled in your homed record"
+  fi
+  echo ""
+  gum style --foreground 220 --bold "  [2/2] sudo / polkit credential (pam_u2f)"
+  echo ""
+else
+  gum style --foreground 240 \
+    "  Not a systemd-homed user — pam_u2f covers login and sudo alike."
+  echo ""
+fi
+
+# ── 2. pam_u2f credential ────────────────────────────────────────────────────
 # If credentials exist, ask whether to add another key or replace all.
 # We cannot detect which physical key is plugged in without a live assertion.
 if [[ -s "$AUTHFILE" ]] && grep -q "^${USER}:" "$AUTHFILE"; then
@@ -41,31 +143,6 @@ if [[ -s "$AUTHFILE" ]] && grep -q "^${USER}:" "$AUTHFILE"; then
       ;;
   esac
 fi
-
-# Detect capabilities
-DEVICE=$(fido2-token -L 2>/dev/null | awk '{print $1}' | tr -d ':' | head -1)
-ENROLL_FLAGS=()
-if [[ -n "$DEVICE" ]]; then
-  INFO=$(gum spin --spinner dot --title "Detecting key capabilities..." -- \
-    sh -c "fido2-token -I '$DEVICE' 2>/dev/null"; echo)
-  OPTIONS=$(grep "^options:" <<< "$INFO" || true)
-  UV_RETRIES=$(grep "^uv retries:" <<< "$INFO" | awk '{print $NF}')
-
-  grep -qw "clientPin" <<< "$OPTIONS" && ENROLL_FLAGS+=(-N)
-  [[ -n "$UV_RETRIES" && "$UV_RETRIES" != "undefined" ]] && ENROLL_FLAGS+=(-V)
-
-  _yn() { [[ "$1" == "yes" ]] \
-    && gum style --foreground 2 "yes" \
-    || gum style --foreground 240 "no"; }
-  PIN_CAP=$(grep -qw clientPin <<< "$OPTIONS" && echo yes || echo no)
-  UV_CAP=$([[ -n "$UV_RETRIES" && "$UV_RETRIES" != "undefined" ]] && echo yes || echo no)
-
-  echo "  PIN (clientPin): $(_yn "$PIN_CAP")    UV (biometric): $(_yn "$UV_CAP")    flags: $(gum style --foreground 212 -- "${ENROLL_FLAGS[*]:-none}")"
-else
-  gum style --foreground 240 "  fido2-token not found — falling back to -N"
-  ENROLL_FLAGS=(-N)
-fi
-echo ""
 
 gum style --foreground 220 --bold "  Touch your key when it blinks..."
 gum style --foreground 240 "  (You will be asked for your PIN first)"
@@ -93,4 +170,8 @@ else
 fi
 
 gum style --foreground 240 "  Stored in: ${AUTHFILE}"
+if (( HOMED )); then
+  gum style --foreground 240 \
+    "  This credential covers sudo and polkit. Login uses the homed record."
+fi
 echo ""

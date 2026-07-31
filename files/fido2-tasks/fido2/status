@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Show enrolled FIDO2 keys for sudo/login and LUKS slots"
+#MISE description="Show enrolled FIDO2 keys for login, sudo and LUKS slots"
 
 set -euo pipefail
 
 AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
 
-echo "=== sudo / PAM keys (${AUTHFILE}) ==="
+echo "=== pam_u2f keys — sudo / polkit, plus login for non-homed users (${AUTHFILE}) ==="
 if [[ -s "$AUTHFILE" ]]; then
   while IFS= read -r line; do
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -16,6 +16,28 @@ if [[ -s "$AUTHFILE" ]]; then
   done < "$AUTHFILE"
 else
   echo "  (no keys enrolled — run: mise fido2:enroll)"
+fi
+
+echo ""
+echo "=== systemd-homed login credentials ==="
+
+# A homed user's login FIDO2 credential lives in the home record, not in the
+# authfile above — the token's hmac-secret derives the home's volume key, so
+# only homed can consume it. pam_u2f above covers that user's sudo/polkit only.
+HOMED_USERS=$(homectl list --json=short 2>/dev/null | jq -r '.[].name' 2>/dev/null || true)
+if [[ -z "$HOMED_USERS" ]]; then
+  echo "  (no systemd-homed users — login FIDO2 comes from pam_u2f above)"
+else
+  while IFS= read -r HOMED_USER; do
+    [[ -z "$HOMED_USER" ]] && continue
+    CREDS=$(homectl inspect --json=short "$HOMED_USER" 2>/dev/null |
+      jq -r '(.fido2HmacCredential // []) | length' 2>/dev/null || echo 0)
+    if [[ "$CREDS" -gt 0 ]]; then
+      echo "  ${HOMED_USER}: ${CREDS} credential(s)"
+    else
+      echo "  ${HOMED_USER}: none (run: mise fido2:enroll)"
+    fi
+  done <<< "$HOMED_USERS"
 fi
 
 echo ""

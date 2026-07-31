@@ -20,6 +20,33 @@ runs when `composefs=<hash>` is in the kernel command line (set by `bootc instal
 If this service is skipped or absent, `/sysroot` stays as raw btrfs (no `/usr/`),
 and `initrd-switch-root.service` fails with "no init found".
 
+## `/etc` changes DO reach existing deployments on `bootc upgrade` — don't assume otherwise
+
+Shipping config to `/etc` (as `config/u2f-config.bst` does for `/etc/pam.d/system-auth`) looks like it might be fresh-install-only on this backend. It isn't. Verified against bootc **v1.16.6** source (`cf828dc1`), composefs-native path:
+
+| question | answer |
+|---|---|
+| Merge base | The **booted image's own `/etc`**, read by mounting its EROFS/composefs image (`bootc_composefs/finalize.rs::composefs_backend_finalize` → `pristine_etc`). Not `/usr/etc`. Not `/usr/share/factory/etc`. |
+| New deployment's `/etc` | Fresh `cp -a --remove-destination <erofs>/etc/.` into `/sysroot/state/deploy/<digest>/etc` (`bootc_composefs/state.rs::initialize_state`), then local modifications re-applied at finalize. |
+| Unmodified image file, new image changes it | **Gets the new content.** It is byte-identical to the base, so it never lands in `diff.modified` and the freshly copied version survives. |
+| Locally modified file | Frozen at the local version — `merge_leaf` deletes the new image's copy and writes the live one back. |
+
+Two traps that make this easy to get wrong from the outside:
+
+- **No `/usr/etc` on a booted krytis is the expected signature of the composefs-native backend, not evidence that `/etc` merging is off.** The `etc` → `usr/etc` remap (`ostree-ext/src/tar/write.rs::remap_etc_path`) is the *ostree-backed* path only; composefs-native reads `<image>/etc` directly and has its own Rust implementation in `crates/etc-merge`.
+- **`/usr/share/factory/etc` is never read by bootc** — zero hits across `crates/lib/src`, `crates/etc-merge`, `crates/tmpfiles`, `crates/sysusers`. It is purely systemd's (`tmpfiles.d` `C`/`C+`, `systemd-firstboot`). So `image.bst` stripping `/usr/share/factory/etc/pam.d/*` cannot affect the merge, and an empty factory `pam.d/` proves nothing about upgrade reach. (Only `/var` has a factory remap, in the ostree tar importer.)
+
+The reproducible build timestamp is also a red herring: `stat_eq_ignore_mtime` compares uid/gid/mode/xattrs only, and content is compared by SHA-256 / fs-verity digest. A pristine `/etc` file still stamped `2011-11-11 12:11:11` reads as unmodified, which is what you want.
+
+Consequences worth designing around:
+
+- **`bootc upgrade` hard-fails** — `anyhow::bail!("Merge conflicts found in etc")` in `bootc_composefs/update.rs` — if any path is unmergeable (a file↔directory type flip between live and new `/etc`). Never turn a shipped `/etc` file into a directory, or vice versa, without a migration.
+- **uid/gid/mode/xattr changes count as modification**, not just content. A user who `chmod`s a shipped `/etc` file freezes it against all future image updates.
+- **A file the admin deleted from `/etc` stays deleted** even if a new image ships it again (`diff.removed` is re-applied to the new tree).
+- A user who hand-edited a file you are fixing keeps their version and will **not** receive the fix. That population needs to be told, not silently assumed covered.
+
+The merge runs at *finalize* time (shutdown, or `bootc upgrade --apply`), not at stage time — a download-only staged deployment hasn't merged yet.
+
 ## `/etc` and `/var` need the `rw` karg
 
 *Fixed in #396. Symptom set is broad — recognise it fast.*

@@ -1,5 +1,31 @@
 # FIDO2 Skills
 
+## One key, three enrollments — know which consumer you are talking to
+
+A single security key has to be enrolled separately for each consumer, because each uses its own relying-party ID and its own credential store. Enrolling one does nothing for the others:
+
+| Consumer | Enrolled by | rp_id / origin | Stored in |
+|---|---|---|---|
+| LUKS boot unlock | `mise fido2:enroll-luks` → `systemd-cryptenroll --fido2-device=auto` | `io.systemd.cryptsetup` | LUKS2 header token slot |
+| systemd-homed login | `mise fido2:enroll` → `homectl update <user> --fido2-device=auto` | `io.systemd.home` | user record: public `fido2HmacCredential`, privileged `fido2HmacSalt[]` |
+| sudo / polkit / non-homed login | `mise fido2:enroll` → `pamu2fcfg` | `pam://$(hostname)` | `~/.config/Yubico/u2f_keys` |
+
+`mise fido2:enroll` detects a homed user and does both of the last two rows in one run; a classic `/etc/passwd` user only gets the last row. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
+
+```bash
+homectl list --json=short 2>/dev/null | jq -e --arg u "$1" 'any(.[]; .name == $u)' >/dev/null
+```
+
+`homectl list`'s JSON keys come from `table_new("name", "uid", "gid", "state", "realname", "home", "shell")` in `homectl.c:list_homes` — `.name`, not `.userName`. `homectl inspect --json=short <user>` dumps one record at top level, so the enrollment count is `(.fido2HmacCredential // []) | length`.
+
+Why the split is architectural, not a packaging accident: homed derives the home area's LUKS/fscrypt passphrase from the token's `hmac-secret` output, so only homed can consume that credential — and the pam_u2f authfile lives inside the home it would have to unlock. See `docs/skills/pam.md` § systemd-homed users.
+
+**`homectl update --fido2-device=` needs no admin auth for your own account** (`org.freedesktop.home1.update-home-by-owner` is `allow_active=yes`), but it *does* imply `--and-change-password`, so it prompts for the existing account password before the key PIN and touch — it has to re-key the underlying LUKS/fscrypt slots. It also **replaces** any existing FIDO2 enrollment: `ARG_FIDO2_DEVICE` drops `fido2HmacCredential`/`fido2HmacSalt` first, so there is no "add a second key" mode. Warn before overwriting.
+
+Mirror the detected key capabilities into homed's flags (`--fido2-with-client-pin=`, `--fido2-with-user-presence=`, `--fido2-with-user-verification=`) so both enrollments demand the same factors; homed's own defaults are `PIN|UP` only, which silently diverges from a pam_u2f credential enrolled with `-V` on a biometric key.
+
+**Do not tell users to run `ykman` — it is not in the image.** Set a PIN with `fido2-token -S <device>` (libfido2, which is present).
+
 ## enroll-luks task: fresh bootc installs have no /etc/crypttab
 
 A freshly installed bootc system with encrypted root has **no `/etc/crypttab`**. The encrypted block device is configured via the bootloader/initrd, not crypttab. The task must fall back to a `blkid` scan when crypttab is absent or yields nothing:
