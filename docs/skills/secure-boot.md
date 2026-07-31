@@ -200,3 +200,49 @@ podman build --squash-all -t localhost/krytis:sealed \
 `mise run push --sealed` instead compares `podman inspect --format '{{.Created}}'` between `localhost/krytis:latest` and `localhost/krytis:sealed`, auto-running `seal-uki` when `:sealed` is missing or older. This works because podman build is content-addressed: rebuilding `:latest` from byte-identical inputs (same `krytis-input`, same `Containerfile`) reuses the existing image ID and its **original** `Created` timestamp — confirmed by rebuilding twice in a row and seeing an unchanged `Id`/`Created`. Only a genuine content change (new `krytis-input` build, edited `Containerfile`) produces a new image ID with a fresh, current `Created`. That's what makes the comparison a real staleness signal rather than "was the build command merely re-invoked" — don't swap it for wall-clock/`mise run` invocation tracking, which would false-positive on every no-op rebuild.
 
 Scope note: this only tracks drift in `:latest`'s content (kernel, base image, etc.), not signing-key freshness — rotating `files/boot-keys/` without any other content change won't trigger an automatic re-seal.
+
+## A negative test must assert the *rejection*, not just the absence of a boot
+
+`boot-test --expect-fail` originally concluded "secure boot rejected it" from
+"SSH never answered". That passes for the wrong reason on any image that fails to
+boot for an unrelated cause — a missing UKI, a bad initramfs, a broken kargs
+change — so it could never distinguish enforcement from breakage.
+
+Both the loader and the firmware announce a signature rejection on the serial
+console, so assert on that instead. Verified by booting a correctly-signed disk
+with **one byte flipped inside the UKI**:
+
+```
+../src/boot/boot.c:2820@call_image_start: Error loading EFI binary \EFI\Linux\bootc\...efi: Access denied
+BdsDxe: failed to start Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0): Access Denied
+BdsDxe: No bootable option or device was found.
+```
+
+The first line is systemd-boot refusing to chain a UKI whose Authenticode
+signature no longer verifies; the second is EDK2's BDS. An **unsigned bootloader**
+is refused by BDS the same way, one stage earlier. `boot-test` greps for
+`[Aa]ccess [Dd]enied|Security Violation` and reports **INCONCLUSIVE** (exit 1)
+when SSH is down but no such line appears — a silent disk proves nothing.
+
+Contrast the two ways to produce a negative case:
+
+| Method | Isolates the signature? |
+|---|---|
+| Flip one byte inside the signed UKI on the ESP | **Yes** — the signature is the only variable, so a rejection can only be a signature rejection |
+| Install a different, unsigned image (`krytis:latest`) | No — an unsigned bootloader *should* be refused, but any other boot failure in that image looks identical |
+
+The byte flip needs no root: the ESP is FAT, so `mtools` can read and rewrite the
+UKI in place inside the raw disk image at the partition offset.
+
+```bash
+export MTOOLS_SKIP_CHECK=1
+OFF=2097152   # ESP starts at sector 4096
+UKI="::/EFI/Linux/bootc/bootc_composefs-<digest>.efi"
+mcopy -n -i "disk.raw@@${OFF}" "$UKI" /tmp/uki.efi
+python3 -c "import pathlib;p=pathlib.Path('/tmp/uki.efi');d=bytearray(p.read_bytes());d[len(d)//2]^=0xFF;p.write_bytes(d)"
+mcopy -o -i "disk.raw@@${OFF}" /tmp/uki.efi "$UKI"
+```
+
+Combine with `--reuse-disk` to run the whole negative test unprivileged. Budget
+~8 minutes: the firmware retries every boot entry, including a PXE attempt, before
+giving up.
