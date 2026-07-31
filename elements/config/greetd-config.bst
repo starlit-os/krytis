@@ -49,20 +49,43 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
     #%PAM-1.0
     # Self-contained: greetd has session-specific auth requirements that differ
-    # from system-auth (pam_nologin, gnome-keyring). pam_u2f is inserted before
-    # pam_unix so a enrolled FIDO2 key is tried first; absent file falls through.
+    # from system-auth (pam_nologin, gnome-keyring).
+    #
+    # pam_systemd_home must come first and short-circuit on success. For a
+    # systemd-homed user, homed owns the entire credential flow — FIDO2
+    # included (rp_id io.systemd.home) — because the token's HMAC secret IS
+    # the key material that decrypts the home area. pam_u2f cannot serve
+    # homed login: its authfile lives inside the still-unmounted home, and
+    # even a readable authfile would let `sufficient` end the stack before
+    # homed ever activated the home. Without this line homed users cannot log
+    # in through the greeter at all — they have no /etc/shadow entry, so
+    # pam_unix denies. See docs/skills/pam.md.
+    #
+    # The jump spec is upstream's (pam_systemd_home(8) EXAMPLE), not
+    # `sufficient`: the module returns PAM_USER_UNKNOWN — not PAM_IGNORE —
+    # for classic /etc/passwd users, so `default=ignore` is what lets them
+    # fall through, while real homed auth failures stay fatal.
+    #
+    # pam_u2f then covers classic users, before pam_unix; absent authfile
+    # falls through.
 
     auth       required     pam_nologin.so
+    -auth      [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth       sufficient   pam_u2f.so cue pinverification
     auth       required     pam_unix.so
     auth       optional     pam_gnome_keyring.so
 
     account    required     pam_nologin.so
+    -account   sufficient   pam_systemd_home.so
     account    required     pam_unix.so
 
+    -password  sufficient   pam_systemd_home.so
     password   required     pam_unix.so sha512 shadow
     -password  optional     pam_gnome_keyring.so use_authtok
 
+    # pam_systemd_home takes a reference on the home area so homed does not
+    # deactivate it for the lifetime of the session.
+    -session   optional     pam_systemd_home.so
     session    required     pam_loginuid.so
     session    optional     pam_keyinit.so force revoke
     session    required     pam_limits.so

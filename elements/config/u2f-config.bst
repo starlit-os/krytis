@@ -7,10 +7,25 @@ kind: manual
 #   sshd  → password-auth
 #   greetd login → /etc/pam.d/greetd (managed by config/greetd-config.bst)
 #
-# Per-user mode (no authfile=): pam_u2f reads ~/.config/Yubico/u2f_keys.
-# If that file is absent, pam_u2f returns PAM_USER_UNKNOWN and falls through
-# to pam_unix — safe on fresh installs with no key enrolled.
+# Per-user mode (no authfile=): pam_u2f resolves the authfile from the passwd
+# entry's pw_dir as <home>/.config/Yubico/u2f_keys and open()s it during the
+# auth phase. Absent → PAM_AUTHINFO_UNAVAIL, so pam_u2f falls through to
+# pam_unix — safe on fresh installs with no key enrolled.
 # Users enroll keys without root via: mise fido2:enroll
+#
+# systemd-homed users: the home area is still an unmounted encrypted image
+# during auth, so the authfile above is unreachable and pam_u2f can never
+# serve homed *login*. That is by design — homed derives the home's volume
+# key from the token's own HMAC secret (rp_id io.systemd.home), so FIDO2 for
+# homed login belongs to pam_systemd_home, which must therefore run first and
+# end the stack on success. pam_u2f still covers homed users' sudo/polkit,
+# where the home is mounted by then. See docs/skills/pam.md.
+#
+# The pam_systemd_home jump spec is upstream's (pam_systemd_home(8) EXAMPLE),
+# not `sufficient`: the module returns PAM_USER_UNKNOWN — not PAM_IGNORE —
+# for classic /etc/passwd users, so `default=ignore` is what lets them fall
+# through, while genuine homed auth failures stay fatal instead of being
+# silently retried against pam_unix.
 #
 # system-auth and password-auth content pinned to fdsdk linux-pam 1.7.2.
 # Reverify base content on junction bumps.
@@ -41,7 +56,7 @@ config:
     install -Dm644 /dev/stdin \
       "%{install-root}%{sysconfdir}/pam.d/system-auth" <<'EOF'
     auth        required      pam_env.so
-    -auth       sufficient    pam_systemd_home.so
+    -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_u2f.so cue pinverification
     auth        sufficient    pam_unix.so try_first_pass nullok_secure
     auth        required      pam_deny.so
@@ -66,7 +81,7 @@ config:
     install -Dm644 /dev/stdin \
       "%{install-root}%{sysconfdir}/pam.d/password-auth" <<'EOF'
     auth        required      pam_env.so
-    -auth       sufficient    pam_systemd_home.so
+    -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_u2f.so cue pinverification
     auth        sufficient    pam_unix.so try_first_pass nullok_secure
     auth        required      pam_deny.so

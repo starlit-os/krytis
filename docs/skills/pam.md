@@ -1,5 +1,33 @@
 # PAM & Keyring Skills
 
+## systemd-homed users: FIDO2 login belongs to homed, not pam_u2f
+
+Two independent things broke FIDO2 login for `systemd-homed`-managed users. Both were fixed in #409; keep them straight, because fixing only the first looks plausible and achieves nothing.
+
+**1. `pam_u2f` structurally cannot serve homed *login*.**
+
+In per-user mode (no `authfile=`) pam_u2f builds the path from the passwd entry — `resolve_authfile_path()` in `pam-u2f.c` does `dir = user->pw_dir` + `.config/Yubico/u2f_keys` — and `open()`s it during `pam_sm_authenticate` (`util.c:get_devices_from_authfile`). A homed user's home is an **unmounted encrypted image** at that moment: systemd's `home_activate()` (`src/home/homework.c`) only mounts it *after* `user_record_authenticate()` succeeds. So the `open()` returns `ENOENT` and pam_u2f returns **`PAM_AUTHINFO_UNAVAIL`** (not `PAM_USER_UNKNOWN` — that code is only used when the file parsed fine but held no line for this user). Upstream states the general case outright in pam-u2f's `README.adoc`: an authfile in an encrypted home makes login impossible.
+
+Moving the authfile to a root-owned absolute path *would* make the `open()` succeed (`authfile=/etc/security/u2f_mappings/%u` + `expand`, no `openasuser` → read as root; note `expand` substitutes only `%u` and `%%`, there is no `%h`). **Do not do it.** For homed, the token's `hmac-secret` output *is* the key material that decrypts the home — `fido2_use_token()` in `src/home/homework-fido2.c` derives the LUKS/fscrypt passphrase from it. A `sufficient` pam_u2f success would end the auth stack before `pam_systemd_home` ever ran, landing the user in a session with no home mounted. FIDO2 for homed login is homed's job, via `homectl update <user> --fido2-device=auto` (rp_id `io.systemd.home`).
+
+pam_u2f is still right for a homed user's **sudo/polkit**: by then the home is mounted, so the per-user authfile is readable. Hence `mise fido2:enroll` enrolls the key twice for homed users — once into the home record, once into `~/.config/Yubico/u2f_keys`.
+
+**2. `/etc/pam.d/greetd` had no `pam_systemd_home.so` at all.**
+
+Because greetd's stack is self-contained (it does not `include system-auth`), homed users could not log in through the greeter *at all* — with or without a key. They have no `/etc/shadow` entry, so `pam_unix` denies. tty `login` worked the whole time because it `include`s `system-auth`, which did carry the module. **Any new self-contained PAM service in this repo must carry `pam_systemd_home.so` in all four phases**, or it silently excludes every homed user.
+
+**Use upstream's jump spec, not `sufficient`.** `pam_systemd_home` returns `PAM_USER_UNKNOWN` for classic `/etc/passwd` users — *not* `PAM_IGNORE` (`acquire_user_record` → `goto user_unknown`, also for `BUS_ERROR_NO_SUCH_HOME` and for homed not running). With plain `sufficient`, genuine homed auth failures also fall through and get silently retried against `pam_unix`. `pam_systemd_home(8)`'s EXAMPLE is what both `system-auth`/`password-auth` and `greetd` now use:
+
+```
+-auth      [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
+```
+
+`account`/`password` keep `-… sufficient`, and `session` keeps `-session optional` (that one takes a reference on the home so homed does not deactivate it mid-session — omit it and the home disappears under the running session).
+
+**Verifying a PAM stack edit without root or a reboot.** Extract the heredoc from the `.bst` element, drop it into `/etc/pam.d/` inside a `podman run` of the built image, and drive real `pam_authenticate()`/`pam_acct_mgmt()` calls with a `ctypes` conversation function. Always include a **negative control** — corrupt one token in the jump spec (`authtok_err=bogus`) and confirm the run flips to `PAM_SERVICE_ERR (3)`; without it a "Success" proves nothing, since libpam happily ignores plenty of mistakes. Two ctypes gotchas: set `libc.calloc`/`libc.strdup` `restype` to `c_void_p` (the default `c_int` truncates the pointer and segfaults), and remember `strings` defaults to a 4-char minimum, so libpam's short action tokens `ok`/`bad`/`die` only show up under `strings -n 2`.
+
+**Known gap, not a regression:** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore leaves `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129.
+
 ## pam_oo7: null PAM_AUTHTOK does not unlock
 
 `pam_oo7.so` called from `pam_sm_authenticate` with a null `PAM_AUTHTOK` (i.e. no password collected) does **not** unlock the Login collection. Null ≠ empty string — pam_oo7 treats null as "no credentials provided" and skips unlock entirely.

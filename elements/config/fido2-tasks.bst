@@ -4,6 +4,11 @@ kind: manual
 # are available system-wide as `mise fido2:*` on the deployed image.
 # /etc/mise/config.toml must exist for mise to discover system tasks at all;
 # it is installed alongside the scripts.
+#
+# Runtime tools the scripts assume, supplied by stacks/base-system.bst rather
+# than declared here (same as cryptsetup/systemd-cryptenroll for enroll-luks):
+# fido2-token and pamu2fcfg (libfido2, core/pam-u2f.bst), jq, and homectl
+# (systemd) for the systemd-homed enrollment path.
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst

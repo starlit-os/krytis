@@ -4,7 +4,7 @@
 
 [tasks."fido2:enroll"]
 run = "/etc/mise/tasks/fido2/enroll"
-description = "Enroll a FIDO2 security key for sudo / login"
+description = "Enroll a FIDO2 security key for login and sudo (homed-aware)"
 
 [tasks."fido2:enroll-luks"]
 run = "/etc/mise/tasks/fido2/enroll-luks"
@@ -12,7 +12,7 @@ description = "Enroll a FIDO2 key as a LUKS2 unlock factor via systemd-cryptenro
 
 [tasks."fido2:status"]
 run = "/etc/mise/tasks/fido2/status"
-description = "Show enrolled FIDO2 keys for sudo/login and LUKS slots"
+description = "Show enrolled FIDO2 keys for login, sudo and LUKS slots"
 
 [tasks."fido2:test-sudo"]
 run = "/etc/mise/tasks/fido2/test-sudo"
