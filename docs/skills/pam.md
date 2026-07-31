@@ -26,6 +26,24 @@ Because greetd's stack is self-contained (it does not `include system-auth`), ho
 
 **Verifying a PAM stack edit without root or a reboot.** Extract the heredoc from the `.bst` element, drop it into `/etc/pam.d/` inside a `podman run` of the built image, and drive real `pam_authenticate()`/`pam_acct_mgmt()` calls with a `ctypes` conversation function. Always include a **negative control** — corrupt one token in the jump spec (`authtok_err=bogus`) and confirm the run flips to `PAM_SERVICE_ERR (3)`; without it a "Success" proves nothing, since libpam happily ignores plenty of mistakes. Two ctypes gotchas: set `libc.calloc`/`libc.strdup` `restype` to `c_void_p` (the default `c_int` truncates the pointer and segfaults), and remember `strings` defaults to a 4-char minimum, so libpam's short action tokens `ok`/`bad`/`die` only show up under `strings -n 2`.
 
+**Test against a LIVE homed, not just an absent one.** A plain `podman run` has no homed at all, so `pam_systemd_home` takes the *no-bus* path — `acquire_user_record` never reaches homed and returns `PAM_USER_UNKNOWN` early. That is a different code path from the one a real krytis box exercises, where homed **is** running (`vm/config/systemd-homed-firstboot.bst`) and returns `BUS_ERROR_NO_SUCH_HOME` for a non-homed user. Both end at `PAM_USER_UNKNOWN`, so `default=ignore` covers both — but proving the second one needs homed actually on the bus. You do not need PID-1 systemd, a VM, LUKS, a loop device, or a security key for that; a rootless container is enough:
+
+```bash
+mkdir -p /run/dbus /var/lib/systemd/home
+dbus-daemon --system --fork --nopidfile
+/usr/lib/systemd/systemd-userdbd &
+/usr/lib/systemd/systemd-homed &
+busctl --system status org.freedesktop.home1        # expect PID/Comm=systemd-homed
+busctl --system call org.freedesktop.home1 /org/freedesktop/home1 \
+  org.freedesktop.home1.Manager ListHomes           # expect: a(susussso) 0
+```
+
+`--cap-add=all` is needed; `Failed to allocate memory pressure watch` and the `Unknown group "netdev"` dbus warning are both benign in a container.
+
+**`homectl` has a PID-1 guard that `busctl` does not.** Inside that container `homectl list` fails with `System has not been booted with systemd as init system (PID 1). Can't operate.` even though homed is live on the bus — which is why the liveness check above uses `busctl`. Krytis always boots systemd so `homectl` is fine in production, and `mise fido2:enroll`'s `is_homed_user()` degrades in the safe direction if it ever isn't (detection fails → classic path → you get the pam_u2f credential and notice the missing homed one). Do not "fix" this by switching detection to `busctl` parsing; the guard is not reachable on a real deployment.
+
+**Also drive `sudo` and `login`, not just `system-auth` directly** — they `include` it, and an ordering mistake can show up only through the wrapper. One caveat: a `sudo` probe run as root returns `Success` for *any* password because `pam_rootok.so` is first, so that row proves nothing; test `sudo` as an unprivileged user, or rely on the `system-auth` row it includes.
+
 **Known gap, not a regression:** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore leaves `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129.
 
 ## pam_oo7: null PAM_AUTHTOK does not unlock
