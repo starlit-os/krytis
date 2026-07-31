@@ -57,9 +57,17 @@ config:
     # the key material that decrypts the home area. pam_u2f cannot serve
     # homed login: its authfile lives inside the still-unmounted home, and
     # even a readable authfile would let `sufficient` end the stack before
-    # homed ever activated the home. Without this line homed users cannot log
-    # in through the greeter at all — they have no /etc/shadow entry, so
-    # pam_unix denies. See docs/skills/pam.md.
+    # homed ever activated the home.
+    #
+    # Without this line the greeter does NOT reject a homed user — it does
+    # something worse. /etc/nsswitch.conf has `shadow: files systemd`, so
+    # nss_systemd serves the record's privileged hashedPassword to root and
+    # pam_unix authenticates the user just fine. The login succeeds, homed is
+    # never asked to activate anything, and the session starts with the home
+    # unmounted: NSS reports the home as `/` and substitutes
+    # /usr/bin/systemd-home-fallback-shell for the real shell while the area is
+    # inactive. Silent breakage, not a denial. Observed on real hardware.
+    # See docs/skills/pam.md.
     #
     # The jump spec is upstream's (pam_systemd_home(8) EXAMPLE), not
     # `sufficient`: the module returns PAM_USER_UNKNOWN — not PAM_IGNORE —

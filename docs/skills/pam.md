@@ -14,7 +14,23 @@ pam_u2f is still right for a homed user's **sudo/polkit**: by then the home is m
 
 **2. `/etc/pam.d/greetd` had no `pam_systemd_home.so` at all.**
 
-Because greetd's stack is self-contained (it does not `include system-auth`), homed users could not log in through the greeter *at all* — with or without a key. They have no `/etc/shadow` entry, so `pam_unix` denies. tty `login` worked the whole time because it `include`s `system-auth`, which did carry the module. **Any new self-contained PAM service in this repo must carry `pam_systemd_home.so` in all four phases**, or it silently excludes every homed user.
+Because greetd's stack is self-contained (it does not `include system-auth`), homed users got no `pam_systemd_home` there at all. tty `login` worked the whole time because it `include`s `system-auth`, which did carry the module. **Any new self-contained PAM service in this repo must carry `pam_systemd_home.so` in all four phases.**
+
+**The failure mode is silent, not a denial — this is the part that is easy to get wrong.** The intuition "a homed user has no `/etc/shadow` entry, so `pam_unix` denies" is false here: `/etc/nsswitch.conf` has `shadow: files systemd`, so nss_systemd serves the record's privileged `hashedPassword` to root and `pam_unix` authenticates the user perfectly well. The greeter login *succeeds*, homed is never asked to activate anything, and the session comes up with the home unmounted. Confirmed on real hardware — with the home inactive, NSS rewrites the record:
+
+```
+$ getent passwd fido2test
+fido2test:x:60097:60097:fido2test:/:/usr/bin/systemd-home-fallback-shell
+$ userdbctl user fido2test | grep Shell
+      Shell: /usr/bin/systemd-home-fallback-shell (fallback)
+$ homectl list          # the record's real shell, for contrast
+NAME       ... STATE    ... SHELL
+fido2test  ... inactive ... /bin/bash
+```
+
+Home reported as `/`, shell swapped for the fallback. So the symptom to look for is **"logs in but `$HOME` is wrong / nothing persists"**, not "cannot log in" — and a smoke test that only checks *whether* login succeeds will pass on a completely broken configuration. Always assert the home is actually mounted (`mount | grep <user>`, or `getent passwd <user>` showing the real home and shell).
+
+This is also the concrete instance of the hazard that rules out a central pam_u2f authfile for homed login (see above): a `sufficient` module succeeding before `pam_systemd_home` produces exactly this state.
 
 **Use upstream's jump spec, not `sufficient`.** `pam_systemd_home` returns `PAM_USER_UNKNOWN` for classic `/etc/passwd` users — *not* `PAM_IGNORE` (`acquire_user_record` → `goto user_unknown`, also for `BUS_ERROR_NO_SUCH_HOME` and for homed not running). With plain `sufficient`, genuine homed auth failures also fall through and get silently retried against `pam_unix`. `pam_systemd_home(8)`'s EXAMPLE is what both `system-auth`/`password-auth` and `greetd` now use:
 
@@ -166,9 +182,25 @@ binary under the name 'systemd-home-fallback-shell'."* `pam_systemd_home` sets
 `XDG_SESSION_INCOMPLETE=1` and, via `fallback_shell_can_work()`, `ACQUIRE_REF_ANYWAY`
 when there is no `PAM_XDISPLAY` and `PAM_TTY` has no colon — i.e. exactly a TTY/SSH
 login. The fallback shell then authenticates interactively, activates the home, and
-execs the real shell. The binary is already in the image at
-`/usr/bin/systemd-home-fallback-shell`; nothing in krytis wires it up yet, which is the
-actual gap — not the SSH auth policy. Verified against systemd v258 source; see
+execs the real shell.
+
+**It needs no wiring — homed substitutes it automatically.** I first wrote that "nothing
+in krytis wires it up, which is the actual gap"; that was wrong. While a home area is
+inactive, nss_systemd rewrites the record it serves, swapping the user's real shell for
+the fallback and reporting the home as `/`. Observed on real hardware:
+
+```
+$ getent passwd fido2test          # inactive home, via NSS
+fido2test:x:60097:60097:fido2test:/:/usr/bin/systemd-home-fallback-shell
+$ userdbctl user fido2test | grep Shell
+      Shell: /usr/bin/systemd-home-fallback-shell (fallback)
+$ homectl list                     # the record's real shell, for contrast
+fido2test  ... inactive ... /bin/bash
+```
+
+So the open question for #422 is not "how do we install it" but "does it actually work
+over pubkey-only SSH end to end, including the FIDO2 path" — which is a test, not an
+implementation. Verified against systemd v258 source plus the live observation above; see
 `## systemd-homed users` above and #422.
 
 **No PAM-driven 2FA over SSH.** `pam_u2f` runs in the keyboard-interactive path,
