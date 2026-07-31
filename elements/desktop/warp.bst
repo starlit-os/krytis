@@ -13,7 +13,7 @@ depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
 variables:
-  version: "0.2026.07.22.09.01.stable.01"
+  version: "0.2026.07.29.09.05.stable.02"
   strip-binaries: ''
 
 config:
@@ -48,8 +48,8 @@ sources:
   filename: warp.deb
   (?):
   - arch == "x86_64":
-      url: warp_releases:stable/v0.2026.07.22.09.01.stable_01/warp-terminal_0.2026.07.22.09.01.stable.01_amd64.deb
-      ref: 93a8eab5dc6ac1d7264318525286c96762f2beeadc2cc1639462f500b0fcfa08
+      url: warp_releases:stable/v0.2026.07.29.09.05.stable_02/warp-terminal_0.2026.07.29.09.05.stable.02_amd64.deb
+      ref: cf9b61b973b81db5c0435916f121c464a9d37a4e5612696fb5ecf7ff7e97c24f
   - arch == "aarch64":
-      url: warp_releases:stable/v0.2026.07.22.09.01.stable_01/warp-terminal_0.2026.07.22.09.01.stable.01_arm64.deb
-      ref: a1d9545a4ef07f9a9dcb5cc9bdc9030578458204e4f403d601f700ae457ff7c0
+      url: warp_releases:stable/v0.2026.07.29.09.05.stable_02/warp-terminal_0.2026.07.29.09.05.stable.02_arm64.deb
+      ref: fa36bad9283edaea37a7fd4b36912e44540ee91141f8e89ffec4f0fcf6a23c93
