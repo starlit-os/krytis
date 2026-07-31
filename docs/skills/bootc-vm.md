@@ -20,6 +20,94 @@ runs when `composefs=<hash>` is in the kernel command line (set by `bootc instal
 If this service is skipped or absent, `/sysroot` stays as raw btrfs (no `/usr/`),
 and `initrd-switch-root.service` fails with "no init found".
 
+## `/etc` and `/var` need the `rw` karg
+
+*Fixed in #396. Symptom set is broad — recognise it fast.*
+
+krytis passes no `root=` karg, so `systemd-gpt-auto-generator` mounts the root
+partition at `/sysroot`. It only passes `MOUNT_RW` when a bare **`rw`** is on the
+kernel command line — in `gpt-auto-generator.c`, `arg_root_rw` starts at `-1` and
+only `rw`/`ro` ever set it:
+
+```c
+(arg_root_rw > 0 ? MOUNT_RW : 0)
+```
+
+bootc's composefs `setup-root` then derives `/etc` and `/var` as `open_tree()`
+bind clones of that mount (`crates/initramfs/src/lib.rs`, `mount_subdir` →
+`bind_mount`), so **both inherit the read-only superblock**. Only the `/sysroot`
+clone and the composefs `/` are read-only *deliberately*
+(`set_mount_readonly()`); `/etc` and `/var` being read-only is a bug.
+
+Nothing repairs it on the composefs path:
+
+- `ostree-remount.service` — which does exactly this job under classic ostree —
+  is `ConditionKernelCommandLine=ostree`, and the composefs backend puts
+  `composefs=<digest>` on the cmdline instead. Journal: *"ostree-remount.service
+  skipped, unmet condition check ConditionKernelCommandLine=ostree"*.
+- `files/bootc-config/prepare-root.conf`'s `[sysroot] readonly` is read by
+  `ostree-prepare-root`, which is skipped for the same reason. It is **inert**.
+- `systemd-remount-fs` only ever targets `/`, which is the composefs overlay, so
+  it fails with `mount: /: fsconfig() failed: overlay: No changes allowed in
+  reconfigure.`
+
+**Fix:** `kargs = ["rw"]` in `/usr/lib/bootc/kargs.d/` — see
+`files/bootc-config/10-root-rw.toml`. Freedesktop SDK's own VM boot elements use
+`rw quiet splash` for the same reason. As a bonus it stops gpt-auto emitting the
+`50-remount-rw.conf` drop-in, which removes the `systemd-remount-fs` failure too.
+
+**Recognising the symptom.** A read-only `/etc`+`/var` produces ~19 failed units
+that look like unrelated bugs. Any of these means "check the mount flags first":
+
+| Unit | Message |
+|---|---|
+| `sshd.service` | `ssh-keygen: Could not save your private key in /etc/ssh/ssh_host_*: Read-only file system` → `sshd: no hostkeys available -- exiting` → 5 restarts → `start-limit-hit` |
+| `systemd-logind`, `systemd-homed`, `upower`, `accounts-daemon`, `power-profiles-daemon` | `Failed to set up special execution directory in /var/lib: Read-only file system` |
+| `greetd` | `pam_systemd(greetd:session): Failed to create session: Failed to activate service 'org.freedesktop.login1': timed out` — a *downstream* effect of logind failing |
+| `greeter-config-seed` | `install: Read-only file system` on `/var/lib/noctalia-greeter/greeter.toml` |
+| `systemd-networkd` | `The persistent storage is on read-only filesystem` |
+
+Confirm in one shot from inside the guest:
+
+```bash
+findmnt -A -o TARGET,SOURCE,FSTYPE,OPTIONS   # want rw on /etc and /var
+```
+
+Expected topology once fixed — note `/` and `/sysroot` stay `ro` on purpose:
+
+```
+/         composefs:<digest>                     overlay  ro
+/sysroot  /dev/vda3                              btrfs    ro
+/etc      /dev/vda3[/state/deploy/<hash>/etc]    btrfs    rw
+/var      /dev/vda3[/state/os/default/var]       btrfs    rw
+```
+
+## `systemd-firstboot` blocks the boot once `/etc` is writable
+
+`systemd-firstboot.service` is `ConditionPathIsReadWrite=/etc` +
+`ConditionFirstBoot=yes`, ordered `Before=sysinit.target`, with
+`StandardInput=tty` and `--prompt-root-password`. The image ships
+`root:!unprovisioned` in `/etc/shadow`, which firstboot reads as "no password
+set", so it prompts *"Please enter the new root password (empty to skip)"* on the
+console and waits forever. `sysinit.target` never completes, so nothing after it
+starts — no greetd, no sshd, no logind.
+
+This was latent for as long as `/etc` was read-only (the condition check failed
+and the unit was silently skipped). Fixing the `rw` karg is what exposed it.
+
+**Fix:** `kargs = ["systemd.firstboot=no"]` — see
+`files/bootc-config/40-no-firstboot.toml`. This makes PID 1 treat the boot as a
+non-first boot so `ConditionFirstBoot=yes` fails and the unit is skipped cleanly.
+
+It **cannot** be an install-time `bootc install --karg`: UKI images reject
+externally specified kernel arguments. It has to be baked via `kargs.d`.
+
+Diagnosing a stall like this: a unit stuck in `activating` before
+`sysinit.target` starves the whole transaction. `systemctl list-jobs` shows
+everything `waiting` and `systemctl list-units --state=activating` names the
+culprit. If the culprit has `StandardInput=tty`, screendump the VGA console (see
+§ Reading a stalled guest without root) to see what it is asking.
+
 ## Known fix: dracut bootc module unit placement
 
 The bootc dracut module places `bootc-root-setup.service`'s wants symlink at
@@ -78,6 +166,120 @@ This is the live `/etc` for that deployment — changes here survive reboot.
 Useful for setting a root password or unlocking accounts without rebuilding.
 
 ## Boot debug techniques
+
+### Reading a stalled guest without root
+
+**Use this first.** It works under secure boot, needs no `sudo`, no
+`losetup`/`mount`, no disk mutation, and no `console=` karg — so it survives the
+two things that make secure-boot UKI debugging painful: an unwritable disk and a
+signed, uneditable cmdline.
+
+`systemd-debug-generator` consumes the credentials `systemd.extra-unit.<name>`
+and `systemd.unit-dropin.<unit>`, and QEMU can hand credentials to the guest over
+SMBIOS type 11. Credentials are **not** part of the signed cmdline, so secure
+boot does not block them. So: inject a unit that dumps whatever you want to
+`/dev/ttyS0`, which QEMU writes to a host file.
+
+```bash
+printf '[Unit]\nWants=krytis-probe.service\n' > dropin.conf
+
+cat > probe.service <<'EOF'
+[Unit]
+Description=krytis guest probe
+DefaultDependencies=no
+[Service]
+Type=simple
+ExecStart=/bin/bash /run/credentials/krytis-probe.service/probe.sh
+ImportCredential=probe.sh
+StandardOutput=file:/dev/ttyS0
+StandardError=file:/dev/ttyS0
+EOF
+
+b64() { base64 -w0 < "$1"; }
+qemu-system-x86_64 ... \
+    -serial file:serial.log \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(b64 dropin.conf)" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.extra-unit.krytis-probe.service=$(b64 probe.service)" \
+    -smbios "type=11,value=io.systemd.credential.binary:probe.sh=$(b64 probe.sh)"
+```
+
+Use `io.systemd.credential.binary:` (base64) rather than `io.systemd.credential:`
+so multi-line unit files survive intact.
+
+Gotchas learned the hard way:
+
+- **A `Wants=` drop-in on `multi-user.target` is what pulls the unit in.** An
+  injected `systemd.extra-unit.*` with only `[Install] WantedBy=` is never
+  enabled, so it never runs.
+- **If the boot stalls before `sysinit.target`, give the probe unit
+  `DefaultDependencies=no` and *no* `After=`.** Anything ordered after
+  `sysinit.target`/`basic.target` (or a `Type=oneshot` that blocks them) will
+  never run — which looks identical to "the injection didn't work". Use
+  `Type=simple` plus a `sleep` inside the script when you want a late snapshot
+  without blocking the transaction.
+- `systemd.unit-dropin.multi-user.target` adding `Wants=sshd.service` is also the
+  cleanest way to enable a service in a deployed image for a single boot — no
+  need to mount the disk and hand-place a `multi-user.target.wants` symlink.
+
+Worth dumping: `systemctl list-jobs`, `systemctl list-units --state=activating`,
+`systemctl --failed`, `findmnt -A`, `journalctl -b -p err`, `ss -tlnp`.
+
+### Screendump the console instead of guessing
+
+A UKI's cmdline has no `console=ttyS0` (it is a desktop cmdline: `rw quiet splash
+systemd.firstboot=no rd.luks.options=... composefs=...`), and under secure boot
+you cannot edit it at the systemd-boot menu — the cmdline is baked into the signed
+PE. So the serial log goes silent right after `BdsDxe: starting Boot0004 "Linux
+Boot Manager"`. **That silence is expected, not a hang.**
+
+To see the real console, add `-vga std -display none` plus a monitor socket and
+ask QEMU for the framebuffer:
+
+```
+screendump /path/to/screen.ppm
+```
+
+then `magick screen.ppm screen.png`. This is how the `systemd-firstboot` root
+password prompt was found. Note `socat` is not installed on the dev box — drive
+the HMP monitor socket from a few lines of Python `AF_UNIX` instead.
+
+### `journalctl -D <dir> -b` is broken for offline journals
+
+`-b` filters by *this host's* current boot ID, which never matches anything in an
+external journal directory, so you get "No journal boot entry found for the
+specified boot (+0)" even when the journal is full of data. Drop `-b`, or run
+`--list-boots` first and pass an explicit ID:
+
+```bash
+JDIR=/mnt/guestroot/state/os/default/var/log/journal   # NOT state/deploy/<hash>/var
+journalctl -D "$JDIR" --list-boots --no-pager
+journalctl -D "$JDIR" --no-pager
+```
+
+The live `/var` for a running deployment is `state/os/default/var/` (shared across
+deployments in the same stateroot). `state/deploy/<hash>/var/` is just an empty
+bind-mount target — nothing is ever written there.
+
+### `kex_exchange_identification: Connection reset` means nothing is listening
+
+QEMU SLIRP `hostfwd` completes the host-side TCP handshake *before* connecting to
+the guest, so when the guest port is closed the client gets an RST only after
+sending its banner:
+
+```
+kex_exchange_identification: read: Connection reset by peer
+```
+
+This is **not** an sshd bug and **not** an sshd config problem — it is the
+signature of "no listener in the guest". Do not go debugging sshd internals from
+it. Two cheap disambiguations, both root-free:
+
+- `info usernet` on the QEMU monitor lists the SLIRP connection table. If you see
+  the guest doing NTP/mDNS from `10.0.2.15`, the guest is booted and networked and
+  only that one port is closed.
+- Sanity-check sshd itself in the container image, which takes seconds:
+  `podman run -d -p 127.0.0.1:2401:22 --entrypoint /bin/sh <image> -c 'mkdir -p
+  /var/empty /run/sshd; ssh-keygen -A; exec /usr/bin/sshd -D -e'` then ssh to it.
 
 ### Get a shell before switch-root
 
