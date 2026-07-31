@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#MISE description="Reclaim disk from stale build scratch and dangling images (see #416)"
+#USAGE flag "--dry-run" help="Report what would be freed and delete nothing"
+#USAGE flag "--yes" help="Skip the safety pause and delete immediately"
+
+# Why this exists: BuildStream derives its CAS quota from the *filesystem*
+# (buildbox-casd --quota-low=80% --reserved=46.5G), so a nearly-full disk makes
+# builds fail to stage even when BST's own cache is small. The error names a
+# quota, which misleads:
+#
+#   Error capturing "." in ".../cas/staging/cas-tmpdir...":
+#     Out of space error in merklize() for path ".":
+#     OutOfSpaceException ... errMsg = "Insufficient storage quota"
+#
+# When that bit, ~/.cache/buildstream was 27G and /var was at 94% from debris
+# this task removes. See docs/skills/bst.md § Reclaiming disk when a build hits
+# "Insufficient storage quota".
+set -euo pipefail
+
+DRY_RUN="${usage_dry_run:-}"
+ASSUME_YES="${usage_yes:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true; shift ;;
+        --yes)     ASSUME_YES=true; shift ;;
+        *) break ;;
+    esac
+done
+
+# ── Safety: never run alongside a live build ──────────────────────────────────
+# /var/tmp/buildah* belongs to an *in-flight* podman build while it exists;
+# deleting it mid-build corrupts that build. bst is included because its
+# staging dirs and CAS are equally live. This guard is the whole reason the
+# task exists rather than a documented one-liner — the same class of mistake as
+# deleting a running boot-test's WORKDIR (docs/skills/bootc-vm.md).
+LIVE=$(pgrep -a -f 'buildah|bst |buildstream' 2>/dev/null | grep -v 'buildbox-casd' | grep -v 'clean-cache' || true)
+if [ -n "${LIVE}" ]; then
+    echo "ERROR: refusing to run — a build appears to be in flight:" >&2
+    echo "${LIVE}" | sed 's/^/    /' >&2
+    echo "  /var/tmp/buildah* belongs to running builds. Wait for it to finish." >&2
+    exit 1
+fi
+
+human() { numfmt --to=iec --suffix=B "${1:-0}" 2>/dev/null || echo "${1:-0}B"; }
+
+echo "==> Disk before:"
+df -h /var | tail -1 | sed 's/^/    /'
+
+# ── 1. Stale build scratch ────────────────────────────────────────────────────
+# Interrupted `podman build` runs leave per-build temp dirs behind; nothing
+# reaps them. Oldest seen in practice was three weeks old.
+SCRATCH=()
+for d in /var/tmp/buildah* /var/tmp/container_images_oci*; do
+    [ -e "$d" ] && SCRATCH+=("$d")
+done
+
+SCRATCH_BYTES=0
+if [ ${#SCRATCH[@]} -gt 0 ]; then
+    SCRATCH_BYTES=$(du -sb --total "${SCRATCH[@]}" 2>/dev/null | tail -1 | cut -f1)
+    echo "==> Stale build scratch in /var/tmp ($(human "${SCRATCH_BYTES}") across ${#SCRATCH[@]} dirs):"
+    for d in "${SCRATCH[@]}"; do
+        printf '    %-44s %s\n' "$d" "$(stat -c %y "$d" | cut -d. -f1)"
+    done
+else
+    echo "==> Stale build scratch in /var/tmp: none"
+fi
+
+# ── 2. Dangling images ───────────────────────────────────────────────────────
+# Untagged, unreachable layers — mostly superseded krytis:{latest,sealed,
+# sealed-base} generations, ~7G per build+seal-uki cycle. Tagged images are
+# never touched.
+DANGLING=$(podman images --filter dangling=true -q 2>/dev/null | wc -l)
+RECLAIMABLE=$(podman system df --format '{{.Reclaimable}}' 2>/dev/null | head -1 || true)
+echo "==> Dangling images: ${DANGLING} (podman reports ${RECLAIMABLE:-unknown} reclaimable across all images)"
+
+# ── Never touched ────────────────────────────────────────────────────────────
+# The systemd-buildbarn-storage-{cas,ac,fsac} and -asset-cache volumes (~70G)
+# are the Buildbarn cache that `mise bst --pull` and cache-warm.yml depend on.
+# Pruning them is a self-inflicted cache miss for the whole project, so this
+# task never prunes volumes and never prunes tagged images.
+echo "==> NOT touching: podman volumes (Buildbarn cache), tagged images, ~/.cache/buildstream"
+
+if [ "${DRY_RUN}" = "true" ]; then
+    echo "==> --dry-run: nothing deleted."
+    exit 0
+fi
+
+if [ "${ASSUME_YES}" != "true" ]; then
+    echo "==> Deleting in 5s — Ctrl-C to abort (or re-run with --dry-run)..."
+    sleep 5
+fi
+
+if [ ${#SCRATCH[@]} -gt 0 ]; then
+    echo "==> Removing stale build scratch..."
+    rm -rf "${SCRATCH[@]}"
+fi
+
+echo "==> Pruning dangling images..."
+podman image prune -f
+
+echo "==> Disk after:"
+df -h /var | tail -1 | sed 's/^/    /'
+
+# The root podman store is invisible to rootless `podman system df`, and
+# `bootc install` copies every image there via generate-disk. Nothing in this
+# task reclaims it; report it so the number is at least visible.
+if sudo -n true 2>/dev/null; then
+    echo "==> Root podman store (not pruned by this task):"
+    sudo podman system df 2>/dev/null | sed 's/^/    /' || true
+else
+    echo "==> Root podman store not measured (needs sudo). generate-disk copies images"
+    echo "    there for bootc install; check with: sudo podman system df"
+fi

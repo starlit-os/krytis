@@ -1897,3 +1897,39 @@ fix when there's genuinely nothing to strip (firmware `.fd` volumes aren't
 ELF binaries) — set `strip-binaries: ''` in `variables:` and
 `strip-commands: [':']` in `config:` to no-op it, same pattern already used
 for pre-built `.deb`/tarball apps (see § .deb extraction in BST sandbox).
+
+## Reclaiming disk when a build hits "Insufficient storage quota"
+
+```
+Error capturing "." in ".../cas/staging/cas-tmpdir...":
+  Out of space error in merklize() for path ".":
+  OutOfSpaceException ... errMsg = "Insufficient storage quota"
+```
+
+**This usually is not BST's cache.** BuildStream derives its CAS quota from the
+*filesystem* (`buildbox-casd --quota-low=80% --reserved=46.5G`), so a nearly-full disk
+makes it refuse to stage regardless of how small its own cache is. When this first bit,
+`~/.cache/buildstream` was **27 GB** while `/var` sat at 94% — pruning BST would have
+achieved nothing. Check `df -h /var` before `du ~/.cache/buildstream`.
+
+Run **`mise run clean-cache`** (`--dry-run` to look first). It reclaims the two things
+that actually accumulate:
+
+| Source | Typical | Why it accumulates |
+|---|---|---|
+| `/var/tmp/buildah*`, `/var/tmp/container_images_oci*` | tens of GB | Per-build scratch from interrupted `podman build` runs. Nothing reaps it; dirs three weeks old are normal. |
+| Dangling (untagged) images | ~7 GB per cycle | Every `mise run build` + `mise run seal-uki` supersedes the previous `krytis:latest`/`:sealed`/`:sealed-base`, orphaning the old layers. |
+
+**Never prune the podman volumes.** `systemd-buildbarn-storage-{cas,ac,fsac}` and
+`systemd-buildbarn-asset-cache` (~70 GB) are the Buildbarn cache `mise bst --pull` and
+`cache-warm.yml` depend on — pruning them is a self-inflicted cache miss for the whole
+project. `clean-cache` never touches volumes or tagged images.
+
+`clean-cache` refuses to run while any `buildah`/`bst` process is live, because
+`/var/tmp/buildah*` belongs to an *in-flight* build while it exists. Deleting it
+mid-build corrupts that build — the same class of mistake as removing a running
+`boot-test`'s WORKDIR (docs/skills/bootc-vm.md § Reading a stalled guest without root).
+
+One consumer it cannot reclaim: the **root** podman store. `bootc install` copies every
+image there via `generate-disk`, and it is invisible to rootless `podman system df`.
+Check it with `sudo podman system df`.
