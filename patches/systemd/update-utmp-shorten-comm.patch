@@ -1,0 +1,36 @@
+Backport of systemd b8968c492108506952ab2748c4a44ce32fc9477c ("update-utmp:
+shorten comm on boot/shutdown"), which landed after v260 and is not in the
+v260.2 tag gnome-build-meta pins.
+
+libaudit's _get_commname() (lib/audit_logging.c) rejects any comm argument
+whose length reaches the kernel's TASK_COMM_LEN of 16 bytes:
+
+    len = strnlen(comm, AUDIT_COMM_LEN);
+    if (len == AUDIT_COMM_LEN) { errno = EINVAL; return NULL; }
+
+"systemd-update-utmp" is 19 bytes, so audit_log_user_comm_message() fails
+locally with EINVAL and never reaches the audit netlink socket.
+systemd-update-utmp only tolerates EPERM, so the unit exits 1 and the whole
+boot is reported as degraded. Drop the "systemd-" prefix, as upstream did.
+
+diff --git a/src/update-utmp/update-utmp.c b/src/update-utmp/update-utmp.c
+--- a/src/update-utmp/update-utmp.c
++++ b/src/update-utmp/update-utmp.c
+@@ -60,7 +60,7 @@
+ 
+ #if HAVE_AUDIT
+         if (c->audit_fd >= 0)
+-                if (sym_audit_log_user_comm_message(c->audit_fd, AUDIT_SYSTEM_BOOT, "", "systemd-update-utmp", NULL, NULL, NULL, 1) < 0 &&
++                if (sym_audit_log_user_comm_message(c->audit_fd, AUDIT_SYSTEM_BOOT, "", "update-utmp", NULL, NULL, NULL, 1) < 0 &&
+                     errno != EPERM)
+                         q = log_error_errno(errno, "Failed to send audit message: %m");
+ #endif
+@@ -89,7 +89,7 @@
+         Context *c = ASSERT_PTR(userdata);
+ 
+         if (c->audit_fd >= 0)
+-                if (sym_audit_log_user_comm_message(c->audit_fd, AUDIT_SYSTEM_SHUTDOWN, "", "systemd-update-utmp", NULL, NULL, NULL, 1) < 0 &&
++                if (sym_audit_log_user_comm_message(c->audit_fd, AUDIT_SYSTEM_SHUTDOWN, "", "update-utmp", NULL, NULL, NULL, 1) < 0 &&
+                     errno != EPERM)
+                         q = log_error_errno(errno, "Failed to send audit message: %m");
+ #endif

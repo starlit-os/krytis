@@ -11,6 +11,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § BST Weak-Key Caching Bug |
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
+| Backport a patch onto a release pinned by a junction | [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
 | Change SSH config, sshd auth policy, or make SSH work for some account type | [`docs/skills/pam.md`](skills/pam.md) § `UsePAM yes` — **read the priority note first: SSH is opt-in and not a release blocker** |
