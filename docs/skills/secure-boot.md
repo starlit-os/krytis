@@ -191,7 +191,11 @@ podman build --squash-all -t localhost/krytis:sealed \
 
 ## Sealed images push under `:sealed` tags, never `:latest`
 
-`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces. A sealed/UKI image needs `bootc install --composefs-backend --boot=uki` on the target, which a plain bootc install doesn't do — silently reusing `:latest` for the sealed variant would mean anyone pulling `:latest` expecting the ordinary install path gets an image that can't be installed the same way. Keep the tag suffix whenever adding new push variants.
+`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces.
+
+A sealed/UKI image is installed differently from an unsigned one, but **not** via a flag the installer has to know about: bootc **auto-detects** the UKI in the image and switches to the composefs backend itself — *"Whenever the container image has a UKI, bootc automatically selects the composefs backend during installation"* — so the installer only ever supplies `--composefs-backend` and `--bootloader systemd`. There is **no `--boot=uki` flag**; earlier revisions of this section claimed one, copied from a Fedora doc reference that has since been debunked. Verified against the authoritative `bootc install to-filesystem` man page, whose complete flag set is `--source-imgref`, `--target-imgref`, `--bootloader {grub,grub-cc,systemd,none}`, `--composefs-backend`, `--allow-missing-verity`, `--uki-addon`, plus the disk/selinux/karg flags.
+
+The consequence for tagging is unchanged, and it is the point of this section: silently reusing `:latest` for the sealed variant would hand anyone pulling `:latest` an image whose boot chain only verifies against enrolled keys, when they expected the ordinary one. Keep the tag suffix whenever adding new push variants — and note the same discipline now extends to the ISO (`mise run build-iso --sealed` embeds `…/krytis:sealed` and writes `krytis-live-sealed.iso`, never overwriting the unsigned artifact's name).
 
 ## `--squash-all` erases parent/layer provenance — use `.Created` as a content-identity proxy instead
 
