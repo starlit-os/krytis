@@ -189,6 +189,7 @@ Worktrees are not automatically deleted — prune manually after merge or abando
 **Merge strategy is squash-only**, enforced at the GitHub repo settings level (`allow_squash_merge: true`, `allow_merge_commit: false`, `allow_rebase_merge: false` — not just convention, the other options are disabled). This matters for cleanup:
 - `git branch -d <branch>` after merge will refuse — a squashed merge commit has no ancestry link back to the local branch's commits, so git can't see it as "merged." Use `git branch -D` (or check `gh pr view <n> --json state` first) instead of treating the safety check as a signal something's wrong.
 - Same applies to worktree pruning — don't rely on `git log --merged` to decide whether a worktree's branch landed; check the PR state directly.
+- A **stacked** PR (based on another open PR's branch) always turns `CONFLICTING` the moment its parent merges — the child still carries the parent's pre-squash commit. It is not a content conflict; `git rebase --onto origin/main <parent-tip-sha>` fixes it. Recipe: `docs/skills/workflow.md` § Stacked PRs on a Squash-Only Repo.
 
 ---
 
