@@ -696,3 +696,51 @@ Do not start Phase E until V1–V8 pass. Skill entries are **not** in this phase
 - ~~**`podman save --format oci-archive` may not preserve the config digest.**~~ **Verified 2026-08-01, not a risk:** `podman save --format oci-archive -o /var/tmp/p.tar localhost/krytis:sealed` then `skopeo inspect --raw`/`--config` on the archive returned config digest `sha256:0b00a10aad1a…` and layer diff_id `sha256:e2ae30e0f0ac…` — both identical to `podman inspect localhost/krytis:sealed --format '{{.Id}} {{index .RootFS.Layers 0}}'`. Krytis images are already OCI-format, so no manifest conversion occurs and no digest is rewritten. `verify-iso-payload`'s image-ID equality gate is therefore sound as specified; the observed pair is the expected value to compare against until `:sealed` is rebuilt.
 - **`bootc upgrade` on a sealed system needs `ghcr.io/starlit-os/krytis:sealed` to exist in the registry.** It does today (pushed 3 days ago by `mise run push --sealed`), but a sealed ISO shipped while that tag is stale would upgrade a machine backwards. Out of scope here; worth an issue on the publish workflow if sealed ISOs are ever released.
 - **`mise lint` rebuilds `:latest`** and can therefore make `:sealed` look stale, silently triggering a full re-seal on the next `build-iso --sealed`. Known behaviour of the `.Created` rule (already documented); V8 runs lint last to avoid conflating it with a test failure.
+
+---
+
+# Results (2026-08-02)
+
+All acceptance criteria met. Executed on a Krytis host (bootc, immutable), QEMU+KVM,
+OVMF `edk2/ovmf` incl. the secboot variant. Sealed image under test:
+`localhost/krytis:sealed`, image ID `bce34086e8ce`, layer diff_id `5759b69c44ad`,
+UKI cmdline `…composefs=<sha512>`; registry digest of the installed payload
+`sha256:c6c761dc…`.
+
+| # | Check | Command | Result |
+|---|---|---|---|
+| V1 | Default path unaffected | `mise run build-iso --debug` | **PASS** — payload prep ran (`Squashing … to single layer`), no `PAYLOAD_SEALED=1`; recipe.json `:latest` on all four fields; ISO written to krytis's own `output/` |
+| V2 | Sealed ISO + embed gate | `mise run build-iso --sealed --debug` | **PASS** — `PAYLOAD_SEALED=1 — skipping payload prep`; `Payload verified: bce34086e8ce ['ghcr.io/starlit-os/krytis:sealed']` |
+| V3 | Boots under enforcement | `mise run iso-install-test --secure` | **PASS** — install from ISO, then `boot-test … --secure` reached `system state: running` |
+| V4 | Boots with SB disabled | probe boot, plain OVMF, enrollment trigger removed from the fixture ESP | **PASS** — `Secure Boot: disabled (setup)`, `is-system-running: running`, no failed units |
+| V5 | Unsigned install rejected | `mise run iso-install-test --secure --expect-fail` | **PASS** — `BdsDxe: failed to load Boot0002 …: Access Denied -- rejected probably by Secure Boot` (an explicit rejection, not a silent non-boot) |
+| V6 | `targetImgref` follows sealed | in-guest `bootc status` | **PASS** — `spec.image.image` and `booted.image.image` both `ghcr.io/starlit-os/krytis:sealed` |
+| V7 | Live ISO stays ordinary | build log + V3/V5 phase 1 | **PASS** — live env built `FROM ghcr.io/starlit-os/krytis:latest`, boots on plain OVMF; no signing material entered dakota-iso |
+| V8 | `mise lint` | `mise run lint` | **PASS** — `Checks passed: 13` |
+
+The premise was also confirmed empirically, in both directions: on the **default**
+ISO the embedded store holds `6d396b4c82e4` while `localhost/krytis:latest` is
+`7b77595ce1f2` — the payload really is mutated — and on the **sealed** ISO the
+store holds exactly `bce34086e8ce`. Before this work nothing had ever run a sealed
+image through that pipeline, so the mutation had never mattered.
+
+## Deviations from the plan
+
+1. **Task 4's gate reads the ISO with `unsquashfs -offset`, not an `xorriso -osirrox` extract.** The ISO 9660 walk (`scripts/iso-squashfs-offset.py`) finds `LiveOS/squashfs.img`'s extent and reads `images.json` in place — no root, no 5GB copy, and no dependency on xorriso, which is absent from a Krytis host.
+2. **Task 6's verdict moved from dakota-iso to `boot-test --reuse-disk`.** A sealed system cannot print `Reached target Graphical Interface` to serial: its cmdline is frozen inside the signed UKI, so `console=ttyS0` cannot be injected. dakota-iso's serial grep reported a five-minute timeout for a completely healthy install. `sealed-test-qemu` gained `INSTALL_ONLY=1`; the verdict now runs through boot-test, which asserts over SSH via SMBIOS credentials and needs no karg.
+3. **Three host-portability fixes were needed that the plan did not anticipate**, all in dakota-iso: `sshpass`/`socat` do not exist on an immutable Krytis host (prefer-then-fallback helpers in `scripts/e2e-lib.sh`); krytis's live session is pubkey-only, so the debug password could never authenticate (a `05-live-debug.conf` drop-in, DEBUG-only); and a failed phase leaked its daemonized QEMU, holding the disk and port for the next run.
+4. **A pre-existing bug in `mise/tasks/build-iso` was found and fixed:** every option it accepted (`--output-dir`, `--workdir`, `--compression`, `--debug`) was silently discarded, because dakota-iso's recipe assigns those names from its own `just` variables and a recipe-level assignment shadows the environment. The ISO had always been written to `dakota-iso/output/` while the task printed a path that never held it.
+5. **`--no-enforce`/`--vars` were prototyped and reverted.** "Keys enrolled, enforcement off" is not a state OVMF can represent — it derives Secure Boot from PK presence, and `virt-fw-vars` has no disable switch. Shipping a flag whose name promised that would have been worse than not having it; V4 was demonstrated instead by removing the enrollment trigger from the test fixture's ESP.
+
+## Follow-up found, not fixed here
+
+`loader/keys/auto` self-enrollment (#309's mechanism) leaves the firmware
+rejecting krytis's own signed loader: on a setup-mode varstore systemd-boot
+enrolls PK/KEK/db and the next boot fails `Access Denied`, on both non-SMM and
+proper secboot+smm firmware, and `secure-boot-enroll manual` in the ESP's
+loader.conf does not prevent it. The same disk boots fine when
+`generate-ovmf-vars` enrolls the same certs externally, so the boot chain's
+signatures are not the variable — the `.auth` lists are. No existing test could
+have caught it: `boot-test --secure` pre-enrolls the varstore and bypasses
+`loader/keys/auto` entirely. Recorded in `docs/skills/secure-boot.md`
+§ `loader/keys/auto` self-enrollment leaves the firmware rejecting our own loader.
