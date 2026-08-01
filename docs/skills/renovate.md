@@ -8,7 +8,8 @@ Load when changing `.github/renovate.json5`, enabling a manager, or deciding whe
 |---|---|---|
 | `github-actions` | `.github/workflows/*.yml` | digest/pin/patch/minor |
 | `pep621` | `pyproject.toml` (+ `uv.lock`) | patch/minor, except the packages listed below |
-| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner` | patch/minor |
+| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | never — the lockfile needs a manual refresh |
+| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `pass-cli` pin | patch/minor; `pass-cli` never |
 
 Everything else is tracked by the `track-bst-sources.yml` CI matrix, not Renovate — see [`bst.md`](bst.md) § Element update path.
 
@@ -44,7 +45,7 @@ An explicit path makes the validator treat the file as *global* (self-hosted adm
     (any other package)            digest=AUTO  pin=AUTO  patch=AUTO  minor=AUTO  major=hold
 ```
 
-Subjects are derived from the config's own `matchPackageNames`/`matchDepTypes`, so a new rule gets covered automatically. `(any other package)` is the fall-through: it proves the blanket auto-merge rule still applies to everything a rule does *not* name.
+Subjects are derived from the config's own `matchPackageNames`, `matchDepNames` and `matchDepTypes`, so a new rule gets covered automatically. `(any other package)` is the fall-through: it proves the blanket auto-merge rule still applies to everything a rule does *not* name. A rule with no `matchManagers` shows up under every manager — that is the rule's real scope, not a display bug. What the table cannot show is `allowedVersions`: it filters candidate *versions*, so its effect is visible only in a `--dry-run`.
 
 ## `pep621`, not `uv`
 
@@ -55,9 +56,22 @@ Two extraction behaviours that need explicit rules:
 - **`requires-python` is extracted as a dependency** named `python`, `depType: "requires-python"`. `requires-python = ">=3.12"` is a *floor*; a Renovate bump to `>=3.14` drops interpreter support rather than picking anything up. Disabled via `matchDepTypes: ["requires-python"]`.
 - **Direct git references are extracted as PyPI packages.** `buildstream-sbom @ git+https://gitlab.com/…@<sha>` parses through Renovate's PEP 508 regex as `packageName: buildstream-sbom`, `currentValue: "@ git+https://…"`, `datasource: pypi`. Nothing sane can come of that lookup, and if the name ever appears on PyPI Renovate would offer to replace the git ref with a release. Disabled by name.
 
+## The `mise` manager
+
+Reads `mise.toml` `[tools]` only — `[env]` values need a custom manager (see below) — and picks each tool's datasource out of the [mise registry](https://mise.jdx.dev/registry.html), so any registry tool on a supported backend works without configuration. It also reads `mise.lock`, reporting each tool's `lockedVersion` alongside the pin.
+
+**Nothing from this manager auto-merges.** Renovate cannot refresh `mise.lock`: mise lockfile updates are classed as an unsafe execution that only a self-hosted admin can enable via `allowedUnsafeExecutions` ([docs](https://docs.renovatebot.com/modules/manager/mise/#trust-model-for-lock-file-updates)). Auto-merging a tool bump would therefore land `mise.toml` and `mise.lock` disagreeing on main, with no CI to notice. The `prBodyNotes` on the rule tells the reviewer to run `mise run mise-lock` — see [`mise.md`](mise.md) § `mise.lock`.
+
+Two tools need rules of their own:
+
+- **`python` is capped at `allowedVersions: "<3.13"`.** It resolves to `python/cpython` on the `github-tags` datasource, so without a ceiling Renovate offers the newest CPython tag. The pin tracks `pyproject.toml`'s `requires-python = ">=3.12"`, so patch bumps are routine and the minor boundary is a human decision.
+- **`pass-cli` is not in the mise registry.** The manager extracts it (`depType: "tools"`, `lockedVersion` and all) but gives up with `skipReason: "unsupported-datasource"` — the `[tool_alias]` pointing at the `github:` backend is a mise-side detail Renovate does not read. A `custom.regex` manager covers that one line instead.
+
+A tool pinned to `"latest"` is extracted with nothing to compare against, so it is invisible to the update loop. Pinning every tool (#24) is what makes this manager useful at all.
+
 ## Custom regex managers
 
-`RUNNER_VERSION` lives in `mise.toml`'s `[env]` block, which Renovate's `mise` manager does not read (it only handles `[tools]`), so it needs a `custom.regex` manager. Four things about them are easy to get wrong:
+Two pins need one: `RUNNER_VERSION`, which lives in `mise.toml`'s `[env]` block that the `mise` manager does not read, and `pass-cli`, which is in `[tools]` but absent from the mise registry. Four things about custom managers are easy to get wrong:
 
 1. **`enabledManagers` must list `"custom.regex"`.** With an allowlist in place, `customManagers` is silently skipped otherwise — no error, no PR, nothing in the log to notice.
 2. **The config keys are `customManagers` + `customType: "regex"` + `managerFilePatterns`.** `regexManagers` and `fileMatch` are the old spellings; `renovate-config-validator --strict` fails on them.
@@ -69,6 +83,19 @@ Two extraction behaviours that need explicit rules:
 The runner version is pinned twice — `mise.toml` `[env]` (what `mise run runner/build` passes as `--build-arg`) and the `ARG RUNNER_VERSION` default in `Containerfile.runner` (what a direct `podman build -f Containerfile.runner` uses). Both `managerFilePatterns` and both `matchStrings` live in a *single* custom manager so the two deps come out with the same `depName` and `currentValue`, which puts them on one branch: Renovate rewrites both files in one PR instead of bumping one and leaving the other to rot.
 
 If the two pins ever drift apart, Renovate will open *two* branches (one per `currentValue`) — that is the drift showing up, not a config bug.
+
+### Match the version, not every line with that key
+
+`pass-cli` appears twice in `mise.toml` — once under `[tool_alias]` mapping the short name to the `github:` backend, once under `[tools]` as the pin:
+
+```toml
+[tool_alias]
+pass-cli = "github:protonpass/pass-cli"
+[tools]
+pass-cli = "2.2.3"
+```
+
+`pass-cli = "(?<currentValue>[^"]+)"` matches both, and the alias line yields a dep whose "version" is `github:protonpass/pass-cli`. Requiring a leading digit — `"(?<currentValue>\d[^"]*)"` — pins the match to the real version without needing lookahead, which RE2 does not have anyway.
 
 ### Prove the round trip, not just the match
 
