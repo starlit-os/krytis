@@ -5,7 +5,7 @@
   // It reads [project.dependencies] and refreshes uv.lock via `uv lock`.
   // Custom managers only run when "custom.regex" is listed here explicitly —
   // an enabledManagers allowlist otherwise silently skips customManagers.
-  "enabledManagers": ["github-actions", "pep621", "custom.regex"],
+  "enabledManagers": ["github-actions", "pep621", "mise", "custom.regex"],
   // Renamed from "baseBranches", which renovate-config-validator now reports
   // as needing migration.
   "baseBranchPatterns": ["main"],
@@ -30,6 +30,19 @@
       "datasourceTemplate": "github-releases",
       // Releases are tagged v2.325.0; both pins hold the bare version.
       "extractVersionTemplate": "^v(?<version>.+)$",
+    },
+    {
+      // pass-cli is not in the mise registry — the repo resolves the short name
+      // through [tool_alias] to the github: backend — so the mise manager
+      // cannot derive a datasource for it. `\d` anchors the match to the
+      // version pin in [tools]; without it the [tool_alias] line
+      // (`pass-cli = "github:protonpass/pass-cli"`) matches too.
+      "customType": "regex",
+      "description": "pass-cli pin in mise.toml [tools] (absent from the mise registry)",
+      "managerFilePatterns": ["/^mise\\.toml$/"],
+      "matchStrings": ["pass-cli = \"(?<currentValue>\\d[^\"]*)\""],
+      "depNameTemplate": "protonpass/pass-cli",
+      "datasourceTemplate": "github-releases",
     },
   ],
   "packageRules": [
@@ -78,6 +91,36 @@
       "matchManagers": ["pep621"],
       "matchPackageNames": ["buildstream-sbom"],
       "enabled": false,
+    },
+    {
+      // Renovate cannot refresh mise.lock on the hosted app — mise lockfile
+      // updates are an unsafe execution only a self-hosted admin can allow — so
+      // every [tools] bump lands with mise.toml updated and mise.lock behind.
+      "matchManagers": ["mise"],
+      "automerge": false,
+      "prBodyNotes": [
+        ":warning: Run `mise run mise-lock` on this branch and commit the refreshed `mise.lock` before merging — Renovate cannot update it. `mise run mise-lock --check` verifies it.",
+      ],
+    },
+    {
+      // pass-cli comes from the custom manager above rather than the mise
+      // manager, but it is a [tools] pin with a mise.lock entry all the same, so
+      // it needs the same lockfile refresh. Scoped by dep name, not by manager
+      // or file: the RUNNER_VERSION custom manager also reads mise.toml and its
+      // [env] pin has nothing to do with the lockfile.
+      "matchDepNames": ["protonpass/pass-cli"],
+      "automerge": false,
+      "prBodyNotes": [
+        ":warning: Run `mise run mise-lock` on this branch and commit the refreshed `mise.lock` before merging — Renovate cannot update it.",
+      ],
+    },
+    {
+      // The python pin tracks pyproject.toml's `requires-python = ">=3.12"`,
+      // and BST 2.5.x is validated against 3.12. Patch bumps are routine;
+      // crossing the minor boundary is a deliberate, human decision.
+      "matchManagers": ["mise"],
+      "matchDepNames": ["python"],
+      "allowedVersions": "<3.13",
     },
   ],
 }

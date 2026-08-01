@@ -113,6 +113,44 @@ cd <worktree-path> && gh pr create --title "..."
 
 Running from the main repo dir produces: `head branch "main" is the same as base branch "main"`.
 
+## Stacked PRs on a Squash-Only Repo
+
+Stack when the next piece of work needs a file state that only exists in an open PR — a prerequisite (#24 → #25) or the same lines of one config (#26 → #27). Base the child on the parent branch and say so in the body, so the reviewer knows the order:
+
+```shell
+git worktree add -b <child-branch> <base>/<path> <parent-branch>
+cd <worktree-path> && gh pr create --base <parent-branch> --title "..."
+```
+
+### The parent's merge breaks the child, every time
+
+This repo is squash-only (`AGENTS.md` § Merge strategy), so when the parent merges, `main` gains the parent's changes as **one new commit with a new SHA**, and the parent branch is deleted. GitHub retargets the child PR to `main`, and it immediately reads:
+
+```
+"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"
+```
+
+This is not a real content conflict. The child branch still carries the parent's *original* commit, so git sees two unrelated commits touching the same files and refuses. Do not try to merge `main` in and hand-resolve — that reintroduces the duplicate. Replay only your own commits:
+
+```shell
+git fetch origin --prune
+git rebase --onto origin/main <parent-tip-sha>      # the SHA the child branched from
+git push --force-with-lease origin <child-branch>
+```
+
+`<parent-tip-sha>` is the parent's last local commit — `git log --oneline` on the child shows it directly under your own commits.
+
+### Confirm the rebase kept the right scope
+
+```shell
+git diff origin/main --stat              # must be exactly the child's own files
+git diff <parent-tip-sha> origin/main --stat   # empty ⇒ the squash was verbatim
+```
+
+If the second diff is *not* empty the maintainer edited something while merging — no action needed, since the rebase replays only your commit and `main`'s version of the parent's files wins automatically. Then re-run the change's verification against the merged `main`: a clean rebase still shifts the ground your change sits on.
+
+Worked examples: #430 rebased onto the squashed #427, #432 onto the squashed #431 — both were three commands, no conflict markers touched.
+
 ## Testing Scripts Shipped in the Image
 
 Rebuilding the OCI image to test a script change takes significant time. For scripts shipped via BST elements (e.g. `files/fido2-tasks/fido2/enroll`), iterate locally first:

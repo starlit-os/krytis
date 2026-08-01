@@ -23,6 +23,8 @@ default.
 |------|---------|-------------|
 | GitHub Actions `uses:` | `github-actions` | Yes (digest/patch/minor) |
 | `pyproject.toml` + `uv.lock` | `pep621` | Yes, except `click`/`dulwich`/`buildstream*` (held for review) and `requires-python`/`buildstream-sbom` (disabled) |
+| `mise.toml` `[tools]` + `mise.lock` | `mise` | No — the lockfile needs `mise run mise-lock` first |
+| `pass-cli` pin in `mise.toml` | `custom.regex` | No — same lockfile reason |
 | `RUNNER_VERSION` in `mise.toml` + `Containerfile.runner` | `custom.regex` | Yes (patch/minor) |
 
 Config changes are verified with `mise run renovate-check` (`--explain` resolves
@@ -100,7 +102,9 @@ understood.
 
 1. ~~Pin mise tool versions + commit `mise.lock` (prerequisite for mise
    manager).~~ Done in #24.
-2. Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.
+2. ~~Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.~~
+   Done in #25 — plus a `custom.regex` manager for `pass-cli`, which the mise
+   registry does not know about.
 3. ~~Add `pep621` to `enabledManagers` for Python deps; exclude `click` and
    `dulwich` from auto-merge.~~ Done in #26.
 4. ~~Add a `regexManager` for `RUNNER_VERSION` (see

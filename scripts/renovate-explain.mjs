@@ -43,14 +43,20 @@ const add = (manager, packageName, depType) => {
   const key = `${manager}\0${packageName}\0${depType}`;
   if (seen.has(key)) return;
   seen.add(key);
-  subjects.push({ manager, packageName, depType });
+  // depName and packageName are separate matchers; probing a subject where they
+  // agree covers matchPackageNames and matchDepNames alike, which is how nearly
+  // every dep in this repo actually looks.
+  subjects.push({ manager, packageName, depName: packageName, depType });
 };
 
 for (const rule of rules) {
   const ruleManagers = rule.matchManagers ?? managers;
   for (const manager of ruleManagers) {
-    for (const packageName of rule.matchPackageNames ?? []) {
-      add(manager, packageName, rule.matchDepTypes?.[0] ?? 'project.dependencies');
+    for (const name of [
+      ...(rule.matchPackageNames ?? []),
+      ...(rule.matchDepNames ?? []),
+    ]) {
+      add(manager, name, rule.matchDepTypes?.[0] ?? 'project.dependencies');
     }
     for (const depType of rule.matchDepTypes ?? []) {
       add(manager, depType === 'requires-python' ? 'python' : `any-${depType}`, depType);
