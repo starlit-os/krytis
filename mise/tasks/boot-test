@@ -408,17 +408,26 @@ SSH() { ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/
 
 # Capture, then match — do NOT pipe into grep. `systemctl is-system-running`
 # exits non-zero for every state except `running` (1 for `degraded`), so under
-# `set -o pipefail` the pipeline failed on a perfectly acceptable `degraded`
-# system no matter what the text said. Capturing also lets the failure message
-# name the state we actually got.
+# `set -o pipefail` the pipeline failed on a perfectly acceptable state no
+# matter what the text said. Capturing also lets the failure message name the
+# state we actually got.
+#
+# `degraded` was tolerated here until #417: systemd-update-utmp.service failed
+# on every single boot, so `degraded` WAS the healthy state and the assertion
+# could not distinguish it from a real regression. With that fixed, only
+# `running` passes — and the failed units are printed, because "degraded" alone
+# never tells you which unit died.
 SYS_STATE=$(SSH systemctl is-system-running --wait 2>/dev/null || true)
-case "${SYS_STATE}" in
-    running|degraded) ;;
-    *)
-        echo "    FAIL: systemctl is-system-running reported '${SYS_STATE:-<no output>}', want running/degraded" >&2
-        FAILED=1
-        ;;
-esac
+echo "    system state: ${SYS_STATE:-<no output>}"
+if [ "${SYS_STATE}" != "running" ]; then
+    echo "    FAIL: systemctl is-system-running reported '${SYS_STATE:-<no output>}', want running" >&2
+    FAILED_UNITS=$(SSH systemctl list-units --state=failed --plain --no-legend --no-pager 2>/dev/null || true)
+    if [ -n "${FAILED_UNITS}" ]; then
+        echo "    failed units:" >&2
+        printf '%s\n' "${FAILED_UNITS}" | sed 's/^/      /' >&2
+    fi
+    FAILED=1
+fi
 
 BOOTCTL_OUT=$(SSH bootctl status 2>&1 || true)
 if [ "${SECURE}" = "true" ]; then

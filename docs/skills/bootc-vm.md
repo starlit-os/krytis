@@ -144,7 +144,9 @@ systemd-update-utmp[572]: Failed to send audit message: Invalid argument
 ```
 
 was the only failed unit on an otherwise healthy boot (#417), which is why
-`mise run boot-test` had to accept `degraded` as well as `running`. The message
+`mise run boot-test` used to accept `degraded` as well as `running` — and why
+that assertion was worthless: `degraded` *was* the healthy state, so no future
+unit failure could have changed the verdict. The message
 never reaches the kernel: libaudit's `_get_commname()` rejects any `comm`
 argument of 16 bytes or more (`AUDIT_COMM_LEN`, the kernel's `TASK_COMM_LEN`)
 with `EINVAL` before it touches the netlink socket, and systemd ≤ v260 passes
@@ -152,6 +154,12 @@ the 19-byte `"systemd-update-utmp"`. It only tolerates `EPERM`, so the unit
 exits 1. Upstream fix `b8968c49` shortens the literal to `"update-utmp"`;
 krytis backports it via `elements/overrides/systemd-base.bst` until the
 gnome-build-meta junction reaches v261.
+
+With the unit fixed, `boot-test` asserts `running` and nothing else, prints the
+state it observed, and lists the failed units when there are any — verified on
+a secure-boot install of the patched image, which reports `system state:
+running`. Keep it that way: an assertion that accepts the current breakage is
+not an assertion.
 
 **The general technique — locate the failure on the right side of the
 syscall.** An audit send that reaches the kernel and is refused comes back
