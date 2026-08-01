@@ -247,13 +247,23 @@ Combine with `--reuse-disk` to run the whole negative test unprivileged. Budget
 ~8 minutes: the firmware retries every boot entry, including a PXE attempt, before
 giving up.
 
-### `boot-test --secure` on the default image is the negative test, not the positive one
+### `--secure` picks the tag; booting `:latest` under enforcement is the negative test
 
-`--secure` defaults to `--image localhost/krytis:latest`, and that tag is the
-*unsigned* image `mise build` produces — no signed systemd-boot, and no UKI at
-all (`/boot/EFI/Linux/krytis.efi` only exists in `localhost/krytis:sealed`,
-baked by `mise run seal-uki`). The firmware therefore refuses the disk before
-systemd-boot prints anything, and the whole log is:
+`--secure` verifies signatures, and only `mise run seal-uki`'s
+`localhost/krytis:sealed` is signed — `localhost/krytis:latest` from `mise build`
+has no signed systemd-boot and no UKI at all (`/boot/EFI/Linux/krytis.efi` exists
+only in the sealed image). `boot-test` therefore resolves `--image` from the
+mode: `:sealed` under `--secure`, `:latest` otherwise, and `:latest` again under
+`--secure --expect-fail`, whose whole purpose is to watch the firmware refuse the
+unsigned build. Name `--image` explicitly only to override that.
+
+The default is computed in the script, not in the `#USAGE` annotation: a
+`default=` there is indistinguishable from the user typing the same value, so
+`usage_image` could not tell "unset" from "explicitly `:latest`".
+
+Boot the wrong tag under enforcement — which is what happened before the default
+existed (#417/#425) — and the firmware refuses the disk before systemd-boot
+prints anything. The entire log is:
 
 ```
 BdsDxe: failed to load Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0):
@@ -265,17 +275,15 @@ BdsDxe: No bootable option or device was found.
 Note `failed to **load**` and the absence of any `../src/boot/boot.c` line: this
 is one stage earlier than the UKI rejection above — BDS refusing the bootloader
 itself. Read that shape as "wrong tag", not as a regression in the change under
-test. It cost a full install-and-boot cycle once (#417/#425) before
-`mise/tasks/boot-test` learned to check the image for `/boot/EFI/Linux/krytis.efi`
-and fail immediately when `--secure` is combined with an unsigned image and no
-`--expect-fail`.
+test. `boot-test` now also refuses up front, before the privileged install, when
+an explicitly named image has no UKI or does not exist locally.
 
-So there are three deliberate combinations, and only the first two are positive:
+Three deliberate combinations, only the first two positive:
 
 | Command | Asserts |
 |---|---|
 | `mise run boot-test` | the image boots and is healthy — the right check for anything that isn't about the boot chain |
-| `mise run seal-uki && mise run boot-test --secure --image localhost/krytis:sealed` | the *signed* image boots under enforcement |
+| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement |
 | `mise run boot-test --secure --expect-fail` | secure boot rejects the unsigned image |
 
 Note that a systemd rebuild changes systemd-boot and systemd-stub, so any

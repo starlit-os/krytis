@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Automated boot pass/fail: install, boot headless, assert health, shut down"
-#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install and boot"
+#USAGE flag "--image <tag>" help="Local image tag to install and boot. Default: localhost/krytis:sealed under --secure (the signed build), localhost/krytis:latest otherwise"
 #USAGE flag "--secure" help="Boot with OVMF secure boot enabled (requires 'mise run generate-ovmf-vars' first)"
 #USAGE flag "--filesystem <fs>" default="btrfs" help="Root filesystem type (btrfs or ext4)"
 #USAGE flag "--expect-fail" help="Invert the result: a successful boot is the failure (secure boot negative test)"
@@ -33,12 +33,26 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+IMAGE="${CLI_IMAGE:-${usage_image:-}}"
 SECURE="${CLI_SECURE:-${usage_secure:-}}"
 FS="${CLI_FS:-${usage_filesystem:-btrfs}}"
 EXPECT_FAIL="${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}"
 DEBUG_KEEP="${CLI_DEBUG_KEEP:-${usage_debug_keep:-}}"
 REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+
+# The image default depends on the mode, so it is resolved here rather than in
+# the #USAGE annotation (a `default=` there is indistinguishable from the user
+# typing that same value, which would make an explicit `--image` unoverridable
+# below). --secure enforces signatures, and only `mise run seal-uki`'s sealed
+# image is signed — except under --expect-fail, whose entire purpose is to watch
+# the firmware reject the *unsigned* image.
+if [ -z "${IMAGE}" ]; then
+    if [ -n "${SECURE}" ] && [ -z "${EXPECT_FAIL}" ]; then
+        IMAGE="localhost/krytis:sealed"
+    else
+        IMAGE="localhost/krytis:latest"
+    fi
+fi
 
 # generate-disk is the ONLY part of boot-test that needs root, and it is
 # irreducibly privileged: `bootc install to-disk --via-loopback` has to create a
@@ -87,24 +101,30 @@ while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT +
 
 # --secure boots against the db key enrolled in .ovmf-vars-secure.fd, so the
 # image has to carry the signed UKI that `mise run seal-uki` bakes at
-# /boot/EFI/Linux/krytis.efi. The default image, localhost/krytis:latest from
-# `mise build`, is the unsigned variant and has no UKI at all: the firmware
-# rejects it before systemd-boot prints a single line, and the only evidence is
+# /boot/EFI/Linux/krytis.efi. localhost/krytis:latest, from `mise build`, is the
+# unsigned variant and has no UKI at all: the firmware rejects it before
+# systemd-boot prints a single line, and the only evidence is
 #
 #   BdsDxe: failed to load Boot0002 "UEFI Misc Device" …: Access Denied
 #            -- rejected probably by Secure Boot
 #
-# which reads like an image bug and is really "you booted the wrong tag". That
-# rejection IS the --expect-fail negative test, so refuse the combination only
-# when a positive result was asked for. --reuse-disk installs nothing, so the
-# image is irrelevant there.
+# which reads like an image bug and is really "you booted the wrong tag". The
+# default above avoids that, so this only fires for an image named explicitly —
+# or for a :sealed tag that was never built. That rejection IS the --expect-fail
+# negative test, so refuse the combination only when a positive result was asked
+# for. --reuse-disk installs nothing, so the image is irrelevant there.
 if [ -n "${SECURE}" ] && [ -z "${EXPECT_FAIL}" ] && [ -z "${REUSE_DISK}" ]; then
+    if ! podman image exists "${IMAGE}"; then
+        echo "ERROR: --secure needs the signed image, and ${IMAGE} does not exist locally." >&2
+        echo "  Build it:  mise run seal-uki" >&2
+        exit 1
+    fi
     if ! podman run --rm "${IMAGE}" sh -c '[ -f /boot/EFI/Linux/krytis.efi ]' 2>/dev/null; then
         echo "ERROR: --secure needs a signed UKI, and ${IMAGE} has none" >&2
-        echo "       (no /boot/EFI/Linux/krytis.efi — that image is the unsigned build)." >&2
+        echo "       (no /boot/EFI/Linux/krytis.efi — that image is an unsigned build)." >&2
         echo "  Build and boot the sealed image instead:" >&2
         echo "      mise run seal-uki" >&2
-        echo "      mise run boot-test --secure --image localhost/krytis:sealed" >&2
+        echo "      mise run boot-test --secure" >&2
         echo "  Or drop --secure to boot ${IMAGE} unsigned, or add --expect-fail to" >&2
         echo "  assert that secure boot rejects it." >&2
         exit 1
