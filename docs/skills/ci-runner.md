@@ -41,6 +41,15 @@ gh api -X DELETE repos/starlit-os/krytis/actions/runners/<id>
 
 `libicu74` must be installed explicitly in the Containerfile. The runner's bundled `installdependencies.sh` doesn't work in a separate Docker layer (no apt lists). Without it the runner binary fails with "Libicu dependencies missing for .NET Core 6.0".
 
+### The runner version is pinned in two places
+
+| Pin | Consumed by |
+|---|---|
+| `mise.toml` `[env]` `RUNNER_VERSION` | `mise run runner/build`, passed as `--build-arg` |
+| `ARG RUNNER_VERSION` default in `Containerfile.runner` | a direct `podman build -f Containerfile.runner` |
+
+They must hold the same value: the `ARG` default is the only thing a build that bypasses the mise task sees, so it rots silently if only `mise.toml` is bumped. Renovate keeps them in step — the `custom.regex` manager in `.github/renovate.json5` matches both files and rewrites them in one PR (#27, see [`renovate.md`](renovate.md) § Custom regex managers). Bumping by hand means editing both.
+
 ---
 
 ## BST Cache in CI

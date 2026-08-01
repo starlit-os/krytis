@@ -23,6 +23,7 @@ default.
 |------|---------|-------------|
 | GitHub Actions `uses:` | `github-actions` | Yes (digest/patch/minor) |
 | `pyproject.toml` + `uv.lock` | `pep621` | Yes, except `click`/`dulwich`/`buildstream*` (held for review) and `requires-python`/`buildstream-sbom` (disabled) |
+| `RUNNER_VERSION` in `mise.toml` + `Containerfile.runner` | `custom.regex` | Yes (patch/minor) |
 
 Config changes are verified with `mise run renovate-check` (`--explain` resolves
 every rule to its enabled/auto-merge verdict; `--dry-run` lists pending
@@ -41,8 +42,9 @@ invisible to Renovate. Options:
   for `mise.toml` tool versions.
 - Pin tools to explicit versions first (e.g. `uv = "0.7.13"`) so Renovate has
   something to bump. Commit `mise.lock` for reproducible installs.
-- See also: `docs/plans/done/2026-06-18-runner-followup.md` §3 for `RUNNER_VERSION` which needs a regex
-  manager since it lives in `[env]`, not `[tools]`.
+- `RUNNER_VERSION` also lives in `mise.toml`, but in `[env]` rather than
+  `[tools]`, so the `mise` manager will never see it — it is covered by a
+  `custom.regex` manager instead (#27).
 
 ### Python dependencies (`pyproject.toml` / `uv.lock`) — done (#26)
 
@@ -55,9 +57,11 @@ direct reference the pypi datasource cannot represent).
 
 ### BST element sources (remote binaries)
 
-`core/mise.bst` `RUNNER_VERSION` (in `docs/plans/done/2026-06-18-runner-followup.md`), and any future
-`remote`-sourced elements. These need `regexManagers` since there is no
-first-class BST datasource. Pattern established in `docs/plans/done/2026-06-18-runner-followup.md` §3.
+Any future `remote`-sourced element needs a `custom.regex` manager, since there
+is no first-class BST datasource. `RUNNER_VERSION` (#27) is the worked example
+of the pattern: `customManagers` + `customType: "regex"`, `"custom.regex"` added
+to `enabledManagers`, and `extractVersionTemplate` where upstream tags carry a
+`v` prefix the pin does not.
 
 ### Freedesktop SDK / gnome-build-meta junctions
 
@@ -86,6 +90,8 @@ understood.
 2. Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.
 3. ~~Add `pep621` to `enabledManagers` for Python deps; exclude `click` and
    `dulwich` from auto-merge.~~ Done in #26.
-4. Add a `regexManager` for `RUNNER_VERSION` (see `docs/plans/done/2026-06-18-runner-followup.md` §3).
+4. ~~Add a `regexManager` for `RUNNER_VERSION` (see
+   `docs/plans/done/2026-06-18-runner-followup.md` §3).~~ Done in #27, as a
+   `custom.regex` manager covering both pins.
 5. Revisit `buildstream` version tracking once the junction/BST coupling is
    better understood.

@@ -8,6 +8,7 @@ Load when changing `.github/renovate.json5`, enabling a manager, or deciding whe
 |---|---|---|
 | `github-actions` | `.github/workflows/*.yml` | digest/pin/patch/minor |
 | `pep621` | `pyproject.toml` (+ `uv.lock`) | patch/minor, except the packages listed below |
+| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner` | patch/minor |
 
 Everything else is tracked by the `track-bst-sources.yml` CI matrix, not Renovate — see [`bst.md`](bst.md) § Element update path.
 
@@ -53,6 +54,33 @@ Two extraction behaviours that need explicit rules:
 
 - **`requires-python` is extracted as a dependency** named `python`, `depType: "requires-python"`. `requires-python = ">=3.12"` is a *floor*; a Renovate bump to `>=3.14` drops interpreter support rather than picking anything up. Disabled via `matchDepTypes: ["requires-python"]`.
 - **Direct git references are extracted as PyPI packages.** `buildstream-sbom @ git+https://gitlab.com/…@<sha>` parses through Renovate's PEP 508 regex as `packageName: buildstream-sbom`, `currentValue: "@ git+https://…"`, `datasource: pypi`. Nothing sane can come of that lookup, and if the name ever appears on PyPI Renovate would offer to replace the git ref with a release. Disabled by name.
+
+## Custom regex managers
+
+`RUNNER_VERSION` lives in `mise.toml`'s `[env]` block, which Renovate's `mise` manager does not read (it only handles `[tools]`), so it needs a `custom.regex` manager. Four things about them are easy to get wrong:
+
+1. **`enabledManagers` must list `"custom.regex"`.** With an allowlist in place, `customManagers` is silently skipped otherwise — no error, no PR, nothing in the log to notice.
+2. **The config keys are `customManagers` + `customType: "regex"` + `managerFilePatterns`.** `regexManagers` and `fileMatch` are the old spellings; `renovate-config-validator --strict` fails on them.
+3. **Renovate uses RE2, and matches per *file*, not per line.** No lookahead, no backreferences; `^`/`$` anchor the whole file. For a line boundary use `(?:^|\r\n|\r|\n|$)`.
+4. **Tag prefixes need `extractVersionTemplate`.** `actions/runner` tags releases `v2.325.0` while both pins hold the bare `2.325.0`, so `"^v(?<version>.+)$"` strips the prefix — without it every lookup mismatches the current value.
+
+### One manager, two files, one PR
+
+The runner version is pinned twice — `mise.toml` `[env]` (what `mise run runner/build` passes as `--build-arg`) and the `ARG RUNNER_VERSION` default in `Containerfile.runner` (what a direct `podman build -f Containerfile.runner` uses). Both `managerFilePatterns` and both `matchStrings` live in a *single* custom manager so the two deps come out with the same `depName` and `currentValue`, which puts them on one branch: Renovate rewrites both files in one PR instead of bumping one and leaving the other to rot.
+
+If the two pins ever drift apart, Renovate will open *two* branches (one per `currentValue`) — that is the drift showing up, not a config bug.
+
+### Prove the round trip, not just the match
+
+A `--dry-run` showing the dep extracted only proves half of it. The other half — that the pin Renovate *writes* is one it will then read back as current — is what stops a manager opening the same PR forever. Check the `replaceString` in the debug log is the whole assignment, apply the bump by hand, and confirm the update disappears:
+
+```bash
+sed -i 's/2\.325\.0/2.336.0/' mise.toml Containerfile.runner
+mise run renovate-check --dry-run --log-level debug   # actions/runner gone from "flattened updates found"
+git restore mise.toml Containerfile.runner
+```
+
+Commit before simulating, and restore with `git restore` — never `git checkout <path>`, which silently discards unstaged work elsewhere in the tree.
 
 ## Rule ordering
 

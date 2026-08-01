@@ -1,5 +1,8 @@
 FROM ubuntu:24.04
 
+# Fallback for a direct `podman build -f Containerfile.runner`; mise run
+# runner/build always passes --build-arg from mise.toml's RUNNER_VERSION. Both
+# pins are bumped together by the custom.regex manager in renovate.json5.
 ARG RUNNER_VERSION=2.325.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
