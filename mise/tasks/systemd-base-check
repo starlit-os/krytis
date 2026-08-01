@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#MISE description="Verify overrides/systemd-base.bst still matches gnome-build-meta's pinned systemd-base"
+
+# elements/overrides/systemd-base.bst mirrors gnome-build-meta's
+# elements/core-deps/systemd-base.bst so that one patch can be applied on top of
+# it (#417 — systemd v260 passes a 19-byte comm to libaudit, which rejects any
+# comm of 16 bytes or more, failing systemd-update-utmp.service on every boot).
+#
+# A mirrored element silently rots: bumping the gnome-build-meta junction moves
+# the upstream systemd ref and build config, while the copy keeps building the
+# old one. This task diffs the two, ignoring comments, blank lines and the
+# `kind: patch` source the override adds, and fails on any other difference.
+#
+# When it fails, either resync the copy against upstream, or — if the junction
+# now carries systemd v261 or newer, which contains b8968c49 — delete the
+# override element, its patch, this task and the overrides entry in
+# elements/freedesktop-sdk.bst.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+OVERRIDE="elements/overrides/systemd-base.bst"
+UPSTREAM_PATH="elements/core-deps/systemd-base.bst"
+PATCH="patches/systemd/update-utmp-shorten-comm.patch"
+
+# Lines the mirror adds on purpose; everything else must match upstream.
+LOCAL_ADDITIONS=(
+    "- kind: patch"
+    "  path: $PATCH"
+    '  project_licensedir: "%{licensedir}/gnome"'
+)
+
+if [ ! -f "$OVERRIDE" ]; then
+    echo "==> $OVERRIDE is gone — nothing to check."
+    exit 0
+fi
+
+REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/gnome-build-meta.bst | head -1)"
+SHA="${REF##*-g}"
+if [ -z "$SHA" ] || [ "$SHA" = "$REF" ]; then
+    echo "==> Could not read a git-describe ref from elements/gnome-build-meta.bst" >&2
+    exit 1
+fi
+
+URL="https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/${SHA}/${UPSTREAM_PATH}"
+echo "==> Comparing $OVERRIDE against gnome-build-meta ${SHA:0:12}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
+    echo "==> Could not fetch $URL" >&2
+    exit 1
+fi
+
+# Strip comments and blank lines from both, and the deliberate additions from ours.
+normalise() {
+    grep -vE '^\s*#|^\s*$' "$1"
+}
+
+drop_local_additions() {
+    local args=()
+    local line
+    for line in "${LOCAL_ADDITIONS[@]}"; do
+        args+=(-e "$line")
+    done
+    grep -vxF "${args[@]}"
+}
+
+normalise "$TMP/upstream.bst" >"$TMP/upstream.norm"
+normalise "$OVERRIDE" | drop_local_additions >"$TMP/override.norm"
+
+if ! diff -u --label "gnome-build-meta/$UPSTREAM_PATH" "$TMP/upstream.norm" \
+        --label "$OVERRIDE" "$TMP/override.norm"; then
+    echo
+    echo "==> systemd-base-check FAILED — the override has drifted from the junction."
+    echo "    Resync $OVERRIDE, or drop the override if the junction now ships systemd v261+."
+    exit 1
+fi
+
+if ! grep -q 'path: '"$PATCH" "$OVERRIDE"; then
+    echo "==> $OVERRIDE no longer applies $PATCH" >&2
+    exit 1
+fi
+
+echo "==> systemd-base-check passed."

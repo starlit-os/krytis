@@ -135,6 +135,59 @@ everything `waiting` and `systemctl list-units --state=activating` names the
 culprit. If the culprit has `StandardInput=tty`, screendump the VGA console (see
 § Reading a stalled guest without root) to see what it is asking.
 
+## `Failed to send audit message: Invalid argument` is a libaudit rejection, not audit being broken
+
+`systemd-update-utmp.service` failing with
+
+```
+systemd-update-utmp[572]: Failed to send audit message: Invalid argument
+```
+
+was the only failed unit on an otherwise healthy boot (#417), which is why
+`mise run boot-test` used to accept `degraded` as well as `running` — and why
+that assertion was worthless: `degraded` *was* the healthy state, so no future
+unit failure could have changed the verdict. The message
+never reaches the kernel: libaudit's `_get_commname()` rejects any `comm`
+argument of 16 bytes or more (`AUDIT_COMM_LEN`, the kernel's `TASK_COMM_LEN`)
+with `EINVAL` before it touches the netlink socket, and systemd ≤ v260 passes
+the 19-byte `"systemd-update-utmp"`. It only tolerates `EPERM`, so the unit
+exits 1. Upstream fix `b8968c49` shortens the literal to `"update-utmp"`;
+krytis backports it via `elements/overrides/systemd-base.bst` until the
+gnome-build-meta junction reaches v261.
+
+With the unit fixed, `boot-test` asserts `running` and nothing else, prints the
+state it observed, and lists the failed units when there are any — verified on
+a secure-boot install of the patched image, which reports `system state:
+running`. Keep it that way: an assertion that accepts the current breakage is
+not an assertion.
+
+**The general technique — locate the failure on the right side of the
+syscall.** An audit send that reaches the kernel and is refused comes back
+`EPERM` (`CAP_AUDIT_WRITE`), so calling the same libaudit function as an
+*unprivileged* user separates the two cases with no VM and no root:
+
+```python
+import ctypes, ctypes.util
+la = ctypes.CDLL(ctypes.util.find_library("audit"), use_errno=True)
+fd = la.audit_open()
+for comm in (b"systemd-update-utmp", b"systemd-update-"):   # 19 vs 15 bytes
+    ctypes.set_errno(0)
+    la.audit_log_user_comm_message(fd, 1127, b"", comm, None, None, None, 1)
+    print(comm, ctypes.get_errno())    # 22 EINVAL (libaudit) vs 1 EPERM (kernel)
+```
+
+`EPERM` means the message got out of userspace, so the kernel audit path is
+healthy and the argument is the problem. Cross-check with a raw
+`NETLINK_AUDIT` `AUDIT_SYSTEM_BOOT` send (also `EPERM` unprivileged), and with
+the journal: PID 1 emits `SERVICE_START` audit records in the same millisecond
+the unit fails — including one for the failing unit itself.
+
+Corollaries worth remembering: `auditd` being up is not evidence that a
+userspace audit call will succeed, and it is not implicated by this failure at
+all (`systemd-update-utmp.service` is already `After=auditd.service`); and this
+failure is not the read-only-`/var` one fixed in #403, which logged `Failed to
+write wtmp record, ignoring: Read-only file system` — note the `ignoring`.
+
 ## Known fix: dracut bootc module unit placement
 
 The bootc dracut module places `bootc-root-setup.service`'s wants symlink at

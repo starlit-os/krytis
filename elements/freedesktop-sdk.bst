@@ -42,7 +42,8 @@ config:
     components/libsecret.bst: gnome-build-meta.bst:sdk/libsecret.bst
     components/zenity.bst: gnome-build-meta.bst:void/zenity.bst
     components/linux-module-cert.bst: gnome-build-meta.bst:gnomeos/linux-module-cert.bst
-    components/systemd-base.bst: gnome-build-meta.bst:core-deps/systemd-base.bst
+    # gnome-build-meta's systemd-base + backported update-utmp comm fix (#417)
+    components/systemd-base.bst: overrides/systemd-base.bst
     components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst
     components/systemd-ukify.bst: gnome-build-meta.bst:core-deps/systemd-ukify.bst
     components/systemd-libs.bst: gnome-build-meta.bst:core-deps/systemd-libs.bst

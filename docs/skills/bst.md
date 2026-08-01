@@ -395,6 +395,51 @@ Verify the override actually resolves (not silently ignored) with `mise bst show
 
 **Gotcha while verifying this class of fix:** `mise lint` alone (per its own `#MISE description`) assumes `mise run load-image` already ran — it just does `podman build` against the *existing* `localhost/krytis-input:latest` tag. If that tag predates your element change, `mise lint` will pass while still testing the *old* content, silently. Use `mise run build [--force]` (which chains `generate-image-version` → `load-image` → `lint`) to force a real `oci/krytis/image.bst` rebuild before trusting lint output for an element-level change — `mise bst build <element>` in isolation only proves the element itself builds, not that the full image picked it up.
 
+### Mirroring a junction element to patch its *source*
+
+The duplicate-with-one-change recipe above also covers the case where the upstream element is correct but the release it pins needs a patch that isn't in that release yet — e.g. `#417`, where systemd v260.2 fails `systemd-update-utmp.service` on every boot and the fix (`b8968c49`) only landed after the tag. `elements/overrides/systemd-base.bst` + `patches/systemd/update-utmp-shorten-comm.patch` is the worked example.
+
+**Don't try to avoid copying the body with a cross-junction include.** `(@): gnome-build-meta.bst:elements/core-deps/systemd-base.bst` plus a `sources: (>):` patch entry looks like the DRY version, but an element used as an *override target* for a junction cannot include a file from that same junction — the junction's declaration would have to be resolved to load the element that the declaration points at. BuildStream documents this as circular ("files included across a junction cannot be used to inform the declaration of a junction element"), and the failure is opaque: the include is silently not composited and you get
+
+```
+overrides/systemd-base.bst [line 15 column 0]: Dictionary did not contain expected key 'kind'
+```
+
+pointing at the `(@)` line itself. Copy the body.
+
+**Override at the freedesktop-sdk junction even when the element lives in gnome-build-meta.** `components/systemd-base.bst` is already redirected to `gnome-build-meta.bst:core-deps/systemd-base.bst`; repoint that one entry at the local mirror instead of adding an override to `elements/gnome-build-meta.bst`. gnome-build-meta's own `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` are `kind: filter` elements over `freedesktop-sdk.bst:components/systemd-base.bst`, and gnome-build-meta resolves that through *krytis's* fdsdk junction (`overrides: freedesktop-sdk.bst: freedesktop-sdk.bst`), so a single entry redirects the whole graph. Verify:
+
+```shell
+mise bst show --deps all --format '%{name}' stacks/base-system.bst | grep systemd
+# overrides/systemd-base.bst          ← ours
+# gnome-build-meta.bst:core-deps/systemd.bst, …/systemd-libs.bst   ← filters, unchanged
+# (no gnome-build-meta.bst:core-deps/systemd-base.bst)
+```
+
+**Moving an element between projects moves its licence tree, which breaks whitelists.** `project_licensedir` is `%{licensedir}/%{project-name}` (fdsdk `include/install-dirs.yml`), so a mirror built in krytis harvests licences to `/usr/share/licenses/krytis/<name>/` instead of the upstream project's directory — gnome-build-meta's project name is `gnome`, not `gnome-build-meta`. That alone is a fatal build break whenever the mirrored element is filtered: gnome-build-meta's `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` both carry the licence files and rely on an `overlap-whitelist` of `%{project_licensedir}/systemd/**`, expanded in *their* project's scope. At the moved path nothing matches, and every element that stages both filters dies with
+
+```
+/usr/share/licenses/krytis/systemd/LICENSE.GPL2: gnome-build-meta.bst:core-deps/systemd.bst is not permitted to overlap other elements …
+[overlaps]: Non-whitelisted overlaps detected
+```
+
+reported against an innocent bystander (`components/polkit-base.bst` — the first element to stage both). Pin the variable in the mirror rather than chasing whitelists: `project_licensedir: "%{licensedir}/gnome"`. Keeping the artifact's layout identical to the element being mirrored is the general rule — the whole point of a mirror is that only the patched bits differ.
+
+Note that `mise validate` and a standalone `mise bst build <element>` both pass with the licence tree at the wrong path: nothing stages two filters of the same element until the image graph is assembled, so this class of break only shows up in `mise run build`. Budget for a full image build before calling a junction mirror verified.
+
+**A mirrored element rots silently.** It carries its own copy of upstream's `ref:` and build config, so a junction bump moves upstream while the mirror keeps building the old release — and, like `desktop/mesa-all-codecs.bst`, it is deliberately *not* in the `track-bst-sources.yml` matrix (its ref is tied to the junction, not tracked independently; running `bst source track` on it would actively break the mirror). Ship a drift check with it: `mise run systemd-base-check` fetches the junction-pinned upstream file at the SHA in `elements/gnome-build-meta.bst` and diffs it against the mirror, ignoring comments, blank lines and the added `kind: patch` source. Run it after every junction bump; there is no PR-triggered CI in this repo to run it for you.
+
+**Patch hygiene:** patches live in `patches/<project>/`, and the file starts with a prose header naming the upstream SHA and why the backport exists (the `patch` source kind ignores everything before the first `diff`/`---` line). Confirm it applies to the pinned tag before building — much faster than discovering it in a build sandbox an hour in:
+
+```shell
+mkdir -p /tmp/chk/src/update-utmp
+curl -sS -o /tmp/chk/src/update-utmp/update-utmp.c \
+  https://raw.githubusercontent.com/systemd/systemd/v260.2/src/update-utmp/update-utmp.c
+patch -p1 --dry-run -d /tmp/chk < patches/systemd/update-utmp-shorten-comm.patch
+```
+
+Delete the mirror, its patch, the check task and the overrides entry as soon as the junction ships a release containing the fix — every one of these is a temporary hold on an upstream bug, not a permanent fork.
+
 ## Adding a Package
 
 1. Create `elements/desktop/<name>.bst` (or `elements/deps/`, `elements/config/`, etc. depending on what it is — copy a similar existing element)
