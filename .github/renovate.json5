@@ -3,11 +3,35 @@
   "extends": ["config:recommended"],
   // "pep621" is the manager for pyproject.toml — there is no "uv" manager.
   // It reads [project.dependencies] and refreshes uv.lock via `uv lock`.
-  "enabledManagers": ["github-actions", "pep621"],
+  // Custom managers only run when "custom.regex" is listed here explicitly —
+  // an enabledManagers allowlist otherwise silently skips customManagers.
+  "enabledManagers": ["github-actions", "pep621", "custom.regex"],
   // Renamed from "baseBranches", which renovate-config-validator now reports
   // as needing migration.
   "baseBranchPatterns": ["main"],
   "pinDigests": true,
+  "customManagers": [
+    {
+      // The GitHub Actions runner version is pinned in two places that must
+      // move together: mise.toml [env] feeds `mise run runner/build`'s
+      // --build-arg, and the ARG default in Containerfile.runner is what a
+      // direct `podman build -f Containerfile.runner` uses. One manager owning
+      // both means Renovate rewrites them in a single PR instead of letting the
+      // ARG default rot. `mise` has no first-class datasource for [env] values,
+      // hence regex rather than the mise manager.
+      "customType": "regex",
+      "description": "actions/runner version pinned in mise.toml and Containerfile.runner",
+      "managerFilePatterns": ["/^mise\\.toml$/", "/^Containerfile\\.runner$/"],
+      "matchStrings": [
+        "RUNNER_VERSION = \\{ default = \"(?<currentValue>[^\"]+)\" \\}",
+        "ARG RUNNER_VERSION=(?<currentValue>\\S+)",
+      ],
+      "depNameTemplate": "actions/runner",
+      "datasourceTemplate": "github-releases",
+      // Releases are tagged v2.325.0; both pins hold the bare version.
+      "extractVersionTemplate": "^v(?<version>.+)$",
+    },
+  ],
   "packageRules": [
     {
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],

@@ -59,6 +59,8 @@ BST_MEMORY_LIMIT = { default = "16g" }
 VM_RAM = { default = "8192" }
 VM_CPUS = { default = "4" }
 RUNNER_IMAGE = { default = "localhost/krytis-runner:latest" }
+# Kept in lockstep with Containerfile.runner's ARG default by the custom.regex
+# manager in .github/renovate.json5 — edit both if you bump it by hand.
 RUNNER_VERSION = { default = "2.325.0" }
 RUNNER_NAME = { default = "krytis-local" }
 RUNNER_LABELS = { default = "self-hosted,linux,x64" }
