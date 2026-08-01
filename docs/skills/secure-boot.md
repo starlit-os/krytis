@@ -366,3 +366,46 @@ the `hsqs` magic at the computed offset so a layout change fails loudly instead 
 as a confusing unsquashfs error. `xorriso` is not on the krytis host at all
 (dakota-iso routes it through the iso-tools container), so an `-osirrox` extract
 would be both slower and less portable here.
+
+## A sealed system's boot cannot be judged from the serial console
+
+`console=ttyS0` is a kernel argument, and a UKI's kernel arguments are frozen
+inside the signed PE — injecting one is exactly what sealing prevents. So every
+harness that decides "did it boot?" by grepping the guest's serial log for
+`Reached target Graphical Interface` is structurally unable to pass a sealed
+system. dakota-iso's installed-boot verdict does precisely that (it patches
+`console=ttyS0` into the BLS type-1 entry first, which a sealed system does not
+boot through), and it reported a five-minute timeout for an install that was in
+fact completely healthy.
+
+What a *successful* enforced sealed boot looks like on serial — all of it:
+
+```
+BdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+systemd-boot@0x101300000 260.2
+systemd-stub@0x14df91000 260.2
+```
+
+Read it as evidence, not silence. `BdsDxe: starting` (rather than
+`failed to load … Access Denied`) means the firmware accepted the signed
+systemd-boot against the enrolled db; `systemd-stub@…` appearing after
+`systemd-boot@…` means systemd-boot chain-loaded the UKI and its Authenticode
+signature verified — a bad signature stops at
+`Error loading EFI binary …: Access denied` instead. Everything after that point
+goes to tty0 and is invisible. **"Nothing after `systemd-stub@`" means "we cannot
+see the boot", never "the boot failed."**
+
+The verdict has to come from a channel that needs no kernel argument.
+`mise run boot-test --reuse-disk <disk> --secure` is that channel and is why
+`mise run iso-install-test` keeps the verdict on the krytis side instead of
+delegating it: boot-test provisions sshd, an authorized key and a diagnostics
+probe as **SMBIOS type-11 systemd credentials**, which systemd consumes with no
+cmdline involvement, then asserts health over SSH. The same mechanism is what
+makes the negative test honest — the firmware's own rejection line *does* reach
+serial, so `--expect-fail` asserts on that and reports INCONCLUSIVE for a merely
+silent disk.
+
+Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
+kargs for anything a test needs to inject. Kargs are a signing-time decision;
+credentials are a runtime one.

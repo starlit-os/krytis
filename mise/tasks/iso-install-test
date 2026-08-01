@@ -77,7 +77,9 @@ if [[ ! -f "${ISO}" ]]; then
     exit 1
 fi
 
-OVMF_VARS_SECURE=""
+# boot-test owns the varstore (it copies the enrolled original to scratch before
+# booting), so only its existence is checked here — fail before the install, not
+# after it.
 if [[ "${SECURE}" -eq 1 ]]; then
     if [[ ! -f ".ovmf-vars-secure.fd" ]]; then
         echo "ERROR: .ovmf-vars-secure.fd missing — run 'mise run generate-ovmf-vars' first." >&2
@@ -124,15 +126,9 @@ fi
 WORKDIR=$(mktemp -d /var/tmp/krytis-iso-test.XXXXXX)
 trap 'rm -rf "${WORKDIR}"' EXIT
 
-# Always boot a COPY of the varstore: an enforcing boot writes to it, and
-# .ovmf-vars-secure.fd is the enrolled original every future run depends on.
-if [[ "${SECURE}" -eq 1 ]]; then
-    cp ".ovmf-vars-secure.fd" "${WORKDIR}/vars.fd"
-    OVMF_VARS_SECURE="${WORKDIR}/vars.fd"
-fi
-
 ISO_ABS="$(realpath "${ISO}")"
 OUTPUT_DIR="$(dirname "${ISO_ABS}")"
+INSTALL_DISK="/var/tmp/dakota-sealed-install.img"
 
 echo "==> Installing Krytis from an ISO in QEMU"
 echo "    dakota-iso:  ${DAKOTA_ISO_DIR}"
@@ -141,11 +137,24 @@ echo "    payload:     ${PAYLOAD_REF}"
 echo "    secure:      ${SECURE} (installed disk; the live ISO always boots unsigned)"
 echo "    expect-fail: ${EXPECT_FAIL}"
 
+# Phase 1-2 only: boot the live ISO and run the installer. The verdict is NOT
+# delegated, because dakota-iso decides it by grepping the installed system's
+# serial console for "Reached target Graphical Interface" — and a sealed system
+# can never produce that. Its kernel cmdline is frozen inside the signed UKI, so
+# `console=ttyS0` cannot be injected (that is the whole point of sealing), the
+# kernel logs to tty0 only, and the serial log ends at:
+#
+#     BdsDxe: starting Boot0002 "UEFI Misc Device" …
+#     systemd-boot@0x101300000 260.2
+#     systemd-stub@0x14df91000 260.2
+#
+# which is a *successful* verified chain under enforcement (BDS accepted the
+# signed bootloader; systemd-boot chained into the stub, so the UKI's signature
+# verified), read as a timeout. See docs/skills/secure-boot.md.
 set +e
 ISO_PATH="${ISO_ABS}" \
 PAYLOAD_REF="${PAYLOAD_REF}" \
-OVMF_VARS_SECURE="${OVMF_VARS_SECURE}" \
-EXPECT_FAIL="$([[ "${EXPECT_FAIL}" -eq 1 ]] && echo 1 || echo '')" \
+INSTALL_ONLY=1 \
     just --justfile "${DAKOTA_ISO_DIR}/justfile" \
          --working-directory "${DAKOTA_ISO_DIR}" \
          output_dir="${OUTPUT_DIR}" \
@@ -154,9 +163,26 @@ RESULT=$?
 set -e
 
 if [[ "${RESULT}" -ne 0 ]]; then
-    echo "==> FAILED (exit ${RESULT}). Serial logs from the run:" >&2
-    ls -la /tmp/dakota-sealed-qemu-*serial*.log /tmp/dakota-plain-qemu-*serial*.log 2>/dev/null >&2 || true
+    echo "==> FAILED during install (exit ${RESULT}). Serial logs from the run:" >&2
+    ls -la /tmp/dakota-sealed-qemu-*serial*.log 2>/dev/null >&2 || true
     exit "${RESULT}"
 fi
+
+[[ -f "${INSTALL_DISK}" ]] || { echo "ERROR: installer reported success but ${INSTALL_DISK} is missing." >&2; exit 1; }
+
+# boot-test is the verdict engine: it provisions sshd, an authorized key and a
+# diagnostics probe as SMBIOS type-11 systemd credentials, which systemd reads
+# with no kernel argument involved — so it works on a sealed system whose cmdline
+# cannot be touched. It also already owns the OVMF secboot selection (smm=on +
+# pflash secure=on), copies the enrolled varstore to scratch, and implements the
+# negative case properly: --expect-fail asserts the FIRMWARE's rejection line
+# rather than concluding "rejected" from a silent disk. One implementation of
+# "did this disk boot under enforcement", shared with the image→disk path.
+BOOT_TEST_ARGS=(--reuse-disk "${INSTALL_DISK}")
+[[ "${SECURE}" -eq 1 ]] && BOOT_TEST_ARGS+=(--secure)
+[[ "${EXPECT_FAIL}" -eq 1 ]] && BOOT_TEST_ARGS+=(--expect-fail)
+
+echo "==> Verdict: booting the installed disk (boot-test ${BOOT_TEST_ARGS[*]})"
+./mise/tasks/boot-test "${BOOT_TEST_ARGS[@]}"
 
 echo "==> PASS"
