@@ -289,3 +289,80 @@ Three deliberate combinations, only the first two positive:
 Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
 element change touching systemd invalidates an existing `:sealed` image — rerun
 `mise run seal-uki` rather than booting the stale one.
+
+## A sealed ISO payload must be embedded byte-identically, and its ref must move too
+
+`mise run build-iso --sealed` embeds `localhost/krytis:sealed` as the live ISO's
+offline install payload. Two non-obvious requirements, both of which otherwise
+produce late, confusing failures:
+
+**1. Byte identity.** dakota-iso's payload pipeline injects
+`/usr/lib/bootc/install/00-defaults.toml` and `/etc/containers/storage.conf` into
+every payload and re-commits it twice with `buildah commit --squash`. Krytis ships
+neither file, and each `buildah run`/`commit` round trip can bump `/tmp` and
+`/var/tmp` mtimes — the same, and only, discrepancy that broke the UKI digest
+before (§ `bootc container ukify` must run in a throwaway stage). Any of the three
+invalidates the `composefs=` digest baked into the UKI's frozen cmdline, and
+`bootc install` then aborts with `The UKI has the wrong composefs= parameter (is
+'sha512:X', should be sha512:Y')`. `PAYLOAD_SEALED=1` makes the pipeline pass the
+payload through untouched. Skipping only the `00-defaults.toml` injection — which
+is what issue #371 originally scoped — is **not** enough.
+
+Where that code lives is itself a trap: the injection exists in **three** places
+in dakota-iso, and `mise run build-iso` only reaches one of them. `iso-sd-boot.sh`
+calls `live/iso-tools/payload-prep.sh` (via the `ISO_TOOLS_IMAGE` container, since
+krytis's host has no buildah) and then assembles the squashfs with its own inline
+`_ns_build_squashfs`. `scripts/build-live-squashfs.sh` is a *different* entry point
+with a duplicate copy of both. Grep for `00-defaults.toml`, don't assume.
+
+**2. `targetImgref`, not just the store key.** `configure-live-krytis.sh` bakes one
+ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
+`local_imgref`. Change only the embedded *content* and the install succeeds while
+`targetImgref` still points at `…/krytis:latest` — so the first `bootc upgrade` on
+the freshly sealed system pulls the **unsigned** image, overwrites the signed UKI
+and signed systemd-boot, and the enrolled firmware refuses to boot it. Change only
+`payload_ref` and `local_imgref` no longer resolves in the offline store, failing
+the install immediately. `PAYLOAD_REF` moves both together; `build-iso --sealed`
+sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
+`bootc status --json | jq '.spec.image.image'`.
+
+Because `iso-sd-boot.sh` ignores env vars it does not know, an out-of-date sibling
+checkout would silently produce a *broken* sealed ISO. `build-iso --sealed`
+therefore greps the sibling for both knobs and refuses up front — same
+"fail before the expensive step, not during it" discipline as `boot-test`'s UKI
+presence check.
+
+### Assert the embed on the finished ISO, not inside the pipeline
+
+Once the sealed path is a pass-through, byte identity is true *by construction*, so
+an assertion inside dakota-iso would be tautological. `mise run verify-iso-payload`
+reads the **finished ISO** instead, which is the only place that proves the whole
+chain (`podman save` → oci-archive → `skopeo copy` → VFS store → squashfs → ISO)
+preserved the image. It also catches the "wrong tag embedded" class of bug that
+already bit once (#417/#425). `build-iso --sealed` runs it automatically.
+
+The invariant is image-ID equality, established empirically:
+
+- a VFS containers-storage records `vfs-images/images.json` as a list of
+  `{"id": …, "names": [...]}`, where `id` is exactly
+  `podman inspect <tag> --format '{{.Id}}'` (the config digest, no `sha256:` prefix);
+- `podman save --format oci-archive` round-trips both the config digest and the
+  layer diff_id unchanged for krytis's images (they are already OCI-format, so no
+  manifest conversion happens). Checked against `:sealed`: ID `0b00a10aad1a…`,
+  diff_id `e2ae30e0f0ac…`, identical before and after the archive round trip.
+
+Byte identity is a *stronger* claim than digest equality, which is what makes it
+the right assertion — and it needs no privileged mount and no digest recomputation.
+The authoritative digest check is `bootc install` itself, which recomputes and
+names both digests in its error; the QEMU install test is therefore the end-to-end
+digest proof, and this gate is the cheap regression net in front of it.
+
+Reading the payload out of the ISO needs neither root nor a 5GB extract: walk the
+ISO 9660 directory records to find `LiveOS/squashfs.img`'s extent, then
+`unsquashfs -offset <lba*2048> -cat <iso> <path>`. File data in an ISO is
+contiguous — including across the multi-extent records `-iso-level 3` uses for
+files over 4GB — so the first record's extent is the start of the squashfs. Assert
+the `hsqs` magic at the computed offset so a layout change fails loudly instead of
+as a confusing unsquashfs error. `xorriso` is not on the krytis host at all
+(dakota-iso routes it through the iso-tools container), so an `-osirrox` extract
+would be both slower and less portable here.

@@ -4,6 +4,7 @@
 #USAGE flag "--workdir <dir>" help="Working directory for squashfs staging (XFS/BTRFS recommended)"
 #USAGE flag "--compression <mode>" default="fast" help="Squashfs compression: fast or release"
 #USAGE flag "--debug" help="Enable SSH in the live environment (not for production)"
+#USAGE flag "--sealed" help="Embed the signed UKI image (localhost/krytis:sealed) as the offline install payload instead of the unsigned one"
 
 set -euo pipefail
 
@@ -26,19 +27,58 @@ if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
     exit 1
 fi
 
-# `mise build` only tags the freshly built image as localhost/krytis:latest.
-# dakota-iso's iso-sd-boot.sh reads krytis/payload_ref (ghcr.io/starlit-os/
-# krytis:latest) and does `podman save` on that exact ref to embed the
-# offline payload — without a matching local tag it either fails outright or
-# silently picks up a stale image pulled/pushed earlier. Re-tag on every run
-# so the ISO always embeds the image `mise build` just produced.
-LOCAL_IMAGE="localhost/krytis:latest"
+SEALED=$([[ "${usage_sealed:-}" == "true" ]] && echo 1 || echo 0)
+
+# iso-sd-boot.sh ignores env vars it does not know, so an out-of-date sibling
+# checkout would silently build a BROKEN sealed ISO — a mutated payload whose
+# UKI composefs digest no longer matches, discovered ~40 minutes later when
+# `bootc install` aborts. Refuse before the expensive step, matching boot-test's
+# up-front "does this image even have a UKI" guard.
+if [[ "${SEALED}" -eq 1 ]]; then
+    if ! grep -q 'PAYLOAD_SEALED' "${DAKOTA_ISO_DIR}/scripts/iso-sd-boot.sh" \
+       || ! grep -q 'PAYLOAD_REF' "${DAKOTA_ISO_DIR}/live/src/configure-live-krytis.sh"; then
+        echo "ERROR: ${DAKOTA_ISO_DIR} predates sealed-payload support (#371)." >&2
+        echo "       --sealed needs PAYLOAD_SEALED in scripts/iso-sd-boot.sh and PAYLOAD_REF in" >&2
+        echo "       live/src/configure-live-krytis.sh. Update the sibling checkout:" >&2
+        echo "         git -C ${DAKOTA_ISO_DIR} pull" >&2
+        echo "       Without them the ISO would embed a mutated payload whose UKI composefs" >&2
+        echo "       digest no longer matches, and the install would fail late." >&2
+        exit 1
+    fi
+fi
+
+# `mise build` only tags the freshly built image as localhost/krytis:latest, and
+# `mise run seal-uki` only tags localhost/krytis:sealed. iso-sd-boot.sh does
+# `podman save` on the payload ref it is given, so re-tag on every run: without a
+# matching local tag it either fails outright or silently embeds a stale image
+# pulled/pushed earlier.
+#
+# --sealed diverges in three ways, all of which matter:
+#   1. the payload image is :sealed, not :latest;
+#   2. the payload REF is …/krytis:sealed, so recipe.json's targetImgref makes the
+#      installed system follow the sealed stream — pointing it at :latest would make
+#      the first `bootc upgrade` replace the signed boot chain with unsigned
+#      artifacts the enrolled firmware then refuses (#371);
+#   3. PAYLOAD_SEALED=1 tells dakota-iso to embed the payload byte-identically,
+#      because the UKI's baked composefs= digest cannot survive the pipeline's
+#      normal inject-and-recommit pass. See docs/skills/secure-boot.md
+#      § A sealed ISO payload must be embedded byte-identically.
+if [[ "${SEALED}" -eq 1 ]]; then
+    ./scripts/ensure-sealed-image.sh
+    LOCAL_IMAGE="localhost/krytis:sealed"
+    PAYLOAD_REF="ghcr.io/starlit-os/krytis:sealed"
+    ISO_NAME="krytis-live-sealed.iso"
+else
+    LOCAL_IMAGE="localhost/krytis:latest"
+    PAYLOAD_REF="$(tr -d '[:space:]' < "${DAKOTA_ISO_DIR}/krytis/payload_ref")"
+    ISO_NAME="krytis-live.iso"
+fi
+
 if ! podman image exists "${LOCAL_IMAGE}"; then
-    echo "ERROR: ${LOCAL_IMAGE} not found — run 'mise build' first." >&2
+    echo "ERROR: ${LOCAL_IMAGE} not found — run '$([[ "${SEALED}" -eq 1 ]] && echo 'mise run seal-uki' || echo 'mise build')' first." >&2
     exit 1
 fi
 
-PAYLOAD_REF="$(cat "${DAKOTA_ISO_DIR}/krytis/payload_ref" | tr -d '[:space:]')"
 echo "==> Tagging ${LOCAL_IMAGE} → ${PAYLOAD_REF} for offline embed..."
 podman tag "${LOCAL_IMAGE}" "${PAYLOAD_REF}"
 
@@ -63,6 +103,8 @@ echo "    output:     ${OUTPUT_DIR}"
 echo "    workdir:    ${WORKDIR}"
 echo "    compress:   ${COMPRESSION}"
 echo "    iso-tools:  ${ISO_TOOLS_IMAGE}"
+echo "    sealed:     ${SEALED}"
+echo "    payload:    ${PAYLOAD_REF}"
 
 TARGET=krytis \
 OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")" \
@@ -70,8 +112,18 @@ WORKDIR="$(realpath "${WORKDIR}")" \
 DEBUG="${DEBUG}" \
 COMPRESSION="${COMPRESSION}" \
 ISO_TOOLS_IMAGE="${ISO_TOOLS_IMAGE}" \
+PAYLOAD_REF="${PAYLOAD_REF}" \
+PAYLOAD_SEALED="${SEALED}" \
     just --justfile "${DAKOTA_ISO_DIR}/justfile" \
          --working-directory "${DAKOTA_ISO_DIR}" \
          iso-sd-boot krytis
 
-echo "==> ISO ready: ${OUTPUT_DIR}/krytis-live.iso"
+# dakota-iso always writes ${TARGET}-live.iso, so a sealed build necessarily
+# overwrites any existing default ISO at that path before this rename — rebuild
+# the default one if you need both variants side by side.
+if [[ "${SEALED}" -eq 1 ]]; then
+    mv "${OUTPUT_DIR}/krytis-live.iso" "${OUTPUT_DIR}/${ISO_NAME}"
+    ./mise/tasks/verify-iso-payload --iso "${OUTPUT_DIR}/${ISO_NAME}" --image "${LOCAL_IMAGE}"
+fi
+
+echo "==> ISO ready: ${OUTPUT_DIR}/${ISO_NAME}"

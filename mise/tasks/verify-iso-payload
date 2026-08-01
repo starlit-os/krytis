@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+#MISE description="Assert an ISO's embedded offline payload is the exact image expected (sealed-payload digest gate)"
+#USAGE flag "--iso <path>" default="output/krytis-live-sealed.iso" help="ISO to inspect"
+#USAGE flag "--image <tag>" default="localhost/krytis:sealed" help="Local image tag the payload must match"
+
+set -euo pipefail
+
+# Why this exists: a sealed payload's UKI carries a composefs= digest baked into
+# its frozen cmdline at seal time, and `bootc install` refuses any mismatch. The
+# embed pipeline therefore has to hand the payload through byte-identically
+# (PAYLOAD_SEALED=1 in dakota-iso). Asserting that inside the pipeline would be
+# tautological — the pass-through makes it true by construction. The finished ISO
+# is the only place that proves the whole chain (podman save → oci-archive →
+# skopeo copy → VFS store → squashfs → ISO) preserved the image, and the same
+# check catches the "wrong tag embedded" class of bug that already bit once
+# (#417/#425). Unprivileged, no QEMU, seconds.
+#
+# The invariant: the image ID recorded in the ISO's embedded VFS store equals
+# `podman inspect <tag> --format '{{.Id}}'`. Verified empirically that a VFS
+# store's vfs-images/images.json records exactly that value as its `id`, and that
+# `podman save --format oci-archive` round-trips both the config digest and the
+# layer diff_id unchanged for krytis's (already OCI-format) images.
+#
+# When this task is invoked as a plain script by another task (build-iso does),
+# mise does NOT parse these #USAGE annotations for the child call — it passes the
+# literal flags as positional args while leaving the PARENT's usage_* vars in the
+# environment. Consume $@ first, fall back to usage_*. Same fix as boot-test and
+# generate-disk; see docs/skills/mise.md § Propagating flags through tasks that
+# call other tasks.
+CLI_ISO=""; CLI_IMAGE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --iso)   CLI_ISO="$2"; shift 2 ;;
+        --image) CLI_IMAGE="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+ISO="${CLI_ISO:-${usage_iso:-output/krytis-live-sealed.iso}}"
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:sealed}}"
+
+[ -f "${ISO}" ] || { echo "ERROR: ISO not found: ${ISO}" >&2; exit 1; }
+podman image exists "${IMAGE}" || { echo "ERROR: ${IMAGE} does not exist locally — nothing to compare the ISO against." >&2; exit 1; }
+
+EXPECTED_ID="$(podman inspect "${IMAGE}" --format '{{.Id}}')"
+STORE_JSON="var/lib/containers/storage/vfs-images/images.json"
+
+echo "==> Verifying ${ISO} embeds ${IMAGE} (${EXPECTED_ID:0:12})..."
+
+# Locate LiveOS/squashfs.img inside the ISO by walking the ISO 9660 directory
+# records, then read straight out of it with `unsquashfs -offset`. Extracting the
+# squashfs first would mean a ~5GB copy, and xorriso is not on the host at all
+# (dakota-iso routes it through the iso-tools container). File data in the ISO is
+# contiguous — including across the multi-extent records `-iso-level 3` uses for
+# files >4GB — so the first record's extent is the start of the squashfs. The
+# walk asserts the squashfs magic at the computed offset before returning it, so
+# a layout change fails loudly here instead of surfacing as a confusing
+# unsquashfs error.
+SFS_OFFSET="$(python3 - "${ISO}" <<'PY'
+import sys
+
+SECTOR = 2048
+iso = open(sys.argv[1], "rb")
+
+
+def read_sectors(lba, count=1):
+    iso.seek(lba * SECTOR)
+    return iso.read(count * SECTOR)
+
+
+def records(lba, length):
+    """Yield (NAME, extent_lba, size, is_dir) for each record in a directory extent."""
+    data = read_sectors(lba, (length + SECTOR - 1) // SECTOR)
+    pos = 0
+    while pos < len(data):
+        rec_len = data[pos]
+        if rec_len == 0:
+            # Zero padding runs to the end of the sector; resume at the next one.
+            pos = (pos // SECTOR + 1) * SECTOR
+            continue
+        rec = data[pos:pos + rec_len]
+        name = rec[33:33 + rec[32]].decode("latin-1").split(";")[0].upper()
+        yield (
+            name,
+            int.from_bytes(rec[2:6], "little"),
+            int.from_bytes(rec[10:14], "little"),
+            bool(rec[25] & 0x02),
+        )
+        pos += rec_len
+
+
+pvd = read_sectors(16)
+if pvd[0] != 1 or pvd[1:6] != b"CD001":
+    sys.exit("not an ISO 9660 image (no primary volume descriptor at sector 16)")
+
+root = pvd[156:190]
+lba = int.from_bytes(root[2:6], "little")
+length = int.from_bytes(root[10:14], "little")
+
+for want, want_dir in (("LIVEOS", True), ("SQUASHFS.IMG", False)):
+    for name, extent, size, is_dir in records(lba, length):
+        if name == want and is_dir == want_dir:
+            lba, length = extent, size
+            break
+    else:
+        sys.exit(f"{want} not found while walking the ISO's LiveOS path")
+
+offset = lba * SECTOR
+iso.seek(offset)
+if iso.read(4) != b"hsqs":
+    sys.exit(f"no squashfs magic at offset {offset} — the ISO layout changed")
+
+print(offset)
+PY
+)"
+
+if ! IMAGES_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${STORE_JSON}" 2>/dev/null)"; then
+    echo "ERROR: ${STORE_JSON} not present in the ISO's squashfs." >&2
+    echo "       The offline store is missing, or is not the composefs (VFS) layout." >&2
+    exit 1
+fi
+
+IMAGES_JSON="${IMAGES_JSON}" EXPECTED_ID="${EXPECTED_ID}" IMAGE="${IMAGE}" python3 <<'PY'
+import json, os, sys
+
+expected = os.environ["EXPECTED_ID"].removeprefix("sha256:")
+entries = json.loads(os.environ["IMAGES_JSON"])
+found = [(e.get("id", ""), e.get("names") or []) for e in entries]
+
+for image_id, names in found:
+    if image_id == expected:
+        print(f"==> Payload verified: {image_id[:12]} {names}")
+        sys.exit(0)
+
+err = sys.stderr
+print(f"ERROR: the ISO's embedded store does not contain {os.environ['IMAGE']}.", file=err)
+print(f"       expected image ID: {expected[:12]}", file=err)
+for image_id, names in found:
+    print(f"       store has:         {image_id[:12]} {names}", file=err)
+print("", file=err)
+print("Two likely causes:", file=err)
+print("  1. The sibling dakota-iso checkout mutated the payload (PAYLOAD_SEALED not", file=err)
+print("     honoured). The store then holds a re-committed image whose rootfs no", file=err)
+print("     longer matches the digest baked into the UKI, and the install would abort", file=err)
+print("     with 'The UKI has the wrong composefs= parameter'.", file=err)
+print("  2. The wrong tag was embedded — check build-iso's payload ref.", file=err)
+sys.exit(1)
+PY
