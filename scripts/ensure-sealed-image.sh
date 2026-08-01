@@ -39,3 +39,13 @@ if ! podman image exists "${SEALED_TAG}"; then
     echo "==> ERROR: ${SEALED_TAG} still missing after seal-uki" >&2
     exit 1
 fi
+
+# The tag existing is not proof it is sealed — a hand-tagged or half-built image
+# would otherwise be pushed, or embedded in an ISO, as "the signed one" and only
+# surface as a firmware rejection much later. The UKI is the one artifact only the
+# sealed build produces. Same guard boot-test applies before an enforcing boot.
+if ! podman run --rm "${SEALED_TAG}" sh -c '[ -f /boot/EFI/Linux/krytis.efi ]' 2>/dev/null; then
+    echo "==> ERROR: ${SEALED_TAG} has no /boot/EFI/Linux/krytis.efi — that is not a sealed build." >&2
+    echo "    Rebuild it:  mise run seal-uki" >&2
+    exit 1
+fi
