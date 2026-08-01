@@ -409,3 +409,59 @@ silent disk.
 Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
 kargs for anything a test needs to inject. Kargs are a signing-time decision;
 credentials are a runtime one.
+
+## `loader/keys/auto` self-enrollment leaves the firmware rejecting our own loader
+
+Open defect, found in #371, owned by the #309 enrollment mechanism rather than by
+anything the ISO does. Boot a freshly installed sealed system against a firmware
+whose varstore is in **setup mode** (a blank OVMF varstore — i.e. a machine that
+has never had keys) and systemd-boot does what #309 designed it to do:
+
+```
+BdsDxe: starting Boot0002 "UEFI Misc Device" …
+Enrolling secure boot keys from directory: \loader\keys\auto
+Custom Secure Boot keys successfully enrolled, rebooting the system now!
+BdsDxe: failed to load Boot0002 "UEFI Misc Device" …: Access Denied -- rejected probably by Secure Boot
+```
+
+It enrolls krytis's own PK/KEK/db and then the firmware refuses krytis's own
+signed bootloader. Reproduced on both the non-SMM and the proper
+`OVMF_CODE_4M.secboot.fd` + `smm=on` + pflash-`secure=on` configuration, so it is
+not the varstore-protection mistake it first looks like.
+
+The signed artifacts are not the variable. The *same disk image* boots and reaches
+`running` under enforcement when the varstore is enrolled externally by
+`mise run generate-ovmf-vars` — `virt-fw-vars --secure-boot --set-pk/--add-kek/--add-db`
+from `files/boot-keys/*.crt`. Same ESP, same signed systemd-boot, same UKI. The
+only difference is **how the keys got into the firmware**: the `.auth` signature
+lists built in the Containerfile versus the certificates handed to virt-fw-vars.
+So suspect `db.auth`'s contents or its acceptance by the firmware, not the signing
+of the boot chain. `db.auth` also bundles the two Microsoft CAs, which the
+virt-fw-vars path does not — a difference worth isolating first.
+
+`secure-boot-enroll manual` does **not** prevent it here, despite being present in
+the ESP's own `loader.conf` (verified in-guest: `bootctl -p` is `/boot`, and that
+file contains the line). A VM in setup mode enrolls anyway.
+
+**Why no existing test caught it:** `mise run boot-test --secure` pre-enrolls the
+varstore with virt-fw-vars, which bypasses `loader/keys/auto` completely. Nothing
+in the repo had ever put a freshly installed disk in front of a *blank* varstore
+until an ISO install did. Any future work on enrollment must test the
+setup-mode-first-boot path explicitly; a passing `boot-test --secure` says nothing
+about it.
+
+**Working around it in a test fixture** — when you want to boot a sealed disk with
+no enforcement, delete the enrollment trigger from the *copy* you boot, never from
+the payload. The ESP is FAT, so this needs no root (same mtools technique as the
+UKI byte-flip test above):
+
+```bash
+export MTOOLS_SKIP_CHECK=1
+# ESP offset: first GPT partition entry's starting LBA × 512
+OFF=$(python3 -c 'f=open("disk.raw","rb");f.seek(1024+32);print(int.from_bytes(f.read(8),"little")*512)')
+mdeltree -i "disk.raw@@${OFF}" ::/loader/keys
+```
+
+With the trigger gone, the same disk boots to `running` with
+`bootctl status` reporting `Secure Boot: disabled (setup)` — which is how #371
+demonstrated that a sealed payload is still a valid non-secure-boot image.
