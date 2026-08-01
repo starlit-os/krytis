@@ -2,10 +2,11 @@
 
 ## Context
 
-Renovate is currently configured with a single manager (`github-actions`) that
-SHA-pins and auto-merges Action digest/patch/minor updates. Everything else in
-the project is updated manually. This document tracks what else Renovate could
-own.
+Renovate started with a single manager (`github-actions`) that SHA-pins and
+auto-merges Action digest/patch/minor updates; `pep621` was added for
+`pyproject.toml` in #26. Everything else in the project is updated manually or
+by the `track-bst-sources.yml` CI matrix. This document tracks what else
+Renovate could own.
 
 **Principle: prefer Renovate over manual or custom CI tracking wherever
 possible.** Renovate provides consistent PR descriptions, configurable
@@ -21,6 +22,11 @@ default.
 | What | Manager | Auto-merge? |
 |------|---------|-------------|
 | GitHub Actions `uses:` | `github-actions` | Yes (digest/patch/minor) |
+| `pyproject.toml` + `uv.lock` | `pep621` | Yes, except `click`/`dulwich`/`buildstream*` (held for review) and `requires-python`/`buildstream-sbom` (disabled) |
+
+Config changes are verified with `mise run renovate-check` (`--explain` resolves
+every rule to its enabled/auto-merge verdict; `--dry-run` lists pending
+updates). Operational detail lives in `docs/skills/renovate.md`.
 
 ---
 
@@ -38,16 +44,14 @@ invisible to Renovate. Options:
 - See also: `docs/plans/done/2026-06-18-runner-followup.md` §3 for `RUNNER_VERSION` which needs a regex
   manager since it lives in `[env]`, not `[tools]`.
 
-### Python dependencies (`pyproject.toml` / `uv.lock`)
+### Python dependencies (`pyproject.toml` / `uv.lock`) — done (#26)
 
-`buildstream`, `buildstream-plugins`, `buildstream-plugins-community`,
-`click==8.2.1`, `dulwich==0.24.0`, `requests`, `tomlkit`. Options:
-
-- Enable the `uv` or `pep621` manager to track `pyproject.toml`.
-- `click` and `dulwich` are hard-pinned for compatibility reasons — Renovate
-  PRs for these need manual review, not auto-merge. Add a `packageRule` to
-  exclude them from auto-merge, or pin with a comment explaining the constraint
-  so the PR description is informative.
+`pep621` is the manager (there is no `uv` manager); it also refreshes `uv.lock`
+via `uv lock`. Held back from auto-merge: `click`/`dulwich` (hard-pinned for
+BuildStream 2.5.x) and the `buildstream*` family (junction-coupled, see below),
+each carrying a `prBodyNotes` explanation. Disabled outright: `requires-python`
+(a `>=` floor, not a pin) and `buildstream-sbom` (a `git+https://…@<sha>`
+direct reference the pypi datasource cannot represent).
 
 ### BST element sources (remote binaries)
 
@@ -64,11 +68,15 @@ redundant here and could conflict. Leave with CI tracking.
 
 Already tracked by `track-linux-cachyos` CI job. Leave with CI tracking.
 
-### `buildstream` version in `pyproject.toml`
+### `buildstream` version in `pyproject.toml` — partly settled (#26)
 
 Tied closely to junction versions — a BST upgrade may require junction bumps
-in lockstep. Auto-merge is risky. Could add a Renovate PR for visibility but
-require manual merge.
+in lockstep. Auto-merge is therefore off for `buildstream`,
+`buildstream-plugins`, and `buildstream-plugins-community`: Renovate opens the
+PR for visibility and a human decides whether `elements/freedesktop-sdk.bst` /
+`elements/gnome-build-meta.bst` need bumping alongside it. Revisit whether the
+coupling can be encoded (rather than left to review) once it is better
+understood.
 
 ---
 
@@ -76,8 +84,8 @@ require manual merge.
 
 1. Pin mise tool versions + commit `mise.lock` (prerequisite for mise manager).
 2. Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.
-3. Add `uv` or `pep621` to `enabledManagers` for Python deps; add a rule to
-   exclude `click` and `dulwich` from auto-merge.
+3. ~~Add `pep621` to `enabledManagers` for Python deps; exclude `click` and
+   `dulwich` from auto-merge.~~ Done in #26.
 4. Add a `regexManager` for `RUNNER_VERSION` (see `docs/plans/done/2026-06-18-runner-followup.md` §3).
 5. Revisit `buildstream` version tracking once the junction/BST coupling is
    better understood.

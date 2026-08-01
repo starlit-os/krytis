@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#MISE description="Validate .github/renovate.json5 — add --explain to resolve packageRules, --dry-run to list pending updates"
+#USAGE flag "--explain" help="Resolve every packageRule to its enabled/automerge verdict per package (offline)"
+#USAGE flag "--dry-run" help="Also run a full local dry-run (network: PyPI + GitHub lookups; no writes)"
+#USAGE flag "--log-level <level>" default="info" help="Renovate LOG_LEVEL for the dry-run (debug shows per-dep extraction)"
+
+# Renovate runs in a container rather than via npx: the hosted Mend app always
+# runs the newest release, and npm resolves `renovate@latest` against the host
+# node's engines field — on a node newer than the release supports it silently
+# walks back to an ancient major (37.x on node 26) and validates against the
+# wrong schema. `:latest` here is deliberate for the same reason: this is a
+# lint of a config consumed by an always-latest bot, not a build input.
+#
+# `--platform=local --dry-run=full` runs extract + lookup against the working
+# tree and writes nothing — no branches, no PRs, no token required for PyPI.
+# GitHub Actions datasource lookups are rate-limited without a token, so the
+# gh CLI token is passed through when one is available.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+IMAGE="ghcr.io/renovatebot/renovate:latest"
+CONFIG=".github/renovate.json5"
+EXPLAIN=$([[ "${usage_explain:-}" == "true" ]] && echo 1 || echo 0)
+DRY_RUN=$([[ "${usage_dry_run:-}" == "true" ]] && echo 1 || echo 0)
+LOG_LEVEL="${usage_log_level:-info}"
+
+run_renovate() {
+    podman run --rm \
+        --pull=newer \
+        -v "$PWD:/repo:z" \
+        -w /repo \
+        -e LOG_LEVEL \
+        -e GITHUB_COM_TOKEN \
+        "$IMAGE" "$@"
+}
+
+echo "==> Validating ${CONFIG}..."
+# No path argument: given one, the validator treats the file as *global* config
+# and skips repo-scoped checks. Auto-discovery validates it as repo config, and
+# --strict then fails on migration warnings too, not just hard errors.
+LOG_LEVEL="$LOG_LEVEL" run_renovate renovate-config-validator --strict
+
+if [[ "$EXPLAIN" -eq 1 ]]; then
+    # Renovate's own applyPackageRules(), against the real config — the dry-run
+    # below stops before branch materialisation and never reveals this.
+    run_renovate node scripts/renovate-explain.mjs "$CONFIG"
+fi
+
+if [[ "$DRY_RUN" -eq 0 ]]; then
+    echo "==> Config valid. Re-run with --dry-run to list the updates Renovate would open."
+    exit 0
+fi
+
+GITHUB_COM_TOKEN="${GITHUB_COM_TOKEN:-$(gh auth token 2>/dev/null || true)}"
+if [[ -z "$GITHUB_COM_TOKEN" ]]; then
+    echo "    (no gh token — github-actions lookups will be rate-limited)"
+fi
+
+echo "==> Dry-running Renovate against the working tree (no writes)..."
+LOG_LEVEL="$LOG_LEVEL" GITHUB_COM_TOKEN="$GITHUB_COM_TOKEN" \
+    run_renovate renovate --platform=local --dry-run=full
