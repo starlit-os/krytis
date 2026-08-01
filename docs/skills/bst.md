@@ -416,6 +416,17 @@ mise bst show --deps all --format '%{name}' stacks/base-system.bst | grep system
 # (no gnome-build-meta.bst:core-deps/systemd-base.bst)
 ```
 
+**Moving an element between projects moves its licence tree, which breaks whitelists.** `project_licensedir` is `%{licensedir}/%{project-name}` (fdsdk `include/install-dirs.yml`), so a mirror built in krytis harvests licences to `/usr/share/licenses/krytis/<name>/` instead of the upstream project's directory — gnome-build-meta's project name is `gnome`, not `gnome-build-meta`. That alone is a fatal build break whenever the mirrored element is filtered: gnome-build-meta's `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` both carry the licence files and rely on an `overlap-whitelist` of `%{project_licensedir}/systemd/**`, expanded in *their* project's scope. At the moved path nothing matches, and every element that stages both filters dies with
+
+```
+/usr/share/licenses/krytis/systemd/LICENSE.GPL2: gnome-build-meta.bst:core-deps/systemd.bst is not permitted to overlap other elements …
+[overlaps]: Non-whitelisted overlaps detected
+```
+
+reported against an innocent bystander (`components/polkit-base.bst` — the first element to stage both). Pin the variable in the mirror rather than chasing whitelists: `project_licensedir: "%{licensedir}/gnome"`. Keeping the artifact's layout identical to the element being mirrored is the general rule — the whole point of a mirror is that only the patched bits differ.
+
+Note that `mise validate` and a standalone `mise bst build <element>` both pass with the licence tree at the wrong path: nothing stages two filters of the same element until the image graph is assembled, so this class of break only shows up in `mise run build`. Budget for a full image build before calling a junction mirror verified.
+
 **A mirrored element rots silently.** It carries its own copy of upstream's `ref:` and build config, so a junction bump moves upstream while the mirror keeps building the old release — and, like `desktop/mesa-all-codecs.bst`, it is deliberately *not* in the `track-bst-sources.yml` matrix (its ref is tied to the junction, not tracked independently; running `bst source track` on it would actively break the mirror). Ship a drift check with it: `mise run systemd-base-check` fetches the junction-pinned upstream file at the SHA in `elements/gnome-build-meta.bst` and diffs it against the mirror, ignoring comments, blank lines and the added `kind: patch` source. Run it after every junction bump; there is no PR-triggered CI in this repo to run it for you.
 
 **Patch hygiene:** patches live in `patches/<project>/`, and the file starts with a prose header naming the upstream SHA and why the backport exists (the `patch` source kind ignores everything before the first `diff`/`---` line). Confirm it applies to the pinned tag before building — much faster than discovering it in a build sandbox an hour in:

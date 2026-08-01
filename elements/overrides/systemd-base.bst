@@ -87,6 +87,17 @@ config:
       shopt -u nullglob
 
 variables:
+  # Local addition, not upstream. `project_licensedir` is
+  # `%{licensedir}/%{project-name}`, so building this element in krytis rather
+  # than in gnome-build-meta moves the harvested licence tree from
+  # /usr/share/licenses/gnome/systemd to /usr/share/licenses/krytis/systemd.
+  # gnome-build-meta's core-deps/systemd.bst and systemd-libs.bst are filters
+  # over this element and both carry those files; their overlap-whitelist
+  # expands in the *gnome* project's scope, so at the moved path it no longer
+  # matches and every consumer fails to stage with `[overlaps]: Non-whitelisted
+  # overlaps detected`. Pin the path so the artifact stays byte-identical in
+  # layout to the element being mirrored.
+  project_licensedir: "%{licensedir}/gnome"
   efi: 'false'
   bpf-framework: 'disabled'
   fallback-ntp-servers: "gnome.pool.ntp.org"

@@ -24,6 +24,13 @@ OVERRIDE="elements/overrides/systemd-base.bst"
 UPSTREAM_PATH="elements/core-deps/systemd-base.bst"
 PATCH="patches/systemd/update-utmp-shorten-comm.patch"
 
+# Lines the mirror adds on purpose; everything else must match upstream.
+LOCAL_ADDITIONS=(
+    "- kind: patch"
+    "  path: $PATCH"
+    '  project_licensedir: "%{licensedir}/gnome"'
+)
+
 if [ ! -f "$OVERRIDE" ]; then
     echo "==> $OVERRIDE is gone — nothing to check."
     exit 0
@@ -47,13 +54,22 @@ if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
     exit 1
 fi
 
-# Strip comments and blank lines from both, and the patch source from ours.
+# Strip comments and blank lines from both, and the deliberate additions from ours.
 normalise() {
     grep -vE '^\s*#|^\s*$' "$1"
 }
 
+drop_local_additions() {
+    local args=()
+    local line
+    for line in "${LOCAL_ADDITIONS[@]}"; do
+        args+=(-e "$line")
+    done
+    grep -vxF "${args[@]}"
+}
+
 normalise "$TMP/upstream.bst" >"$TMP/upstream.norm"
-normalise "$OVERRIDE" | grep -vxF -e "- kind: patch" -e "  path: $PATCH" >"$TMP/override.norm"
+normalise "$OVERRIDE" | drop_local_additions >"$TMP/override.norm"
 
 if ! diff -u --label "gnome-build-meta/$UPSTREAM_PATH" "$TMP/upstream.norm" \
         --label "$OVERRIDE" "$TMP/override.norm"; then
