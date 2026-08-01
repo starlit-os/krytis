@@ -246,3 +246,38 @@ mcopy -o -i "disk.raw@@${OFF}" /tmp/uki.efi "$UKI"
 Combine with `--reuse-disk` to run the whole negative test unprivileged. Budget
 ~8 minutes: the firmware retries every boot entry, including a PXE attempt, before
 giving up.
+
+### `boot-test --secure` on the default image is the negative test, not the positive one
+
+`--secure` defaults to `--image localhost/krytis:latest`, and that tag is the
+*unsigned* image `mise build` produces — no signed systemd-boot, and no UKI at
+all (`/boot/EFI/Linux/krytis.efi` only exists in `localhost/krytis:sealed`,
+baked by `mise run seal-uki`). The firmware therefore refuses the disk before
+systemd-boot prints anything, and the whole log is:
+
+```
+BdsDxe: failed to load Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0):
+        Access Denied -- rejected probably by Secure Boot
+>>Start PXE over IPv4.  PXE-E16: No valid offer received.
+BdsDxe: No bootable option or device was found.
+```
+
+Note `failed to **load**` and the absence of any `../src/boot/boot.c` line: this
+is one stage earlier than the UKI rejection above — BDS refusing the bootloader
+itself. Read that shape as "wrong tag", not as a regression in the change under
+test. It cost a full install-and-boot cycle once (#417/#425) before
+`mise/tasks/boot-test` learned to check the image for `/boot/EFI/Linux/krytis.efi`
+and fail immediately when `--secure` is combined with an unsigned image and no
+`--expect-fail`.
+
+So there are three deliberate combinations, and only the first two are positive:
+
+| Command | Asserts |
+|---|---|
+| `mise run boot-test` | the image boots and is healthy — the right check for anything that isn't about the boot chain |
+| `mise run seal-uki && mise run boot-test --secure --image localhost/krytis:sealed` | the *signed* image boots under enforcement |
+| `mise run boot-test --secure --expect-fail` | secure boot rejects the unsigned image |
+
+Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
+element change touching systemd invalidates an existing `:sealed` image — rerun
+`mise run seal-uki` rather than booting the stale one.

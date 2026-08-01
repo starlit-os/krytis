@@ -85,6 +85,32 @@ MONITOR_SOCK="${WORKDIR}/monitor.sock"
 SSH_PORT=2299
 while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT + 1)); done
 
+# --secure boots against the db key enrolled in .ovmf-vars-secure.fd, so the
+# image has to carry the signed UKI that `mise run seal-uki` bakes at
+# /boot/EFI/Linux/krytis.efi. The default image, localhost/krytis:latest from
+# `mise build`, is the unsigned variant and has no UKI at all: the firmware
+# rejects it before systemd-boot prints a single line, and the only evidence is
+#
+#   BdsDxe: failed to load Boot0002 "UEFI Misc Device" …: Access Denied
+#            -- rejected probably by Secure Boot
+#
+# which reads like an image bug and is really "you booted the wrong tag". That
+# rejection IS the --expect-fail negative test, so refuse the combination only
+# when a positive result was asked for. --reuse-disk installs nothing, so the
+# image is irrelevant there.
+if [ -n "${SECURE}" ] && [ -z "${EXPECT_FAIL}" ] && [ -z "${REUSE_DISK}" ]; then
+    if ! podman run --rm "${IMAGE}" sh -c '[ -f /boot/EFI/Linux/krytis.efi ]' 2>/dev/null; then
+        echo "ERROR: --secure needs a signed UKI, and ${IMAGE} has none" >&2
+        echo "       (no /boot/EFI/Linux/krytis.efi — that image is the unsigned build)." >&2
+        echo "  Build and boot the sealed image instead:" >&2
+        echo "      mise run seal-uki" >&2
+        echo "      mise run boot-test --secure --image localhost/krytis:sealed" >&2
+        echo "  Or drop --secure to boot ${IMAGE} unsigned, or add --expect-fail to" >&2
+        echo "  assert that secure boot rejects it." >&2
+        exit 1
+    fi
+fi
+
 # Ephemeral, test-only SSH keypair, discarded with WORKDIR on exit.
 ssh-keygen -t ed25519 -N '' -C 'krytis-boot-test ephemeral' -f "${WORKDIR}/id_boottest" -q
 
