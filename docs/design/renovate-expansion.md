@@ -35,7 +35,7 @@ invisible to Renovate. Options:
   for `mise.toml` tool versions.
 - Pin tools to explicit versions first (e.g. `uv = "0.7.13"`) so Renovate has
   something to bump. Commit `mise.lock` for reproducible installs.
-- See also: `runner-followup.md` §3 for `RUNNER_VERSION` which needs a regex
+- See also: `docs/plans/done/2026-06-18-runner-followup.md` §3 for `RUNNER_VERSION` which needs a regex
   manager since it lives in `[env]`, not `[tools]`.
 
 ### Python dependencies (`pyproject.toml` / `uv.lock`)
@@ -51,9 +51,9 @@ invisible to Renovate. Options:
 
 ### BST element sources (remote binaries)
 
-`core/mise.bst` `RUNNER_VERSION` (in `runner-followup.md`), and any future
+`core/mise.bst` `RUNNER_VERSION` (in `docs/plans/done/2026-06-18-runner-followup.md`), and any future
 `remote`-sourced elements. These need `regexManagers` since there is no
-first-class BST datasource. Pattern established in `runner-followup.md` §3.
+first-class BST datasource. Pattern established in `docs/plans/done/2026-06-18-runner-followup.md` §3.
 
 ### Freedesktop SDK / gnome-build-meta junctions
 
@@ -78,6 +78,6 @@ require manual merge.
 2. Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.
 3. Add `uv` or `pep621` to `enabledManagers` for Python deps; add a rule to
    exclude `click` and `dulwich` from auto-merge.
-4. Add a `regexManager` for `RUNNER_VERSION` (see `runner-followup.md` §3).
+4. Add a `regexManager` for `RUNNER_VERSION` (see `docs/plans/done/2026-06-18-runner-followup.md` §3).
 5. Revisit `buildstream` version tracking once the junction/BST coupling is
    better understood.

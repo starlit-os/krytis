@@ -1,6 +1,6 @@
 # Enrolling krytis's Secure Boot Keys on Real Hardware
 
-krytis ships its own PK/KEK/db keys (see `docs/plan/secure-boot-uki.md`) and signs
+krytis ships its own PK/KEK/db keys (see `docs/design/secure-boot-uki.md`) and signs
 the UKI + `systemd-boot` against them. On real hardware — unlike the QEMU test path,
 which bakes keys directly into OVMF vars via `mise run generate-ovmf-vars` — you must
 enroll them through the firmware's own Secure Boot setup flow.

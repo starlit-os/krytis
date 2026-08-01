@@ -1830,7 +1830,7 @@ variables:
   make-args: EFIDIR=krytis sbindir=%{bindir}
 ```
 
-efibootmgr bakes this into the binary as the default `--loader` path (`\EFI\krytis\grub.efi`, verify with `--help`). Krytis boots via UKI (see `docs/plan/secure-boot-uki.md`), not grub, so this default loader path is currently unused at boot time — but keep it consistent for any future element that needs a reserved ESP dirname, so they don't disagree with each other.
+efibootmgr bakes this into the binary as the default `--loader` path (`\EFI\krytis\grub.efi`, verify with `--help`). Krytis boots via UKI (see `docs/design/secure-boot-uki.md`), not grub, so this default loader path is currently unused at boot time — but keep it consistent for any future element that needs a reserved ESP dirname, so they don't disagree with each other.
 
 ## Building a headless QEMU + OVMF + virt-firmware toolchain for `mise run boot-test`/`boot-vm`
 

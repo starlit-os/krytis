@@ -129,7 +129,7 @@ These features compose naturally:
 - UKI + secure boot: verifies the *kernel + initramfs + cmdline* at boot
 
 A fully attested boot chain needs both. Implement composefs first (it's self-contained),
-then add UKI signing on top. See `docs/plan/secure-boot-uki.md`.
+then add UKI signing on top. See `docs/design/secure-boot-uki.md`.
 
 ## References
 

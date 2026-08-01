@@ -1,0 +1,20 @@
+# Paths `mise run docs-links` must not treat as broken.
+#
+# Format: <path> [# reason]. Two legitimate categories only:
+#
+#   - Planned-but-unwritten docs a design doc or live plan forward-references.
+#     Remove the entry when the doc lands.
+#   - Paths that belong to an upstream repo (dakota, bootc), quoted here as a
+#     source citation. These will never exist in this tree.
+#
+# Anything else is rot — fix the reference instead of listing it here.
+
+# Planned, not yet written
+docs/design/secure-boot-tpm-analysis.md   # output of docs/plans/2026-07-12-secure-boot.md Task 2 (#312)
+docs/design/mise-tool-versions.md         # forward-referenced by docs/design/self-build.md
+docs/verifying-signatures.md              # planned by docs/design/cosign-keyless-signing.md § 5
+
+# Upstream repo paths, cited as sources
+docs/skills/patch-junctions.md            # dakota's skill tree, quoted in docs/skills/dakota.md
+docs/skills/ci-reference.md               # dakota's skill tree, quoted in docs/skills/sbom.md
+docs/src/man/bootc-container-ukify.8.md   # bootc upstream, quoted in docs/design/secure-boot-uki.md

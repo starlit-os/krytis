@@ -4,7 +4,7 @@
 
 **Goal:** Port dakota's chunkah rechunking pipeline into krytis so `mise generate-disk` can enable `--composefs-backend` on a real component-keyed chunked image, closing #15 via its sub-issues #28, #29, #30.
 
-**Architecture:** Add one BST-adjacent host tool (`fakecap-restore.c`, compiled ad hoc — not a BST element), one manifest-generation mise task that walks BST artifacts to attribute every installed file to its owning element, and one `chunkify` mise task that mounts `localhost/krytis:latest` as a writable overlay, injects `user.component` xattrs, and runs the pinned `chunkah` container to re-layer the image. This mirrors dakota's proven pipeline (`docs/plan/composefs-chunkah.md`), confirmed unchanged against true upstream `projectbluefin/dakota` as of 2026-07-05, with one upstream fix (largest-free-tmpdir) folded in that dakota's own doc-era snapshot didn't have.
+**Architecture:** Add one BST-adjacent host tool (`fakecap-restore.c`, compiled ad hoc — not a BST element), one manifest-generation mise task that walks BST artifacts to attribute every installed file to its owning element, and one `chunkify` mise task that mounts `localhost/krytis:latest` as a writable overlay, injects `user.component` xattrs, and runs the pinned `chunkah` container to re-layer the image. This mirrors dakota's proven pipeline (`docs/design/composefs-chunkah.md`), confirmed unchanged against true upstream `projectbluefin/dakota` as of 2026-07-05, with one upstream fix (largest-free-tmpdir) folded in that dakota's own doc-era snapshot didn't have.
 
 **Tech Stack:** bash (mise tasks), Python 3.12 (manifest generation, already a project dependency via `pyproject.toml`), C (`fakecap-restore`, compiled with `gcc` at task-run time — matches dakota, not a BST-shipped binary), podman, `quay.io/coreos/chunkah`.
 
@@ -572,7 +572,7 @@ Run:
 mise generate-disk
 ```
 
-Expected: completes without the `"Invalid splitstream content type"` error noted in `docs/plan/composefs-chunkah.md` — this is the acceptance criterion for #15 as a whole. (Full VM boot-test is out of scope for this step per the existing `mise boot-test` gap — see the `project_boot_test_gap` memory; a successful `bootc install to-disk` exit code is the bar here, matching the "no automated boot verification anywhere in repo" reality.)
+Expected: completes without the `"Invalid splitstream content type"` error noted in `docs/design/composefs-chunkah.md` — this is the acceptance criterion for #15 as a whole. (Full VM boot-test is out of scope for this step per the existing `mise boot-test` gap — see the `project_boot_test_gap` memory; a successful `bootc install to-disk` exit code is the bar here, matching the "no automated boot verification anywhere in repo" reality.)
 
 - [ ] **Step 5: Update `docs/skills/mise.md`**
 
@@ -770,6 +770,6 @@ EOF
 
 ## Self-Review Notes
 
-- **Spec coverage:** every numbered step of `docs/plan/composefs-chunkah.md`'s "What krytis needs" section (1. generate manifest, 2. port fakecap-restore, 3. chunkify task, 4. re-enable `--composefs-backend`) maps to Tasks 1–3; item 4 needed no code change since `generate-disk` already carries the flag (confirmed at `mise/tasks/generate-disk:39`) — Task 3 Step 4 is the verification that this flag now actually works instead of failing.
+- **Spec coverage:** every numbered step of `docs/design/composefs-chunkah.md`'s "What krytis needs" section (1. generate manifest, 2. port fakecap-restore, 3. chunkify task, 4. re-enable `--composefs-backend`) maps to Tasks 1–3; item 4 needed no code change since `generate-disk` already carries the flag (confirmed at `mise/tasks/generate-disk:39`) — Task 3 Step 4 is the verification that this flag now actually works instead of failing.
 - **Fork-staleness caveat carried forward:** the `CHUNKAH_REF` digest and the tmpdir fix in this plan were verified against `projectbluefin/dakota` directly (not the stale `starlit-os/dakota` fork mirror) — see the `project_chunkah_pipeline_state` memory. Re-verify before merging if significant time has passed since 2026-07-05.
 - **Type/interface consistency:** `fakecap-restore <manifest.tsv> <rootfs>` (Task 1) is called identically in Task 3's chunkify script; `files/fakecap-manifest.tsv` (Task 2's output path) matches the literal path Task 3 passes to fakecap-restore; `localhost/krytis:latest` is the same default tag threaded through Tasks 2 and 3's `--tag` flags.

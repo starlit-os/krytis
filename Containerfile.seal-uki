@@ -6,7 +6,7 @@
 # one, because `--composefs-backend` (bootc's `Pulling image into composefs
 # repository` step) requires a single-layer image — a multi-layer image fails
 # with "Unexpected EOF in splitstream" (matches dakota#841, documented in
-# docs/plan/composefs-chunkah.md). But `bootc container ukify`'s digest
+# docs/design/composefs-chunkah.md). But `bootc container ukify`'s digest
 # computation must be run against an image whose /tmp and /var/tmp mtimes will
 # be IDENTICAL to what ends up in the final pushed image (see
 # docs/skills/secure-boot.md § `bootc container ukify` must run in a throwaway
