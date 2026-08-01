@@ -87,7 +87,11 @@ WORKDIR="${usage_workdir:-${OUTPUT_DIR}}"
 DEBUG=$([[ "${usage_debug:-}" == "true" ]] && echo 1 || echo 0)
 COMPRESSION="${usage_compression:-fast}"
 
-mkdir -p "${OUTPUT_DIR}"
+# Absolute from here on: these are handed to just with --working-directory set to
+# the dakota-iso checkout, so a relative path would resolve against ITS root.
+mkdir -p "${OUTPUT_DIR}" "${WORKDIR}"
+OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")"
+WORKDIR="$(realpath "${WORKDIR}")"
 
 # buildah + xorriso have no freedesktop-sdk component, so they are not in the
 # Krytis image. Build the iso-tools container (Fedora-based, carries both) and
@@ -106,16 +110,22 @@ echo "    iso-tools:  ${ISO_TOOLS_IMAGE}"
 echo "    sealed:     ${SEALED}"
 echo "    payload:    ${PAYLOAD_REF}"
 
-TARGET=krytis \
-OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")" \
-WORKDIR="$(realpath "${WORKDIR}")" \
-DEBUG="${DEBUG}" \
-COMPRESSION="${COMPRESSION}" \
+# Pass output_dir/workdir/debug/compression as just VARIABLES, not environment.
+# dakota-iso's iso-sd-boot recipe assigns them from its own just variables
+# (OUTPUT_DIR={{output_dir}}, DEBUG={{debug}}, …), and a recipe-level assignment
+# shadows whatever the caller exported — so every one of these flags was silently
+# a no-op until #371: the ISO landed in dakota-iso/output/ instead of ours, and
+# --debug never enabled sshd in the live session. ISO_TOOLS_IMAGE / PAYLOAD_REF /
+# PAYLOAD_SEALED are NOT assigned by the recipe, so those do travel as env.
 ISO_TOOLS_IMAGE="${ISO_TOOLS_IMAGE}" \
 PAYLOAD_REF="${PAYLOAD_REF}" \
 PAYLOAD_SEALED="${SEALED}" \
     just --justfile "${DAKOTA_ISO_DIR}/justfile" \
          --working-directory "${DAKOTA_ISO_DIR}" \
+         output_dir="${OUTPUT_DIR}" \
+         workdir="${WORKDIR}" \
+         debug="${DEBUG}" \
+         compression="${COMPRESSION}" \
          iso-sd-boot krytis
 
 # dakota-iso always writes ${TARGET}-live.iso, so a sealed build necessarily
