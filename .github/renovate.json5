@@ -1,15 +1,59 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "enabledManagers": ["github-actions"],
-  "baseBranches": ["main"],
+  // "pep621" is the manager for pyproject.toml — there is no "uv" manager.
+  // It reads [project.dependencies] and refreshes uv.lock via `uv lock`.
+  "enabledManagers": ["github-actions", "pep621"],
+  // Renamed from "baseBranches", which renovate-config-validator now reports
+  // as needing migration.
+  "baseBranchPatterns": ["main"],
   "pinDigests": true,
   "packageRules": [
     {
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
       "automerge": true,
       "automergeType": "pr",
-      "automergeStrategy": "squash"
-    }
-  ]
+      "automergeStrategy": "squash",
+    },
+    {
+      // Hard-pinned in pyproject.toml for BST 2.5.x compatibility. A bump has
+      // to be tested against the build, so it never auto-merges.
+      "matchManagers": ["pep621"],
+      "matchPackageNames": ["click", "dulwich"],
+      "automerge": false,
+      "prBodyNotes": [
+        ":warning: Hard-pinned for BuildStream compatibility — merge only after `mise run validate` and a `mise run build` pass on this branch.",
+      ],
+    },
+    {
+      // BuildStream is coupled to the freedesktop-sdk / gnome-build-meta
+      // junction versions — a bump may need junction bumps in lockstep.
+      // PRs are for visibility; merging is a human call.
+      "matchManagers": ["pep621"],
+      "matchPackageNames": [
+        "buildstream",
+        "buildstream-plugins",
+        "buildstream-plugins-community",
+      ],
+      "automerge": false,
+      "prBodyNotes": [
+        ":warning: BuildStream is coupled to the freedesktop-sdk junction — check whether `elements/freedesktop-sdk.bst` and `elements/gnome-build-meta.bst` need bumping in lockstep before merging.",
+      ],
+    },
+    {
+      // `requires-python = ">=3.12"` is a floor, not a pin — bumping it drops
+      // interpreter support rather than picking up a new release.
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["requires-python"],
+      "enabled": false,
+    },
+    {
+      // buildstream-sbom is a `git+https://…@<sha>` direct reference, which the
+      // pypi datasource cannot represent. Bump it by hand and re-verify
+      // `mise run sbom` (see the comment in pyproject.toml).
+      "matchManagers": ["pep621"],
+      "matchPackageNames": ["buildstream-sbom"],
+      "enabled": false,
+    },
+  ],
 }
