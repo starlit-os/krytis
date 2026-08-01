@@ -47,72 +47,10 @@ STORE_JSON="var/lib/containers/storage/vfs-images/images.json"
 
 echo "==> Verifying ${ISO} embeds ${IMAGE} (${EXPECTED_ID:0:12})..."
 
-# Locate LiveOS/squashfs.img inside the ISO by walking the ISO 9660 directory
-# records, then read straight out of it with `unsquashfs -offset`. Extracting the
-# squashfs first would mean a ~5GB copy, and xorriso is not on the host at all
-# (dakota-iso routes it through the iso-tools container). File data in the ISO is
-# contiguous — including across the multi-extent records `-iso-level 3` uses for
-# files >4GB — so the first record's extent is the start of the squashfs. The
-# walk asserts the squashfs magic at the computed offset before returning it, so
-# a layout change fails loudly here instead of surfacing as a confusing
-# unsquashfs error.
-SFS_OFFSET="$(python3 - "${ISO}" <<'PY'
-import sys
-
-SECTOR = 2048
-iso = open(sys.argv[1], "rb")
-
-
-def read_sectors(lba, count=1):
-    iso.seek(lba * SECTOR)
-    return iso.read(count * SECTOR)
-
-
-def records(lba, length):
-    """Yield (NAME, extent_lba, size, is_dir) for each record in a directory extent."""
-    data = read_sectors(lba, (length + SECTOR - 1) // SECTOR)
-    pos = 0
-    while pos < len(data):
-        rec_len = data[pos]
-        if rec_len == 0:
-            # Zero padding runs to the end of the sector; resume at the next one.
-            pos = (pos // SECTOR + 1) * SECTOR
-            continue
-        rec = data[pos:pos + rec_len]
-        name = rec[33:33 + rec[32]].decode("latin-1").split(";")[0].upper()
-        yield (
-            name,
-            int.from_bytes(rec[2:6], "little"),
-            int.from_bytes(rec[10:14], "little"),
-            bool(rec[25] & 0x02),
-        )
-        pos += rec_len
-
-
-pvd = read_sectors(16)
-if pvd[0] != 1 or pvd[1:6] != b"CD001":
-    sys.exit("not an ISO 9660 image (no primary volume descriptor at sector 16)")
-
-root = pvd[156:190]
-lba = int.from_bytes(root[2:6], "little")
-length = int.from_bytes(root[10:14], "little")
-
-for want, want_dir in (("LIVEOS", True), ("SQUASHFS.IMG", False)):
-    for name, extent, size, is_dir in records(lba, length):
-        if name == want and is_dir == want_dir:
-            lba, length = extent, size
-            break
-    else:
-        sys.exit(f"{want} not found while walking the ISO's LiveOS path")
-
-offset = lba * SECTOR
-iso.seek(offset)
-if iso.read(4) != b"hsqs":
-    sys.exit(f"no squashfs magic at offset {offset} — the ISO layout changed")
-
-print(offset)
-PY
-)"
+# Read the store metadata straight out of the ISO's live squashfs — no root, no
+# loop mount, no ~5GB extract. See scripts/iso-squashfs-offset.py for how the
+# offset is found and why xorriso is not an option on a Krytis host.
+SFS_OFFSET="$(python3 scripts/iso-squashfs-offset.py "${ISO}")"
 
 if ! IMAGES_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${STORE_JSON}" 2>/dev/null)"; then
     echo "ERROR: ${STORE_JSON} not present in the ISO's squashfs." >&2

@@ -98,12 +98,28 @@ if ! command -v qemu-system-x86_64 &>/dev/null && ! command -v qemu-kvm &>/dev/n
     exit 1
 fi
 
-# The live session drives fisherman over SSH, and sshd only runs in the live
-# environment when the ISO was built with --debug. Without it the run dies as
-# `kex_exchange_identification: Connection reset by peer` ~2 minutes in, which
-# reads like a network fault rather than a missing flag. See dakota-iso
-# docs/skills/e2e-ci.md § sshd is only enabled in debug ISOs.
-echo "==> NOTE: this needs an ISO built with --debug (sshd in the live session)."
+# The install is driven over SSH into the live session, which needs two things
+# that only a --debug ISO has: sshd enabled, and password auth re-enabled.
+# Krytis is pubkey-only by policy (/etc/ssh/sshd_config.d/10-krytis-auth.conf,
+# both PasswordAuthentication and KbdInteractiveAuthentication set to no), so a
+# production ISO refuses the installer's login with "Permission denied
+# (publickey)" — and because the readiness probe IS an ssh login, the harness
+# reports a flat timeout minutes later that reads like a boot or network fault.
+# That cost a full debugging cycle in #371; see docs/skills/pam.md § Key-only SSH
+# also breaks password-driven tooling.
+#
+# --debug writes the sanctioned lower-numbered override into the live squashfs,
+# so its presence is an exact, instant test for "is this ISO drivable".
+DEBUG_DROPIN="etc/ssh/sshd_config.d/05-live-debug.conf"
+SFS_OFFSET="$(python3 scripts/iso-squashfs-offset.py "${ISO}")"
+if ! unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${DEBUG_DROPIN}" >/dev/null 2>&1; then
+    echo "ERROR: ${ISO} has no ${DEBUG_DROPIN} in its live session — it was built" >&2
+    echo "       without --debug, or predates the live-debug SSH override (#371)." >&2
+    echo "       Krytis's pubkey-only sshd will refuse the installer's password login," >&2
+    echo "       so this run would stall until the readiness probe times out." >&2
+    echo "  Rebuild it:  mise run build-iso$([[ "${SECURE}" -eq 1 && "${EXPECT_FAIL}" -eq 0 ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
 
 WORKDIR=$(mktemp -d /var/tmp/krytis-iso-test.XXXXXX)
 trap 'rm -rf "${WORKDIR}"' EXIT
