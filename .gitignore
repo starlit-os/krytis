@@ -61,3 +61,6 @@ krytis-push-digests.env
 
 # Host-side build tools (compiled ad hoc)
 files/fakecap/fakecap-restore
+
+# ISO build artifacts (mise run build-iso) — multi-GB, never committed
+output/
