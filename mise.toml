@@ -2,34 +2,47 @@
 # pass-cli has no aqua/asdf backend; resolve the short name to the GitHub backend.
 pass-cli = "github:protonpass/pass-cli"
 
+# Every tool is pinned to an exact version so Renovate's mise manager has
+# something to bump (#24/#25) — "latest" is invisible to it. Bump by editing
+# here, then `mise run mise-lock` to refresh mise.lock.
 [tools]
-usage = "latest"
-python = "3.12"
-uv = "latest"
-gum = "latest"
-bat = "latest"
+usage = "4.1.0"
+# 3.12 is a floor, not a preference: pyproject.toml's requires-python is
+# ">=3.12" and BST 2.5.x is validated against it. Crossing to 3.13 is a
+# deliberate call, so Renovate is capped below it (allowedVersions in
+# .github/renovate.json5).
+python = "3.12.13"
+uv = "0.12.0"
+gum = "0.17.0"
+bat = "0.26.1"
 # `just` drives the dakota-iso ISO build pipeline (mise run build-iso).
 # Sourced from mise (aqua) rather than a BST element — it is dev-host
 # tooling, not part of the shipped OS runtime.
-just = "latest"
+just = "1.57.0"
 # pass-cli: required by `mise run pull-keys` (#311) to authenticate against the
 # Proton Pass vault holding secure boot signing keys. Dev-host tooling only.
-pass-cli = "latest"
+# The mise registry has no pass-cli entry, so Renovate's mise manager cannot
+# resolve it — a custom.regex manager tracks this line instead.
+pass-cli = "2.2.3"
 # oras: required by `mise run push` to attach the SBOM (#40) as an OCI
 # referrer via `oras attach`. Dev-host tooling only.
-oras = "latest"
+oras = "1.3.3"
 # grype: required by `mise run vuln-scan` / `mise run push` to scan the SBOM
 # for known CVEs (#41). Dev-host tooling only.
-grype = "latest"
+grype = "0.116.0"
 # cosign: required by `mise run sign` to sign the published image and its
 # OCI referrers with Sigstore keyless/OIDC signing (#60). Dev-host tooling
 # only — in CI it needs the `id-token: write` job permission for ambient
 # GitHub Actions OIDC detection; locally it falls back to an interactive
 # browser-based Sigstore login.
-cosign = "latest"
+cosign = "3.1.2"
 
 [settings]
 python.uv_venv_auto = "create|source"
+# mise.lock is committed: it carries the checksum + download URL per platform,
+# so installs are reproducible and do not need a GITHUB_TOKEN to hit release
+# APIs. Lockfiles are never created implicitly — `mise run mise-lock` writes it.
+lockfile = true
 
 [deps.uv]
 auto = true
