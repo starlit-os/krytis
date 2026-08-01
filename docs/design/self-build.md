@@ -30,7 +30,7 @@ Rootful podman, skopeo, `fallocate` (via `util-linux-full`), `vim`, `wget2`, `jq
 
 ## BST approach inside krytis
 
-Native BST via uv. Consistent with the existing plans for CI and local dev (see `docs/plan/native-bst-local-dev.md` and `docs/plan/ci-workflows.md`).
+Native BST via uv. Consistent with the existing plans for CI and local dev (see `docs/design/native-bst-local-dev.md` and `docs/plans/done/2026-06-17-ci-workflows.md`).
 
 `mise` is present in the image (element on a branch, merged before this lands). When the user clones the repo and runs `mise install`, mise reads `mise.toml` and installs `python = "3.12"` and `uv = "latest"` into its tool cache in `~/.local/share/mise`. From there, `uv sync` creates the venv and installs `buildstream` from `pyproject.toml`+`uv.lock`. No BST2 container pull required.
 
@@ -109,7 +109,7 @@ depends:
 
 ## pyproject.toml + uv.lock inside the repo clone
 
-The self-build workflow requires the BST Python deps (`buildstream`, `click==8.2.1`, `dulwich==0.24.0`, etc.) specified in `pyproject.toml`+`uv.lock` to be present in the cloned repo. These are already planned in `docs/plan/ci-workflows.md`. Once that plan ships, the clone will have them and `mise install` + `uv sync` will create the venv automatically (via `mise.toml`'s `[deps.uv]` block).
+The self-build workflow requires the BST Python deps (`buildstream`, `click==8.2.1`, `dulwich==0.24.0`, etc.) specified in `pyproject.toml`+`uv.lock` to be present in the cloned repo. These are already planned in `docs/plans/done/2026-06-17-ci-workflows.md`. Once that plan ships, the clone will have them and `mise install` + `uv sync` will create the venv automatically (via `mise.toml`'s `[deps.uv]` block).
 
 ---
 
@@ -172,7 +172,7 @@ No interference observed in practice. The booted image does not ship a MAC polic
 
 ### Pinning `mise` version
 
-The `mise.bst` element must pin a specific release version and sha256 checksum. Renovate should track it via the `regex` or `github-releases` manager once the element is added. See `docs/plan/renovate-expansion.md` for the expansion plan. `uv` is pinned via `mise.toml` (`uv = "latest"` today; see `docs/plan/mise-tool-versions.md` for the plan to pin tool versions there).
+The `mise.bst` element must pin a specific release version and sha256 checksum. Renovate should track it via the `regex` or `github-releases` manager once the element is added. See `docs/design/renovate-expansion.md` for the expansion plan. `uv` is pinned via `mise.toml` (`uv = "latest"` today; see `docs/design/mise-tool-versions.md` for the plan to pin tool versions there).
 
 ### `mise` shell integration
 

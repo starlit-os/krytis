@@ -247,7 +247,7 @@ signature.
 
 - `mise run cosign-generate-keys` — one-time, human-run. Wraps `cosign
   generate-key-pair`. Modeled on the `generate-keys` precedent already
-  planned for secure-boot key material (`docs/plan/secure-boot-uki.md`).
+  planned for secure-boot key material (`docs/design/secure-boot-uki.md`).
 - `mise run cosign-sign --digest <digest>` — runs both signing commands
   from §2. Used by `publish.yml`; also runnable manually for a re-sign.
 - `mise run cosign-verify --ref <digest-or-tag>` — runs both verification

@@ -160,6 +160,20 @@ When referencing Dakota or Zirconium Hawaii, read `docs/skills/` in the sibling 
 
 **Don't read only the `.bst` file.** The element captures what the author needed to add on top of their environment. The skills docs capture what that environment provides implicitly.
 
+## Where Plan and Design Docs Go
+
+`docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.
+
+**The `writing-plans` skill emits to `docs/superpowers/plans/` by default.** That directory was removed in #393 — the tool's brand name has no business in the durable doc tree. A `PreToolUse` hook (`.claude/hooks/block-superpowers-path.sh`, wired in `.claude/settings.json`) rejects writes under it, the same way `EnterWorktree` is blocked. Prose in `AGENTS.md` alone did not reliably beat a skill default; the hook is what actually enforces it.
+
+**`docs/plans/done/` is frozen.** Archived plans reproduce past `git commit -m` bodies, `grep` invocations and `**Result: PASS.** Present at <path>:<line>` evidence verbatim. Rewriting a path inside one — even a correct-looking rename — falsifies a record of what was true when the check ran. When a migration renames files, update references everywhere *except* there, and let the stale paths stand.
+
+**Live plans quote content destined for other files.** A plan that says "add this row to `docs/SKILL.md`" embeds the row with a relative link target of `skills/foo.md` — correct in `docs/SKILL.md`'s frame, broken in the plan's. Do not "fix" these. `mise run docs-links` excludes `docs/plans/` from markdown-link checking for exactly this reason, while still checking its repo-root-relative `docs/…` paths.
+
+**Run `mise run docs-links` before opening any PR that touches docs.** It resolves both repo-root-relative `docs/….md` references (including those in `.bst` files, mise tasks, and Containerfile comments — several exist) and markdown inline links. It is standalone, not wired into `mise lint`: `lint` is a full `podman build` of the image, and a text check has no business behind a container build.
+
+Two categories may go in `docs/.links-ignore`: docs a design doc forward-references but that nobody has written yet, and paths belonging to an upstream repo (dakota, bootc) quoted as a source citation. Anything else is rot — fix the reference.
+
 ## Self-Improvement Loop
 
 Before committing — when you hit a non-obvious pattern, workaround, or convention:

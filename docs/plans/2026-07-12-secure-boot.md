@@ -28,7 +28,7 @@
 ## Prerequisites (before starting any task)
 
 - [ ] Read `AGENTS.md`, `docs/SKILL.md`, `docs/skills/bst.md`, `docs/skills/workflow.md`
-- [ ] Read `docs/plan/secure-boot-uki.md` (the design notes / architecture decisions)
+- [ ] Read `docs/design/secure-boot-uki.md` (the design notes / architecture decisions)
 - [ ] Create a worktree: `git worktree add -b <branch> <base>/feat/gh16-secure-boot`
 - [ ] `mise trust` in the worktree
 - [ ] `fnox` and `pass-cli` installed on the developer's machine
@@ -245,7 +245,7 @@ Assisted-by: Claude Sonnet 4.6"
 
 **Files:**
 - No code changes — investigation and documentation only
-- Create: `docs/plan/secure-boot-tpm-analysis.md` (analysis results)
+- Create: `docs/design/secure-boot-tpm-analysis.md` (analysis results)
 
 **Interfaces:**
 - Consumes: existing `files/bootc-config/30-fido2-luks.toml`, current LUKS/TPM setup, a test sealed image
@@ -372,7 +372,7 @@ Read travier's `uki.sh` — it uses `--measure` and masks `systemd-tpm2-setup-ea
 
 - [ ] **Step 8: Write the analysis document**
 
-Create `docs/plan/secure-boot-tpm-analysis.md` with:
+Create `docs/design/secure-boot-tpm-analysis.md` with:
 - Part A results: does bootc install boot a pre-built UKI? What path? What composefs digest requirement?
 - Part B results: TPM-bound or not? PCR impact? Mitigations needed?
 - Decisions: `--allow-missing-verity` (yes), `--measure` (yes/no), `systemd-tpm2-*` masking (yes/no), TPM re-enrollment procedure (if needed)
@@ -381,7 +381,7 @@ Create `docs/plan/secure-boot-tpm-analysis.md` with:
 - [ ] **Step 9: Commit**
 
 ```bash
-git add docs/plan/secure-boot-tpm-analysis.md
+git add docs/design/secure-boot-tpm-analysis.md
 git commit -m "docs(secure-boot): UKI consumption spike + fido2-luks/TPM analysis
 
 Closes #312
@@ -494,7 +494,7 @@ Assisted-by: Claude Sonnet 4.6"
 
 - [ ] **Step 1: Read the #312 analysis**
 
-Read `docs/plan/secure-boot-tpm-analysis.md`. Determine:
+Read `docs/design/secure-boot-tpm-analysis.md`. Determine:
 - Did the UKI consumption spike succeed? What path did bootc find the UKI at?
 - Is `ukify --measure` needed?
 - Do any `systemd-tpm2-*` services need masking?

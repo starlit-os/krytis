@@ -134,4 +134,4 @@ The workaround — a long-lived static key whose `keyPath` verification `policy.
 express, signed alongside the keyless signature — means storing and rotating a key, the
 exact thing keyless signing was chosen to avoid. That is a Security Gate tradeoff under
 AGENTS.md, tracked in **#418**, not a pending chore. The original design for it is at
-`docs/superpowers/specs/2026-07-12-cosign-keyless-signing-design.md` §§ 3–4.
+`docs/design/cosign-keyless-signing.md` §§ 3–4.

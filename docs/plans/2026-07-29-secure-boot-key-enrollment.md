@@ -25,7 +25,7 @@
 
 ## Prerequisites (before starting any task)
 
-- [ ] Read `AGENTS.md`, `docs/SKILL.md`, `docs/skills/bst.md`, `docs/skills/mise.md`, `docs/skills/secure-boot.md`, `docs/plan/secure-boot-uki.md`
+- [ ] Read `AGENTS.md`, `docs/SKILL.md`, `docs/skills/bst.md`, `docs/skills/mise.md`, `docs/skills/secure-boot.md`, `docs/design/secure-boot-uki.md`
 - [ ] Create a worktree: `git worktree add -b 309-add-secure-boot-key-enrollment .worktrees/gh16/309-add-secure-boot-key-enrollment`
 - [ ] `mise trust` in the worktree
 - [ ] `mise run pull-keys` (or `mise run generate-keys`) — `files/boot-keys/{PK,KEK,db}.{key,crt}` must exist and validate
@@ -215,7 +215,7 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
 ```
 
 Notes embedded for the implementer:
-- `PK.auth` and `KEK.auth` are both signed with the **PK** key (self-signed initial enrollment — PK asserts the KEK list, and PK asserts itself). `db.auth` is signed with the **KEK** key (KEK asserts the db list). This is the standard UEFI PK→KEK→db signing chain, matching `docs/plan/secure-boot-uki.md`.
+- `PK.auth` and `KEK.auth` are both signed with the **PK** key (self-signed initial enrollment — PK asserts the KEK list, and PK asserts itself). `db.auth` is signed with the **KEK** key (KEK asserts the db list). This is the standard UEFI PK→KEK→db signing chain, matching `docs/design/secure-boot-uki.md`.
 - `cert-to-efi-sig-list` takes **no type argument** — `<cert.der> <output.esl>` only (see `docs/skills/secure-boot.md`).
 - `sign-efi-sig-list` takes the variable name (`PK`/`KEK`/`db`) as its first positional arg, `-k`/`-c` for the signer's key/cert, `-g` for the (optional) signature owner GUID.
 - The subdirectory name `auto` is significant — it is the specific key-set name systemd-boot's `secure-boot-enroll=if-safe`/`manual` looks for (see systemd-boot.xml "loader/keys"), and matches the layout `bootc`'s `get_secureboot_keys()` expects: one directory per key set under `usr/lib/bootc/install/secureboot-keys/`, each holding arbitrarily-named `*.auth` files.
@@ -835,12 +835,12 @@ Assisted-by: Claude Sonnet 4.6"
 **Files:**
 - Create: `mise/tasks/boot-test`
 - Modify: `docs/skills/desktop.md` (remove the "does not exist" gap note — this task closes it)
-- Modify: `docs/superpowers/plans/2026-07-05-chunkah-pipeline.md` (the `project_boot_test_gap` reference is now stale — leave a note only if that file still has open checkboxes referencing it; otherwise skip)
+- Modify: `docs/plans/2026-07-05-chunkah-pipeline.md` (the `project_boot_test_gap` reference is now stale — leave a note only if that file still has open checkboxes referencing it; otherwise skip)
 
 **Interfaces:**
 - Produces: `mise boot-test [--image <tag>] [--secure] [--filesystem <fs>]` — headless boot + SSH health check + clean shutdown, non-zero exit on any failure
 
-**Issue:** #309 explicitly lists `mise boot-test passes with secure boot enforcement` as an acceptance criterion. This task also closes the documented cross-repo gap (AGENTS.md references it; `docs/skills/desktop.md` and `docs/superpowers/plans/2026-07-05-chunkah-pipeline.md` both flag it as "aspirational, not real").
+**Issue:** #309 explicitly lists `mise boot-test passes with secure boot enforcement` as an acceptance criterion. This task also closes the documented cross-repo gap (AGENTS.md references it; `docs/skills/desktop.md` and `docs/plans/2026-07-05-chunkah-pipeline.md` both flag it as "aspirational, not real").
 **Blocked by:** Task 5 (needs `boot-vm --secure` and `generate-disk --image`)
 
 - [ ] **Step 1: Create `mise/tasks/boot-test`**
@@ -1039,7 +1039,7 @@ bootctl status assertions, clean shutdown via QEMU monitor.
 
 Closes the 'mise boot-test does not exist' gap AGENTS.md's
 Verification section has referenced since before #309 (see
-docs/skills/desktop.md, docs/superpowers/plans/2026-07-05-chunkah-pipeline.md).
+docs/skills/desktop.md, docs/plans/2026-07-05-chunkah-pipeline.md).
 
 Part of #309
 
@@ -1063,7 +1063,7 @@ Assisted-by: Claude Sonnet 4.6"
 ```markdown
 # Enrolling krytis's Secure Boot Keys on Real Hardware
 
-krytis ships its own PK/KEK/db keys (see `docs/plan/secure-boot-uki.md`) and signs
+krytis ships its own PK/KEK/db keys (see `docs/design/secure-boot-uki.md`) and signs
 the UKI + `systemd-boot` against them. On real hardware — unlike the QEMU test path,
 which bakes keys directly into OVMF vars via `mise run generate-ovmf-vars` — you must
 enroll them through the firmware's own Secure Boot setup flow.
@@ -1152,14 +1152,14 @@ Re-read `docs/SKILL.md`'s current "Reference Docs" table before editing (line nu
 | Enroll secure boot keys on real hardware | [`docs/secure-boot-enrollment.md`](../secure-boot-enrollment.md) |
 ```
 
-- [ ] **Step 3: Cross-link from `docs/plan/secure-boot-uki.md`**
+- [ ] **Step 3: Cross-link from `docs/design/secure-boot-uki.md`**
 
 Add a one-line pointer near the "Key enrollment: systemd-boot native (#309)" section: `See docs/secure-boot-enrollment.md for the real-hardware step-by-step.`
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/secure-boot-enrollment.md docs/SKILL.md docs/plan/secure-boot-uki.md
+git add docs/secure-boot-enrollment.md docs/SKILL.md docs/design/secure-boot-uki.md
 git commit -m "docs(secure-boot): real hardware enrollment walkthrough
 
 Setup Mode entry, systemd-boot's Enroll Secure Boot keys menu item,

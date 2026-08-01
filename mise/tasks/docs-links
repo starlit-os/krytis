@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#MISE description="Verify docs/ path references and markdown links resolve"
+
+# Two classes of reference are checked across all tracked text files:
+#
+#   1. Repo-root-relative `docs/<name>.md` paths, wherever they appear — prose,
+#      backticks, code comments (e.g. Containerfile.seal-uki cites a design doc).
+#      A negative lookbehind keeps the pattern from matching inside URLs
+#      (`.../tcmalloc/blob/master/docs/tuning.md`) or longer paths.
+#   2. Markdown inline links `](target)` resolved relative to the linking file.
+#
+# Exclusions, and why:
+#
+#   docs/plans/done/          Archived plans quote past commands, commit messages
+#                             and `Result: PASS` evidence verbatim. Their stale
+#                             paths are the record, not rot. Still valid targets.
+#   docs/plans/ (links only)  Live plans embed content destined for *other* files
+#                             — e.g. a docs/SKILL.md table row whose relative link
+#                             is correct once pasted there, not where it is quoted.
+#                             Their repo-root-relative paths are still checked.
+#   files/fakecap-manifest.tsv  Generated image manifest; contains paths from the
+#                             built rootfs, not references to this repo.
+#
+# Known-unresolvable references (planned-but-unwritten docs, paths belonging to
+# the dakota/bootc upstreams) live in docs/.links-ignore with a reason each.
+# Prefer fixing a reference over adding an entry.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+IGNORE_FILE="docs/.links-ignore"
+declare -A IGNORED=()
+if [ -f "$IGNORE_FILE" ]; then
+    while read -r path _; do
+        [ -n "$path" ] && [ "${path:0:1}" != "#" ] && IGNORED["$path"]=1
+    done <"$IGNORE_FILE"
+fi
+
+fail=0
+
+report() {
+    printf '  %s:%s → %s\n' "$1" "$2" "$3"
+    fail=1
+}
+
+echo "==> Checking docs/ path references..."
+while IFS=: read -r file line ref; do
+    [ -e "$ref" ] && continue
+    [ -n "${IGNORED[$ref]:-}" ] && continue
+    report "$file" "$line" "missing path $ref"
+done < <(git grep -I -noP '(?<![A-Za-z0-9._/-])docs/[A-Za-z0-9._/-]+\.md' \
+    -- ':(exclude)docs/plans/done' ':(exclude)files/fakecap-manifest.tsv')
+
+echo "==> Checking markdown links..."
+while IFS=: read -r file line target; do
+    case "$target" in
+        http://* | https://* | mailto:* | '#'*) continue ;;
+    esac
+    target="${target%%#*}"
+    [ -n "$target" ] || continue
+    resolved="$(dirname "$file")/$target"
+    [ -e "$resolved" ] && continue
+    [ -n "${IGNORED[$target]:-}" ] && continue
+    report "$file" "$line" "broken link $target"
+done < <(git grep -I -noE '\]\([^)]+\)' -- '*.md' ':(exclude)docs/plans' |
+    sed -E 's/^([^:]*):([0-9]+):\]\((.*)\)$/\1:\2:\3/')
+
+if [ "$fail" -ne 0 ]; then
+    echo "==> docs-links FAILED — fix the references above."
+    exit 1
+fi
+
+echo "==> docs-links passed."

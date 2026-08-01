@@ -192,6 +192,28 @@ Worktrees are not automatically deleted — prune manually after merge or abando
 
 ---
 
+## Plan & Design Docs
+
+Two directories, split by lifecycle. Pick by asking whether the document is a **living reference** or a **spent work order**.
+
+| Directory | Naming | Contents |
+|---|---|---|
+| `docs/design/` | `<topic>.md` — no date | Architecture, rationale, deferred work. Edited in place as reality changes. Cited from skills, code comments, and other docs. |
+| `docs/plans/` | `YYYY-MM-DD-<slug>.md` | Step-by-step execution plans with checkboxes, scoped to an issue. Obsolete once the work merges. |
+| `docs/plans/done/` | `YYYY-MM-DD-<slug>.md` | Completed or superseded plans. Kept for the verification evidence they carry. |
+
+**Decision rule:** will someone read this in six months to learn *why the system is the way it is*? → `docs/design/`. Is it a checklist that stops mattering once merged? → `docs/plans/`.
+
+**Archive on merge.** When a plan's work lands, `git mv docs/plans/<file> docs/plans/done/` in the same PR. Do not leave spent checklists in the live directory.
+
+**`docs/plans/done/` is frozen.** Archived plans quote past commands, commit messages, and `Result: PASS` evidence verbatim. Never rewrite paths or content inside them — doing so falsifies the record. `mise run docs-links` skips the directory for this reason.
+
+**The `writing-plans` skill defaults to `docs/superpowers/plans/`. That path does not exist in this repo** — emit to `docs/plans/YYYY-MM-DD-<slug>.md` instead. A `PreToolUse` hook in `.claude/settings.json` blocks writes under `docs/superpowers/`.
+
+**Before opening a PR that touches docs, run `mise run docs-links`.** It fails on any `docs/…` path reference that no longer resolves.
+
+---
+
 ## Human Decision Points — Stop and Ask
 
 Agents implement autonomously **except** at these gates. Stop and request human input:
