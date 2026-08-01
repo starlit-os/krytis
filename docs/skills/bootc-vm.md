@@ -487,3 +487,46 @@ The `Containerfile` has a commented line for setting a debug root password:
 ```
 
 After uncommenting: `mise run lint && mise run generate-disk`.
+
+## Two install paths, two tests: `boot-test` vs `iso-install-test`
+
+`mise run boot-test` installs with `bootc install to-disk --via-loopback` straight
+from a local image. That is *not* how a user installs Krytis, and it exercises
+none of the ISO machinery: no offline VFS store, no live installer, no
+`recipe.json`, no `targetImgref`. `mise run iso-install-test` boots the live ISO
+in QEMU and drives fisherman over SSH, which is the real path — so it is the only
+test that can catch a broken payload embed, a wrong store key, or an imgref that
+sends the installed system to the wrong upgrade stream.
+
+| Command | Exercises |
+|---|---|
+| `mise run boot-test` | image → disk (`bootc install to-disk`), boot, health |
+| `mise run boot-test --secure` | the same under enforcement, signed image |
+| `mise run iso-install-test` | ISO → live session → fisherman → disk, boot |
+| `mise run iso-install-test --secure` | as above, installed disk under enforcement |
+| `mise run iso-install-test --secure --expect-fail` | enforcement refuses an unsigned install |
+
+Two things about the ISO variants that are easy to get wrong:
+
+**The two phases need different firmware.** The live ISO is deliberately unsigned
+(#371 Design Gate: signing it would not make it bootable under stock Secure Boot
+anyway, since the firmware does not trust krytis's keys until an install has
+enrolled them). So phase 1 boots the ISO with **plain** OVMF and only phase 2, the
+installed disk, boots with `.ovmf-vars-secure.fd` and enforcement. Running phase 1
+under enforcement is a guaranteed false negative, not a stricter test. `--secure`
+therefore means "enforce on the installed disk", and dropping it gives the
+"a sealed payload is still a valid ordinary image" case — which is a real
+acceptance criterion, not a lesser variant.
+
+**It needs a `--debug` ISO.** sshd is disabled in the live session unless the ISO
+was built with `mise run build-iso --debug`, and the install is driven over SSH.
+Without it the run dies ~2 minutes in with
+`kex_exchange_identification: Connection reset by peer`, which reads like a
+network fault. dakota-iso's own CI works around this by unsquashing and patching
+production ISOs; locally, just pass `--debug`.
+
+As with `build-iso`, the QEMU/fisherman orchestration lives in dakota-iso
+(`just sealed-test-qemu krytis`) and the mise task is a wrapper that resolves
+defaults, checks every prerequisite *before* the tens-of-minutes run starts, and
+copies the enrolled varstore to scratch so an enforcing boot never writes back to
+`.ovmf-vars-secure.fd`.

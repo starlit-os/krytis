@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+#MISE description="Install Krytis from a live ISO in QEMU and assert the installed system boots (secure boot optional)"
+#USAGE flag "--iso <path>" help="ISO to install from. Default: output/krytis-live-sealed.iso under --secure, output/krytis-live.iso otherwise"
+#USAGE flag "--secure" help="Boot the INSTALLED disk with secure boot enforced (requires 'mise run generate-ovmf-vars'). The live ISO always boots unsigned — it is not signed by design (#371)"
+#USAGE flag "--expect-fail" help="Invert the result: the installed system MUST be rejected by secure boot (negative test)"
+#USAGE flag "--payload-ref <ref>" help="Payload image ref for the fisherman recipe. Default: matches the ISO variant"
+
+set -euo pipefail
+
+# boot-test covers the image→disk install path (`bootc install to-disk`).
+# This covers the ISO→fisherman→disk path, which is the only one that exercises
+# the offline VFS store, the live installer's recipe.json, and targetImgref —
+# i.e. everything `mise run build-iso --sealed` actually changes.
+#
+# The two phases deliberately run under DIFFERENT firmware:
+#   phase 1  live ISO      → plain OVMF. The live ISO is unsigned by design
+#                            (#371 Design Gate); enforcing here would be a
+#                            guaranteed false negative, not a test.
+#   phase 2  installed disk → enforcement + krytis's enrolled PK/KEK/db, under
+#                            --secure. Without --secure it boots plain, which is
+#                            the "sealed payload must still be a valid ordinary
+#                            image" case.
+# QEMU/fisherman orchestration lives in dakota-iso (just sealed-test-qemu), the
+# same delegation `mise run build-iso` already uses — reimplementing the ISO
+# boot/install/verify cycle here would duplicate a lot of already-debugged QEMU
+# handling (ENOSPC scratch disk, KVM fallback, monitor screendumps).
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# Resolve dakota-iso from the MAIN worktree via git-common-dir: inside a git
+# worktree REPO_ROOT is nested under .worktrees/ and a naive "${REPO_ROOT}/.."
+# points at the wrong place. Same block as mise/tasks/build-iso.
+if [[ -z "${DAKOTA_ISO_DIR:-}" ]]; then
+    COMMON_GIT="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    MAIN_ROOT="${COMMON_GIT:+$(dirname "${COMMON_GIT}")}"
+    MAIN_ROOT="${MAIN_ROOT:-${REPO_ROOT}}"
+    DAKOTA_ISO_DIR="$(realpath "${MAIN_ROOT}/../dakota-iso" 2>/dev/null || echo "${MAIN_ROOT}/../dakota-iso")"
+fi
+
+SECURE=$([[ "${usage_secure:-}" == "true" ]] && echo 1 || echo 0)
+EXPECT_FAIL=$([[ "${usage_expect_fail:-}" == "true" ]] && echo 1 || echo 0)
+
+# Mode-dependent defaults are resolved here, not in the #USAGE annotations: a
+# `default=` there is indistinguishable from the user typing the same value, so
+# an explicit --iso could not override it. Same reasoning as boot-test's --image.
+# --expect-fail wants the UNSIGNED ISO — watching the firmware refuse it is the
+# whole point — so it does not get the sealed defaults.
+if [[ "${SECURE}" -eq 1 && "${EXPECT_FAIL}" -eq 0 ]]; then
+    DEFAULT_ISO="output/krytis-live-sealed.iso"
+    DEFAULT_REF="ghcr.io/starlit-os/krytis:sealed"
+else
+    DEFAULT_ISO="output/krytis-live.iso"
+    DEFAULT_REF="ghcr.io/starlit-os/krytis:latest"
+fi
+
+ISO="${usage_iso:-${DEFAULT_ISO}}"
+PAYLOAD_REF="${usage_payload_ref:-${DEFAULT_REF}}"
+
+if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
+    echo "ERROR: dakota-iso not found at ${DAKOTA_ISO_DIR}" >&2
+    echo "       Clone kitten-lily/dakota-iso as a sibling of the krytis checkout, or set DAKOTA_ISO_DIR." >&2
+    exit 1
+fi
+
+if ! grep -q 'sealed-test-qemu' "${DAKOTA_ISO_DIR}/justfile"; then
+    echo "ERROR: ${DAKOTA_ISO_DIR} has no 'sealed-test-qemu' recipe (#371)." >&2
+    echo "       Update the sibling checkout: git -C ${DAKOTA_ISO_DIR} pull" >&2
+    exit 1
+fi
+
+# Every prerequisite is checked before QEMU starts. An install run is tens of
+# minutes; discovering a missing varstore or the wrong ISO at minute 30 is the
+# failure mode this block exists to prevent.
+if [[ ! -f "${ISO}" ]]; then
+    echo "ERROR: ISO not found: ${ISO}" >&2
+    echo "       Build it:  mise run build-iso$([[ "${SECURE}" -eq 1 && "${EXPECT_FAIL}" -eq 0 ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
+
+OVMF_VARS_SECURE=""
+if [[ "${SECURE}" -eq 1 ]]; then
+    if [[ ! -f ".ovmf-vars-secure.fd" ]]; then
+        echo "ERROR: .ovmf-vars-secure.fd missing — run 'mise run generate-ovmf-vars' first." >&2
+        exit 1
+    fi
+    # The installed system must carry the sealed payload, or "boots under
+    # enforcement" is being asserted about the wrong artifact. verify-iso-payload
+    # is seconds and exact; skip it for --expect-fail, whose ISO is unsigned on
+    # purpose.
+    if [[ "${EXPECT_FAIL}" -eq 0 ]]; then
+        echo "==> Confirming ${ISO} carries the sealed payload..."
+        ./mise/tasks/verify-iso-payload --iso "${ISO}" --image localhost/krytis:sealed
+    fi
+fi
+
+if ! command -v qemu-system-x86_64 &>/dev/null && ! command -v qemu-kvm &>/dev/null; then
+    echo "ERROR: needs qemu-system-x86_64 or qemu-kvm on the host." >&2
+    exit 1
+fi
+
+# The live session drives fisherman over SSH, and sshd only runs in the live
+# environment when the ISO was built with --debug. Without it the run dies as
+# `kex_exchange_identification: Connection reset by peer` ~2 minutes in, which
+# reads like a network fault rather than a missing flag. See dakota-iso
+# docs/skills/e2e-ci.md § sshd is only enabled in debug ISOs.
+echo "==> NOTE: this needs an ISO built with --debug (sshd in the live session)."
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-iso-test.XXXXXX)
+trap 'rm -rf "${WORKDIR}"' EXIT
+
+# Always boot a COPY of the varstore: an enforcing boot writes to it, and
+# .ovmf-vars-secure.fd is the enrolled original every future run depends on.
+if [[ "${SECURE}" -eq 1 ]]; then
+    cp ".ovmf-vars-secure.fd" "${WORKDIR}/vars.fd"
+    OVMF_VARS_SECURE="${WORKDIR}/vars.fd"
+fi
+
+ISO_ABS="$(realpath "${ISO}")"
+OUTPUT_DIR="$(dirname "${ISO_ABS}")"
+
+echo "==> Installing Krytis from an ISO in QEMU"
+echo "    dakota-iso:  ${DAKOTA_ISO_DIR}"
+echo "    iso:         ${ISO_ABS}"
+echo "    payload:     ${PAYLOAD_REF}"
+echo "    secure:      ${SECURE} (installed disk; the live ISO always boots unsigned)"
+echo "    expect-fail: ${EXPECT_FAIL}"
+
+set +e
+ISO_PATH="${ISO_ABS}" \
+PAYLOAD_REF="${PAYLOAD_REF}" \
+OVMF_VARS_SECURE="${OVMF_VARS_SECURE}" \
+EXPECT_FAIL="$([[ "${EXPECT_FAIL}" -eq 1 ]] && echo 1 || echo '')" \
+    just --justfile "${DAKOTA_ISO_DIR}/justfile" \
+         --working-directory "${DAKOTA_ISO_DIR}" \
+         output_dir="${OUTPUT_DIR}" \
+         sealed-test-qemu krytis
+RESULT=$?
+set -e
+
+if [[ "${RESULT}" -ne 0 ]]; then
+    echo "==> FAILED (exit ${RESULT}). Serial logs from the run:" >&2
+    ls -la /tmp/dakota-sealed-qemu-*serial*.log /tmp/dakota-plain-qemu-*serial*.log 2>/dev/null >&2 || true
+    exit "${RESULT}"
+fi
+
+echo "==> PASS"
