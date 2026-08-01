@@ -33,18 +33,30 @@ updates). Operational detail lives in `docs/skills/renovate.md`.
 
 ## Candidates to investigate
 
-### mise tools (`mise.toml` `[tools]`)
+### mise tools (`mise.toml` `[tools]`) — pinned (#24)
 
-`usage`, `python`, `uv`, `gum` are all pinned to `"latest"` — unpinned and
-invisible to Renovate. Options:
+All ten tools now carry exact versions instead of `"latest"`, and `mise.lock` is
+committed (`mise run mise-lock` writes and `--check` verifies it). This was the
+stated prerequisite for the `mise` manager (#25): Renovate extracts `"latest"`
+as a literal string and has nothing to bump, so an unpinned tool is invisible to
+it.
 
-- Enable the `mise` manager in `enabledManagers` — Renovate has native support
-  for `mise.toml` tool versions.
-- Pin tools to explicit versions first (e.g. `uv = "0.7.13"`) so Renovate has
-  something to bump. Commit `mise.lock` for reproducible installs.
-- `RUNNER_VERSION` also lives in `mise.toml`, but in `[env]` rather than
-  `[tools]`, so the `mise` manager will never see it — it is covered by a
-  `custom.regex` manager instead (#27).
+Two tools do not fit the plain pattern:
+
+- `python` is capped below 3.13 — the pin tracks `pyproject.toml`'s
+  `requires-python = ">=3.12"`, so patch bumps are routine and the minor
+  boundary is a human call.
+- `pass-cli` is absent from the mise registry (the repo resolves it through
+  `[tool_alias]` to the `github:` backend), so Renovate's `mise` manager cannot
+  derive a datasource for it and a `custom.regex` manager covers the line.
+
+`mise.lock` cannot be refreshed by Renovate on the hosted app — mise lockfile
+updates are an unsafe execution only a self-hosted admin can enable — so tool
+bumps are not auto-merged; the reviewer runs `mise run mise-lock` first.
+
+`RUNNER_VERSION` also lives in `mise.toml`, but in `[env]` rather than
+`[tools]`, so the `mise` manager will never see it — it is covered by a
+`custom.regex` manager instead (#27).
 
 ### Python dependencies (`pyproject.toml` / `uv.lock`) — done (#26)
 
@@ -86,7 +98,8 @@ understood.
 
 ## Suggested next steps
 
-1. Pin mise tool versions + commit `mise.lock` (prerequisite for mise manager).
+1. ~~Pin mise tool versions + commit `mise.lock` (prerequisite for mise
+   manager).~~ Done in #24.
 2. Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.
 3. ~~Add `pep621` to `enabledManagers` for Python deps; exclude `click` and
    `dulwich` from auto-merge.~~ Done in #26.

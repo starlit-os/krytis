@@ -263,14 +263,35 @@ cat > "${MISE_PROJECT_ROOT}/include/image-version.yml" <<EOF ...
 
 ## Tool declarations
 
-Tools managed by mise go in `mise.toml`. `usage` is always present to power `#USAGE` annotations and shell completions:
+Tools managed by mise go in `mise.toml`. System tools (podman, git, qemu) are **not** managed here. Run `mise install` to install declared tools.
+
+**Every tool is pinned to an exact version** (#24). `"latest"` is invisible to Renovate's `mise` manager — it extracts the literal string and has nothing to compare against — so an unpinned tool silently drops out of the update loop, which is the same trap `kind: tar` sources hit in `bst.md` § Element update path.
 
 ```toml
 [tools]
-usage = "latest"
+usage = "4.1.0"        # not "latest"
+python = "3.12.13"     # capped below 3.13 by a packageRule, see below
 ```
 
-Run `mise install` to install declared tools. System tools (podman, git, qemu) are **not** managed here.
+`python` is the one pin with a ceiling: `pyproject.toml`'s `requires-python` is `">=3.12"` and BST 2.5.x is validated against it, so the Renovate rule for it caps at `allowedVersions: "<3.13"` (#25). Crossing the minor boundary is a human decision, not a patch bump.
+
+`pass-cli` has no entry in the mise registry (hence the `[tool_alias]` pointing at the `github:` backend), so Renovate's `mise` manager cannot resolve a datasource for it; a `custom.regex` manager covers that line instead (#25, see [`renovate.md`](renovate.md) § Custom regex managers).
+
+### `mise.lock`
+
+Committed, and it must stay in step with `mise.toml`:
+
+```bash
+mise run mise-lock            # write/refresh it
+mise run mise-lock --check    # fail if the *committed* lockfile is behind
+```
+
+Four things worth knowing:
+
+- **mise never creates a lockfile implicitly.** `[settings] lockfile = true` only makes mise *maintain* one; `mise lock` has to write it the first time. Enabling the setting without running the task leaves you with no lockfile and no warning.
+- **The lockfile records a checksum, download URL, and API URL per platform.** That makes installs reproducible and lets them skip the release APIs, so CI does not need a `GITHUB_TOKEN` just to resolve tools. `mise lock --platform` only records the platforms you name; `linux-x64` is the default here because that is all krytis builds on.
+- **Any mise command that resolves tools rewrites `mise.lock` in passing.** Change a pin and merely run `mise run <anything>` and the lockfile is already updated on disk — which means a `git status` can come back dirty from a command you thought was read-only, and a task that tries to detect drift by copying `mise.lock` before running `mise lock` always sees "no change". `--check` therefore diffs against **git**: the working tree self-heals, the committed file does not.
+- **Renovate cannot refresh it on the hosted app.** mise lockfile updates are classed as an unsafe execution that only a self-hosted admin can allow, so a tool-bump PR lands with `mise.toml` updated and `mise.lock` stale. That is why mise deps are held back from auto-merge (#25): the reviewer runs `mise run mise-lock` and commits the result.
 
 ## System-wide config: `/etc/mise/conf.d/*.toml`
 
@@ -517,7 +538,7 @@ tasks while `mise/tasks/` held 53.
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
 | Docs & upstreams | `docs-links` `upstream-sync` |
-| Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)) |
+| Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock` |
 | Element updates | one `<name>-update` per tracked element — see § Element update tasks |
 
 `generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Write/refresh mise.lock for the pinned tool versions in mise.toml"
+#USAGE flag "--check" help="Fail if the committed mise.lock is out of date (leaves the refreshed file in place)"
+#USAGE flag "--platform <list>" default="linux-x64" help="Comma-separated platforms to record checksums/URLs for"
+
+# mise never creates a lockfile implicitly — `mise lock` has to write it once.
+# After that any mise command that resolves tools rewrites it in passing, so a
+# stale mise.lock heals locally the moment someone runs a task; what does *not*
+# heal is the copy committed to git.
+#
+# That is the failure mode this guards. Renovate bumps mise.toml but cannot
+# refresh the lockfile on the hosted app — mise lockfile updates are an "unsafe
+# execution" only a self-hosted admin can allow
+# (docs.renovatebot.com/modules/manager/mise/#trust-model-for-lock-file-updates)
+# — so a tool-bump PR arrives with mise.toml updated and mise.lock stale, and
+# the reviewer runs this task before merging. Hence mise deps are held back from
+# auto-merge in .github/renovate.json5.
+#
+# --check therefore compares against **git**, not against a pre-run copy: mise
+# may already have synced the working tree before this script got a chance to
+# look at it, and `git diff` still reports the committed file as behind.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+CHECK=$([[ "${usage_check:-}" == "true" ]] && echo 1 || echo 0)
+PLATFORM="${usage_platform:-linux-x64}"
+
+echo "==> Locking tools for ${PLATFORM}..."
+mise lock --platform "$PLATFORM"
+
+if [[ "$CHECK" -eq 1 ]]; then
+    if ! git diff --quiet -- mise.lock; then
+        echo "==> The committed mise.lock does not match mise.toml:" >&2
+        git --no-pager diff -- mise.lock >&2
+        echo "==> Commit the refreshed mise.lock (already written above)." >&2
+        exit 1
+    fi
+    echo "==> mise.lock is up to date with mise.toml."
+    exit 0
+fi
+
+echo "==> mise.lock written. Commit it alongside the mise.toml change."
