@@ -502,28 +502,27 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
 fi
 ```
 
-### File task list (updated)
+### File task list
 
-```
-mise/tasks/
-├── bst
-├── validate
-├── generate-image-version
-├── generate-keys            # ensure secure boot keys exist (pull from Proton Pass or generate)
-├── load-image
-├── lint
-├── push                     # tag + push to ghcr.io/starlit-os/krytis
-├── generate-disk
-├── boot-vm
-├── kernel-update
-├── mise-update
-├── gum-update
-├── pangolin-update
-├── niri-update
-├── ghostty-update
-├── symbols-nerd-font-update
-└── game-devices-udev-update # Codeberg source; uses curl+jq not gh api
-```
+`mise tasks` is the source of truth — run it. This section groups them by purpose,
+because a hand-maintained copy of the tree rots: the list that lived here named 16
+tasks while `mise/tasks/` held 53.
+
+| Group | Tasks |
+|---|---|
+| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` `generate-image-version` |
+| Disk & VM | `generate-disk` `boot-vm` `boot-test` `build-iso` |
+| Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `fetch-microsoft-certs` `seal-uki` |
+| Supply chain | `sbom` `vuln-scan` `sign` |
+| composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
+| Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
+| Docs & upstreams | `docs-links` `upstream-sync` |
+| Element updates | one `<name>-update` per tracked element — see § Element update tasks |
+
+`generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).
+`push` tags and pushes to `ghcr.io/starlit-os/krytis`. `docs-links` resolves
+`docs/*.md` references and markdown links across the tree — run it before any PR
+that touches docs (see `docs/skills/workflow.md` § Where Plan and Design Docs Go).
 
 ## `boot-test` provisions the guest with systemd credentials, not disk edits
 
