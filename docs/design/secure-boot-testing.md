@@ -235,19 +235,53 @@ automation ever produces a sealed image, so `ghcr.io/starlit-os/krytis:sealed` e
 only because someone ran `mise run push --sealed` by hand. A sealed ISO bakes that tag
 as `targetImgref`, which means installed sealed systems track a manually refreshed tag.
 
+That is not hypothetical drift. The published tag as of 2026-08-02, pulled and
+inspected:
+
+```
+$ podman inspect ghcr.io/starlit-os/krytis:sealed --format '{{.Created}}'
+2026-07-28 20:29:15 +0000 UTC
+$ podman run --rm --entrypoint="" ghcr.io/starlit-os/krytis:sealed \
+      sh -c 'ls /boot/EFI/Linux/; ls /usr/lib/bootc/install/'
+krytis.efi          <- signed UKI present
+                    <- /usr/lib/bootc/install/ is EMPTY: no secureboot-keys at all
+```
+
+So the sealed image users can actually pull is five days old and predates #309
+entirely: it boots signed but enrols nothing, leaving a machine to have keys placed
+by hand. Anyone installing from a sealed ISO built against that tag inherits it as
+their upgrade target. Automating sealed publishing is therefore not a tidiness
+question — the manual tag is already behind the feature work by two issues.
+
 What could move to CI today, in order of value per minute:
 
 | Candidate | Feasible on a GitHub runner? |
 |---|---|
 | T0 static gates + `parse-efi-auth.py` | yes — seconds, no privileges |
-| `mise run lint` | yes — already how the image is built in `publish.yml` |
+| `mise run lint` | **no** — it builds the Containerfile `FROM localhost/krytis-input`, which only exists after `mise run build`. That is publish.yml's 420-minute BST job, not a PR gate |
 | `mise run seal-uki` + `assert_esl` | yes, but needs the signing keys as secrets — a Security Gate decision |
-| `mise run enroll-test` | needs nested KVM. Blacksmith runners are used already; whether they expose `/dev/kvm` is unverified — check before designing around it |
-| `boot-test --secure` | needs KVM **and** root for `generate-disk` |
-| T3 ISO E2E | needs KVM + ~60 GB scratch + ~40 min |
+| `mise run enroll-test` | **KVM confirmed available**, see below. Blocked instead on having a sealed image worth testing |
+| `boot-test --secure` | needs KVM (available) **and** root for `generate-disk` |
+| T3 ISO E2E | needs KVM (available) + ~60 GB scratch + ~40 min |
 
-`enroll-test` is the standout: 8 seconds, no root, and it guards the failure mode that
-actually shipped. If KVM is available it should be the first boot gate in CI.
+**KVM is usable on both runner types — measured, not assumed** (PR #445, since deleted
+from the workflow). On `ubuntu-24.04` and `blacksmith-8vcpu-ubuntu-2404` alike:
+`/dev/kvm` exists as `crw-rw---- root:kvm`, the runner user is **not** in the `kvm`
+group, and `qemu-system-x86_64 -enable-kvm` works **under sudo**. A
+`sudo chmod 0666 /dev/kvm` (or an ACL) in a setup step is enough, after which the
+mise tasks run unprivileged exactly as they do locally. Note the distinction that
+made this worth probing: "Permission denied" means the device is there and reachable
+with a permission fix, where "No such file" would have meant no KVM at all.
+
+`enroll-test` remains the standout candidate — 8 seconds, no root, and it guards the
+failure mode that actually shipped — but it needs a sealed image, and that is where
+it is stuck. `podman pull ghcr.io/starlit-os/krytis:sealed` avoids both the BST build
+and the signing keys, and tests the artifact users actually receive, which is the
+better gate. Except the published tag is **stale**: built 2026-07-28, it carries the
+UKI but an *empty* `/usr/lib/bootc/install/` — no enrollment keys at all, predating
+#309. Pointing CI at it today would report a real problem for the wrong reason.
+Publishing a current sealed image is therefore a prerequisite for this gate, and is
+the same decision as G-1's "should CI build sealed images at all".
 
 ### G-2 · `bootc upgrade` on a sealed system is untested
 
