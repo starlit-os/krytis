@@ -934,3 +934,13 @@ Two rules:
 2. **When a shell builtin-ish coreutils tool does input parsing, assume the two
    implementations disagree.** `date -d`, and anything else accepting free-form
    input, must be validated against GNU before it reaches CI.
+
+Same family, third variant: the podman **storage driver** differs too. Locally it is
+native kernel overlayfs (`overlay` on btrfs); on the runners rootless podman falls
+back to **fuse-overlayfs**, which does not implement `O_TMPFILE` — breaking
+`bootc container ukify` in CI only. See `docs/skills/secure-boot.md` § ukify's temp
+repo needs a `/var/tmp` that supports `O_TMPFILE`. Check with:
+
+```bash
+podman info --format '{{.Store.GraphDriverName}}'
+```
