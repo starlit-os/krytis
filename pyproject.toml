@@ -9,7 +9,7 @@ dependencies = [
   # click 8.3.0 breaks BST 2.5.x internal API — do not unpin without testing
   "click==8.4.2",
   # dulwich breaks API in patch releases — pin and test before bumping
-  "dulwich==0.25.2",
+  "dulwich==1.2.12",
   # required by buildstream-plugins-community git_repo source plugin
   "requests",
   # required by buildstream-plugins-community cargo2 source plugin
