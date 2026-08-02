@@ -9,6 +9,14 @@ name: Checks
 # what each candidate costs. Referenced by PR rather than by path: docs-links
 # checks every docs/ path mentioned anywhere in the tree, so naming a file that
 # only exists on an unmerged branch would make this workflow fail its own gate.
+#
+# A temporary job here already answered the one open question about the QEMU
+# gates: /dev/kvm exists on both ubuntu-24.04 and blacksmith-8vcpu-ubuntu-2404
+# as crw-rw---- root:kvm, the runner user is not in the kvm group, and QEMU
+# takes -enable-kvm under sudo on both. So the boot gates are runnable here
+# after a `sudo chmod 0666 /dev/kvm` (or an ACL) in a setup step — the mise
+# tasks themselves then need no privileges. The job is deleted; the finding
+# lives in the testing plan.
 
 on:
   pull_request:
@@ -62,63 +70,3 @@ jobs:
             python3 -m py_compile "$f" || { echo "::error file=$f::syntax error"; rc=1; }
           done
           exit $rc
-
-  kvm-probe:
-    # TEMPORARY. Answers one question — can a runner actually run the QEMU boot
-    # gates — so the enroll-test job can be designed against fact rather than
-    # assumption. Delete this job once the answer is recorded in the secure-boot
-    # testing plan (PR #443).
-    name: KVM probe (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: true
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        runner:
-          - ubuntu-24.04
-          - blacksmith-8vcpu-ubuntu-2404
-    steps:
-      - name: Report virtualisation support
-        # To stdout as well as the summary — a step summary is invisible to
-        # `gh run view --log`, which is how this gets read from a terminal.
-        run: |
-          {
-            echo "nested virt flags: $(grep -cE '^flags.*(vmx|svm)' /proc/cpuinfo || echo 0) cpu(s)"
-            if [ -e /dev/kvm ]; then
-              ls -l /dev/kvm
-              id -un; id -Gn
-              [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "/dev/kvm: rw for this user" \
-                                                 || echo "/dev/kvm: present but NOT rw for this user"
-            else
-              echo "/dev/kvm: absent"
-            fi
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: Functional check — can QEMU take -enable-kvm?
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 >/dev/null
-          # No disk: QEMU sits in SeaBIOS hunting for boot media until the timeout,
-          # which is the success shape. A missing or inaccessible KVM module makes
-          # it exit immediately with a named error instead.
-          probe() {
-            timeout 20 "$@" qemu-system-x86_64 -enable-kvm -display none -m 128 \
-              -monitor none -serial none >/tmp/qemu.log 2>&1 || true
-            grep -qiE 'could not access kvm|kvm is not supported|permission denied' /tmp/qemu.log \
-              && return 1 || return 0
-          }
-          if probe; then
-            echo "VERDICT: KVM usable as the runner user on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "--- unprivileged attempt ---"; cat /tmp/qemu.log
-          # "Permission denied" means the device exists but is not reachable by this
-          # user, which sudo or a kvm-group membership might fix. "No such file"
-          # would mean the host exposes no KVM at all and nothing can fix it here.
-          if probe sudo; then
-            echo "VERDICT: KVM usable ONLY under sudo on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "--- sudo attempt ---"; cat /tmp/qemu.log
-          echo "VERDICT: KVM NOT usable on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit 1
