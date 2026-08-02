@@ -845,3 +845,36 @@ means a relative one resolves against the other repo's root.
 Diagnostic: dakota-iso's recipes echo the composed command line, so the log shows
 `OUTPUT_DIR=output … DEBUG=0` even when the caller exported `DEBUG=1`. Grep the
 build log for the assignment rather than trusting that the flag arrived.
+
+## `mise which X` and whatever `X` resolves to on your PATH can be different binaries
+
+A CI step calling `pass-cli test` failed with `unrecognized subcommand 'test'` after I
+had read that subcommand straight out of `pass-cli --help` on this machine. Both
+statements were true at once:
+
+```
+$ pass-cli --version                 # what answered on PATH
+Proton Pass CLI 2.2.3 (38ff599)      #   -> has `test`
+$ mise which pass-cli
+~/.local/share/mise/installs/pass-cli/2.2.4/pass-cli
+$ curl -sL "$(locked url from mise.lock)" -o pc && ./pc --version
+Proton Pass CLI 2.2.4 (84323b8)      #   -> login/logout/info, NO `test`
+```
+
+`mise.toml` pins 2.2.4 and `mise.lock` names the exact asset, so **CI got 2.2.4 while a
+stray 2.2.3 answered locally**. Upstream had removed the subcommand between those
+releases. Nothing in the local session hinted at the mismatch: the help output was
+perfectly valid, just for the wrong version.
+
+**Rule: verify a tool's CLI surface against the pinned artifact, not against whatever
+answers in your shell.** For a locked tool that is one command:
+
+```bash
+URL=$(grep -A6 '\[tools.<name>."platforms.linux-x64"\]' mise.lock | grep -oP '^url = "\K[^"]+')
+curl -sSfL "$URL" -o /tmp/probe && chmod +x /tmp/probe && /tmp/probe --help
+```
+
+`mise which` is necessary but not sufficient — it tells you what mise *would* run, not
+what your PATH does. When a CI step depends on a subcommand or flag existing, prefer a
+call the tool cannot plausibly drop (or none at all: a command that already exits
+non-zero on failure needs no separate probe).
