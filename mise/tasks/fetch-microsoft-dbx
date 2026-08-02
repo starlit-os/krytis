@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#MISE description="Fetch Microsoft's UEFI revocation list (dbx) into files/microsoft-uefi-certs/ (public, committed)"
+
+set -euo pipefail
+
+# Why we re-sign rather than ship Microsoft's file as-is: DBXUpdate.bin is an
+# EFI_VARIABLE_AUTHENTICATION_2 already signed by **Microsoft's KEK**, and krytis
+# does not enrol Microsoft's KEK — only its own, plus Microsoft's *db* CAs. A
+# firmware will only accept a dbx update signed by a KEK it trusts, so Microsoft's
+# signature is useless to us. We keep the payload (the revocation list itself) and
+# re-sign it with krytis's KEK in the Containerfile.
+#
+# That makes the extracted .esl the artifact the build consumes. The upstream
+# .bin's sha256 is recorded next to it so the provenance of that payload stays
+# checkable against Microsoft's published file.
+#
+# Source moved in 2024: uefi.org/revocationlistfile now redirects to Microsoft's
+# repo, which the UEFI Forum names as the authoritative location.
+CERTS_DIR="files/microsoft-uefi-certs"
+DBX_URL="https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PostSignedObjects/DBX/amd64/DBXUpdate.bin"
+
+# Both files are committed and both are used:
+#   dbx.bin  the upstream artifact, still carrying Microsoft's KEK signature. It is
+#            the provenance record, and `virt-fw-vars --set-dbx` consumes exactly
+#            this format (it reads the EFI_TIME header, so a bare .esl makes it
+#            fail with "month must be in 1..12").
+#   dbx.esl  the payload extracted from it, which the Containerfile re-signs with
+#            krytis's KEK. sign-efi-sig-list wants a bare signature list.
+mkdir -p "$CERTS_DIR"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+echo "==> Fetching ${DBX_URL}"
+curl -sSfL --max-time 120 -o "$TMP/DBXUpdate.bin" "$DBX_URL"
+
+python3 - "$TMP/DBXUpdate.bin" "$CERTS_DIR/dbx.esl" <<'PY'
+import pathlib, struct, sys, uuid
+
+SHA256 = uuid.UUID("c1c41626-504c-4092-aca9-41f936934328")
+X509 = uuid.UUID("a5c059a1-94e4-4aa7-87b5-ab155c2bf072")
+
+src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+data = src.read_bytes()
+if len(data) < 40:
+    sys.exit(f"{src} is too short to be an EFI_VARIABLE_AUTHENTICATION_2")
+
+# EFI_TIME(16) || WIN_CERTIFICATE_UEFI_GUID(dwLength covers the whole cert) || payload
+dw_length = struct.unpack_from("<I", data, 16)[0]
+payload = data[16 + dw_length:]
+if not payload:
+    sys.exit("no signature-list payload after the authentication header")
+
+hashes = certs = lists = 0
+pos = 0
+while pos + 28 <= len(payload):
+    list_type = uuid.UUID(bytes_le=payload[pos:pos + 16])
+    size, header, sig = struct.unpack_from("<III", payload, pos + 16)
+    if size < 28 or pos + size > len(payload) or sig == 0:
+        sys.exit(f"malformed signature list at offset {pos}")
+    entries = (size - 28 - header) // sig
+    if list_type == SHA256:
+        hashes += entries
+    elif list_type == X509:
+        certs += entries
+    lists += 1
+    pos += size
+
+if pos != len(payload):
+    sys.exit(f"trailing bytes after the last signature list ({len(payload) - pos})")
+if hashes + certs == 0:
+    sys.exit("revocation list is empty — refusing to ship a dbx that revokes nothing")
+
+dst.write_bytes(payload)
+print(f"    lists={lists} sha256-hashes={hashes} x509-certs={certs} -> {dst} ({len(payload)} bytes)")
+PY
+
+cp "$TMP/DBXUpdate.bin" "$CERTS_DIR/dbx.bin"
+
+echo "==> Revocation list in $CERTS_DIR/:"
+echo "    dbx.bin   $(wc -c < "$CERTS_DIR/dbx.bin") bytes  upstream, Microsoft-KEK-signed (provenance; used by generate-ovmf-vars)"
+echo "    dbx.esl   $(wc -c < "$CERTS_DIR/dbx.esl") bytes  extracted payload (re-signed with krytis's KEK by the Containerfile)"
+echo "    sha256    $(sha256sum "$CERTS_DIR/dbx.bin" | awk '{print $1}')"
+echo
+echo "    Re-run this task to refresh. Microsoft adds revocations over time, and an"
+echo "    old dbx silently keeps trusting binaries that have since been revoked —"
+echo "    which is the whole reason #446 exists."

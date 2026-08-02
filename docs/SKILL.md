@@ -16,7 +16,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
 | Change SSH config, sshd auth policy, or make SSH work for some account type | [`docs/skills/pam.md`](skills/pam.md) § `UsePAM yes` — **read the priority note first: SSH is opt-in and not a release blocker** |
 | Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
-| Generate or debug the firmware key-enrollment `.auth` files (`mise run enroll-test`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
+| Generate or debug the firmware key-enrollment `.auth` files, or refresh the dbx revocation list (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
 | Decide which boot-chain tests to run for a change, or find what is still untested | [`docs/design/secure-boot-testing.md`](design/secure-boot-testing.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |

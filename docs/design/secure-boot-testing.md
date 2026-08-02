@@ -371,25 +371,43 @@ desktop OS — it just needs writing down. Whoever does build it inherits the
 `sbvarsign` `tm_mon` trap (§ the fix in `docs/skills/secure-boot.md`), which is
 cosmetic today and becomes silent update rejection under rollback protection.
 
-### G-5 · `dbx` is empty while the Microsoft CAs are trusted — #446
+### G-5 · ~~`dbx` is empty while the Microsoft CAs are trusted~~ — closed, #446
 
-This got sharper as a direct result of fixing #438. Post-enrollment varstore on a
-machine that came from Setup Mode:
+krytis now enrols Microsoft's revocation list. Post-enrollment varstore on a machine
+that came from Setup Mode, before and after:
 
 ```
-PK  1254   KEK 1263   db 4353 (krytis + both Microsoft CAs)   SecureBootEnable ON
-                      dbx — absent
+before:  PK 1254   KEK 1263   db 4353   dbx — absent
+after:   PK 1254   KEK 1263   db 4353   dbx 21292 (443 revoked sha256 hashes)
 ```
 
-krytis ships `PK.auth`, `KEK.auth`, `db.auth` and no `dbx.auth`. Before #443 every one
-of those lists was empty, so trusting the Microsoft CAs was theoretical; now it is
-real, with **no revocations loaded** — every Microsoft-signed binary ever revoked
-still verifies. Worst for exactly the users who follow #309's instructions, since
-clearing firmware keys to reach Setup Mode typically clears `dbx` too.
+The gap mattered because #443 made the Microsoft CAs *real* in `db` — before that
+every list was empty, so trusting them was theoretical. Once real, an absent `dbx`
+meant every Microsoft-signed binary ever revoked still verified, worst for exactly
+the users who follow #309's instructions (clearing firmware keys to reach Setup Mode
+usually clears `dbx` too).
 
-#446 carries the options. Shipping a `dbx.auth` from Microsoft's published DBX
-update, signed by our KEK, reuses the machinery that already exists — but it is a
-Security Gate call.
+Two things were worth learning here:
+
+- **Microsoft's `DBXUpdate.bin` cannot be shipped as-is.** It is already an
+  `EFI_VARIABLE_AUTHENTICATION_2` signed by *Microsoft's KEK*, and krytis enrols only
+  its own KEK plus Microsoft's *db* CAs. Firmware accepts a `dbx` update only when a
+  KEK it trusts signed it, so Microsoft's signature is useless to us. `mise run
+  fetch-microsoft-dbx` keeps the payload and the Containerfile re-signs it with
+  krytis's KEK.
+- **systemd-boot does enrol `dbx` from `loader/keys/auto`** — verified, not assumed.
+  That was the open question, and `mise run enroll-test` now asserts it: it fails when
+  the image ships a `dbx.auth` that does not end up in the firmware.
+
+Staleness is the remaining hazard, and it is the same shape as every other pinned
+dependency: Microsoft adds revocations on their own schedule, and an old `dbx`
+silently keeps trusting what it should not. `track-bst-sources.yml` grew a
+`track-microsoft-dbx` job that refreshes it and opens a PR describing the delta
+("443 → N revocations").
+
+What is still untested is whether a revoked binary is actually *refused* — that needs
+a Microsoft-signed binary from the revocation list, which is a T4/hardware item
+alongside "a Microsoft-signed EFI binary still runs".
 
 ### G-6 · One firmware, one architecture
 

@@ -108,8 +108,22 @@ echo "==> [4/4] Verdict"
 sed -n 's/^/    /p' <<<"$(grep -E 'systemd-boot@|Enrolling|successfully enrolled|BdsDxe: (starting|failed to load)' "${WORKDIR}/serial.log" | head -8)"
 
 echo "    --- enrolled variables ---"
-virt-fw-vars --input "${WORKDIR}/vars.fd" --print 2>/dev/null |
-    grep -E '^ *(PK|KEK|db|dbx|SecureBootEnable) ' | sed 's/^/    /'
+VARS_DUMP=$(virt-fw-vars --input "${WORKDIR}/vars.fd" --print 2>/dev/null)
+sed -n 's/^ *\(PK\|KEK\|db\|dbx\|SecureBootEnable\) /    &/p' <<<"${VARS_DUMP}" |
+    grep -E '(PK|KEK|db|dbx|SecureBootEnable) ' | sed 's/^ */    /'
+
+# dbx is enrolled from the same directory and is easy to lose silently: nothing
+# fails if it is absent, the machine just quietly trusts every binary Microsoft
+# has ever revoked (#446). Assert it landed, and that it is not an empty list.
+if [ -f "${ESP}/loader/keys/auto/dbx.auth" ]; then
+    DBX_SIZE=$(sed -n 's/^ *dbx *: blob: \([0-9]*\) bytes.*/\1/p' <<<"${VARS_DUMP}" | head -1)
+    if [ -z "${DBX_SIZE}" ] || [ "${DBX_SIZE}" -lt 100 ]; then
+        echo "FAIL: the image ships dbx.auth but the firmware ended up with dbx=${DBX_SIZE:-absent}." >&2
+        echo "      Secure Boot is on with no revocations, so every revoked Microsoft-signed" >&2
+        echo "      binary still verifies. See #446." >&2
+        exit 1
+    fi
+fi
 
 if ! grep -q 'successfully enrolled' "${WORKDIR}/serial.log"; then
     echo "FAIL: systemd-boot never enrolled the keys — it did not treat loader/keys/auto as enrollable." >&2

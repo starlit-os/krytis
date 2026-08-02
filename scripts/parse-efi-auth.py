@@ -21,6 +21,7 @@ import sys
 import uuid
 
 X509_GUID = uuid.UUID("a5c059a1-94e4-4aa7-87b5-ab155c2bf072")
+SHA256_GUID = uuid.UUID("c1c41626-504c-4092-aca9-41f936934328")
 PKCS7_GUID = uuid.UUID("4aafd29d-68df-49ee-8aa9-347d375665a7")
 
 
@@ -65,23 +66,44 @@ def check(path: str) -> bool:
 
         entries = (list_size - 28 - header_size) // sig_size if sig_size else 0
         base = pos + 28 + header_size
-        for _ in range(entries):
-            der = payload[base + 16:base + sig_size]
-            if not der:
-                print(f"  FAIL — empty certificate (SignatureSize={sig_size}, "
-                      f"so this list enrolls nothing)")
+
+        if list_type == SHA256_GUID:
+            # dbx is mostly SHA-256 image hashes, not certificates. A revocation
+            # entry is 16 bytes of owner GUID + a 32-byte digest, so SignatureSize
+            # is 48 and there is nothing for openssl to parse. Counting them is the
+            # check that matters: an empty dbx revokes nothing, which is exactly the
+            # #446 hazard.
+            if sig_size != 48:
+                print(f"  FAIL — SHA-256 list with SignatureSize={sig_size}, expected 48")
+                ok = False
+            elif entries == 0:
+                print("  FAIL — SHA-256 list with no entries: this revokes nothing")
                 ok = False
             else:
-                name = subject(der)
-                if name:
-                    print(f"  cert {len(der):5d} bytes  {name}")
-                else:
-                    print(f"  FAIL — {len(der)} bytes of certificate data that openssl cannot parse")
+                print(f"  {entries} revoked sha256 image hash(es)")
+        elif list_type == X509_GUID:
+            for _ in range(entries):
+                der = payload[base + 16:base + sig_size]
+                if not der:
+                    print(f"  FAIL — empty certificate (SignatureSize={sig_size}, "
+                          f"so this list enrolls nothing)")
                     ok = False
-            base += sig_size
+                else:
+                    name = subject(der)
+                    if name:
+                        print(f"  cert {len(der):5d} bytes  {name}")
+                    else:
+                        print(f"  FAIL — {len(der)} bytes of certificate data that openssl cannot parse")
+                        ok = False
+                base += sig_size
+        else:
+            # Not a failure by itself — the UEFI spec allows other signature types
+            # (SHA-1/384/512, RSA2048) — but flag it so an unexpected list is seen.
+            print(f"  note — {entries} entry(s) of unhandled list type {list_type}")
+            if entries == 0:
+                print("  FAIL — list carries no entries")
+                ok = False
 
-        if list_type != X509_GUID:
-            print(f"  note — non-X509 list type {list_type}")
         pos += list_size
         lists += 1
 
@@ -91,17 +113,36 @@ def check(path: str) -> bool:
     return ok
 
 
+def count_esl(path: str) -> int:
+    """Print how many entries a bare signature list holds. Used by CI to describe a
+    dbx refresh ("443 -> 461 revocations") without re-implementing the walk."""
+    payload = pathlib.Path(path).read_bytes()
+    total = pos = 0
+    while pos + 28 <= len(payload):
+        size, header, sig = struct.unpack_from("<III", payload, pos + 16)
+        if size < 28 or pos + size > len(payload) or sig == 0:
+            sys.exit(f"malformed signature list at offset {pos}")
+        total += (size - 28 - header) // sig
+        pos += size
+    print(total)
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["--count-esl"]:
+        if len(argv) != 2:
+            sys.exit(f"usage: {sys.argv[0]} --count-esl <file.esl>")
+        return count_esl(argv[1])
     if not argv:
-        sys.exit(f"usage: {sys.argv[0]} <file.auth> [...]")
+        sys.exit(f"usage: {sys.argv[0]} [--count-esl] <file.auth> [...]")
     failures = [p for p in argv if not check(p)]
     if failures:
-        print(f"\nFAIL: {len(failures)} of {len(argv)} file(s) would enroll no certificates: "
+        print(f"\nFAIL: {len(failures)} of {len(argv)} file(s) would enrol nothing: "
               f"{', '.join(failures)}", file=sys.stderr)
         print("See #438 — cert-to-efi-sig-list takes PEM; feeding it DER yields empty lists.",
               file=sys.stderr)
         return 1
-    print(f"\nOK: {len(argv)} file(s), every signature list carries a parseable certificate")
+    print(f"\nOK: {len(argv)} file(s), every signature list carries entries")
     return 0
 
 

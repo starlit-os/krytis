@@ -48,6 +48,17 @@ if [ "${#MS_DB_ARGS[@]}" -eq 0 ]; then
     echo "         what db.auth enrolls. Run 'mise run fetch-microsoft-certs'." >&2
 fi
 
+# Same argument for dbx (#446): the image now enrols Microsoft's revocation list,
+# so a test varstore without it trusts binaries a real machine refuses — the
+# inverse of the db gap above, and just as invisible.
+DBX_ARGS=()
+if [ -f "${MS_CERTS_DIR}/dbx.bin" ]; then
+    DBX_ARGS=(--set-dbx "${MS_CERTS_DIR}/dbx.bin")
+else
+    echo "WARNING: ${MS_CERTS_DIR}/dbx.bin missing — the varstore will have an empty dbx" >&2
+    echo "         while the image enrols one. Run 'mise run fetch-microsoft-dbx'." >&2
+fi
+
 echo "==> Baking keys into OVMF vars (source: ${OVMF_VARS_SRC}, GUID: ${GUID})..."
 virt-fw-vars \
     --input "${OVMF_VARS_SRC}" \
@@ -56,6 +67,7 @@ virt-fw-vars \
     --add-kek "${GUID}" "${KEYS_DIR}/KEK.crt" \
     --add-db  "${GUID}" "${KEYS_DIR}/db.crt" \
     "${MS_DB_ARGS[@]}" \
+    "${DBX_ARGS[@]}" \
     --output ".ovmf-vars-secure.fd"
 
 VARS_DB=$(virt-fw-vars --input .ovmf-vars-secure.fd --print 2>/dev/null |
