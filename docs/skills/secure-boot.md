@@ -115,9 +115,25 @@ the Containerfile change fully verified), but it does isolate "is my new shell l
 from "does `ukify` work in this environment" when the two would otherwise be conflated by one
 failing `RUN` step.
 
-`sig-list-to-certs`'s own extracted `.der` files come out 0 bytes in this efitools version —
-a tool quirk, not a bug in the `.esl`; the header count (`X509 Header sls=N`) printed to stderr
-is the reliable signal, not the output file sizes.
+> **Correction (#438).** This section used to end: *"`sig-list-to-certs`'s own extracted `.der`
+> files come out 0 bytes in this efitools version — a tool quirk, not a bug in the `.esl`; the
+> header count printed to stderr is the reliable signal, not the output file sizes."*
+>
+> That was wrong, and it dismissed the exact evidence of a real defect. The `.der` files were
+> 0 bytes because the signature lists genuinely **contained no certificates**:
+> `cert-to-efi-sig-list` wants **PEM**, the Containerfile feeds it **DER**, and on wrong-format
+> input it writes a well-formed empty list and exits 0. Every `.auth` krytis shipped enrolled an
+> empty allow-list, so a machine that enrolled them turned Secure Boot on and then refused
+> krytis's own signed loader. The three `X509 Header` blocks were three *empty* lists.
+>
+> **Reading rule this earns:** a count of structural headers is not evidence that the structures
+> have contents. When a tool reports "N entries" and the extracted payloads are empty, believe the
+> payloads. Byte sizes are the cheap check — an `EFI_SIGNATURE_LIST` holding one X509 cert is
+> `28 + 16 + len(DER)` bytes, so anything near 44 is empty by construction.
+>
+> See § `loader/keys/auto` self-enrollment below and #438 for the full root cause and the
+> `sbsiglist`/`sbvarsign` fix.
+
 ## `bootc container ukify` must run in a throwaway stage, never the final image
 
 `bootc install to-disk` recomputes the composefs digest over **whatever image it is installing** and verifies it against the `composefs=` parameter baked into the UKI's `.cmdline` section. If they disagree, install fails late with:
@@ -414,10 +430,10 @@ Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
 kargs for anything a test needs to inject. Kargs are a signing-time decision;
 credentials are a runtime one.
 
-## `loader/keys/auto` self-enrollment leaves the firmware rejecting our own loader
+## Every shipped `.auth` enrolled an empty allow-list — `cert-to-efi-sig-list` wants PEM
 
-Open defect, found in #371, owned by the #309 enrollment mechanism rather than by
-anything the ISO does. Boot a freshly installed sealed system against a firmware
+Root-caused in #438 (found via #371). Boot a freshly installed sealed system against
+a firmware
 whose varstore is in **setup mode** (a blank OVMF varstore — i.e. a machine that
 has never had keys) and systemd-boot does what #309 designed it to do:
 
@@ -433,15 +449,42 @@ signed bootloader. Reproduced on both the non-SMM and the proper
 `OVMF_CODE_4M.secboot.fd` + `smm=on` + pflash-`secure=on` configuration, so it is
 not the varstore-protection mistake it first looks like.
 
-The signed artifacts are not the variable. The *same disk image* boots and reaches
-`running` under enforcement when the varstore is enrolled externally by
-`mise run generate-ovmf-vars` — `virt-fw-vars --secure-boot --set-pk/--add-kek/--add-db`
-from `files/boot-keys/*.crt`. Same ESP, same signed systemd-boot, same UKI. The
-only difference is **how the keys got into the firmware**: the `.auth` signature
-lists built in the Containerfile versus the certificates handed to virt-fw-vars.
-So suspect `db.auth`'s contents or its acceptance by the firmware, not the signing
-of the boot chain. `db.auth` also bundles the two Microsoft CAs, which the
-virt-fw-vars path does not — a difference worth isolating first.
+**Root cause: the `.auth` files contain no certificates at all.** `Containerfile`
+converts each PEM cert to DER and feeds the DER to `cert-to-efi-sig-list`, but that
+tool takes **PEM** (its own usage line says so). Given DER it finds no certificate,
+writes a well-formed *empty* `EFI_SIGNATURE_LIST`, and **exits 0**;
+`sign-efi-sig-list` then signs the empty payload perfectly validly. The firmware
+accepts the writes, leaves setup mode, enables Secure Boot — with an empty
+allow-list, so nothing verifies, including our own correctly signed loader.
+`sbverify --cert db.crt` passes on both `systemd-bootx64.efi` and `krytis.efi`; the
+boot chain's signing was never the problem.
+
+Same DER input to both tools, in the image:
+
+```
+cert-to-efi-sig-list db.der out.esl   ->   44 bytes   # ListSize 0x2c, SigSize 0x10, no cert
+sbsiglist --owner "$GUID" --type x509 --output out.esl db.der
+                                      -> 1255 bytes   # 28 + 16 + 1211
+```
+
+**Size is the cheap tell.** One X509 cert in a signature list is `28 + 16 + len(DER)`
+bytes. Anything near 44 is empty by construction. Post-enrollment varstores:
+
+| varstore | PK | KEK | db |
+|---|---|---|---|
+| `.ovmf-vars-secure.fd` (virt-fw-vars — the path that works today) | 1254 | 1263 | 1255 (krytis only) |
+| enrolled from the shipped `.auth` files | 44 | 44 | **132** (three empty lists) |
+| enrolled from `sbsiglist`/`sbvarsign` output | 1254 | 1263 | **4353** (krytis + both MS CAs) |
+
+Two consequences beyond the boot failure: #309's "db.auth includes Microsoft's
+well-known CA certs" was never actually met (the loop concatenated three *empty*
+lists), and `boot-test --secure` exercises a narrower db than a real enrolled
+machine will have — its virt-fw-vars db holds krytis's cert alone.
+
+**Fix:** use `sbsigntools` (`sbsiglist` + `sbvarsign`), already in the image for
+`sbsign`, which takes DER natively and does not silently succeed on wrong-format
+input. Feeding PEM to efitools also works (verified — identical 4353-byte ESL), but
+it inverts every conversion in that `RUN` block and keeps the silent-no-op hazard.
 
 `secure-boot-enroll manual` does **not** prevent it here, despite being present in
 the ESP's own `loader.conf` (verified in-guest: `bootctl -p` is `/boot`, and that
@@ -453,6 +496,33 @@ in the repo had ever put a freshly installed disk in front of a *blank* varstore
 until an ISO install did. Any future work on enrollment must test the
 setup-mode-first-boot path explicitly; a passing `boot-test --secure` says nothing
 about it.
+
+**Test enrollment in isolation — no bootc, no ISO, no UKI.** A full install to reach
+one firmware decision is a 15-minute round trip. The whole mechanism is an ESP with
+a signed loader and three files, so build exactly that and boot it against a
+pristine varstore. QEMU's VVFAT (`fat:rw:<dir>`) builds the filesystem from a
+directory, so no image, no partitioning and no root are involved:
+
+```bash
+mkdir -p esp/EFI/BOOT esp/loader/keys/auto
+cp systemd-bootx64.efi esp/EFI/BOOT/BOOTX64.EFI      # from the sealed image
+cp {PK,KEK,db}.auth   esp/loader/keys/auto/
+cp /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd vars.fd   # pristine = setup mode
+qemu-system-x86_64 -enable-kvm -m 1024 -machine q35,smm=on \
+  -global driver=cfi.pflash01,property=secure,value=on \
+  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd \
+  -drive if=pflash,format=raw,file=vars.fd \
+  -drive file=fat:rw:esp,format=raw,if=virtio \
+  -display none -serial file:serial.log -daemonize -pidfile qemu.pid
+```
+
+45 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
+`BdsDxe: starting` + `systemd-boot@` after the enrollment reboot means the firmware
+now trusts the loader; `failed to load … Access Denied` means it does not. Then dump
+what actually landed with `virt-fw-vars --input vars.fd --print` and check the db
+size against the table above. Vary one input at a time — this is how #438 was
+isolated to the `.auth` files rather than the disk, the installer, or the firmware
+configuration.
 
 **Working around it in a test fixture** — when you want to boot a sealed disk with
 no enforcement, delete the enrollment trigger from the *copy* you boot, never from
