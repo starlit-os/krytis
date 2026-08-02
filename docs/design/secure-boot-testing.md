@@ -85,6 +85,12 @@ firmware. It reads each list's `SignatureSize` field; 16 means no certificate.
 | `mise run boot-test --secure` | ~3 min ⚠ root | the signed image boots against a **pre-enrolled** varstore | **it never touches `loader/keys/auto`** — this is exactly the blind spot that hid #438 |
 | `mise run boot-test --secure --expect-fail` | ~8 min ⚠ root | enforcement refuses the unsigned image, asserted on the firmware's own rejection line | that the *signature* is what was refused (any failure in that image looks the same) — the byte-flip variant isolates it |
 | `mise run boot-test --reuse-disk <disk> [--secure]` | 20 s–4 min | boot + health on an already-installed disk, unprivileged | any first-boot behaviour: host keys, `systemd-firstboot`, `/etc` writability, and enrollment policy (trap T-4) |
+| `mise run upgrade-test` | ~3 min + pull | `bootc upgrade` on an installed sealed system, then a reboot into the result, still enforcing and healthy | anything about a *newer* image — it follows whatever the configured stream holds, which today is broken (G-2) |
+| `mise run selfenroll-test` | **66 s** | the full chain on a real installed disk against a pristine firmware — see T3 below, where it belongs in the sequence | the manual enrollment prompt (a VM auto-enrols) |
+
+The last two need an installed disk, which T3's `iso-install-test` leaves behind at
+`/var/tmp/dakota-sealed-install.img`. Both boot a *copy* of it, so the disk stays a
+first-boot disk and can be reused (trap T-4).
 
 ⚠ = `generate-disk` needs `CAP_SYS_ADMIN` for loop devices and a real mount; no
 rootless path exists. On a host without passwordless sudo, use T3 instead — it
@@ -302,16 +308,38 @@ UKI but an *empty* `/usr/lib/bootc/install/` — no enrollment keys at all, pred
 Publishing a current sealed image is therefore a prerequisite for this gate, and is
 the same decision as G-1's "should CI build sealed images at all".
 
-### G-2 · `bootc upgrade` on a sealed system is untested
+### G-2 · `bootc upgrade` — now tested, and it found the stream broken
 
-The sealed ISO points installed systems at `…/krytis:sealed`. Nobody has ever upgraded
-one. Both directions are unproven: that a newer sealed image installs over an older
-one, and that the result still boots enforcing (a new systemd means a new
-systemd-boot/stub, hence a new signature and a new composefs digest).
+`mise run upgrade-test` exists (T2, no root). It boots an installed sealed disk under
+enforcement with the enrolled varstore, lets the guest run `bootc upgrade` against its
+own `targetImgref`, reboots into the result and asserts enforcing + healthy. It
+self-sequences across the reboot: SMBIOS credentials are re-supplied each boot, so the
+same probe upgrades on the first pass and reports on the second.
 
-Proposed `mise run upgrade-test`: run a local registry container, push two sealed
-builds, install the older from an ISO, `bootc upgrade`, reboot, assert enforcing and
-healthy. Cost is roughly two seal-uki runs plus a T3 cycle.
+**First real run failed, correctly.** `bootc upgrade` against the published sealed
+stream:
+
+```
+error: Upgrading composefs: … Writing krytis.efi to ESP:
+  The UKI has the wrong composefs= parameter
+  (is 'sha512:69b1f9e6…', should be 'sha512:6b7180ec…')
+```
+
+The published image's baked digest does not match its own rootfs, so bootc refuses to
+deploy it — which means **every machine installed from a sealed ISO is on a stream it
+cannot upgrade from**. Locally built sealed images are fine (`iso-install-test
+--secure` installs one and install runs the same verification), so this is specific to
+the published artifact. Tracked in #448 along with that tag's two other problems.
+
+**Still unverified: the pass path.** There is currently no good sealed image to
+upgrade *to*, so the test has only ever been observed failing — against a real defect,
+which is meaningful evidence but not the same as watching it go green. Publishing a
+sealed image from #443 unblocks it, the same blocker as the `enroll-test` CI job. Until
+then treat a green `upgrade-test` as unproven.
+
+A second sealed build differing only in `include/image-version.yml` would let the test
+run entirely locally, but that version stamp comes from the BST build, so producing one
+costs a `mise run build` rather than a re-seal.
 
 ### G-3 · ~~Self-enrollment is a manual recipe, not a task~~ — closed
 
