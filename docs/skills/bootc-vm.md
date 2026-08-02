@@ -595,6 +595,39 @@ virt-fw-vars --input /usr/share/OVMF/OVMF_VARS_4M.fd --print | grep -iE '^ *(PK|
 # no output = setup mode = correct for enroll-test
 ```
 
+### …and its `OVMF_CODE` enrols two Microsoft CAs of its own
+
+An empty varstore does not mean an empty `db` after boot. Ubuntu's
+`OVMF_CODE_4M.secboot.fd` carries built-in default entries, so the *same* sealed
+image produces different results depending on whose firmware ran it:
+
+```
+Fedora/Arch firmware:  db : blob: 4353 bytes   (3 certs — all ours)
+Ubuntu firmware:       db : blob: 7348 bytes   (5 certs)
+```
+
+The two extras carry owner GUID `77fa9abd-0359-4d32-bd60-28f4e78f784b`:
+
+```
+db-…-DatabaseKey.pem                            <- ours
+db-…-MicrosoftCorporationUEFICA2011.pem         <- ours (bundled since #443)
+db-…-WindowsUEFICA2023.pem                      <- ours
+db-77fa9abd-…-MicrosoftUEFICA2023.pem           <- the firmware's
+db-77fa9abd-…-MicrosoftOptionROMUEFICA2023.pem  <- the firmware's
+```
+
+Two consequences. A CI run on Ubuntu is **more permissive** than a real machine
+enrolled only from krytis's `.auth` files, so a negative test asserting that some
+binary is *refused* cannot be trusted there without checking which CAs are loaded.
+And a `db` size or non-emptiness check is not evidence the image contributed
+anything — the firmware can satisfy it alone. `enroll-test` therefore asserts
+`CN=Database Key` is present by name, and prints every db subject in its verdict:
+
+```bash
+virt-fw-vars --input vars.fd --extract-certs      # writes db-*.pem into CWD
+openssl x509 -in db-….pem -noout -subject
+```
+
 `mise/tasks/enroll-test` carries the Debian/Ubuntu paths. The other five OVMF
 consumers (`boot-test`, `boot-vm`, `generate-ovmf-vars`, `selfenroll-test`,
 `upgrade-test`) still have the Fedora/Arch-only lists and will need the same

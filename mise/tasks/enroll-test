@@ -123,6 +123,33 @@ VARS_DUMP=$(virt-fw-vars --input "${WORKDIR}/vars.fd" --print 2>/dev/null)
 sed -n 's/^ *\(PK\|KEK\|db\|dbx\|SecureBootEnable\) /    &/p' <<<"${VARS_DUMP}" |
     grep -E '(PK|KEK|db|dbx|SecureBootEnable) ' | sed 's/^ */    /'
 
+# Which certificates actually ended up in db, not just how many bytes. The byte
+# count is not ours alone to predict: Ubuntu's OVMF_CODE_4M.secboot.fd carries
+# built-in default db entries (Microsoft UEFI CA 2023 + Option ROM CA 2023, owner
+# GUID 77fa9abd-...), so the same image enrols 4353 bytes under Fedora/Arch
+# firmware and 7348 under Ubuntu's. Printing the subjects makes that visible
+# instead of surprising.
+CERTDIR="${WORKDIR}/certs"; mkdir -p "${CERTDIR}"
+(cd "${CERTDIR}" && virt-fw-vars --input "${WORKDIR}/vars.fd" --extract-certs >/dev/null 2>&1) || true
+echo "    --- certificates in db ---"
+DB_OURS=""
+for c in "${CERTDIR}"/db-*.pem; do
+    [ -f "${c}" ] || continue
+    subj=$(openssl x509 -in "${c}" -noout -subject 2>/dev/null | sed 's/^subject= *//')
+    echo "    ${subj}"
+    grep -qE 'CN *= *Database Key' <<<"${subj}" && DB_OURS=1
+done
+
+# Assert OUR key specifically, not merely that db is non-empty. A firmware that
+# ships its own defaults can satisfy a size check on its own, which would let a
+# regression that dropped krytis's cert still look like a pass.
+if [ -z "${DB_OURS}" ]; then
+    echo "FAIL: db was enrolled, but it does not contain krytis's own Database Key." >&2
+    echo "      Only the firmware's built-in certificates are present, so nothing this" >&2
+    echo "      image shipped actually made it into the allow-list." >&2
+    exit 1
+fi
+
 # dbx is enrolled from the same directory and is easy to lose silently: nothing
 # fails if it is absent, the machine just quietly trusts every binary Microsoft
 # has ever revoked (#446). Assert it landed, and that it is not an empty list.
