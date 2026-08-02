@@ -530,3 +530,40 @@ As with `build-iso`, the QEMU/fisherman orchestration lives in dakota-iso
 defaults, checks every prerequisite *before* the tens-of-minutes run starts, and
 copies the enrolled varstore to scratch so an enforcing boot never writes back to
 `.ovmf-vars-secure.fd`.
+
+## An in-guest probe cannot observe `is-system-running` — it is waiting on itself
+
+Serial-console probes are injected as a unit pulled in by `multi-user.target`
+(`Wants=`, via an SMBIOS `systemd.unit-dropin` credential — see `mise/tasks/upgrade-test`).
+That makes the probe part of the **initial boot transaction**, and
+`systemctl is-system-running` stays `starting` until that transaction drains. From
+inside the probe it therefore never reads `running`:
+
+```
+===KRYTIS-UPGRADE phase=post===
+state: starting                    # healthy system, impatient observer
+```
+
+`systemctl is-system-running --wait` is worse, not better: it blocks on a queue
+containing its own job, so it deadlocks until something times out.
+
+**Report from a transient unit instead.** `systemd-run --on-active=1s` creates the
+job *after* the initial transaction, which is the same vantage point `boot-test`
+gets by connecting over SSH once the guest is up:
+
+```bash
+cp "$0" /run/krytis-upgrade-report.sh
+systemd-run --collect --unit=krytis-upgrade-report --on-active=1s \
+    --property=StandardOutput=file:/dev/ttyS0 \
+    --setenv=KRYTIS_REPORT=1 /bin/bash /run/krytis-upgrade-report.sh
+```
+
+Copy the script out of `/run/credentials/<unit>/` first — that mount goes away with
+the unit that owns it. Bound the subsequent `--wait` with `timeout` so a genuinely
+stuck boot still reports a state rather than hanging until the harness deadline.
+
+Corollary for writing these assertions: an assertion is only as good as where it is
+observed from. `boot-test` can assert `state: running` because it asks over SSH
+after boot; anything asking from inside the boot has to either move its vantage
+point or assert something else (`systemctl --failed` being empty is observable from
+anywhere).
