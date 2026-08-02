@@ -102,8 +102,27 @@ print(((b.get("image") or {}).get("image") or {}).get("image", "unknown"))' 2>/d
 }
 
 if [ -f /var/lib/krytis-upgrade-test.done ]; then
+    # `systemctl is-system-running` cannot report "running" from in here: this probe
+    # is pulled into the boot transaction by multi-user.target's Wants=, so it would
+    # be waiting on its own job and always sees "starting" (`--wait` deadlocks
+    # outright). Hand the reporting to a transient unit that runs after the boot
+    # transaction has drained — the same vantage point boot-test gets by connecting
+    # over SSH once the guest is up.
+    if [ "${KRYTIS_REPORT:-0}" != 1 ]; then
+        cp "$0" /run/krytis-upgrade-report.sh
+        systemd-run --collect --unit=krytis-upgrade-report --on-active=1s \
+            --property=StandardOutput=file:/dev/ttyS0 \
+            --property=StandardError=file:/dev/ttyS0 \
+            --setenv=KRYTIS_REPORT=1 \
+            /bin/bash /run/krytis-upgrade-report.sh >/dev/null 2>&1
+        exit 0
+    fi
+    # Bounded, so a genuinely stuck boot still reports its state instead of hanging
+    # until the harness deadline. Falls through to a plain read on degraded/timeout.
+    STATE="$(timeout 300 systemctl is-system-running --wait 2>/dev/null \
+             || systemctl is-system-running 2>/dev/null || echo unknown)"
     echo "===KRYTIS-UPGRADE phase=post==="
-    echo "state: $(systemctl is-system-running)"
+    echo "state: ${STATE}"
     bootctl status 2>&1 | grep -iE 'secure boot' | sed 's/^ */sb: /'
     echo "ref: $(booted_ref)"
     echo "digest: $(booted_digest)"
