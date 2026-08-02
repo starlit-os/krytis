@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+#MISE description="Assert the image's own .auth keys enroll into a setup-mode firmware and the signed loader still verifies afterwards (#438)"
+#USAGE flag "--image <tag>" default="localhost/krytis:sealed" help="Sealed image whose /usr/lib/bootc/install/secureboot-keys/auto/*.auth and signed systemd-boot are tested"
+#USAGE flag "--keep" help="Keep the workdir (ESP tree, varstore, serial log) for inspection"
+
+set -euo pipefail
+
+# The gate #309 never had. `boot-test --secure` boots a varstore that
+# generate-ovmf-vars already enrolled with virt-fw-vars, which bypasses
+# loader/keys/auto completely — so it cannot see whether the image's OWN .auth
+# files work. They did not: shipped ones enrolled empty signature lists, Secure
+# Boot came up with an empty allow-list, and the firmware refused krytis's own
+# signed loader (#438).
+#
+# This boots the mechanism in isolation: an ESP containing nothing but the signed
+# systemd-boot and the three .auth files, against a pristine (setup-mode)
+# varstore. No bootc, no UKI, no composefs, no install — so a failure here can
+# only be about the keys. 45 seconds instead of a 15-minute install round trip.
+#
+# QEMU's VVFAT (`fat:rw:<dir>`) synthesises the filesystem from a directory, so
+# there is no image to create, nothing to partition and no root needed.
+
+CLI_IMAGE=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) CLI_IMAGE="$2"; shift 2 ;;
+        --keep)  CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:sealed}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+podman image exists "${IMAGE}" || {
+    echo "ERROR: ${IMAGE} not found locally — run 'mise run seal-uki' first." >&2
+    exit 1
+}
+command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
+command -v virt-fw-vars >/dev/null || { echo "ERROR: virt-fw-vars not found (pip install virt-firmware)." >&2; exit 1; }
+
+OVMF_CODE=""; OVMF_VARS_SRC=""
+for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
+         /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
+    [ -f "$c" ] && OVMF_CODE="$c" && break
+done
+# A PRISTINE secboot varstore, not .ovmf-vars-secure.fd: this test needs setup
+# mode (no keys) so systemd-boot performs the enrollment itself.
+for v in /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd /usr/share/OVMF/OVMF_VARS_4M.secboot.qcow2 \
+         /usr/share/edk2/x64/OVMF_VARS.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_VARS.secboot.fd; do
+    [ -f "$v" ] && OVMF_VARS_SRC="$v" && break
+done
+[ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF secboot firmware not found." >&2; exit 1; }
+[ -n "${OVMF_VARS_SRC}" ] || { echo "ERROR: OVMF secboot vars template not found." >&2; exit 1; }
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-enroll-test.XXXXXX)
+cleanup() {
+    [ -f "${WORKDIR}/qemu.pid" ] && kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
+    if [ -n "${KEEP}" ]; then echo "==> Kept ${WORKDIR}"; else rm -rf "${WORKDIR}"; fi
+}
+trap cleanup EXIT
+
+ESP="${WORKDIR}/esp"
+mkdir -p "${ESP}/EFI/BOOT" "${ESP}/loader/keys/auto"
+
+echo "==> [1/4] Extracting the signed loader and .auth keys from ${IMAGE}..."
+CID=$(podman create "${IMAGE}" true)
+podman cp "${CID}":/usr/lib/systemd/boot/efi/systemd-bootx64.efi "${ESP}/EFI/BOOT/BOOTX64.EFI"
+podman cp "${CID}":/usr/lib/bootc/install/secureboot-keys/auto/. "${ESP}/loader/keys/auto/"
+podman rm "${CID}" >/dev/null
+for f in PK KEK db; do
+    [ -f "${ESP}/loader/keys/auto/${f}.auth" ] || {
+        echo "ERROR: ${IMAGE} has no ${f}.auth — that is not a sealed build." >&2
+        exit 1
+    }
+done
+
+# Cheap gate first: a static parse catches an empty allow-list with no VM at all,
+# and names the offending file. Only spend 45 seconds of QEMU on files that could
+# plausibly work.
+echo "==> [2/4] Validating the .auth payloads..."
+./scripts/parse-efi-auth.py "${ESP}"/loader/keys/auto/*.auth
+
+echo "==> [3/4] Booting a setup-mode firmware so systemd-boot enrolls them..."
+cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars.fd"
+qemu-system-x86_64 \
+    -enable-kvm -m 1024 -cpu host -smp 2 \
+    -machine q35,smm=on \
+    -global driver=cfi.pflash01,property=secure,value=on \
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+    -drive "file=fat:rw:${ESP},format=raw,if=virtio" \
+    -display none \
+    -serial "file:${WORKDIR}/serial.log" \
+    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+
+# Enrollment reboots the guest once, so wait for the SECOND firmware pass.
+DEADLINE=$((SECONDS + 90))
+while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    grep -q 'successfully enrolled' "${WORKDIR}/serial.log" 2>/dev/null && \
+        [ "$(grep -c 'BdsDxe: \(starting\|failed to load\) Boot0002' "${WORKDIR}/serial.log")" -ge 2 ] && break
+    sleep 3
+done
+kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
+sleep 1
+
+echo "==> [4/4] Verdict"
+sed -n 's/^/    /p' <<<"$(grep -E 'systemd-boot@|Enrolling|successfully enrolled|BdsDxe: (starting|failed to load)' "${WORKDIR}/serial.log" | head -8)"
+
+echo "    --- enrolled variables ---"
+virt-fw-vars --input "${WORKDIR}/vars.fd" --print 2>/dev/null |
+    grep -E '^ *(PK|KEK|db|dbx|SecureBootEnable) ' | sed 's/^/    /'
+
+if ! grep -q 'successfully enrolled' "${WORKDIR}/serial.log"; then
+    echo "FAIL: systemd-boot never enrolled the keys — it did not treat loader/keys/auto as enrollable." >&2
+    echo "      (secure-boot-enroll policy, a missing keys directory, or the loader never ran.)" >&2
+    exit 1
+fi
+
+if grep -q 'Access Denied\|Security Violation' "${WORKDIR}/serial.log"; then
+    echo "FAIL: after enrolling its own keys the firmware refused the signed loader." >&2
+    echo "      The enrolled db does not authorise our own binaries — check the db sizes above:" >&2
+    echo "      a 44-byte list per entry means the certificates never made it in (#438)." >&2
+    exit 1
+fi
+
+# The loader must come up a SECOND time, after the enrollment reboot, with Secure
+# Boot now enforcing. One `systemd-boot@` line only proves the pre-enrollment
+# boot, which happened in setup mode and enforced nothing.
+if [ "$(grep -c 'systemd-boot@' "${WORKDIR}/serial.log")" -lt 2 ]; then
+    echo "FAIL: the loader did not start again after the enrollment reboot, and the firmware" >&2
+    echo "      printed no rejection either — INCONCLUSIVE, a silent firmware proves nothing." >&2
+    echo "      Inspect with: mise run enroll-test --keep" >&2
+    exit 1
+fi
+
+echo "==> PASS: keys enrolled from the image's own .auth files, and the firmware then"
+echo "    verified the signed systemd-boot under enforcement."

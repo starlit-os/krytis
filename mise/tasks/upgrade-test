@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+#MISE description="Run bootc upgrade on an installed sealed system and assert it still boots under Secure Boot enforcement (#438 gap G-2)"
+#USAGE flag "--disk <path>" default="/var/tmp/dakota-sealed-install.img" help="Installed sealed disk, as left behind by 'mise run iso-install-test'"
+#USAGE flag "--to <ref>" help="Switch to this image ref instead of upgrading the configured stream. Default: plain 'bootc upgrade' against the system's own targetImgref"
+#USAGE flag "--keep" help="Keep the workdir (disk copy, varstore, serial log) for inspection"
+
+set -euo pipefail
+
+# The one path #371 built and nobody had ever walked. A sealed ISO points the
+# installed system's targetImgref at the sealed stream, so `bootc upgrade` is what
+# every one of those machines will eventually run — and an upgrade replaces the
+# UKI and the composefs digest, i.e. exactly the things enforcement checks. If the
+# new image's UKI does not verify against the enrolled db, or its digest does not
+# match what its own cmdline claims, the machine does not come back.
+#
+# Self-sequencing across the reboot: SMBIOS credentials are re-supplied by QEMU on
+# every boot, so the same probe unit runs twice. It upgrades on the boot where the
+# booted digest is still the old one, and reports on the boot where it is not.
+#
+# Verdict comes over the credential-injected probe, never the serial console — a
+# sealed system's cmdline is frozen inside the signed UKI (docs/skills/secure-boot.md
+# § A sealed system's boot cannot be judged from the serial console).
+
+CLI_DISK=""; CLI_TO=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --disk) CLI_DISK="$2"; shift 2 ;;
+        --to)   CLI_TO="$2"; shift 2 ;;
+        --keep) CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+
+DISK="${CLI_DISK:-${usage_disk:-/var/tmp/dakota-sealed-install.img}}"
+TO_REF="${CLI_TO:-${usage_to:-}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+[ -f "${DISK}" ] || {
+    echo "ERROR: no installed disk at ${DISK}" >&2
+    echo "  Produce one:  mise run build-iso --sealed --debug && mise run iso-install-test --secure" >&2
+    exit 1
+}
+[ -f ".ovmf-vars-secure.fd" ] || {
+    echo "ERROR: .ovmf-vars-secure.fd missing — run 'mise run generate-ovmf-vars' first." >&2
+    echo "       This test boots under enforcement; enrollment itself is enroll-test's job." >&2
+    exit 1
+}
+command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
+
+OVMF_CODE=""
+for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
+         /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
+    [ -f "$c" ] && OVMF_CODE="$c" && break
+done
+[ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF secboot firmware not found." >&2; exit 1; }
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-upgrade-test.XXXXXX)
+cleanup() {
+    [ -f "${WORKDIR}/qemu.pid" ] && kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
+    if [ -n "${KEEP}" ]; then echo "==> Kept ${WORKDIR}"; else rm -rf "${WORKDIR}"; fi
+}
+trap cleanup EXIT
+
+echo "==> [1/3] Preparing a copy of ${DISK} and the enrolled varstore..."
+cp --reflink=auto "${DISK}" "${WORKDIR}/disk.raw"
+cp ".ovmf-vars-secure.fd" "${WORKDIR}/vars.fd"
+
+printf '[Unit]\nWants=krytis-upgrade-probe.service\n' > "${WORKDIR}/mu.conf"
+cat > "${WORKDIR}/probe.service" <<'PROBE'
+[Unit]
+Description=krytis bootc upgrade probe
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=oneshot
+TimeoutStartSec=infinity
+ExecStart=/bin/bash /run/credentials/krytis-upgrade-probe.service/probe.sh
+ImportCredential=probe.sh
+StandardOutput=file:/dev/ttyS0
+StandardError=file:/dev/ttyS0
+PROBE
+
+# `bootc upgrade` with no argument follows the system's own targetImgref, which for
+# an ISO-installed sealed system is the sealed stream — the real configured path.
+# --to overrides it with an explicit switch for testing a specific target.
+cat > "${WORKDIR}/probe.sh" <<PROBESH
+#!/bin/bash
+TO_REF="${TO_REF}"
+PROBESH
+cat >> "${WORKDIR}/probe.sh" <<'PROBESH'
+booted_digest() {
+    bootc status --json 2>/dev/null | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+b = (d.get("status") or d).get("booted") or {}
+print(b.get("imageDigest") or "none")' 2>/dev/null || echo unknown
+}
+booted_ref() {
+    bootc status --json 2>/dev/null | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+b = (d.get("status") or d).get("booted") or {}
+print(((b.get("image") or {}).get("image") or {}).get("image", "unknown"))' 2>/dev/null || echo unknown
+}
+
+if [ -f /var/lib/krytis-upgrade-test.done ]; then
+    echo "===KRYTIS-UPGRADE phase=post==="
+    echo "state: $(systemctl is-system-running)"
+    bootctl status 2>&1 | grep -iE 'secure boot' | sed 's/^ */sb: /'
+    echo "ref: $(booted_ref)"
+    echo "digest: $(booted_digest)"
+    echo "was: $(cat /var/lib/krytis-upgrade-test.done)"
+    echo "failed-units:"; systemctl --failed --no-legend --no-pager | head -5
+    echo "===KRYTIS-UPGRADE-END==="
+    systemctl poweroff --no-block
+    exit 0
+fi
+
+echo "===KRYTIS-UPGRADE phase=pre==="
+echo "ref: $(booted_ref)"
+echo "digest: $(booted_digest)"
+bootctl status 2>&1 | grep -iE 'secure boot' | sed 's/^ */sb: /'
+booted_digest > /var/lib/krytis-upgrade-test.done
+
+if [ -n "${TO_REF}" ]; then
+    echo "action: bootc switch ${TO_REF}"
+    bootc switch --transport registry "${TO_REF}" 2>&1 | tail -5 || {
+        echo "FAILED: bootc switch returned $?"; echo "===KRYTIS-UPGRADE-END==="
+        systemctl poweroff --no-block; exit 1; }
+else
+    echo "action: bootc upgrade (following the system's own targetImgref)"
+    out=$(bootc upgrade 2>&1) || {
+        echo "$out" | tail -5; echo "FAILED: bootc upgrade returned nonzero"
+        echo "===KRYTIS-UPGRADE-END==="; systemctl poweroff --no-block; exit 1; }
+    echo "$out" | tail -3
+    if echo "$out" | grep -qi 'no update available'; then
+        echo "NOUPDATE: the configured stream already matches what is booted"
+        echo "===KRYTIS-UPGRADE-END==="; systemctl poweroff --no-block; exit 0
+    fi
+fi
+
+echo "staged — rebooting into it"
+echo "===KRYTIS-UPGRADE-END==="
+systemctl reboot --no-block
+PROBESH
+
+cred_b64() { base64 -w0 < "$1"; }
+
+echo "==> [2/3] Booting under enforcement; the guest upgrades itself and reboots once..."
+echo "    (pulling an image inside the guest over user-mode NAT — allow several minutes)"
+qemu-system-x86_64 \
+    -enable-kvm -m "${VM_RAM:-4096}" -cpu host -smp "${VM_CPUS:-4}" \
+    -machine q35,smm=on \
+    -global driver=cfi.pflash01,property=secure,value=on \
+    -drive "file=${WORKDIR}/disk.raw,format=raw,if=virtio" \
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+    -device virtio-net-pci,netdev=net0 -netdev user,id=net0 \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.extra-unit.krytis-upgrade-probe.service=$(cred_b64 "${WORKDIR}/probe.service")" \
+    -smbios "type=11,value=io.systemd.credential.binary:probe.sh=$(cred_b64 "${WORKDIR}/probe.sh")" \
+    -display none \
+    -serial "file:${WORKDIR}/serial.log" \
+    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+
+DEADLINE=$((SECONDS + 1800))
+while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    grep -q 'phase=post' "${WORKDIR}/serial.log" 2>/dev/null && break
+    grep -qE 'NOUPDATE|FAILED:|Access Denied|Security Violation' "${WORKDIR}/serial.log" 2>/dev/null && break
+    sleep 10
+done
+[ -f "${WORKDIR}/qemu.pid" ] && kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
+sleep 1
+
+echo "==> [3/3] Verdict"
+grep -E 'BdsDxe: (starting|failed to load)|systemd-boot@|systemd-stub@' "${WORKDIR}/serial.log" | head -6 | sed 's/^/    /'
+sed -n '/===KRYTIS-UPGRADE phase=pre===/,$p' "${WORKDIR}/serial.log" | tr -d '\r' | sed 's/^/    /' | head -30
+
+if grep -q 'NOUPDATE' "${WORKDIR}/serial.log"; then
+    echo "SKIP: the configured stream already matches the installed digest, so there was" >&2
+    echo "      nothing to upgrade to. Point --to at a different sealed image, or publish" >&2
+    echo "      a newer one, for this test to mean anything." >&2
+    exit 2
+fi
+if grep -q 'FAILED:' "${WORKDIR}/serial.log"; then
+    echo "FAIL: the upgrade itself did not complete — see the output above." >&2
+    exit 1
+fi
+if grep -qE 'Access Denied|Security Violation' "${WORKDIR}/serial.log"; then
+    echo "FAIL: the firmware refused the upgraded system's boot chain." >&2
+    echo "      The new image's UKI does not verify against the enrolled db, or its" >&2
+    echo "      baked composefs digest does not match what was deployed." >&2
+    exit 1
+fi
+if ! grep -q 'phase=post' "${WORKDIR}/serial.log"; then
+    echo "FAIL: never reached a post-upgrade boot within the deadline." >&2
+    echo "      Inspect with: mise run upgrade-test --keep" >&2
+    exit 1
+fi
+if ! grep -q 'state: running' "${WORKDIR}/serial.log"; then
+    echo "FAIL: booted the upgraded system but it did not reach 'running'." >&2
+    exit 1
+fi
+if ! grep -qi 'sb: *Secure Boot: enabled' "${WORKDIR}/serial.log"; then
+    echo "FAIL: upgraded and healthy, but Secure Boot is not enabled — this boot proves" >&2
+    echo "      nothing about enforcement." >&2
+    exit 1
+fi
+
+echo "==> PASS: bootc upgrade completed and the upgraded system booted healthy under"
+echo "    Secure Boot enforcement."

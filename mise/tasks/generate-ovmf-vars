@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Bake PK/KEK/db keys into an OVMF vars file for QEMU secure boot testing"
+#MISE description="Bake PK/KEK/db keys into an OVMF vars file for QEMU secure boot testing — mirrors what the image's own db.auth enrolls"
 
 set -euo pipefail
 
 KEYS_DIR="files/boot-keys"
+MS_CERTS_DIR="${MS_CERTS_DIR:-files/microsoft-uefi-certs}"
+SEALED_TAG="${SEALED_TAG:-localhost/krytis:sealed}"
 GUID="${GUID:-$(cat /proc/sys/kernel/random/uuid)}"
 
 if ! command -v virt-fw-vars &>/dev/null; then
@@ -28,6 +30,24 @@ if [ -z "${OVMF_VARS_SRC}" ]; then
     exit 1
 fi
 
+# db must hold the SAME certificates the image's own db.auth enrolls, in the same
+# order: krytis's db cert followed by the Microsoft CAs from files/. Testing a
+# narrower db than real hardware gets is how #438 stayed invisible — a machine
+# that enrolls loader/keys/auto ends up with a 4353-byte db, while this varstore
+# used to hold krytis's cert alone (1255 bytes), so `boot-test --secure` proved
+# strictly less than it appeared to. --add-db takes PEM or DER and repeats.
+MS_DB_ARGS=()
+if [ -d "${MS_CERTS_DIR}" ]; then
+    for ms in "${MS_CERTS_DIR}"/*.der; do
+        [ -f "${ms}" ] || continue
+        MS_DB_ARGS+=(--add-db "${GUID}" "${ms}")
+    done
+fi
+if [ "${#MS_DB_ARGS[@]}" -eq 0 ]; then
+    echo "WARNING: no certs in ${MS_CERTS_DIR}/ — the varstore's db will be narrower than" >&2
+    echo "         what db.auth enrolls. Run 'mise run fetch-microsoft-certs'." >&2
+fi
+
 echo "==> Baking keys into OVMF vars (source: ${OVMF_VARS_SRC}, GUID: ${GUID})..."
 virt-fw-vars \
     --input "${OVMF_VARS_SRC}" \
@@ -35,6 +55,38 @@ virt-fw-vars \
     --set-pk  "${GUID}" "${KEYS_DIR}/PK.crt" \
     --add-kek "${GUID}" "${KEYS_DIR}/KEK.crt" \
     --add-db  "${GUID}" "${KEYS_DIR}/db.crt" \
+    "${MS_DB_ARGS[@]}" \
     --output ".ovmf-vars-secure.fd"
 
-echo "==> OVMF vars: .ovmf-vars-secure.fd"
+VARS_DB=$(virt-fw-vars --input .ovmf-vars-secure.fd --print 2>/dev/null |
+          sed -n 's/^ *db  *: blob: \([0-9]*\) bytes.*/\1/p' | head -1)
+echo "==> OVMF vars: .ovmf-vars-secure.fd (db: ${VARS_DB:-?} bytes)"
+
+# Drift guard: the whole point is that this varstore matches the image. If the
+# sealed image is around, compare its db.auth payload against what we just baked
+# and refuse to hand back a varstore that tests something else.
+if podman image exists "${SEALED_TAG}" 2>/dev/null; then
+    AUTH_TMP=$(mktemp -d)
+    trap 'rm -rf "${AUTH_TMP}"' EXIT
+    CID=$(podman create "${SEALED_TAG}" true)
+    if podman cp "${CID}":/usr/lib/bootc/install/secureboot-keys/auto/db.auth "${AUTH_TMP}/db.auth" 2>/dev/null; then
+        podman rm "${CID}" >/dev/null
+        AUTH_DB=$(python3 -c '
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+print(len(d) - 16 - struct.unpack_from("<I", d, 16)[0])
+' "${AUTH_TMP}/db.auth")
+        if [ "${VARS_DB}" != "${AUTH_DB}" ]; then
+            echo "ERROR: this varstore's db is ${VARS_DB} bytes but ${SEALED_TAG}'s db.auth enrolls ${AUTH_DB}." >&2
+            echo "       boot-test --secure would then verify against a different key set than a real" >&2
+            echo "       machine gets — the blind spot that hid #438. Rebuild whichever is stale:" >&2
+            echo "         mise run seal-uki           # if the image is older than files/" >&2
+            echo "         mise run generate-ovmf-vars # if this varstore is older than the image" >&2
+            exit 1
+        fi
+        echo "==> Matches ${SEALED_TAG}'s db.auth (${AUTH_DB} bytes) — boot-test --secure now"
+        echo "    verifies against the same key set a real enrolled machine has."
+    else
+        podman rm "${CID}" >/dev/null
+    fi
+fi

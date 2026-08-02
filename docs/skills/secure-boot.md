@@ -298,13 +298,20 @@ itself. Read that shape as "wrong tag", not as a regression in the change under
 test. `boot-test` now also refuses up front, before the privileged install, when
 an explicitly named image has no UKI or does not exist locally.
 
-Three deliberate combinations, only the first two positive:
+Five deliberate combinations, only the first four positive:
 
 | Command | Asserts |
 |---|---|
 | `mise run boot-test` | the image boots and is healthy — the right check for anything that isn't about the boot chain |
-| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement |
+| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement, against a varstore `generate-ovmf-vars` pre-enrolled with the same certificates `db.auth` carries |
+| `mise run seal-uki && mise run enroll-test` | the image's **own** `.auth` files enrol into a setup-mode firmware and the loader still verifies afterwards — a different question, and the one #438 answered wrongly for months |
+| `mise run selfenroll-test` | the same, on a **real installed disk** rather than a synthetic ESP — ESP layout, UKI, composefs and first-boot units included — ending in a healthy system with `Secure Boot: enabled (user)` |
 | `mise run boot-test --secure --expect-fail` | secure boot rejects the unsigned image |
+
+The second and third are not substitutes. `boot-test --secure` boots keys that
+virt-fw-vars already placed, so it never touches `loader/keys/auto`; `enroll-test`
+makes the firmware do the enrolling from the image's own files. An image can pass
+one and fail the other — that is exactly what #438 was.
 
 Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
 element change touching systemd invalidates an existing `:sealed` image — rerun
@@ -472,23 +479,98 @@ bytes. Anything near 44 is empty by construction. Post-enrollment varstores:
 
 | varstore | PK | KEK | db |
 |---|---|---|---|
-| `.ovmf-vars-secure.fd` (virt-fw-vars — the path that works today) | 1254 | 1263 | 1255 (krytis only) |
+| `.ovmf-vars-secure.fd` before this fix (virt-fw-vars, krytis's cert only) | 1254 | 1263 | 1255 |
 | enrolled from the shipped `.auth` files | 44 | 44 | **132** (three empty lists) |
-| enrolled from `sbsiglist`/`sbvarsign` output | 1254 | 1263 | **4353** (krytis + both MS CAs) |
+| enrolled from `sbsiglist` output — and `.ovmf-vars-secure.fd` now | 1254 | 1263 | **4353** (krytis + both MS CAs) |
 
-Two consequences beyond the boot failure: #309's "db.auth includes Microsoft's
+Two consequences beyond the boot failure. #309's "db.auth includes Microsoft's
 well-known CA certs" was never actually met (the loop concatenated three *empty*
-lists), and `boot-test --secure` exercises a narrower db than a real enrolled
-machine will have — its virt-fw-vars db holds krytis's cert alone.
+lists) — it is now. And `boot-test --secure` had been verifying against a **narrower
+db than any real machine gets**: `generate-ovmf-vars` baked krytis's cert alone
+(1255 bytes) while an enrolling machine ends up with 4353. It proved strictly less
+than it appeared to, which is part of why this went unnoticed.
 
-**Fix:** use `sbsigntools` (`sbsiglist` + `sbvarsign`), already in the image for
-`sbsign`, which takes DER natively and does not silently succeed on wrong-format
-input. Feeding PEM to efitools also works (verified — identical 4353-byte ESL), but
-it inverts every conversion in that `RUN` block and keeps the silent-no-op hazard.
+`generate-ovmf-vars` now adds `files/microsoft-uefi-certs/*.der` in the same order
+the Containerfile does, so the test varstore and the shipped `db.auth` hold the same
+certificates. It also refuses to finish when they disagree — it extracts `db.auth`
+from `localhost/krytis:sealed` and compares payload sizes, so "what we test" cannot
+silently drift from "what we ship" again:
 
-`secure-boot-enroll manual` does **not** prevent it here, despite being present in
-the ESP's own `loader.conf` (verified in-guest: `bootctl -p` is `/boot`, and that
-file contains the line). A VM in setup mode enrolls anyway.
+```
+==> OVMF vars: .ovmf-vars-secure.fd (db: 4353 bytes)
+==> Matches localhost/krytis:sealed's db.auth (4353 bytes)
+```
+
+Widening db does not weaken the negative test — verified rather than assumed, since
+a bigger allow-list could plausibly have made a rejection stop happening. An
+unsigned `systemd-bootx64.efi` (mtools-copied over the ESP's signed one) is still
+refused with `Access Denied` against the 4353-byte db. The Microsoft CAs authorise
+Microsoft-signed binaries, not ours.
+
+**Fix (landed): use each toolkit for the half it gets right.** The signature *lists*
+come from sbsigntools' `sbsiglist`, which takes DER natively and cannot silently
+produce an empty list. The *signatures* stay with efitools' `sign-efi-sig-list`,
+which was never the broken half — and must stay, because sbsigntools' `sbvarsign`
+writes the `EFI_TIME` month straight from a 0-based `tm_mon`:
+
+```
+sbvarsign          -> 2026-07-02 11:10:15     # built on 2026-08-02
+sign-efi-sig-list  -> 2026-08-02 11:10:46     # same moment, correct
+```
+
+An August build stamped July is survivable; a **January** build would be stamped
+month 0, which is not a valid `EFI_TIME`, and UEFI compares these timestamps for
+authenticated-variable rollback protection — so a key rotation could be refused by
+the firmware for reasons that look nothing like a date bug. Swapping both halves to
+sbsigntools (the obvious "use one toolkit" cleanup) reintroduces this. Don't.
+
+Feeding PEM to efitools also produces a correct list (verified — identical
+4353-byte ESL), but it inverts every conversion in that `RUN` block and keeps a tool
+that silently no-ops on wrong-format input.
+
+Two gates now stand behind this, because a silent empty list is exactly the kind of
+thing that ships:
+
+- **Build time.** `assert_esl` in `Containerfile` reads the `SignatureSize` field at
+  offset 24 of each list and fails the build when it is 16 (no certificate). Also
+  `scripts/parse-efi-auth.py <file.auth>` walks any `.auth` and reports every
+  entry's certificate subject, exiting non-zero on an empty one.
+- **Runtime.** `mise run enroll-test` boots the mechanism in isolation (below) and
+  asserts the firmware trusts the loader *after* enrolling the image's own keys.
+  8 seconds. This is the gate #309 never had.
+
+### `secure-boot-enroll manual` works — but not on the first boot after install
+
+An earlier revision of this section claimed `manual` "does not prevent it". That was
+wrong. Measured in isolation, varying only the ESP's `loader.conf`:
+
+| `loader.conf` | auto-enrolls in a VM? |
+|---|---|
+| `secure-boot-enroll manual` + `timeout 0` | no |
+| `secure-boot-enroll manual` + `timeout 5` | no |
+| `secure-boot-enroll off` | no |
+| **no `loader.conf` at all** | **yes** |
+
+So the setting is honoured; the problem is *when* krytis has it.
+`elements/config/secureboot-loader-conf.bst` appends the line from a first-boot
+oneshot, which by definition runs **after** systemd-boot has already decided. The
+very first boot of a fresh install therefore sees no setting and falls back to
+systemd-boot's default `secure-boot-enroll=if-safe` — which auto-enrols inside a VM
+(recognised as "safe") and does nothing on real hardware. From the second boot on,
+`manual` governs.
+
+Consequence for real hardware: none — `if-safe` never auto-enrols there, so the
+user still gets the intended manual prompt. Consequence in a VM: a fresh install
+silently enrols its own keys and comes up enforcing, which is convenient but is not
+what the design asked for. Closing that one-boot window means getting the line onto
+the ESP at install time, which is #309 design work, not a bug in the keys.
+
+**Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
+the source disk, so an install disk stays a first-boot disk no matter how many times
+you test with it — every probe re-runs the `if-safe` path. If you read
+`/boot/loader/loader.conf` from inside such a guest you will see
+`secure-boot-enroll manual` and conclude it was in force during that boot. It was
+not: the oneshot wrote it seconds earlier, long after the firmware handed off.
 
 **Why no existing test caught it:** `mise run boot-test --secure` pre-enrolls the
 varstore with virt-fw-vars, which bypasses `loader/keys/auto` completely. Nothing
@@ -497,11 +579,13 @@ until an ISO install did. Any future work on enrollment must test the
 setup-mode-first-boot path explicitly; a passing `boot-test --secure` says nothing
 about it.
 
-**Test enrollment in isolation — no bootc, no ISO, no UKI.** A full install to reach
-one firmware decision is a 15-minute round trip. The whole mechanism is an ESP with
-a signed loader and three files, so build exactly that and boot it against a
-pristine varstore. QEMU's VVFAT (`fat:rw:<dir>`) builds the filesystem from a
-directory, so no image, no partitioning and no root are involved:
+**Test enrollment in isolation — no bootc, no ISO, no UKI.** `mise run enroll-test`
+does this; the shape is worth knowing because it is how any future enrollment
+question should be asked. A full install to reach one firmware decision is a
+15-minute round trip, but the whole mechanism is an ESP with a signed loader and
+three files, so build exactly that and boot it against a pristine varstore. QEMU's
+VVFAT (`fat:rw:<dir>`) builds the filesystem from a directory, so no image, no
+partitioning and no root are involved:
 
 ```bash
 mkdir -p esp/EFI/BOOT esp/loader/keys/auto
@@ -516,18 +600,23 @@ qemu-system-x86_64 -enable-kvm -m 1024 -machine q35,smm=on \
   -display none -serial file:serial.log -daemonize -pidfile qemu.pid
 ```
 
-45 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
+8 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
 `BdsDxe: starting` + `systemd-boot@` after the enrollment reboot means the firmware
-now trusts the loader; `failed to load … Access Denied` means it does not. Then dump
-what actually landed with `virt-fw-vars --input vars.fd --print` and check the db
-size against the table above. Vary one input at a time — this is how #438 was
-isolated to the `.auth` files rather than the disk, the installer, or the firmware
-configuration.
+now trusts the loader; `failed to load … Access Denied` means it does not; and one
+`systemd-boot@` with no rejection at all is INCONCLUSIVE — that first boot happened
+in setup mode and enforced nothing. Then dump what actually landed with
+`virt-fw-vars --input vars.fd --print` and check the db size against the table
+above. Vary one input at a time — this is how #438 was isolated to the `.auth`
+files rather than the disk, the installer, or the firmware configuration.
 
-**Working around it in a test fixture** — when you want to boot a sealed disk with
-no enforcement, delete the enrollment trigger from the *copy* you boot, never from
-the payload. The ESP is FAT, so this needs no root (same mtools technique as the
-UKI byte-flip test above):
+**Booting a sealed disk with enforcement genuinely off.** Not a workaround for the
+bug any more — it is the only way to express "a machine that will never enrol",
+because a setup-mode VM now *correctly* enrols krytis's keys on first boot and comes
+up enforcing (and "keys enrolled, Secure Boot off" is not a state OVMF can
+represent: it derives Secure Boot from PK presence, and `virt-fw-vars` has no
+disable switch). So remove the enrollment trigger from the *copy* you boot, never
+from the payload. The ESP is FAT, so this needs no root (same mtools technique as
+the UKI byte-flip test above):
 
 ```bash
 export MTOOLS_SKIP_CHECK=1
@@ -536,6 +625,25 @@ OFF=$(python3 -c 'f=open("disk.raw","rb");f.seek(1024+32);print(int.from_bytes(f
 mdeltree -i "disk.raw@@${OFF}" ::/loader/keys
 ```
 
-With the trigger gone, the same disk boots to `running` with
-`bootctl status` reporting `Secure Boot: disabled (setup)` — which is how #371
-demonstrated that a sealed payload is still a valid non-secure-boot image.
+With the trigger gone the same disk boots to `running` with `bootctl status`
+reporting `Secure Boot: disabled (setup)` — which is how #371 demonstrated that a
+sealed payload is still a valid non-secure-boot image.
+
+For the opposite case — the fixed keys enrolling for real — no fixture surgery is
+needed at all. Install from the sealed ISO, boot the disk against a pristine
+`OVMF_VARS_4M.secboot.fd` with `smm=on`, and the whole chain runs itself:
+
+```
+BdsDxe: starting Boot0002 …            <- setup mode, nothing enforced yet
+systemd-boot@0x101300000 260.2
+Enrolling secure boot keys from directory: \loader\keys\auto
+Custom Secure Boot keys successfully enrolled, rebooting the system now!
+BdsDxe: starting Boot0002 …            <- now enforcing, and it still starts
+systemd-boot@0x101300000 260.2
+systemd-stub@0x14df91000 260.2         <- UKI signature verified too
+```
+
+In-guest afterwards: `is-system-running` → `running`, `bootctl status` →
+`Secure Boot: enabled (user)`, no failed units, `bootc status` booted image
+`ghcr.io/starlit-os/krytis:sealed`. That is the acceptance criterion #438 was filed
+for, on the real artifact rather than the isolated ESP.
