@@ -19,6 +19,17 @@ url = "https://github.com/sigstore/cosign/releases/download/v3.1.2/cosign-linux-
 url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/480496709"
 provenance = "cosign"
 
+[[tools.fnox]]
+version = "1.31.1"
+backend = "github:jdx/fnox"
+
+[tools.fnox."platforms.linux-x64"]
+checksum = "sha256:f87808cb1b5db2382daf244ced84f342ab01352654df2f50faa1cd1565941102"
+url = "https://github.com/jdx/fnox/releases/download/v1.31.1/fnox-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/jdx/fnox/releases/assets/488427453"
+provenance = "github-attestations"
+provenance_verified = true
+
 [[tools.grype]]
 version = "0.116.1"
 backend = "aqua:anchore/grype"

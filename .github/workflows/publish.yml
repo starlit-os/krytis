@@ -11,6 +11,10 @@ on:
         description: 'Permit publishing from a ref other than main (CI testing). The resulting :latest will NOT satisfy the strict main-pinned verification policy — re-publish from main afterwards.'
         type: boolean
         default: false
+      publish_sealed:
+        description: 'Also build and publish the sealed (signed UKI) image to :sealed. Needs the PROTON_PASS_PAT secret; runs after the unsigned image is published and verified.'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -183,6 +187,96 @@ jobs:
           verify "image" "${image_digest:-}"
           verify "SBOM" "${sbom_digest:-}"
           verify "vulnerability report" "${vuln_digest:-}"
+
+      # ── Sealed image (#448) ────────────────────────────────────────────────
+      # Deliberately after the unsigned image is published, signed AND verified:
+      # the sealed build is the newer, less-exercised path, and a failure in it
+      # must not cost us the primary artifact. Everything below is skipped when
+      # publish_sealed=false.
+      #
+      # Key custody: the six UEFI keys are NOT GitHub secrets. They live in the
+      # Proton Pass vault the whole project already uses (fnox.toml), and CI
+      # holds exactly one credential — a Proton Pass PAT — to reach them. That
+      # keeps raw private key material out of the repository's secret store,
+      # makes rotation a vault operation rather than six secret edits, and means
+      # a leaked CI secret exposes a revocable token instead of the keys
+      # themselves. The keys touch the runner's disk only inside this job and are
+      # shredded in the cleanup step below.
+      - name: Authenticate to Proton Pass
+        if: inputs.publish_sealed
+        env:
+          PROTON_PASS_PAT: ${{ secrets.PROTON_PASS_PAT }}
+        run: |
+          if [[ -z "${PROTON_PASS_PAT}" ]]; then
+            echo "::error::publish_sealed=true but PROTON_PASS_PAT is not set."
+            echo "  Create one with 'pass-cli personal-access-token create' and add it as a"
+            echo "  repository secret. Format: pst_<token>::<key>."
+            exit 1
+          fi
+          pass-cli login --pat "${PROTON_PASS_PAT}"
+          pass-cli test
+
+      - name: Pull secure boot keys
+        if: inputs.publish_sealed
+        run: mise run pull-keys
+
+      - name: Build and push sealed image
+        id: push-sealed
+        if: inputs.publish_sealed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # A separate digest file: the unsigned push already wrote
+        # krytis-push-digests.env and the verify step above read it. Overwriting
+        # it here would silently re-point the primary image's signature record at
+        # the sealed one.
+        run: |
+          if [[ "${{ inputs.report_only }}" == "true" ]]; then
+            mise run push --sealed --digest-file krytis-sealed-digests.env
+          else
+            mise run push --sealed --fail-on critical --digest-file krytis-sealed-digests.env
+          fi
+
+      - name: Sign sealed artifacts with cosign (best-effort)
+        id: sign-sealed
+        if: always() && steps.push-sealed.outcome == 'success'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run sign --digest-file krytis-sealed-digests.env
+
+      - name: Verify sealed signature
+        # Same contract as the unsigned verify above: blocking, but only when
+        # signing itself reported success.
+        if: always() && steps.sign-sealed.outcome == 'success'
+        run: |
+          if [[ ! -f krytis-sealed-digests.env ]]; then
+            echo "::notice::No sealed digest file — nothing was published, so no signature to verify"
+            exit 0
+          fi
+          # shellcheck disable=SC1091
+          source krytis-sealed-digests.env
+          verify() {
+            local label="$1" digest="$2"
+            [[ -z "${digest}" ]] && return 0
+            echo "==> Verifying sealed ${label} (${digest})"
+            cosign verify \
+              --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/${{ github.ref_name }}\$" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "ghcr.io/starlit-os/krytis@${digest}"
+          }
+          verify "image" "${image_digest:-}"
+          verify "SBOM" "${sbom_digest:-}"
+          verify "vulnerability report" "${vuln_digest:-}"
+
+      - name: Revoke Proton Pass session and wipe keys
+        # always(): the keys must not survive a failure either. The runner is
+        # ephemeral, but a job that leaves private keys on disk between steps is
+        # a habit worth not forming.
+        if: always() && inputs.publish_sealed
+        run: |
+          shred -u files/boot-keys/*.key files/boot-keys/*.crt 2>/dev/null || true
+          rm -rf files/boot-keys
+          pass-cli logout 2>/dev/null || true
 
       - name: Report severity gate outcome
         if: always()
