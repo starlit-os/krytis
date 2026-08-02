@@ -298,13 +298,19 @@ itself. Read that shape as "wrong tag", not as a regression in the change under
 test. `boot-test` now also refuses up front, before the privileged install, when
 an explicitly named image has no UKI or does not exist locally.
 
-Three deliberate combinations, only the first two positive:
+Four deliberate combinations, only the first three positive:
 
 | Command | Asserts |
 |---|---|
 | `mise run boot-test` | the image boots and is healthy — the right check for anything that isn't about the boot chain |
-| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement |
+| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement, against a varstore `generate-ovmf-vars` enrolled |
+| `mise run seal-uki && mise run enroll-test` | the image's **own** `.auth` files enrol into a setup-mode firmware and the loader still verifies afterwards — a different question, and the one #438 answered wrongly for months |
 | `mise run boot-test --secure --expect-fail` | secure boot rejects the unsigned image |
+
+The second and third are not substitutes. `boot-test --secure` boots keys that
+virt-fw-vars already placed, so it never touches `loader/keys/auto`; `enroll-test`
+makes the firmware do the enrolling from the image's own files. An image can pass
+one and fail the other — that is exactly what #438 was.
 
 Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
 element change touching systemd invalidates an existing `:sealed` image — rerun
@@ -481,10 +487,37 @@ well-known CA certs" was never actually met (the loop concatenated three *empty*
 lists), and `boot-test --secure` exercises a narrower db than a real enrolled
 machine will have — its virt-fw-vars db holds krytis's cert alone.
 
-**Fix:** use `sbsigntools` (`sbsiglist` + `sbvarsign`), already in the image for
-`sbsign`, which takes DER natively and does not silently succeed on wrong-format
-input. Feeding PEM to efitools also works (verified — identical 4353-byte ESL), but
-it inverts every conversion in that `RUN` block and keeps the silent-no-op hazard.
+**Fix (landed): use each toolkit for the half it gets right.** The signature *lists*
+come from sbsigntools' `sbsiglist`, which takes DER natively and cannot silently
+produce an empty list. The *signatures* stay with efitools' `sign-efi-sig-list`,
+which was never the broken half — and must stay, because sbsigntools' `sbvarsign`
+writes the `EFI_TIME` month straight from a 0-based `tm_mon`:
+
+```
+sbvarsign          -> 2026-07-02 11:10:15     # built on 2026-08-02
+sign-efi-sig-list  -> 2026-08-02 11:10:46     # same moment, correct
+```
+
+An August build stamped July is survivable; a **January** build would be stamped
+month 0, which is not a valid `EFI_TIME`, and UEFI compares these timestamps for
+authenticated-variable rollback protection — so a key rotation could be refused by
+the firmware for reasons that look nothing like a date bug. Swapping both halves to
+sbsigntools (the obvious "use one toolkit" cleanup) reintroduces this. Don't.
+
+Feeding PEM to efitools also produces a correct list (verified — identical
+4353-byte ESL), but it inverts every conversion in that `RUN` block and keeps a tool
+that silently no-ops on wrong-format input.
+
+Two gates now stand behind this, because a silent empty list is exactly the kind of
+thing that ships:
+
+- **Build time.** `assert_esl` in `Containerfile` reads the `SignatureSize` field at
+  offset 24 of each list and fails the build when it is 16 (no certificate). Also
+  `scripts/parse-efi-auth.py <file.auth>` walks any `.auth` and reports every
+  entry's certificate subject, exiting non-zero on an empty one.
+- **Runtime.** `mise run enroll-test` boots the mechanism in isolation (below) and
+  asserts the firmware trusts the loader *after* enrolling the image's own keys.
+  8 seconds. This is the gate #309 never had.
 
 `secure-boot-enroll manual` does **not** prevent it here, despite being present in
 the ESP's own `loader.conf` (verified in-guest: `bootctl -p` is `/boot`, and that
@@ -497,11 +530,13 @@ until an ISO install did. Any future work on enrollment must test the
 setup-mode-first-boot path explicitly; a passing `boot-test --secure` says nothing
 about it.
 
-**Test enrollment in isolation — no bootc, no ISO, no UKI.** A full install to reach
-one firmware decision is a 15-minute round trip. The whole mechanism is an ESP with
-a signed loader and three files, so build exactly that and boot it against a
-pristine varstore. QEMU's VVFAT (`fat:rw:<dir>`) builds the filesystem from a
-directory, so no image, no partitioning and no root are involved:
+**Test enrollment in isolation — no bootc, no ISO, no UKI.** `mise run enroll-test`
+does this; the shape is worth knowing because it is how any future enrollment
+question should be asked. A full install to reach one firmware decision is a
+15-minute round trip, but the whole mechanism is an ESP with a signed loader and
+three files, so build exactly that and boot it against a pristine varstore. QEMU's
+VVFAT (`fat:rw:<dir>`) builds the filesystem from a directory, so no image, no
+partitioning and no root are involved:
 
 ```bash
 mkdir -p esp/EFI/BOOT esp/loader/keys/auto
@@ -516,13 +551,14 @@ qemu-system-x86_64 -enable-kvm -m 1024 -machine q35,smm=on \
   -display none -serial file:serial.log -daemonize -pidfile qemu.pid
 ```
 
-45 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
+8 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
 `BdsDxe: starting` + `systemd-boot@` after the enrollment reboot means the firmware
-now trusts the loader; `failed to load … Access Denied` means it does not. Then dump
-what actually landed with `virt-fw-vars --input vars.fd --print` and check the db
-size against the table above. Vary one input at a time — this is how #438 was
-isolated to the `.auth` files rather than the disk, the installer, or the firmware
-configuration.
+now trusts the loader; `failed to load … Access Denied` means it does not; and one
+`systemd-boot@` with no rejection at all is INCONCLUSIVE — that first boot happened
+in setup mode and enforced nothing. Then dump what actually landed with
+`virt-fw-vars --input vars.fd --print` and check the db size against the table
+above. Vary one input at a time — this is how #438 was isolated to the `.auth`
+files rather than the disk, the installer, or the firmware configuration.
 
 **Working around it in a test fixture** — when you want to boot a sealed disk with
 no enforcement, delete the enrollment trigger from the *copy* you boot, never from
