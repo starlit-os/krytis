@@ -5,8 +5,10 @@ name: Checks
 # which only exists after `mise run build` — that is publish.yml's 420-minute job,
 # not a PR gate.
 #
-# See docs/design/secure-boot-testing.md § 6 (gap G-1) for what else could move
-# here and what each candidate costs.
+# The secure-boot testing plan (PR #443) tracks what else could move here and
+# what each candidate costs. Referenced by PR rather than by path: docs-links
+# checks every docs/ path mentioned anywhere in the tree, so naming a file that
+# only exists on an unmerged branch would make this workflow fail its own gate.
 
 on:
   pull_request:
@@ -64,8 +66,8 @@ jobs:
   kvm-probe:
     # TEMPORARY. Answers one question — can a runner actually run the QEMU boot
     # gates — so the enroll-test job can be designed against fact rather than
-    # assumption. Delete this job once the answer is recorded in
-    # docs/design/secure-boot-testing.md.
+    # assumption. Delete this job once the answer is recorded in the secure-boot
+    # testing plan (PR #443).
     name: KVM probe (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     continue-on-error: true
@@ -78,32 +80,45 @@ jobs:
           - blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Report virtualisation support
+        # To stdout as well as the summary — a step summary is invisible to
+        # `gh run view --log`, which is how this gets read from a terminal.
         run: |
-          echo "### Runner: ${{ matrix.runner }}" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo '```'
             echo "nested virt flags: $(grep -cE '^flags.*(vmx|svm)' /proc/cpuinfo || echo 0) cpu(s)"
             if [ -e /dev/kvm ]; then
               ls -l /dev/kvm
-              [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "/dev/kvm: readable+writable" \
-                                                 || echo "/dev/kvm: present but NOT rw for $(id -un)"
+              id -un; id -Gn
+              [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "/dev/kvm: rw for this user" \
+                                                 || echo "/dev/kvm: present but NOT rw for this user"
             else
               echo "/dev/kvm: absent"
             fi
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Functional check — can QEMU take -enable-kvm?
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 >/dev/null
           # No disk: QEMU sits in SeaBIOS hunting for boot media until the timeout,
-          # which is the success shape. A missing/denied KVM module makes it exit
-          # immediately with a named error instead.
-          timeout 20 qemu-system-x86_64 -enable-kvm -display none -m 128 \
-            -monitor none -serial none >/tmp/qemu.log 2>&1 || true
-          echo "--- qemu output ---"; cat /tmp/qemu.log
-          if grep -qiE 'could not access kvm|kvm is not supported|permission denied' /tmp/qemu.log; then
-            echo "VERDICT: KVM NOT usable on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 1
+          # which is the success shape. A missing or inaccessible KVM module makes
+          # it exit immediately with a named error instead.
+          probe() {
+            timeout 20 "$@" qemu-system-x86_64 -enable-kvm -display none -m 128 \
+              -monitor none -serial none >/tmp/qemu.log 2>&1 || true
+            grep -qiE 'could not access kvm|kvm is not supported|permission denied' /tmp/qemu.log \
+              && return 1 || return 0
+          }
+          if probe; then
+            echo "VERDICT: KVM usable as the runner user on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
-          echo "VERDICT: KVM usable on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "--- unprivileged attempt ---"; cat /tmp/qemu.log
+          # "Permission denied" means the device exists but is not reachable by this
+          # user, which sudo or a kvm-group membership might fix. "No such file"
+          # would mean the host exposes no KVM at all and nothing can fix it here.
+          if probe sudo; then
+            echo "VERDICT: KVM usable ONLY under sudo on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "--- sudo attempt ---"; cat /tmp/qemu.log
+          echo "VERDICT: KVM NOT usable on ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 1
