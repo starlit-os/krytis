@@ -894,3 +894,43 @@ curl -sSfL "$URL" -o /tmp/probe && chmod +x /tmp/probe && /tmp/probe --help
 what your PATH does. When a CI step depends on a subcommand or flag existing, prefer a
 call the tool cannot plausibly drop (or none at all: a command that already exits
 non-zero on failure needs no separate probe).
+
+## `/usr/bin/date` here is uutils, not GNU — and uutils is more permissive
+
+Sibling trap to the PATH-shadowing entry above, and a nastier one: the command name
+is identical, the binary is a *different implementation*, and the local one accepts
+input the CI one rejects. This workstation runs CachyOS, which ships
+[uutils coreutils](https://github.com/uutils/coreutils) as `/usr/bin/date`:
+
+```
+$ date --version
+date (uutils coreutils) 0.8.0     # runners: date (GNU coreutils) 9.7
+```
+
+`scripts/ensure-sealed-image.sh` fed `podman inspect --format '{{.Created}}'` — Go's
+`time.String()` rendering — straight into `date -d`. Both halves of the divergence:
+
+```bash
+$ date -d '2026-08-02 16:21:14.125718274 +0000 UTC' +%s    # uutils, locally
+1785687674
+$ podman run --rm debian:stable-slim \
+    date -d '2026-08-02 16:21:14.125718274 +0000 UTC' +%s  # GNU, as in CI
+date: invalid date '2026-08-02 16:21:14.125718274 +0000 UTC'
+```
+
+That trailing ` UTC` after a numeric offset is what GNU refuses. Publish run
+30754171738 died on it 20 minutes in, having passed every local test — because
+**no amount of testing on this machine can see the bug.** krytis's own image also
+ships uutils (`date (uutils coreutils) 0.9.0`), so even `podman run` against the
+product reproduces the permissive behaviour; you need a genuinely GNU userland
+(`debian:stable-slim` is the cheapest) to test what CI does.
+
+Two rules:
+
+1. **Never parse a Go template rendering.** `podman inspect --format json` marshals
+   `time.Time` as RFC3339Nano regardless of podman version, and every date
+   implementation agrees on it. Prefer `--format json` piped to `python3` over
+   `--format '{{.Field}}'` piped to a text tool, for any machine-consumed value.
+2. **When a shell builtin-ish coreutils tool does input parsing, assume the two
+   implementations disagree.** `date -d`, and anything else accepting free-form
+   input, must be validated against GNU before it reaches CI.
