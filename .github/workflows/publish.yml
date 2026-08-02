@@ -213,8 +213,14 @@ jobs:
             echo "  repository secret. Format: pst_<token>::<key>."
             exit 1
           fi
+          # No liveness probe after this, deliberately. The first real run of this
+          # job died on `pass-cli test`: that subcommand exists in 2.2.3 and was
+          # removed by 2.2.4, and the help I checked came from a stray 2.2.3 on PATH
+          # while mise.lock pins 2.2.4 (84323b8) — whose surface is login/logout/info
+          # and no test. `login` already exits non-zero on bad credentials, and the
+          # next step is a far better check anyway: `pull-keys` fetches all six
+          # secrets and openssl-validates every one.
           pass-cli login --pat "${PROTON_PASS_PAT}"
-          pass-cli test
 
       - name: Pull secure boot keys
         if: inputs.publish_sealed
