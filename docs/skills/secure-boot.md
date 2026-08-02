@@ -303,7 +303,7 @@ Four deliberate combinations, only the first three positive:
 | Command | Asserts |
 |---|---|
 | `mise run boot-test` | the image boots and is healthy — the right check for anything that isn't about the boot chain |
-| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement, against a varstore `generate-ovmf-vars` enrolled |
+| `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement, against a varstore `generate-ovmf-vars` pre-enrolled with the same certificates `db.auth` carries |
 | `mise run seal-uki && mise run enroll-test` | the image's **own** `.auth` files enrol into a setup-mode firmware and the loader still verifies afterwards — a different question, and the one #438 answered wrongly for months |
 | `mise run boot-test --secure --expect-fail` | secure boot rejects the unsigned image |
 
@@ -478,14 +478,33 @@ bytes. Anything near 44 is empty by construction. Post-enrollment varstores:
 
 | varstore | PK | KEK | db |
 |---|---|---|---|
-| `.ovmf-vars-secure.fd` (virt-fw-vars — the path that works today) | 1254 | 1263 | 1255 (krytis only) |
+| `.ovmf-vars-secure.fd` before this fix (virt-fw-vars, krytis's cert only) | 1254 | 1263 | 1255 |
 | enrolled from the shipped `.auth` files | 44 | 44 | **132** (three empty lists) |
-| enrolled from `sbsiglist`/`sbvarsign` output | 1254 | 1263 | **4353** (krytis + both MS CAs) |
+| enrolled from `sbsiglist` output — and `.ovmf-vars-secure.fd` now | 1254 | 1263 | **4353** (krytis + both MS CAs) |
 
-Two consequences beyond the boot failure: #309's "db.auth includes Microsoft's
+Two consequences beyond the boot failure. #309's "db.auth includes Microsoft's
 well-known CA certs" was never actually met (the loop concatenated three *empty*
-lists), and `boot-test --secure` exercises a narrower db than a real enrolled
-machine will have — its virt-fw-vars db holds krytis's cert alone.
+lists) — it is now. And `boot-test --secure` had been verifying against a **narrower
+db than any real machine gets**: `generate-ovmf-vars` baked krytis's cert alone
+(1255 bytes) while an enrolling machine ends up with 4353. It proved strictly less
+than it appeared to, which is part of why this went unnoticed.
+
+`generate-ovmf-vars` now adds `files/microsoft-uefi-certs/*.der` in the same order
+the Containerfile does, so the test varstore and the shipped `db.auth` hold the same
+certificates. It also refuses to finish when they disagree — it extracts `db.auth`
+from `localhost/krytis:sealed` and compares payload sizes, so "what we test" cannot
+silently drift from "what we ship" again:
+
+```
+==> OVMF vars: .ovmf-vars-secure.fd (db: 4353 bytes)
+==> Matches localhost/krytis:sealed's db.auth (4353 bytes)
+```
+
+Widening db does not weaken the negative test — verified rather than assumed, since
+a bigger allow-list could plausibly have made a rejection stop happening. An
+unsigned `systemd-bootx64.efi` (mtools-copied over the ESP's signed one) is still
+refused with `Access Denied` against the 4353-byte db. The Microsoft CAs authorise
+Microsoft-signed binaries, not ours.
 
 **Fix (landed): use each toolkit for the half it gets right.** The signature *lists*
 come from sbsigntools' `sbsiglist`, which takes DER natively and cannot silently
