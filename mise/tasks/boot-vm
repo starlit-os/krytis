@@ -18,19 +18,9 @@ DISK=$(realpath "${DISK}")
 if command -v qemu-system-x86_64 &>/dev/null; then
     echo "==> Using native qemu-system-x86_64..."
 
+    . scripts/ovmf-paths.sh   # distro OVMF layout, one place (#458)
     if [ "${SECURE}" = "true" ]; then
-        OVMF_CODE=""
-        for candidate in \
-                /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd \
-                /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
-                /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd \
-                /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
-            [ -f "${candidate}" ] && OVMF_CODE="${candidate}" && break
-        done
-        if [ -z "${OVMF_CODE}" ]; then
-            echo "ERROR: OVMF secure boot firmware not found. Install edk2-ovmf's secboot variant." >&2
-            exit 1
-        fi
+        OVMF_CODE=$(ovmf_code_secboot) || exit 1
         OVMF_VARS=".ovmf-vars-secure.fd"
         if [ ! -e "${OVMF_VARS}" ]; then
             echo "ERROR: ${OVMF_VARS} not found — run 'mise run generate-ovmf-vars' first." >&2
@@ -39,35 +29,11 @@ if command -v qemu-system-x86_64 &>/dev/null; then
         MACHINE_ARGS="q35,smm=on"
         FLASH_SECURE_ARGS=(-global driver=cfi.pflash01,property=secure,value=on)
     else
-        OVMF_CODE=""
-        for candidate in \
-                /usr/share/edk2/ovmf/OVMF_CODE.fd \
-                /usr/share/OVMF/OVMF_CODE.fd \
-                /usr/share/OVMF/OVMF_CODE_4M.fd \
-                /usr/share/edk2/x64/OVMF_CODE.4m.fd \
-                /usr/share/qemu/OVMF_CODE.fd; do
-            [ -f "${candidate}" ] && OVMF_CODE="${candidate}" && break
-        done
-        if [ -z "${OVMF_CODE}" ]; then
-            echo "ERROR: OVMF firmware not found. Install edk2-ovmf (Fedora) or ovmf (Debian/Ubuntu)." >&2
-            exit 1
-        fi
+        OVMF_CODE=$(ovmf_code_plain) || exit 1
 
         OVMF_VARS=".ovmf-vars.fd"
         if [ ! -e "${OVMF_VARS}" ]; then
-            OVMF_VARS_SRC=""
-            for candidate in \
-                    /usr/share/edk2/ovmf/OVMF_VARS.fd \
-                    /usr/share/OVMF/OVMF_VARS.fd \
-                    /usr/share/OVMF/OVMF_VARS_4M.fd \
-                    /usr/share/edk2/x64/OVMF_VARS.4m.fd \
-                    /usr/share/qemu/OVMF_VARS.fd; do
-                [ -f "${candidate}" ] && OVMF_VARS_SRC="${candidate}" && break
-            done
-            if [ -z "${OVMF_VARS_SRC}" ]; then
-                echo "ERROR: OVMF_VARS not found alongside OVMF_CODE." >&2
-                exit 1
-            fi
+            OVMF_VARS_SRC=$(ovmf_vars_plain) || exit 1
             cp "${OVMF_VARS_SRC}" "${OVMF_VARS}"
         fi
         # q35, not qemu's default `pc` — see the same comment in boot-test and

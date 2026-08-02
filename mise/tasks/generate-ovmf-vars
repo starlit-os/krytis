@@ -17,18 +17,11 @@ for f in PK KEK db; do
     [ -f "${KEYS_DIR}/${f}.crt" ] || { echo "ERROR: ${KEYS_DIR}/${f}.crt missing — run 'mise run pull-keys' first." >&2; exit 1; }
 done
 
-OVMF_VARS_SRC=""
-for candidate in \
-        /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd \
-        /usr/share/OVMF/OVMF_VARS_4M.secboot.qcow2 \
-        /usr/share/edk2/x64/OVMF_VARS.4m.secboot.fd \
-        /usr/share/edk2/ovmf/OVMF_VARS.secboot.fd; do
-    [ -f "${candidate}" ] && OVMF_VARS_SRC="${candidate}" && break
-done
-if [ -z "${OVMF_VARS_SRC}" ]; then
-    echo "ERROR: OVMF secure boot vars template not found. Install edk2-ovmf's secboot variant." >&2
-    exit 1
-fi
+# Start from a setup-mode varstore and bake krytis's keys into it — scripts/
+# ovmf-paths.sh (#458). Starting from one that already had a PK would layer our
+# keys on top of someone else's trust anchors.
+. scripts/ovmf-paths.sh
+OVMF_VARS_SRC=$(ovmf_vars_pristine) || exit 1
 
 # db must hold the SAME certificates the image's own db.auth enrolls, in the same
 # order: krytis's db cert followed by the Microsoft CAs from files/. Testing a
