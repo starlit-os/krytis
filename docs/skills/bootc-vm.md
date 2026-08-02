@@ -567,3 +567,36 @@ observed from. `boot-test` can assert `state: running` because it asks over SSH
 after boot; anything asking from inside the boot has to either move its vantage
 point or assert something else (`systemctl --failed` being empty is observable from
 anywhere).
+## Debian/Ubuntu ship no `*VARS*secboot*` — setup mode is the plain `OVMF_VARS_4M.fd`
+
+Every QEMU task here resolves OVMF by walking a list of candidate paths, and those
+paths are distro-specific. Ubuntu 24.04's `ovmf` package (2024.02-2) contains only:
+
+```
+OVMF_CODE_4M.fd   OVMF_CODE_4M.ms.fd   OVMF_CODE_4M.secboot.fd   OVMF_CODE_4M.snakeoil.fd
+OVMF_VARS_4M.fd   OVMF_VARS_4M.ms.fd                             OVMF_VARS_4M.snakeoil.fd
+```
+
+Note the asymmetry: there is a **secboot CODE but no secboot VARS**. Fedora's
+`OVMF_VARS_4M.secboot.fd` has no Debian equivalent — the setup-mode varstore is the
+bare `OVMF_VARS_4M.fd`, paired with the secboot CODE. A candidate list written on a
+Fedora or Arch box therefore finds nothing on a runner and the task dies with
+"OVMF secboot vars template not found" before it does any work.
+
+**Never paper over that by reaching for `OVMF_VARS_4M.ms.fd`.** It ships with
+Microsoft's keys already enrolled, so the firmware is not in setup mode. Any test
+whose premise is "watch the image enrol its own keys" silently stops testing
+anything — the enrollment never happens because there is nothing to enrol into.
+
+Verify a candidate is really pristine before trusting it:
+
+```bash
+virt-fw-vars --input /usr/share/OVMF/OVMF_VARS_4M.fd --print | grep -iE '^ *(PK|KEK|db)'
+# no output = setup mode = correct for enroll-test
+```
+
+`mise/tasks/enroll-test` carries the Debian/Ubuntu paths. The other five OVMF
+consumers (`boot-test`, `boot-vm`, `generate-ovmf-vars`, `selfenroll-test`,
+`upgrade-test`) still have the Fedora/Arch-only lists and will need the same
+treatment before they can run on a runner — [#458](https://github.com/starlit-os/krytis/issues/458),
+which also proposes collapsing all six lists into one resolver.
