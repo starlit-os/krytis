@@ -519,9 +519,38 @@ thing that ships:
   asserts the firmware trusts the loader *after* enrolling the image's own keys.
   8 seconds. This is the gate #309 never had.
 
-`secure-boot-enroll manual` does **not** prevent it here, despite being present in
-the ESP's own `loader.conf` (verified in-guest: `bootctl -p` is `/boot`, and that
-file contains the line). A VM in setup mode enrolls anyway.
+### `secure-boot-enroll manual` works — but not on the first boot after install
+
+An earlier revision of this section claimed `manual` "does not prevent it". That was
+wrong. Measured in isolation, varying only the ESP's `loader.conf`:
+
+| `loader.conf` | auto-enrolls in a VM? |
+|---|---|
+| `secure-boot-enroll manual` + `timeout 0` | no |
+| `secure-boot-enroll manual` + `timeout 5` | no |
+| `secure-boot-enroll off` | no |
+| **no `loader.conf` at all** | **yes** |
+
+So the setting is honoured; the problem is *when* krytis has it.
+`elements/config/secureboot-loader-conf.bst` appends the line from a first-boot
+oneshot, which by definition runs **after** systemd-boot has already decided. The
+very first boot of a fresh install therefore sees no setting and falls back to
+systemd-boot's default `secure-boot-enroll=if-safe` — which auto-enrols inside a VM
+(recognised as "safe") and does nothing on real hardware. From the second boot on,
+`manual` governs.
+
+Consequence for real hardware: none — `if-safe` never auto-enrols there, so the
+user still gets the intended manual prompt. Consequence in a VM: a fresh install
+silently enrols its own keys and comes up enforcing, which is convenient but is not
+what the design asked for. Closing that one-boot window means getting the line onto
+the ESP at install time, which is #309 design work, not a bug in the keys.
+
+**Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
+the source disk, so an install disk stays a first-boot disk no matter how many times
+you test with it — every probe re-runs the `if-safe` path. If you read
+`/boot/loader/loader.conf` from inside such a guest you will see
+`secure-boot-enroll manual` and conclude it was in force during that boot. It was
+not: the oneshot wrote it seconds earlier, long after the firmware handed off.
 
 **Why no existing test caught it:** `mise run boot-test --secure` pre-enrolls the
 varstore with virt-fw-vars, which bypasses `loader/keys/auto` completely. Nothing
@@ -560,10 +589,14 @@ in setup mode and enforced nothing. Then dump what actually landed with
 above. Vary one input at a time — this is how #438 was isolated to the `.auth`
 files rather than the disk, the installer, or the firmware configuration.
 
-**Working around it in a test fixture** — when you want to boot a sealed disk with
-no enforcement, delete the enrollment trigger from the *copy* you boot, never from
-the payload. The ESP is FAT, so this needs no root (same mtools technique as the
-UKI byte-flip test above):
+**Booting a sealed disk with enforcement genuinely off.** Not a workaround for the
+bug any more — it is the only way to express "a machine that will never enrol",
+because a setup-mode VM now *correctly* enrols krytis's keys on first boot and comes
+up enforcing (and "keys enrolled, Secure Boot off" is not a state OVMF can
+represent: it derives Secure Boot from PK presence, and `virt-fw-vars` has no
+disable switch). So remove the enrollment trigger from the *copy* you boot, never
+from the payload. The ESP is FAT, so this needs no root (same mtools technique as
+the UKI byte-flip test above):
 
 ```bash
 export MTOOLS_SKIP_CHECK=1
@@ -572,6 +605,25 @@ OFF=$(python3 -c 'f=open("disk.raw","rb");f.seek(1024+32);print(int.from_bytes(f
 mdeltree -i "disk.raw@@${OFF}" ::/loader/keys
 ```
 
-With the trigger gone, the same disk boots to `running` with
-`bootctl status` reporting `Secure Boot: disabled (setup)` — which is how #371
-demonstrated that a sealed payload is still a valid non-secure-boot image.
+With the trigger gone the same disk boots to `running` with `bootctl status`
+reporting `Secure Boot: disabled (setup)` — which is how #371 demonstrated that a
+sealed payload is still a valid non-secure-boot image.
+
+For the opposite case — the fixed keys enrolling for real — no fixture surgery is
+needed at all. Install from the sealed ISO, boot the disk against a pristine
+`OVMF_VARS_4M.secboot.fd` with `smm=on`, and the whole chain runs itself:
+
+```
+BdsDxe: starting Boot0002 …            <- setup mode, nothing enforced yet
+systemd-boot@0x101300000 260.2
+Enrolling secure boot keys from directory: \loader\keys\auto
+Custom Secure Boot keys successfully enrolled, rebooting the system now!
+BdsDxe: starting Boot0002 …            <- now enforcing, and it still starts
+systemd-boot@0x101300000 260.2
+systemd-stub@0x14df91000 260.2         <- UKI signature verified too
+```
+
+In-guest afterwards: `is-system-running` → `running`, `bootctl status` →
+`Secure Boot: enabled (user)`, no failed units, `bootc status` booted image
+`ghcr.io/starlit-os/krytis:sealed`. That is the acceptance criterion #438 was filed
+for, on the real artifact rather than the isolated ESP.
