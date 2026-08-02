@@ -221,6 +221,13 @@ The consequence for tagging is unchanged, and it is the point of this section: s
 
 Scope note: this only tracks drift in `:latest`'s content (kernel, base image, etc.), not signing-key freshness — rotating `files/boot-keys/` without any other content change won't trigger an automatic re-seal.
 
+**Read that timestamp out of `--format json`, not `--format '{{.Created}}'`.** The
+template renders Go's `time.String()` (`2026-08-02 16:21:14.125718274 +0000 UTC`),
+which GNU `date -d` rejects outright — while the uutils `date` on the usual
+workstation accepts it, so the breakage only ever appears in CI. `scripts/ensure-sealed-image.sh`
+parses the JSON (RFC3339Nano) instead. Details: `docs/skills/mise.md` § `/usr/bin/date`
+here is uutils, not GNU.
+
 ## A negative test must assert the *rejection*, not just the absence of a boot
 
 `boot-test --expect-fail` originally concluded "secure boot rejected it" from

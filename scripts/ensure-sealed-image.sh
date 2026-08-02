@@ -23,9 +23,30 @@ if ! podman image exists "${LATEST_TAG}"; then
     exit 1
 fi
 
-LATEST_CREATED=$(date -d "$(podman inspect "${LATEST_TAG}" --format '{{.Created}}')" +%s)
+# `podman inspect --format '{{.Created}}'` renders Go's time.String(), e.g.
+# "2026-08-02 16:21:14.125718274 +0000 UTC". GNU date rejects that trailing
+# " UTC" outright ("date: invalid date"), which killed publish run 30754171738
+# after 20 minutes. It parses fine on this project's usual workstation because
+# CachyOS ships uutils coreutils as /usr/bin/date, and uutils is more permissive
+# than GNU — so the bug is invisible to any amount of local testing here. See
+# docs/skills/mise.md § uutils vs GNU coreutils.
+#
+# `--format json` is the stable interface: Go marshals time.Time as RFC3339Nano
+# regardless of podman version, and both date implementations agree on it.
+created_epoch() {
+    podman inspect --format json "$1" | python3 -c '
+import json, re, sys
+from datetime import datetime
+created = json.load(sys.stdin)[0]["Created"]
+# podman emits 9 fractional digits; fromisoformat before 3.11 accepts only 3 or 6
+created = re.sub(r"(\.\d{6})\d+", r"\1", created).replace("Z", "+00:00")
+print(int(datetime.fromisoformat(created).timestamp()))
+'
+}
+
+LATEST_CREATED=$(created_epoch "${LATEST_TAG}")
 if podman image exists "${SEALED_TAG}"; then
-    SEALED_CREATED=$(date -d "$(podman inspect "${SEALED_TAG}" --format '{{.Created}}')" +%s)
+    SEALED_CREATED=$(created_epoch "${SEALED_TAG}")
 else
     SEALED_CREATED=0
 fi
