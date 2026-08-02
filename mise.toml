@@ -23,7 +23,7 @@ just = "1.57.0"
 # Proton Pass vault holding secure boot signing keys. Dev-host tooling only.
 # The mise registry has no pass-cli entry, so Renovate's mise manager cannot
 # resolve it — a custom.regex manager tracks this line instead.
-pass-cli = "2.2.3"
+pass-cli = "2.2.4"
 # oras: required by `mise run push` to attach the SBOM (#40) as an OCI
 # referrer via `oras attach`. Dev-host tooling only.
 oras = "1.3.3"
