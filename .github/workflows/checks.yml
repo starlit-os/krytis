@@ -1,0 +1,72 @@
+name: Checks
+
+# Cheap gates that run on every PR. Deliberately excludes anything needing the
+# BST build: `mise run lint` builds the Containerfile FROM localhost/krytis-input,
+# which only exists after `mise run build` — that is publish.yml's 420-minute job,
+# not a PR gate.
+#
+# The secure-boot testing plan (PR #443) tracks what else could move here and
+# what each candidate costs. Referenced by PR rather than by path: docs-links
+# checks every docs/ path mentioned anywhere in the tree, so naming a file that
+# only exists on an unmerged branch would make this workflow fail its own gate.
+#
+# A temporary job here already answered the one open question about the QEMU
+# gates: /dev/kvm exists on both ubuntu-24.04 and blacksmith-8vcpu-ubuntu-2404
+# as crw-rw---- root:kvm, the runner user is not in the kvm group, and QEMU
+# takes -enable-kvm under sudo on both. So the boot gates are runnable here
+# after a `sudo chmod 0666 /dev/kvm` (or an ACL) in a setup step — the mise
+# tasks themselves then need no privileges. The job is deleted; the finding
+# lives in the testing plan.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup mise
+        uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          experimental: true
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Check docs references
+        run: mise run docs-links
+
+      - name: Shell syntax
+        # Catches the class of typo that only surfaces when a task is invoked,
+        # which for the boot-chain tasks can be 40 minutes into a QEMU run.
+        run: |
+          rc=0
+          for f in mise/tasks/* mise/tasks/*/* scripts/*.sh; do
+            [ -f "$f" ] || continue
+            head -1 "$f" | grep -q '^#!.*\(bash\|sh\)' || continue
+            bash -n "$f" || { echo "::error file=$f::shell syntax error"; rc=1; }
+          done
+          exit $rc
+
+      - name: Python syntax
+        run: |
+          rc=0
+          for f in scripts/*.py; do
+            [ -f "$f" ] || continue
+            python3 -m py_compile "$f" || { echo "::error file=$f::syntax error"; rc=1; }
+          done
+          exit $rc
