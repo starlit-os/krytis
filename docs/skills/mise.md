@@ -799,3 +799,49 @@ This was expected and non-fatal under the vfs embed — the update still succeed
 `mise run build-iso --debug` produces `output/krytis-live.iso` (~4 GB, volume label `KRYTIS_LIVE`, protective MBR + GPT) on rootless Krytis. **Boot test still pending** — Krytis ships no `qemu`; boot via dakota-iso's `run-iso` recipe (`ghcr.io/qemus/qemu` container) or external hardware/VM.
 
 For a one-off build on a **mutable** dev host instead, install the tools directly (e.g. CachyOS: `sudo pacman -S --needed just mtools xorriso squashfs-tools isomd5sum buildah`) and `export ISO_TOOLS_IMAGE=` to opt out of the container path.
+
+## A `just` recipe's own `VAR={{var}}` assignments shadow the environment you export
+
+`mise/tasks/build-iso` delegates to dakota-iso with
+`just --justfile … --working-directory … iso-sd-boot krytis`, and used to pass
+configuration by exporting environment variables in front of that call. Every one
+of them was silently discarded, because the recipe assigns the same names from its
+own `just` variables:
+
+```make
+iso-sd-boot target:
+    TARGET={{target}} \
+    OUTPUT_DIR={{output_dir}} \
+    WORKDIR={{workdir}} \
+    DEBUG={{debug}} \
+    COMPRESSION={{compression}} \
+    bash scripts/iso-sd-boot.sh
+```
+
+A recipe-level `NAME=value` prefix wins over an inherited `NAME`, so
+`OUTPUT_DIR=/our/path just … iso-sd-boot krytis` runs with
+`OUTPUT_DIR=output` — the recipe's default, resolved against **dakota-iso's**
+working directory. Consequences, all silent: `mise run build-iso --output-dir`,
+`--workdir`, `--compression` and `--debug` did nothing, the ISO was written to
+`dakota-iso/output/krytis-live.iso` while the task printed `output/krytis-live.iso`,
+and `--debug` never enabled sshd in the live session (which the ISO install test
+needs). Found in #371 only because a `mv` of the sealed ISO failed on a path that
+had never contained it.
+
+**Rule:** anything the recipe assigns must be passed as a `just` variable, before
+the recipe name:
+
+```bash
+just --justfile … --working-directory … \
+     output_dir="${OUTPUT_DIR}" workdir="${WORKDIR}" debug="${DEBUG}" \
+     iso-sd-boot krytis
+```
+
+Only names the recipe does *not* assign (`ISO_TOOLS_IMAGE`, `PAYLOAD_REF`,
+`PAYLOAD_SEALED`) travel as environment. Read the recipe body before choosing;
+`just --show <recipe>` prints it. And pass absolute paths — `--working-directory`
+means a relative one resolves against the other repo's root.
+
+Diagnostic: dakota-iso's recipes echo the composed command line, so the log shows
+`OUTPUT_DIR=output … DEBUG=0` even when the caller exported `DEBUG=1`. Grep the
+build log for the assignment rather than trusting that the flag arrived.

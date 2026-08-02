@@ -115,9 +115,25 @@ the Containerfile change fully verified), but it does isolate "is my new shell l
 from "does `ukify` work in this environment" when the two would otherwise be conflated by one
 failing `RUN` step.
 
-`sig-list-to-certs`'s own extracted `.der` files come out 0 bytes in this efitools version —
-a tool quirk, not a bug in the `.esl`; the header count (`X509 Header sls=N`) printed to stderr
-is the reliable signal, not the output file sizes.
+> **Correction (#438).** This section used to end: *"`sig-list-to-certs`'s own extracted `.der`
+> files come out 0 bytes in this efitools version — a tool quirk, not a bug in the `.esl`; the
+> header count printed to stderr is the reliable signal, not the output file sizes."*
+>
+> That was wrong, and it dismissed the exact evidence of a real defect. The `.der` files were
+> 0 bytes because the signature lists genuinely **contained no certificates**:
+> `cert-to-efi-sig-list` wants **PEM**, the Containerfile feeds it **DER**, and on wrong-format
+> input it writes a well-formed empty list and exits 0. Every `.auth` krytis shipped enrolled an
+> empty allow-list, so a machine that enrolled them turned Secure Boot on and then refused
+> krytis's own signed loader. The three `X509 Header` blocks were three *empty* lists.
+>
+> **Reading rule this earns:** a count of structural headers is not evidence that the structures
+> have contents. When a tool reports "N entries" and the extracted payloads are empty, believe the
+> payloads. Byte sizes are the cheap check — an `EFI_SIGNATURE_LIST` holding one X509 cert is
+> `28 + 16 + len(DER)` bytes, so anything near 44 is empty by construction.
+>
+> See § `loader/keys/auto` self-enrollment below and #438 for the full root cause and the
+> `sbsiglist`/`sbvarsign` fix.
+
 ## `bootc container ukify` must run in a throwaway stage, never the final image
 
 `bootc install to-disk` recomputes the composefs digest over **whatever image it is installing** and verifies it against the `composefs=` parameter baked into the UKI's `.cmdline` section. If they disagree, install fails late with:
@@ -191,7 +207,11 @@ podman build --squash-all -t localhost/krytis:sealed \
 
 ## Sealed images push under `:sealed` tags, never `:latest`
 
-`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces. A sealed/UKI image needs `bootc install --composefs-backend --boot=uki` on the target, which a plain bootc install doesn't do — silently reusing `:latest` for the sealed variant would mean anyone pulling `:latest` expecting the ordinary install path gets an image that can't be installed the same way. Keep the tag suffix whenever adding new push variants.
+`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces.
+
+A sealed/UKI image is installed differently from an unsigned one, but **not** via a flag the installer has to know about: bootc **auto-detects** the UKI in the image and switches to the composefs backend itself — *"Whenever the container image has a UKI, bootc automatically selects the composefs backend during installation"* — so the installer only ever supplies `--composefs-backend` and `--bootloader systemd`. There is **no `--boot=uki` flag**; earlier revisions of this section claimed one, copied from a Fedora doc reference that has since been debunked. Verified against the authoritative `bootc install to-filesystem` man page, whose complete flag set is `--source-imgref`, `--target-imgref`, `--bootloader {grub,grub-cc,systemd,none}`, `--composefs-backend`, `--allow-missing-verity`, `--uki-addon`, plus the disk/selinux/karg flags.
+
+The consequence for tagging is unchanged, and it is the point of this section: silently reusing `:latest` for the sealed variant would hand anyone pulling `:latest` an image whose boot chain only verifies against enrolled keys, when they expected the ordinary one. Keep the tag suffix whenever adding new push variants — and note the same discipline now extends to the ISO (`mise run build-iso --sealed` embeds `…/krytis:sealed` and writes `krytis-live-sealed.iso`, never overwriting the unsigned artifact's name).
 
 ## `--squash-all` erases parent/layer provenance — use `.Created` as a content-identity proxy instead
 
@@ -289,3 +309,233 @@ Three deliberate combinations, only the first two positive:
 Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
 element change touching systemd invalidates an existing `:sealed` image — rerun
 `mise run seal-uki` rather than booting the stale one.
+
+## A sealed ISO payload must be embedded byte-identically, and its ref must move too
+
+`mise run build-iso --sealed` embeds `localhost/krytis:sealed` as the live ISO's
+offline install payload. Two non-obvious requirements, both of which otherwise
+produce late, confusing failures:
+
+**1. Byte identity.** dakota-iso's payload pipeline injects
+`/usr/lib/bootc/install/00-defaults.toml` and `/etc/containers/storage.conf` into
+every payload and re-commits it twice with `buildah commit --squash`. Krytis ships
+neither file, and each `buildah run`/`commit` round trip can bump `/tmp` and
+`/var/tmp` mtimes — the same, and only, discrepancy that broke the UKI digest
+before (§ `bootc container ukify` must run in a throwaway stage). Any of the three
+invalidates the `composefs=` digest baked into the UKI's frozen cmdline, and
+`bootc install` then aborts with `The UKI has the wrong composefs= parameter (is
+'sha512:X', should be sha512:Y')`. `PAYLOAD_SEALED=1` makes the pipeline pass the
+payload through untouched. Skipping only the `00-defaults.toml` injection — which
+is what issue #371 originally scoped — is **not** enough.
+
+Where that code lives is itself a trap: the injection exists in **three** places
+in dakota-iso, and `mise run build-iso` only reaches one of them. `iso-sd-boot.sh`
+calls `live/iso-tools/payload-prep.sh` (via the `ISO_TOOLS_IMAGE` container, since
+krytis's host has no buildah) and then assembles the squashfs with its own inline
+`_ns_build_squashfs`. `scripts/build-live-squashfs.sh` is a *different* entry point
+with a duplicate copy of both. Grep for `00-defaults.toml`, don't assume.
+
+**2. `targetImgref`, not just the store key.** `configure-live-krytis.sh` bakes one
+ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
+`local_imgref`. Change only the embedded *content* and the install succeeds while
+`targetImgref` still points at `…/krytis:latest` — so the first `bootc upgrade` on
+the freshly sealed system pulls the **unsigned** image, overwrites the signed UKI
+and signed systemd-boot, and the enrolled firmware refuses to boot it. Change only
+`payload_ref` and `local_imgref` no longer resolves in the offline store, failing
+the install immediately. `PAYLOAD_REF` moves both together; `build-iso --sealed`
+sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
+`bootc status --json | jq '.spec.image.image'`.
+
+Because `iso-sd-boot.sh` ignores env vars it does not know, an out-of-date sibling
+checkout would silently produce a *broken* sealed ISO. `build-iso --sealed`
+therefore greps the sibling for both knobs and refuses up front — same
+"fail before the expensive step, not during it" discipline as `boot-test`'s UKI
+presence check.
+
+### Assert the embed on the finished ISO, not inside the pipeline
+
+Once the sealed path is a pass-through, byte identity is true *by construction*, so
+an assertion inside dakota-iso would be tautological. `mise run verify-iso-payload`
+reads the **finished ISO** instead, which is the only place that proves the whole
+chain (`podman save` → oci-archive → `skopeo copy` → VFS store → squashfs → ISO)
+preserved the image. It also catches the "wrong tag embedded" class of bug that
+already bit once (#417/#425). `build-iso --sealed` runs it automatically.
+
+The invariant is image-ID equality, established empirically:
+
+- a VFS containers-storage records `vfs-images/images.json` as a list of
+  `{"id": …, "names": [...]}`, where `id` is exactly
+  `podman inspect <tag> --format '{{.Id}}'` (the config digest, no `sha256:` prefix);
+- `podman save --format oci-archive` round-trips both the config digest and the
+  layer diff_id unchanged for krytis's images (they are already OCI-format, so no
+  manifest conversion happens). Checked against `:sealed`: ID `0b00a10aad1a…`,
+  diff_id `e2ae30e0f0ac…`, identical before and after the archive round trip.
+
+Byte identity is a *stronger* claim than digest equality, which is what makes it
+the right assertion — and it needs no privileged mount and no digest recomputation.
+The authoritative digest check is `bootc install` itself, which recomputes and
+names both digests in its error; the QEMU install test is therefore the end-to-end
+digest proof, and this gate is the cheap regression net in front of it.
+
+Reading the payload out of the ISO needs neither root nor a 5GB extract: walk the
+ISO 9660 directory records to find `LiveOS/squashfs.img`'s extent, then
+`unsquashfs -offset <lba*2048> -cat <iso> <path>`. File data in an ISO is
+contiguous — including across the multi-extent records `-iso-level 3` uses for
+files over 4GB — so the first record's extent is the start of the squashfs. Assert
+the `hsqs` magic at the computed offset so a layout change fails loudly instead of
+as a confusing unsquashfs error. `xorriso` is not on the krytis host at all
+(dakota-iso routes it through the iso-tools container), so an `-osirrox` extract
+would be both slower and less portable here.
+
+## A sealed system's boot cannot be judged from the serial console
+
+`console=ttyS0` is a kernel argument, and a UKI's kernel arguments are frozen
+inside the signed PE — injecting one is exactly what sealing prevents. So every
+harness that decides "did it boot?" by grepping the guest's serial log for
+`Reached target Graphical Interface` is structurally unable to pass a sealed
+system. dakota-iso's installed-boot verdict does precisely that (it patches
+`console=ttyS0` into the BLS type-1 entry first, which a sealed system does not
+boot through), and it reported a five-minute timeout for an install that was in
+fact completely healthy.
+
+What a *successful* enforced sealed boot looks like on serial — all of it:
+
+```
+BdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+systemd-boot@0x101300000 260.2
+systemd-stub@0x14df91000 260.2
+```
+
+Read it as evidence, not silence. `BdsDxe: starting` (rather than
+`failed to load … Access Denied`) means the firmware accepted the signed
+systemd-boot against the enrolled db; `systemd-stub@…` appearing after
+`systemd-boot@…` means systemd-boot chain-loaded the UKI and its Authenticode
+signature verified — a bad signature stops at
+`Error loading EFI binary …: Access denied` instead. Everything after that point
+goes to tty0 and is invisible. **"Nothing after `systemd-stub@`" means "we cannot
+see the boot", never "the boot failed."**
+
+The verdict has to come from a channel that needs no kernel argument.
+`mise run boot-test --reuse-disk <disk> --secure` is that channel and is why
+`mise run iso-install-test` keeps the verdict on the krytis side instead of
+delegating it: boot-test provisions sshd, an authorized key and a diagnostics
+probe as **SMBIOS type-11 systemd credentials**, which systemd consumes with no
+cmdline involvement, then asserts health over SSH. The same mechanism is what
+makes the negative test honest — the firmware's own rejection line *does* reach
+serial, so `--expect-fail` asserts on that and reports INCONCLUSIVE for a merely
+silent disk.
+
+Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
+kargs for anything a test needs to inject. Kargs are a signing-time decision;
+credentials are a runtime one.
+
+## Every shipped `.auth` enrolled an empty allow-list — `cert-to-efi-sig-list` wants PEM
+
+Root-caused in #438 (found via #371). Boot a freshly installed sealed system against
+a firmware
+whose varstore is in **setup mode** (a blank OVMF varstore — i.e. a machine that
+has never had keys) and systemd-boot does what #309 designed it to do:
+
+```
+BdsDxe: starting Boot0002 "UEFI Misc Device" …
+Enrolling secure boot keys from directory: \loader\keys\auto
+Custom Secure Boot keys successfully enrolled, rebooting the system now!
+BdsDxe: failed to load Boot0002 "UEFI Misc Device" …: Access Denied -- rejected probably by Secure Boot
+```
+
+It enrolls krytis's own PK/KEK/db and then the firmware refuses krytis's own
+signed bootloader. Reproduced on both the non-SMM and the proper
+`OVMF_CODE_4M.secboot.fd` + `smm=on` + pflash-`secure=on` configuration, so it is
+not the varstore-protection mistake it first looks like.
+
+**Root cause: the `.auth` files contain no certificates at all.** `Containerfile`
+converts each PEM cert to DER and feeds the DER to `cert-to-efi-sig-list`, but that
+tool takes **PEM** (its own usage line says so). Given DER it finds no certificate,
+writes a well-formed *empty* `EFI_SIGNATURE_LIST`, and **exits 0**;
+`sign-efi-sig-list` then signs the empty payload perfectly validly. The firmware
+accepts the writes, leaves setup mode, enables Secure Boot — with an empty
+allow-list, so nothing verifies, including our own correctly signed loader.
+`sbverify --cert db.crt` passes on both `systemd-bootx64.efi` and `krytis.efi`; the
+boot chain's signing was never the problem.
+
+Same DER input to both tools, in the image:
+
+```
+cert-to-efi-sig-list db.der out.esl   ->   44 bytes   # ListSize 0x2c, SigSize 0x10, no cert
+sbsiglist --owner "$GUID" --type x509 --output out.esl db.der
+                                      -> 1255 bytes   # 28 + 16 + 1211
+```
+
+**Size is the cheap tell.** One X509 cert in a signature list is `28 + 16 + len(DER)`
+bytes. Anything near 44 is empty by construction. Post-enrollment varstores:
+
+| varstore | PK | KEK | db |
+|---|---|---|---|
+| `.ovmf-vars-secure.fd` (virt-fw-vars — the path that works today) | 1254 | 1263 | 1255 (krytis only) |
+| enrolled from the shipped `.auth` files | 44 | 44 | **132** (three empty lists) |
+| enrolled from `sbsiglist`/`sbvarsign` output | 1254 | 1263 | **4353** (krytis + both MS CAs) |
+
+Two consequences beyond the boot failure: #309's "db.auth includes Microsoft's
+well-known CA certs" was never actually met (the loop concatenated three *empty*
+lists), and `boot-test --secure` exercises a narrower db than a real enrolled
+machine will have — its virt-fw-vars db holds krytis's cert alone.
+
+**Fix:** use `sbsigntools` (`sbsiglist` + `sbvarsign`), already in the image for
+`sbsign`, which takes DER natively and does not silently succeed on wrong-format
+input. Feeding PEM to efitools also works (verified — identical 4353-byte ESL), but
+it inverts every conversion in that `RUN` block and keeps the silent-no-op hazard.
+
+`secure-boot-enroll manual` does **not** prevent it here, despite being present in
+the ESP's own `loader.conf` (verified in-guest: `bootctl -p` is `/boot`, and that
+file contains the line). A VM in setup mode enrolls anyway.
+
+**Why no existing test caught it:** `mise run boot-test --secure` pre-enrolls the
+varstore with virt-fw-vars, which bypasses `loader/keys/auto` completely. Nothing
+in the repo had ever put a freshly installed disk in front of a *blank* varstore
+until an ISO install did. Any future work on enrollment must test the
+setup-mode-first-boot path explicitly; a passing `boot-test --secure` says nothing
+about it.
+
+**Test enrollment in isolation — no bootc, no ISO, no UKI.** A full install to reach
+one firmware decision is a 15-minute round trip. The whole mechanism is an ESP with
+a signed loader and three files, so build exactly that and boot it against a
+pristine varstore. QEMU's VVFAT (`fat:rw:<dir>`) builds the filesystem from a
+directory, so no image, no partitioning and no root are involved:
+
+```bash
+mkdir -p esp/EFI/BOOT esp/loader/keys/auto
+cp systemd-bootx64.efi esp/EFI/BOOT/BOOTX64.EFI      # from the sealed image
+cp {PK,KEK,db}.auth   esp/loader/keys/auto/
+cp /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd vars.fd   # pristine = setup mode
+qemu-system-x86_64 -enable-kvm -m 1024 -machine q35,smm=on \
+  -global driver=cfi.pflash01,property=secure,value=on \
+  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd \
+  -drive if=pflash,format=raw,file=vars.fd \
+  -drive file=fat:rw:esp,format=raw,if=virtio \
+  -display none -serial file:serial.log -daemonize -pidfile qemu.pid
+```
+
+45 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
+`BdsDxe: starting` + `systemd-boot@` after the enrollment reboot means the firmware
+now trusts the loader; `failed to load … Access Denied` means it does not. Then dump
+what actually landed with `virt-fw-vars --input vars.fd --print` and check the db
+size against the table above. Vary one input at a time — this is how #438 was
+isolated to the `.auth` files rather than the disk, the installer, or the firmware
+configuration.
+
+**Working around it in a test fixture** — when you want to boot a sealed disk with
+no enforcement, delete the enrollment trigger from the *copy* you boot, never from
+the payload. The ESP is FAT, so this needs no root (same mtools technique as the
+UKI byte-flip test above):
+
+```bash
+export MTOOLS_SKIP_CHECK=1
+# ESP offset: first GPT partition entry's starting LBA × 512
+OFF=$(python3 -c 'f=open("disk.raw","rb");f.seek(1024+32);print(int.from_bytes(f.read(8),"little")*512)')
+mdeltree -i "disk.raw@@${OFF}" ::/loader/keys
+```
+
+With the trigger gone, the same disk boots to `running` with
+`bootctl status` reporting `Secure Boot: disabled (setup)` — which is how #371
+demonstrated that a sealed payload is still a valid non-secure-boot image.

@@ -211,3 +211,37 @@ and advertises `sk-ssh-ed25519@openssh.com` and
 `sk-ecdsa-sha2-nistp256@openssh.com`, which authenticate over **pubkey** and need
 no keyboard-interactive path. `ssh-keygen -t ed25519-sk` is the intended second
 factor for SSH.
+
+### Key-only SSH also breaks password-driven *tooling* — override with a lower-numbered drop-in
+
+Third consequence, found in #371: any external tool that drives krytis over SSH with a
+password cannot work, including the live-ISO installer test. dakota-iso's E2E gate sets
+`liveuser:live` with `chpasswd` and then logs in with `sshpass`; against a krytis live
+session that fails, and the failure looks like a boot or network problem rather than a
+policy decision:
+
+```
+$ ssh -o PreferredAuthentications=none liveuser@127.0.0.1 -p 2224
+debug1: Remote protocol version 2.0, remote software version OpenSSH_10.3
+debug1: Authentications that can continue: publickey
+liveuser@127.0.0.1: Permission denied (publickey).
+```
+
+sshd was up and listening the entire time — `10-krytis-auth.conf`'s two `no`s simply left
+`publickey` as the only method, so a readiness probe that logs in never succeeds and the
+harness reports a timeout. **Read a "SSH timeout" against a krytis guest as an auth-policy
+question first, not a boot failure.** Confirm with `PreferredAuthentications=none`, which
+makes sshd list the methods it will actually accept.
+
+The intended escape hatch is the one `10-krytis-auth.conf` documents itself: `sshd_config`
+`Include`s `/etc/ssh/sshd_config.d/*.conf` at line 2 and first-obtained-value wins for
+these keywords, so a **lower-numbered** drop-in overrides the hardened default. For the
+live ISO that is a `05-live-debug.conf` written only when the ISO is built with
+`--debug`, carrying *both* keywords (`PasswordAuthentication yes` +
+`KbdInteractiveAuthentication yes` — the same pairing the hardening needed, for the same
+`UsePAM yes` reason). It lands in the live squashfs, never in the payload, so an installed
+system stays pubkey-only and a `DEBUG=0` production ISO is unaffected.
+
+Do **not** relax `10-krytis-auth.conf` itself to make tooling work, and do not read this as
+a reason to revisit § Priority above: the fix belongs in the debug-only live environment,
+which is not a krytis release artifact.
