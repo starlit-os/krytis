@@ -652,7 +652,23 @@ Secrets that must never enter the repo (e.g. signing keys) are retrieved with [`
 - One-time setup on a dev machine: `pass-cli login` (browser-based). After that, `fnox get SECRET_NAME` resolves the reference and prints the value to stdout.
 - Tasks that consume secrets (e.g. `mise/tasks/pull-keys`, #311) loop over the `fnox.toml` secret names, redirect `fnox get` output to the destination file, and validate the result (`openssl x509 -noout`, `openssl rsa -check`) — a fnox misconfiguration or an empty vault field fails loudly instead of writing a garbage key file.
 - Retrieved secrets land in a gitignored path (e.g. `files/boot-keys/`), never committed.
-- `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (`pass-cli = "latest"`) in the project `mise.toml` — same dev-host-tooling pattern as `just`. `mise install` then provisions it automatically; no manual download step.
+- `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (pinned exactly — `2.2.4`, not `latest`, see below) in the project `mise.toml` — same dev-host-tooling pattern as `just`. `fnox` is pinned there too (`1.31.1`); it was globally-installed-only until #448, so CI failed with `fnox: command not found` on its first sealed publish. `mise install` then provisions both automatically; no manual download step.
+
+### In CI: a PAT, and a separate grant per vault
+
+CI cannot do a browser login, so it authenticates with a Proton Pass personal access token (`pass-cli login --pat "$PROTON_PASS_PAT"`, format `pst_<token>::<key>`). Two traps, both of which cost a full publish run:
+
+1. **Creating a token does not grant it vault access.** `pass-cli login --pat` reports `Successfully logged in as personal access token: <name>` and then every lookup fails with fnox's generic `Could not find vault <name>` / "Check your Proton Pass configuration" — 20 minutes later, after the unsigned image has already been built and pushed. Grant it once, from an interactive session:
+
+   ```bash
+   pass-cli personal-access-token access grant \
+     --personal-access-token-name <token-name> \
+     --vault-name <vault> --role viewer      # viewer is enough; CI only reads
+   ```
+
+   `mise run assert-vault-access` now checks this immediately after login, so the failure names its own remedy instead of surfacing as a vault-not-found deep inside `pull-keys`.
+
+2. **Pin the version, and check subcommands against the pinned asset.** `pass-cli test` existed in 2.2.3 and was gone by 2.2.4; a CI step calling it died while the same command worked locally. See the PATH-shadowing entry at the end of this file.
 
 ### Testing secret-consuming tasks without a live vault
 

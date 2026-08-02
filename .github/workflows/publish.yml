@@ -222,6 +222,19 @@ jobs:
           # secrets and openssl-validates every one.
           pass-cli login --pat "${PROTON_PASS_PAT}"
 
+          # A PAT is granted vault access separately from being created, and without
+          # it the run dies ~20 minutes later inside pull-keys with fnox's generic
+          # "Check your Proton Pass configuration" — which is how run 30754171738
+          # was spent. Catch it here, where the remedy fits in the error message.
+          #
+          # `vault list --output json` is verified present in the pinned 2.2.4 asset
+          # (84323b8), not just in whatever pass-cli answers locally — that mistake
+          # is what #452 fixed. What is NOT verified is whether a PAT session may
+          # list vaults at all, or the JSON shape it returns, so this only blocks
+          # when listing plainly succeeds and the vault is plainly absent. Anything
+          # ambiguous warns and falls through to pull-keys, which is the real gate.
+          mise run assert-vault-access
+
       - name: Pull secure boot keys
         if: inputs.publish_sealed
         run: mise run pull-keys

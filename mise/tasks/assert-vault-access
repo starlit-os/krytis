@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#MISE description="Assert the current Proton Pass session can see the vault fnox.toml names"
+
+# Creating a personal access token and granting it vault access are two separate
+# operations. Miss the second and every secret lookup fails with fnox's generic
+# "Check your Proton Pass configuration" - which is how publish run 30754171738
+# was spent, 20 minutes after the token had authenticated successfully.
+#
+# This is a diagnostic, not a gate. It fails only when listing plainly succeeds
+# and the vault is plainly absent; anything ambiguous (a PAT session that may not
+# list vaults, an output shape this doesn't recognise) warns and returns 0, because
+# `mise run pull-keys` is the authoritative check and normally runs right after.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+VAULT="$(grep -oP '^vault = "\K[^"]+' fnox.toml)"
+if [[ -z "${VAULT}" ]]; then
+  echo "ERROR: no 'vault = ...' found in fnox.toml" >&2
+  exit 1
+fi
+
+if ! LISTING="$(pass-cli vault list --output json 2>&1)"; then
+  echo "::warning::pass-cli vault list failed, so access to '${VAULT}' is unverified."
+  echo "  If a secret lookup then fails with \"Could not find vault ${VAULT}\", grant access:"
+  echo "    pass-cli personal-access-token access grant \\"
+  echo "      --personal-access-token-name <name-of-the-CI-token> \\"
+  echo "      --vault-name ${VAULT} --role viewer"
+  echo "  (the listing said: ${LISTING})"
+  exit 0
+fi
+
+VAULT_NAME="${VAULT}" LISTING="${LISTING}" python3 <<'PY'
+import json, os, sys
+
+want = os.environ["VAULT_NAME"]
+raw = os.environ["LISTING"]
+
+
+def names(node):
+    """Every "name" string anywhere in the document.
+
+    The listing has been seen as a bare array, but tolerate a wrapper object so an
+    upstream shape change downgrades to a warning instead of blocking a good token.
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "name" and isinstance(value, str):
+                yield value
+            yield from names(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from names(value)
+
+
+try:
+    seen = sorted(set(names(json.loads(raw))))
+except Exception as exc:
+    print(f"::warning::could not parse the vault listing ({exc}); leaving this to pull-keys")
+    sys.exit(0)
+
+if want in seen:
+    print(f"==> Session can see the {want!r} vault.")
+    sys.exit(0)
+
+print(f"::error::Authenticated, but the session cannot see the {want!r} vault that fnox.toml names.")
+print(f"  Vaults it can see: {', '.join(seen) if seen else '(none)'}")
+print( "  Creating a token does not grant it vault access. From an interactive session:")
+print( "    pass-cli personal-access-token access grant \\")
+print( "      --personal-access-token-name <name-of-the-CI-token> \\")
+print(f"      --vault-name {want} --role viewer")
+print( "  viewer is enough - only read access to the six key secrets is needed.")
+sys.exit(1)
+PY
