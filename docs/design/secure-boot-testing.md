@@ -253,12 +253,26 @@ Each of these cost real debugging time. They are ranked by how convincingly they
 
 `.github/workflows/` contains `publish.yml`, `track-bst-sources.yml` and
 `cache-warm.yml`. **Nothing** runs `lint`, `seal-uki`, `boot-test`, `enroll-test`,
-`build-iso` or any QEMU test. Every gate above is a thing a human remembers to run.
+`build-iso` or any QEMU test — PR #445 adds the static gates, but every boot gate above
+is still a thing a human remembers to run.
 
-Worse, `publish.yml` runs `mise run build` + `mise run push` — **unsigned only**. No
-automation ever produces a sealed image, so `ghcr.io/starlit-os/krytis:sealed` exists
-only because someone ran `mise run push --sealed` by hand. A sealed ISO bakes that tag
-as `targetImgref`, which means installed sealed systems track a manually refreshed tag.
+**Resolved (#448, option A): `publish.yml` now builds and publishes the sealed image**
+after the unsigned one is pushed, signed and verified — deliberately last, because the
+sealed path is newer and a failure in it must not cost the primary artifact. Opt out
+per-run with `publish_sealed=false`.
+
+Key custody took the variant, not the letter, of option A. The six UEFI keys are **not**
+GitHub secrets: they stay in the Proton Pass vault `fnox.toml` already points at, and CI
+holds one credential — a Proton Pass PAT — to reach them. That leaves raw private key
+material out of the repository's secret store, makes rotation a vault operation rather
+than six secret edits, and means a leaked CI secret exposes a revocable token instead of
+the keys. Keys touch the runner's disk only inside that job and are shredded on the way
+out, `always()`.
+
+The gap this closed was live, not theoretical: before it, no automation ever produced a
+sealed image, so `ghcr.io/starlit-os/krytis:sealed` existed only because someone ran
+`mise run push --sealed` by hand — and a sealed ISO bakes that tag as `targetImgref`, so
+installed systems tracked a manually refreshed tag.
 
 That is not hypothetical drift. The published tag as of 2026-08-02, pulled and
 inspected:

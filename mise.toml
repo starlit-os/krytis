@@ -24,6 +24,12 @@ just = "1.57.0"
 # The mise registry has no pass-cli entry, so Renovate's mise manager cannot
 # resolve it — a custom.regex manager tracks this line instead.
 pass-cli = "2.2.4"
+# fnox: the front end `mise run pull-keys` / `generate-keys` actually call
+# (fnox.toml maps the six UEFI key secrets onto the Proton Pass vault). It was
+# only ever installed globally, so `pull-keys` worked on the maintainer's box and
+# would have failed in CI with "fnox: command not found" the first time #448's
+# sealed publish ran. Dev-host tooling only.
+fnox = "1.31.1"
 # oras: required by `mise run push` to attach the SBOM (#40) as an OCI
 # referrer via `oras attach`. Dev-host tooling only.
 oras = "1.3.3"
