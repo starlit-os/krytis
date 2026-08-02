@@ -41,13 +41,24 @@ command -v virt-fw-vars >/dev/null || { echo "ERROR: virt-fw-vars not found (pip
 
 OVMF_CODE=""; OVMF_VARS_SRC=""
 for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
+         /usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
          /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
     [ -f "$c" ] && OVMF_CODE="$c" && break
 done
 # A PRISTINE secboot varstore, not .ovmf-vars-secure.fd: this test needs setup
 # mode (no keys) so systemd-boot performs the enrollment itself.
+#
+# Debian and Ubuntu ship NO *VARS*secboot* file at all — their setup-mode
+# varstore is the plain `OVMF_VARS_4M.fd`, paired with the secboot CODE above
+# (verified on ubuntu:24.04, ovmf 2024.02-2: only _4M.fd, _4M.ms.fd and
+# _4M.snakeoil.fd exist). Hence the bare name last in this list.
+#
+# Never substitute `OVMF_VARS_4M.ms.fd` when the lookup fails: it arrives with
+# Microsoft's keys already enrolled, so the firmware is not in setup mode, this
+# test's whole premise disappears, and it would be asserting nothing.
 for v in /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd /usr/share/OVMF/OVMF_VARS_4M.secboot.qcow2 \
-         /usr/share/edk2/x64/OVMF_VARS.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_VARS.secboot.fd; do
+         /usr/share/edk2/x64/OVMF_VARS.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_VARS.secboot.fd \
+         /usr/share/OVMF/OVMF_VARS_4M.fd; do
     [ -f "$v" ] && OVMF_VARS_SRC="$v" && break
 done
 [ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF secboot firmware not found." >&2; exit 1; }

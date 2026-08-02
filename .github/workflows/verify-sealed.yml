@@ -1,0 +1,72 @@
+name: Verify sealed image
+
+# Boots the PUBLISHED sealed image's own .auth files against a setup-mode
+# firmware and asserts systemd-boot enrols them and then verifies the signed
+# loader under enforcement (`mise run enroll-test`, #438).
+#
+# Why not a pull_request gate: this tests ghcr.io/starlit-os/krytis:sealed, which
+# a PR cannot change. Running it on PRs would burn a multi-GB pull to re-test an
+# artifact the PR does not touch. The meaningful moment is right after a publish,
+# so it hangs off publish.yml completing — every newly published sealed image gets
+# its enrollment path exercised. Rebuilding the sealed image here instead is not an
+# option: that needs the BST build and the signing keys.
+#
+# The gate exists because the failure it catches actually shipped. The tag
+# published on 2026-07-28 carried a UKI and an EMPTY /usr/lib/bootc/install/
+# secureboot-keys/auto — Secure Boot came up with nothing enrolled and the
+# firmware refused krytis's own signed loader (#438, #443). Nothing noticed for
+# months, because every other test boots a varstore that generate-ovmf-vars had
+# already enrolled, bypassing loader/keys/auto entirely.
+
+on:
+  workflow_run:
+    workflows: ["Publish krytis image"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: verify-sealed
+  cancel-in-progress: false
+
+jobs:
+  enroll:
+    name: Key enrollment (QEMU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # A failed publish may not have pushed a sealed image at all; re-testing the
+    # previous one would report on an artifact this run did not produce.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup mise
+        uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          experimental: true
+
+      - name: Install QEMU, OVMF and virt-firmware
+        # python3-virt-firmware provides virt-fw-vars, which the task uses to read
+        # the enrolled variables back out of the varstore after the boot.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 ovmf python3-virt-firmware
+          command -v podman >/dev/null || sudo apt-get install -y -qq podman
+
+      - name: Grant KVM access
+        # /dev/kvm is crw-rw---- root:kvm and the runner user is not in that group,
+        # so QEMU otherwise needs sudo. Widening the node here keeps the mise task
+        # itself unprivileged, which is what makes it identical to a local run.
+        run: |
+          ls -l /dev/kvm
+          sudo chmod 0666 /dev/kvm
+
+      - name: Pull the published sealed image
+        run: podman pull ghcr.io/starlit-os/krytis:sealed
+
+      - name: Enrollment gate
+        run: mise run enroll-test --image ghcr.io/starlit-os/krytis:sealed
