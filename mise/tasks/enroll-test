@@ -137,6 +137,10 @@ for c in "${CERTDIR}"/db-*.pem; do
     [ -f "${c}" ] || continue
     subj=$(openssl x509 -in "${c}" -noout -subject 2>/dev/null | sed 's/^subject= *//')
     echo "    ${subj}"
+    # Keep the ` *` either side of the `=`. OpenSSL renders the same subject
+    # differently across versions in the same major series — 3.0.13 on the
+    # runners prints `CN = Database Key`, 3.5.7 here prints `CN=Database Key`
+    # — so an exact-spacing pattern passes locally and fails the gate in CI.
     grep -qE 'CN *= *Database Key' <<<"${subj}" && DB_OURS=1
 done
 

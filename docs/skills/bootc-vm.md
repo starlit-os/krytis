@@ -628,6 +628,13 @@ virt-fw-vars --input vars.fd --extract-certs      # writes db-*.pem into CWD
 openssl x509 -in db-….pem -noout -subject
 ```
 
+Match that output loosely. OpenSSL renders the same subject differently across
+versions *within* 3.x — `CN = Database Key` under 3.0.13 on the runners,
+`CN=Database Key` under 3.5.7 on this workstation — so `grep 'CN=Database Key'`
+would pass locally and fail the gate in CI. Use `CN *= *`. Display-only callers
+(`scripts/parse-efi-auth.py`, `mise/tasks/fetch-microsoft-certs`) are unaffected;
+only code that *matches* on a subject needs this.
+
 `mise/tasks/enroll-test` carries the Debian/Ubuntu paths. The other five OVMF
 consumers (`boot-test`, `boot-vm`, `generate-ovmf-vars`, `selfenroll-test`,
 `upgrade-test`) still have the Fedora/Arch-only lists and will need the same
