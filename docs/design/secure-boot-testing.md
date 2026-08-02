@@ -320,20 +320,48 @@ modes. The remaining piece of this scenario is the **manual enrollment prompt**,
 which no VM can exercise — systemd-boot treats a VM as "safe" and enrols without
 asking. That is T4, and #444 tracks the first-boot policy question behind it.
 
-### G-4 · Key rotation is untested
+### G-4 · There is no key rotation *mechanism* to test — #447
 
-Enrolling a *second* generation of keys over the first exercises UEFI's
-authenticated-variable rollback protection, which compares the `EFI_TIME` in the
-`.auth`. This is not academic: `sbvarsign` writes the month from a 0-based `tm_mon`
-(#438), which is why signing stayed with `sign-efi-sig-list`. A rotation test would
-have caught that class of bug directly. Proposed: enrol set A, then set B built later,
-assert the firmware accepts B and boots a B-signed loader.
+Investigated rather than assumed. `loader/keys/auto` is a one-shot bootstrap:
+systemd-boot only offers enrollment while the firmware is in Setup Mode. Measured by
+booting the same ESP twice against the same varstore:
 
-### G-5 · `dbx` is never touched
+```
+boot 1: pristine varstore (setup mode)      enrolled-this-boot=1
+boot 2: same varstore, keys now enrolled    enrolled-this-boot=0   (no enrollment line at all)
+```
 
-The varstore carries a 76-byte `dbx` from the OVMF template. We neither ship
-revocations nor test that a revoked binary is refused. Fine while krytis signs only its
-own artifacts; revisit if the MS CAs' `dbx` updates ever matter.
+So shipping new `.auth` files in a future image does nothing for existing installs —
+they keep trusting the old `db` forever, and a leaked `db.key` has no remedy short of
+a per-machine trip through firmware setup. Rotation would need the OS to write
+authenticated variable updates signed by the *current* KEK/PK; krytis ships no such
+tooling and bootc does not do it either.
+
+A test needs a mechanism, so #447 asks the prior question: does krytis support
+rotation at all? "No, a compromise means reinstall" is a legitimate answer for a
+desktop OS — it just needs writing down. Whoever does build it inherits the
+`sbvarsign` `tm_mon` trap (§ the fix in `docs/skills/secure-boot.md`), which is
+cosmetic today and becomes silent update rejection under rollback protection.
+
+### G-5 · `dbx` is empty while the Microsoft CAs are trusted — #446
+
+This got sharper as a direct result of fixing #438. Post-enrollment varstore on a
+machine that came from Setup Mode:
+
+```
+PK  1254   KEK 1263   db 4353 (krytis + both Microsoft CAs)   SecureBootEnable ON
+                      dbx — absent
+```
+
+krytis ships `PK.auth`, `KEK.auth`, `db.auth` and no `dbx.auth`. Before #443 every one
+of those lists was empty, so trusting the Microsoft CAs was theoretical; now it is
+real, with **no revocations loaded** — every Microsoft-signed binary ever revoked
+still verifies. Worst for exactly the users who follow #309's instructions, since
+clearing firmware keys to reach Setup Mode typically clears `dbx` too.
+
+#446 carries the options. Shipping a `dbx.auth` from Microsoft's published DBX
+update, signed by our KEK, reuses the machinery that already exists — but it is a
+Security Gate call.
 
 ### G-6 · One firmware, one architecture
 
