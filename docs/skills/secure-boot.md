@@ -298,13 +298,14 @@ itself. Read that shape as "wrong tag", not as a regression in the change under
 test. `boot-test` now also refuses up front, before the privileged install, when
 an explicitly named image has no UKI or does not exist locally.
 
-Four deliberate combinations, only the first three positive:
+Five deliberate combinations, only the first four positive:
 
 | Command | Asserts |
 |---|---|
 | `mise run boot-test` | the image boots and is healthy — the right check for anything that isn't about the boot chain |
 | `mise run seal-uki && mise run boot-test --secure` | the *signed* image boots under enforcement, against a varstore `generate-ovmf-vars` pre-enrolled with the same certificates `db.auth` carries |
 | `mise run seal-uki && mise run enroll-test` | the image's **own** `.auth` files enrol into a setup-mode firmware and the loader still verifies afterwards — a different question, and the one #438 answered wrongly for months |
+| `mise run selfenroll-test` | the same, on a **real installed disk** rather than a synthetic ESP — ESP layout, UKI, composefs and first-boot units included — ending in a healthy system with `Secure Boot: enabled (user)` |
 | `mise run boot-test --secure --expect-fail` | secure boot rejects the unsigned image |
 
 The second and third are not substitutes. `boot-test --secure` boots keys that

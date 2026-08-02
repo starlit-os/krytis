@@ -112,26 +112,44 @@ mise run iso-install-test --secure --expect-fail   # ~11 min, negative
 krytis is pubkey-only without the debug drop-in. The task refuses a non-debug ISO in
 0.2 s rather than timing out (trap T-7).
 
-**Self-enrollment on the real artifact** is not yet a task, and is the strongest
-single check that exists. After `iso-install-test`, boot the disk it left behind
-against a *pristine* varstore:
+**Self-enrollment on the real artifact** is the strongest single check that exists,
+and it is `mise run selfenroll-test` — **66 s**, no root. Run it after
+`iso-install-test`, which leaves the installed disk behind for it:
 
-```bash
-cp --reflink=auto /var/tmp/dakota-sealed-install.img disk.raw
-cp /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd vars.fd
-qemu-system-x86_64 -enable-kvm -m 4096 -machine q35,smm=on \
-  -global driver=cfi.pflash01,property=secure,value=on \
-  -drive file=disk.raw,format=raw,if=virtio \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd \
-  -drive if=pflash,format=raw,file=vars.fd \
-  -display none -serial file:serial.log -daemonize -pidfile qemu.pid
+```
+mise run iso-install-test --secure     # ~4 min, leaves /var/tmp/dakota-sealed-install.img
+mise run selfenroll-test               # 66 s
 ```
 
-Expect, in `serial.log`: `BdsDxe: starting` → `Enrolling secure boot keys` →
-`successfully enrolled` → **`BdsDxe: starting` again** → `systemd-boot@` →
-`systemd-stub@`. Inject an SMBIOS-credential probe (see trap T-1) to read
-`bootctl status` → `Secure Boot: enabled (user)` and `systemctl is-system-running`
-→ `running`. ~66 s. Promoting this to `mise run selfenroll-test` is proposed gap G-3.
+It boots a *copy* of that disk against a **pristine** varstore — setup mode, no keys,
+i.e. a machine that has never seen krytis. `.ovmf-vars-secure.fd` would defeat the
+point: the keys are already in it, so nothing would need enrolling and
+`boot-test --secure` covers that case already.
+
+A pass looks like this, and every line of it is load-bearing:
+
+```
+BdsDxe: starting Boot0002 …                     <- setup mode, nothing enforced yet
+systemd-boot@0x101300000 260.2
+Enrolling secure boot keys from directory: \loader\keys\auto
+Custom Secure Boot keys successfully enrolled, rebooting the system now!
+BdsDxe: starting Boot0002 …                     <- enforcing now, and it still starts
+systemd-boot@0x101300000 260.2
+systemd-stub@0x14df91000 260.2                  <- UKI signature verified too
+state: running
+sb: Secure Boot: enabled (user)
+image: ghcr.io/starlit-os/krytis:sealed
+failed-units:
+```
+
+The task distinguishes four failure modes rather than reporting one "it broke":
+never enrolled, enrolled-then-refused (#438's shape), enrolled and enforcing but not
+healthy, and reached `running` without Secure Boot actually on. The last one matters —
+a boot that comes up fine with enforcement silently off proves nothing.
+
+| Proves | Cannot prove |
+|---|---|
+| the whole chain on a real install: ESP layout, `.auth` files, UKI, composefs, first-boot units, all of it | the **manual** enrollment prompt — a VM is "safe" to systemd-boot, so `if-safe` enrols without asking (trap T-4, #444). The prompt path is T4 only |
 
 ### T4 — real hardware (manual, per release)
 
@@ -167,7 +185,8 @@ Ordered so each step's failure is cheap and unambiguous.
 6. `mise run boot-test --secure` (or T3 if no root) — the signed image boots enforcing.
 7. `mise run build-iso --sealed --debug` — embed gate passes.
 8. `mise run iso-install-test --secure` — real install path.
-9. Self-enrollment boot (§3 T3) — the scenario a user actually hits.
+9. `mise run selfenroll-test` — the scenario a user actually hits: a machine with no
+   keys, enrolling krytis's own, then booting enforcing.
 10. `mise run iso-install-test --secure --expect-fail` — the negative still fires.
 11. T4 checklist on at least one physical machine before calling a sealed image
     releasable.
@@ -294,10 +313,12 @@ Proposed `mise run upgrade-test`: run a local registry container, push two seale
 builds, install the older from an ISO, `bootc upgrade`, reboot, assert enforcing and
 healthy. Cost is roughly two seal-uki runs plus a T3 cycle.
 
-### G-3 · Self-enrollment is a manual recipe, not a task
+### G-3 · ~~Self-enrollment is a manual recipe, not a task~~ — closed
 
-§3's strongest check is copy-paste shell. It should be `mise run selfenroll-test`,
-sharing `enroll-test`'s verdict logic and `boot-test`'s credential-probe plumbing.
+Now `mise run selfenroll-test` (§3 T3): 66 s, no root, four distinguishable failure
+modes. The remaining piece of this scenario is the **manual enrollment prompt**,
+which no VM can exercise — systemd-boot treats a VM as "safe" and enrols without
+asking. That is T4, and #444 tracks the first-boot policy question behind it.
 
 ### G-4 · Key rotation is untested
 
