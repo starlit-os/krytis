@@ -94,5 +94,9 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
             KEK /tmp/KEK.esl /usr/lib/bootc/install/secureboot-keys/auto/KEK.auth && \
         sign-efi-sig-list -g "$GUID" -k /run/secrets/kek_key -c /run/secrets/kek_crt \
             db /tmp/db.esl /usr/lib/bootc/install/secureboot-keys/auto/db.auth && \
+        assert_esl /tmp/microsoft-uefi-certs/dbx.esl && \
+        sign-efi-sig-list -g "$GUID" -k /run/secrets/kek_key -c /run/secrets/kek_crt \
+            dbx /tmp/microsoft-uefi-certs/dbx.esl \
+            /usr/lib/bootc/install/secureboot-keys/auto/dbx.auth && \
         rm -f /tmp/PK.der /tmp/KEK.der /tmp/db.der /tmp/PK.esl /tmp/KEK.esl /tmp/db.esl \
     ; fi

@@ -647,3 +647,49 @@ In-guest afterwards: `is-system-running` → `running`, `bootctl status` →
 `Secure Boot: enabled (user)`, no failed units, `bootc status` booted image
 `ghcr.io/starlit-os/krytis:sealed`. That is the acceptance criterion #438 was filed
 for, on the real artifact rather than the isolated ESP.
+
+## Microsoft's `DBXUpdate.bin` has to be re-signed with our KEK
+
+
+krytis enrols Microsoft's revocation list, but not Microsoft's copy of it. Their
+published `DBXUpdate.bin` is already an `EFI_VARIABLE_AUTHENTICATION_2` **signed by
+Microsoft's KEK** — and krytis enrols only its own KEK plus Microsoft's *db* CAs.
+Firmware accepts a `dbx` update only when a KEK it trusts signed it, so shipping
+their file unchanged would produce an update every krytis machine rejects.
+
+
+`mise run fetch-microsoft-dbx` therefore keeps the *payload* and discards their
+signature. Both halves are committed, because both are used and they are not
+interchangeable:
+
+
+| File | What it is | Consumed by |
+|---|---|---|
+| `dbx.bin` | upstream artifact, Microsoft-KEK-signed | `generate-ovmf-vars --set-dbx` (virt-fw-vars reads the `EFI_TIME` header; a bare ESL makes it fail with `month must be in 1..12`) |
+| `dbx.esl` | the bare signature list extracted from it | `sign-efi-sig-list dbx …` in the Containerfile, re-signed with krytis's KEK |
+
+
+Source note: the list lived at `uefi.org/revocationlistfile` for years and moved to
+`github.com/microsoft/secureboot_objects` in 2024, which the UEFI Forum now names as
+authoritative. The old uefi.org URLs return 403.
+
+
+**`dbx` entries are hashes, not certificates.** A revocation is 16 bytes of owner GUID
+plus a 32-byte SHA-256 digest, so `SignatureSize` is 48 and there is nothing for
+openssl to parse. Any tooling that assumes X509 will report a `dbx` as corrupt —
+`scripts/parse-efi-auth.py` handles both and prints `443 revoked sha256 image hash(es)`
+rather than trying to read a subject line. The build-time `assert_esl` check happens to
+work unchanged, since 48 > 16.
+
+
+**systemd-boot does enrol `dbx` from `loader/keys/auto`** — verified, not assumed, and
+the reason `enroll-test` now asserts it. Post-enrollment the varstore shows
+`dbx: blob: 21292 bytes` beside `db: blob: 4353 bytes`. A missing `dbx` fails nothing on
+its own; the machine just quietly trusts every binary Microsoft has revoked, which is
+why the assertion exists rather than a printed line someone might skim past.
+
+
+Staleness is the live hazard: Microsoft adds revocations on their own schedule.
+`track-bst-sources.yml`'s `track-microsoft-dbx` job refreshes the pair and opens a PR
+titled with the delta. Re-run `mise run seal-uki && mise run enroll-test` before
+merging one — the digest changes, so the sealed image must be rebuilt anyway.
