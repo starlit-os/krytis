@@ -21,4 +21,4 @@ sources:
 - kind: git_repo
   url: github:PapirusDevelopmentTeam/papirus-icon-theme.git
   track: refs/tags/*
-  ref: 20250501-0-g863243822aa6693d4eb3758fd6444690d365c695
+  ref: 20260801-0-g5f8b701d7521e27b4859d7e4f9b0da4c423c036c
