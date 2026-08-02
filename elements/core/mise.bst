@@ -10,11 +10,11 @@ sources:
   filename: mise
   (?):
   - arch == "x86_64":
-      url: github_files:jdx/mise/releases/download/v2026.7.18/mise-v2026.7.18-linux-x64-musl
-      ref: bed1c5f27cc367472389f1b06092d76ddeb9b217531139d6da85acf5499c7a3d
+      url: github_files:jdx/mise/releases/download/v2026.8.0/mise-v2026.8.0-linux-x64-musl
+      ref: a24e100e683aa662bb9f33936ac9d4002531e8aadef108969efa3ebcf0c9f34a
   - arch == "aarch64":
-      url: github_files:jdx/mise/releases/download/v2026.7.18/mise-v2026.7.18-linux-arm64-musl
-      ref: 70578ecb868ddfb0de639b727058d5caf2ef3432925abf8c217e2605eacd2417
+      url: github_files:jdx/mise/releases/download/v2026.8.0/mise-v2026.8.0-linux-arm64-musl
+      ref: e9a1af0382b672f7640885fe7f8a1e67c83ae6cf354e69f5f4983c4779dc10eb
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
