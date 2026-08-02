@@ -4,6 +4,7 @@
 #USAGE flag "--secure" help="Boot the INSTALLED disk with secure boot enforced (requires 'mise run generate-ovmf-vars'). The live ISO always boots unsigned — it is not signed by design (#371)"
 #USAGE flag "--expect-fail" help="Invert the result: the installed system MUST be rejected by secure boot (negative test)"
 #USAGE flag "--payload-ref <ref>" help="Payload image ref for the fisherman recipe. Default: matches the ISO variant"
+#USAGE flag "--payload-image <ref>" help="Image the ISO is expected to embed. Default: localhost/krytis:sealed. Must match build-iso's --payload-image when the ISO was built around a published image"
 
 set -euo pipefail
 
@@ -90,8 +91,13 @@ if [[ "${SECURE}" -eq 1 ]]; then
     # is seconds and exact; skip it for --expect-fail, whose ISO is unsigned on
     # purpose.
     if [[ "${EXPECT_FAIL}" -eq 0 ]]; then
+        # Defaults to this checkout's sealed build. An ISO built with
+        # `build-iso --sealed --payload-image <ref>` carries somebody else's image
+        # — the published one, for release validation — so name the same ref here
+        # or this check rejects a perfectly good ISO.
         echo "==> Confirming ${ISO} carries the sealed payload..."
-        ./mise/tasks/verify-iso-payload --iso "${ISO}" --image localhost/krytis:sealed
+        ./mise/tasks/verify-iso-payload --iso "${ISO}" \
+            --image "${usage_payload_image:-localhost/krytis:sealed}"
     fi
 fi
 

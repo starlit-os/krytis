@@ -13,12 +13,23 @@
 #
 # Callers: mise/tasks/push --sealed, mise/tasks/build-iso --sealed. Run from the
 # repo root (it invokes ./mise/tasks/seal-uki).
+#
+# With an image ref as $1, the freshness half is skipped and that image is only
+# checked for being a genuine sealed build. Building an ISO around an image
+# somebody else produced — the published one, for release validation — has no
+# local :latest to be "no older than", and re-sealing would defeat the point.
 set -euo pipefail
 
-SEALED_TAG="localhost/krytis:sealed"
+SEALED_TAG="${1:-localhost/krytis:sealed}"
 LATEST_TAG="localhost/krytis:latest"
+EXPLICIT=$([[ -n "${1:-}" ]] && echo 1 || echo 0)
 
-if ! podman image exists "${LATEST_TAG}"; then
+if [[ "${EXPLICIT}" -eq 1 ]]; then
+    podman image exists "${SEALED_TAG}" || {
+        echo "==> ERROR: ${SEALED_TAG} not found locally — pull it first" >&2
+        exit 1
+    }
+elif ! podman image exists "${LATEST_TAG}"; then
     echo "==> ERROR: ${LATEST_TAG} not found locally — run mise build first (needed as the freshness reference for the sealed image)" >&2
     exit 1
 fi
@@ -44,21 +55,23 @@ print(int(datetime.fromisoformat(created).timestamp()))
 '
 }
 
-LATEST_CREATED=$(created_epoch "${LATEST_TAG}")
-if podman image exists "${SEALED_TAG}"; then
-    SEALED_CREATED=$(created_epoch "${SEALED_TAG}")
-else
-    SEALED_CREATED=0
-fi
+if [[ "${EXPLICIT}" -eq 0 ]]; then
+    LATEST_CREATED=$(created_epoch "${LATEST_TAG}")
+    if podman image exists "${SEALED_TAG}"; then
+        SEALED_CREATED=$(created_epoch "${SEALED_TAG}")
+    else
+        SEALED_CREATED=0
+    fi
 
-if [[ "${SEALED_CREATED}" -lt "${LATEST_CREATED}" ]]; then
-    echo "==> ${SEALED_TAG} is missing or older than ${LATEST_TAG} — running mise run seal-uki..."
-    ./mise/tasks/seal-uki
-fi
+    if [[ "${SEALED_CREATED}" -lt "${LATEST_CREATED}" ]]; then
+        echo "==> ${SEALED_TAG} is missing or older than ${LATEST_TAG} — running mise run seal-uki..."
+        ./mise/tasks/seal-uki
+    fi
 
-if ! podman image exists "${SEALED_TAG}"; then
-    echo "==> ERROR: ${SEALED_TAG} still missing after seal-uki" >&2
-    exit 1
+    if ! podman image exists "${SEALED_TAG}"; then
+        echo "==> ERROR: ${SEALED_TAG} still missing after seal-uki" >&2
+        exit 1
+    fi
 fi
 
 # The tag existing is not proof it is sealed — a hand-tagged or half-built image

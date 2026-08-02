@@ -194,7 +194,36 @@ Ordered so each step's failure is cheap and unambiguous.
 9. `mise run selfenroll-test` — the scenario a user actually hits: a machine with no
    keys, enrolling krytis's own, then booting enforcing.
 10. `mise run iso-install-test --secure --expect-fail` — the negative still fires.
-11. T4 checklist on at least one physical machine before calling a sealed image
+11. Build the medium you will actually carry to hardware, around the **published**
+    image rather than this checkout's:
+
+    ```bash
+    podman pull ghcr.io/starlit-os/krytis:sealed
+    mise run build-iso --sealed --payload-image ghcr.io/starlit-os/krytis:sealed \
+                       --compression release          # note: no --debug
+    ```
+
+    Steps 7–8 embed *local* bits wearing the published name, which is right for
+    iterating and wrong for release validation: a sealed image's UKI bakes a digest
+    of its own rootfs, so local bits prove nothing about whether the artifact users
+    install is self-consistent (the G-2 failure mode). `build-iso` verifies the
+    embed byte-for-byte either way.
+
+12. **You cannot install-test the medium from step 11.** `iso-install-test` drives
+    the installer over SSH, which needs a `--debug` ISO, and a release medium must
+    not ship a live session with sshd enabled. Test a debug twin of the same
+    payload instead, then carry the non-debug one:
+
+    ```bash
+    mise run build-iso --sealed --payload-image ghcr.io/starlit-os/krytis:sealed \
+                       --debug --output-dir output-debug
+    mise run iso-install-test --secure --payload-image ghcr.io/starlit-os/krytis:sealed
+    ```
+
+    The twin differs from the release ISO only in the live session's sshd drop-in;
+    the embedded payload is the same object, and both runs assert that.
+
+13. T4 checklist on at least one physical machine before calling a sealed image
     releasable.
 
 **Order matters at step 2 vs 6:** `mise run lint` rebuilds `:latest`, which makes

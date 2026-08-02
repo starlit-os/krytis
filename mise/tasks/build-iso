@@ -5,6 +5,7 @@
 #USAGE flag "--compression <mode>" default="fast" help="Squashfs compression: fast or release"
 #USAGE flag "--debug" help="Enable SSH in the live environment (not for production)"
 #USAGE flag "--sealed" help="Embed the signed UKI image (localhost/krytis:sealed) as the offline install payload instead of the unsigned one"
+#USAGE flag "--payload-image <ref>" help="With --sealed, embed this already-built image instead of localhost/krytis:sealed. Use the published ref for release validation; it is taken as-is, never re-sealed"
 
 set -euo pipefail
 
@@ -28,6 +29,12 @@ if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
 fi
 
 SEALED=$([[ "${usage_sealed:-}" == "true" ]] && echo 1 || echo 0)
+
+if [[ -n "${usage_payload_image:-}" && "${SEALED}" -eq 0 ]]; then
+    echo "ERROR: --payload-image only applies with --sealed." >&2
+    echo "       The unsigned payload comes from ${DAKOTA_ISO_DIR}/krytis/payload_ref." >&2
+    exit 1
+fi
 
 # iso-sd-boot.sh ignores env vars it does not know, so an out-of-date sibling
 # checkout would silently build a BROKEN sealed ISO — a mutated payload whose
@@ -64,10 +71,27 @@ fi
 #      normal inject-and-recommit pass. See docs/skills/secure-boot.md
 #      § A sealed ISO payload must be embedded byte-identically.
 if [[ "${SEALED}" -eq 1 ]]; then
-    ./scripts/ensure-sealed-image.sh
-    LOCAL_IMAGE="localhost/krytis:sealed"
+    # Default: the sealed image this checkout builds. For release validation (the
+    # T4 hardware checklist) pass the PUBLISHED one instead — the ISO otherwise
+    # carries local bits wearing the published name, and a sealed image's UKI
+    # bakes in a digest of its own rootfs, so local bits prove nothing about
+    # whether the artifact users install is self-consistent.
+    LOCAL_IMAGE="${usage_payload_image:-localhost/krytis:sealed}"
+    ./scripts/ensure-sealed-image.sh ${usage_payload_image:+"${LOCAL_IMAGE}"}
     PAYLOAD_REF="ghcr.io/starlit-os/krytis:sealed"
     ISO_NAME="krytis-live-sealed.iso"
+
+    # dakota-iso runs `podman rmi "${PAYLOAD_IMAGE}"` once it has exported the
+    # payload to an oci-archive, to reclaim ~7GB before the squashfs step
+    # (scripts/iso-sd-boot.sh). In the default case that deletes only the tagged
+    # copy and localhost/krytis:sealed survives for the verification below — but
+    # naming the published ref as the payload makes source and copy the same
+    # object, so the build would delete exactly what verify-iso-payload needs.
+    # Keep an alias the pipeline has no reason to touch.
+    if [[ "${LOCAL_IMAGE}" == "${PAYLOAD_REF}" ]]; then
+        podman tag "${LOCAL_IMAGE}" localhost/krytis:iso-payload
+        LOCAL_IMAGE="localhost/krytis:iso-payload"
+    fi
 else
     LOCAL_IMAGE="localhost/krytis:latest"
     PAYLOAD_REF="$(tr -d '[:space:]' < "${DAKOTA_ISO_DIR}/krytis/payload_ref")"
@@ -133,6 +157,14 @@ PAYLOAD_SEALED="${SEALED}" \
 # the default one if you need both variants side by side.
 if [[ "${SEALED}" -eq 1 ]]; then
     mv "${OUTPUT_DIR}/krytis-live.iso" "${OUTPUT_DIR}/${ISO_NAME}"
+    # dakota-iso's `podman rmi "${PAYLOAD_IMAGE}"` has just deleted the tag it was
+    # handed. When that tag was one the user pulled themselves, put it back —
+    # building an ISO should not silently remove an image from their storage, and
+    # every follow-up step (iso-install-test --payload-image, another build) names
+    # it the obvious way rather than knowing about the alias.
+    if [[ "${LOCAL_IMAGE}" == "localhost/krytis:iso-payload" ]]; then
+        podman tag "${LOCAL_IMAGE}" "${PAYLOAD_REF}"
+    fi
     ./mise/tasks/verify-iso-payload --iso "${OUTPUT_DIR}/${ISO_NAME}" --image "${LOCAL_IMAGE}"
 fi
 
