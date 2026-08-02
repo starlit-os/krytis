@@ -30,11 +30,47 @@ podman build --squash-all --target sealed -t localhost/krytis:sealed-base \
     --secret id=pk_crt,src=files/boot-keys/PK.crt \
     -f Containerfile .
 
+# `bootc container ukify` computes the composefs digest through a temporary
+# repository it creates with `tempfile::tempdir_in("/var/tmp")` — hardcoded, so
+# TMPDIR is ignored (bootc crates/lib/src/bootc_composefs/digest.rs:28). Objects
+# are ingested with O_TMPFILE, which fuse-overlayfs does not implement, so on a
+# runner whose podman falls back to fuse-overlayfs the build dies with:
+#
+#   Computing composefs digest: ... Creating object tmpfile:
+#     Opening temp file in objects directory: Operation not supported (os error 95)
+#
+# It passes on a workstation only because podman there uses native kernel
+# overlayfs. composefs-rs 5a227a0 adds a named-tmpfile fallback, but that is not
+# in any bootc release yet — bootc-dev/bootc#2340. Until it ships, give the build
+# a /var/tmp on a filesystem that does support O_TMPFILE.
+#
+# Disk, not tmpfs: the object store is a full copy of the rootfs (6.5 GB measured),
+# which is a plausible OOM on a runner and merely a rounding error on disk. Created
+# under /var/tmp so it is on-disk on both CachyOS (btrfs) and the runners (ext4);
+# /tmp is tmpfs on some hosts, which would reintroduce the memory cost.
+UKI_TMP="$(mktemp -d -p /var/tmp krytis-ukify-XXXXXX)"
+trap 'rm -rf "${UKI_TMP}"' EXIT
+
+# Fail here rather than 30 seconds into the build if this filesystem is no better
+# than the one we are working around (e.g. /var/tmp itself on overlayfs).
+if ! python3 -c '
+import os, sys
+try:
+    os.close(os.open(sys.argv[1], os.O_TMPFILE | os.O_RDWR, 0o600))
+except OSError as exc:
+    sys.exit(f"{exc.strerror} (errno {exc.errno})")
+' "${UKI_TMP}"; then
+    echo "==> ERROR: ${UKI_TMP} does not support O_TMPFILE, which bootc's composefs" >&2
+    echo "    digest step requires. Point it at a directory on ext4/xfs/btrfs/tmpfs." >&2
+    exit 1
+fi
+
 echo "==> [2/2] Building UKI against sealed-base -> localhost/krytis:sealed..."
 podman build --squash-all -t localhost/krytis:sealed \
     --build-arg SEAL_SECURE_BOOT=true \
     --secret id=db_key,src=files/boot-keys/db.key \
     --secret id=db_crt,src=files/boot-keys/db.crt \
+    -v "${UKI_TMP}:/var/tmp" \
     -f Containerfile.seal-uki .
 
 echo "==> Sealed image built: localhost/krytis:sealed"

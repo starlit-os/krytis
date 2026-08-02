@@ -173,6 +173,35 @@ RUN --mount=type=bind,from=uki-builder,target=/uki-out \
 
 Verified end-to-end: rebuilt with this structure, extracted the baked digest from the resulting `:sealed` image, then independently recomputed the digest via `podman mount` on that same already-committed image (not a rebuild) — the two matched exactly.
 
+### ukify's temp repo needs a `/var/tmp` that supports `O_TMPFILE`
+
+`bootc container ukify` computes the digest by ingesting the whole rootfs into a
+throwaway composefs repository, created with `tempfile::tempdir_in("/var/tmp")` —
+**hardcoded, so `TMPDIR` is ignored** (bootc `crates/lib/src/bootc_composefs/digest.rs:28`;
+objects land in `/var/tmp/.tmp<rand>/repo/objects`). Objects are ingested with
+`O_TMPFILE`, which **fuse-overlayfs does not implement**:
+
+```
+Computing composefs digest: ... Creating object tmpfile:
+  Opening temp file in objects directory: Operation not supported (os error 95)
+```
+
+This is invisible on a workstation whose podman uses native kernel overlayfs, and
+fatal on a runner where rootless podman falls back to fuse-overlayfs — check with
+`podman info --format '{{.Store.GraphDriverName}}'`. `mise/tasks/seal-uki` therefore
+bind-mounts a host directory over `/var/tmp` for the ukify build (`podman build -v`),
+and asserts `O_TMPFILE` works there before starting.
+
+**Disk, not tmpfs.** The object store is a full copy of the rootfs — 6.5 GB measured
+for krytis — so a tmpfs mount trades a build failure for an OOM. The scratch dir is
+created under `/var/tmp` (on-disk on both CachyOS and the runners) rather than `/tmp`,
+which is tmpfs on some hosts.
+
+Upstream fixes this: composefs-rs `5a227a0` falls back to a named tmpfile on
+`ENOTSUP`. It is **not in any bootc release yet** — [bootc#2340](https://github.com/bootc-dev/bootc/issues/2340),
+[composefs-rs#368](https://github.com/composefs/composefs-rs/pull/368). Drop the
+workaround once a bootc carrying it lands in the image.
+
 ## `--composefs-backend` requires a single layer, but squashing breaks the UKI digest — reconcile with a two-phase build
 
 Two independent, contradictory requirements collide in a sealed build:
