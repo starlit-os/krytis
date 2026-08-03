@@ -752,12 +752,17 @@ The chain, and why each link is load-bearing:
    recognises a root partition carrying the **discoverable** GUID
    `4f68bce3-e8cd-4db1-96e7-fbcaf984b709`, not the generic `0fc63daf-…`.
 
-fisherman typed the encrypted root generically and relied on injecting
-`rd.luks.name=<UUID>=root` into BLS entries, which a UKI install never receives. Fixed
-upstream in [tuna-os/fisherman#72](https://github.com/tuna-os/fisherman/pull/72) (fork
-commit `423a581`) by typing the partition at partition time — not by retagging
-afterwards, since by then partition 2 holds an open LUKS container that later steps
-still need.
+fisherman types the encrypted root generically and relies on injecting
+`rd.luks.name=<UUID>=root` into BLS entries, which a UKI install never receives. Its
+own retag to the discoverable GUID exists but is gated `&& !hasEncryption`
+(`cmd/fisherman/main.go:681`).
+
+A fix is written and tested on the fork —
+`kitten-lily/fisherman:fix/discoverable-root-guid-for-uki`, commit `423a581` — typing
+the partition at partition time rather than retagging afterwards, since by then
+partition 2 holds an open LUKS container that later steps still need. **It is not
+upstream, and no PR is open.** Opening one against a third-party project is the
+maintainer's call, not an agent's; see AGENTS.md § Third-party repositories.
 
 **Operator fix for a machine already installed this way** — metadata only, data
 untouched:
