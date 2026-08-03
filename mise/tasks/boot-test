@@ -6,6 +6,7 @@
 #USAGE flag "--expect-fail" help="Invert the result: a successful boot is the failure (secure boot negative test)"
 #USAGE flag "--debug-keep" help="On failure, keep WORKDIR (disk image, serial log, keys) instead of deleting it, for post-mortem inspection"
 #USAGE flag "--reuse-disk <path>" help="Boot this already-installed raw disk instead of running generate-disk. Skips the only step that needs root, so the boot+assert cycle runs unprivileged."
+#USAGE flag "--luks-passphrase <s>" help="The disk root is an encrypted LUKS2 container: answer the passphrase prompt over the QEMU monitor, and FAIL if no prompt ever appears (#473)"
 
 set -euo pipefail
 
@@ -20,7 +21,7 @@ set -euo pipefail
 # happened when this was invoked via `bash -x` with --image/--secure/--debug-keep.
 #
 # Consume our own flags from $@ before falling back to usage_*.
-CLI_IMAGE=""; CLI_FS=""; CLI_SECURE=""; CLI_EXPECT_FAIL=""; CLI_DEBUG_KEEP=""; CLI_REUSE_DISK=""
+CLI_IMAGE=""; CLI_FS=""; CLI_SECURE=""; CLI_EXPECT_FAIL=""; CLI_DEBUG_KEEP=""; CLI_REUSE_DISK=""; CLI_LUKS_PASS=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --image)       CLI_IMAGE="$2"; shift 2 ;;
@@ -29,6 +30,7 @@ while [ $# -gt 0 ]; do
         --expect-fail) CLI_EXPECT_FAIL=true; shift ;;
         --debug-keep)  CLI_DEBUG_KEEP=true; shift ;;
         --reuse-disk)  CLI_REUSE_DISK="$2"; shift 2 ;;
+        --luks-passphrase) CLI_LUKS_PASS="$2"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -39,6 +41,7 @@ FS="${CLI_FS:-${usage_filesystem:-btrfs}}"
 EXPECT_FAIL="${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}"
 DEBUG_KEEP="${CLI_DEBUG_KEEP:-${usage_debug_keep:-}}"
 REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+LUKS_PASS="${CLI_LUKS_PASS:-${usage_luks_passphrase:-}}"
 
 # The image default depends on the mode, so it is resolved here rather than in
 # the #USAGE annotation (a `default=` there is indistinguishable from the user
@@ -52,6 +55,22 @@ if [ -z "${IMAGE}" ]; then
     else
         IMAGE="localhost/krytis:latest"
     fi
+fi
+
+# systemd-stub refuses SMBIOS cmdline-extra under Secure Boot enforcement — that
+# refusal is the point of sealing — so `console=ttyS0` cannot be injected and the
+# prompt never reaches a channel this script can read or answer. Rejected up front
+# rather than run for six minutes and report "no prompt appeared", which would be
+# an artefact of the harness rather than a fact about the image.
+if [ -n "${LUKS_PASS}" ] && [ -n "${SECURE}" ]; then
+    echo "ERROR: --luks-passphrase cannot be combined with --secure." >&2
+    echo "       Answering the prompt needs console=ttyS0 injected via" >&2
+    echo "       io.systemd.stub.kernel-cmdline-extra, and systemd-stub ignores" >&2
+    echo "       cmdline additions when Secure Boot is enforcing." >&2
+    echo "       Run the two assertions separately:" >&2
+    echo "         mise run luks-install-test            # unlock works" >&2
+    echo "         mise run iso-install-test --secure    # enforcement works" >&2
+    exit 1
 fi
 
 # generate-disk is the ONLY part of boot-test that needs root, and it is
@@ -225,6 +244,35 @@ CRED_ARGS=(
     -smbios "type=11,value=io.systemd.credential.binary:krytis.boottest_authorized_keys=$(cred_b64 "${WORKDIR}/id_boottest.pub")"
 )
 
+# Answering a LUKS prompt needs the serial to be READABLE and WRITABLE, and needs
+# the prompt to reach it at all. Two pieces:
+#
+#   1. `console=ttyS0`, injected through systemd-stub's SMBIOS cmdline-extra. A
+#      sealed UKI's own cmdline is signed and cannot be edited, and with a VGA
+#      device present /dev/console is tty0 — so the prompt is written to a
+#      framebuffer nobody is reading and the serial log stops at `systemd-stub@`.
+#      That is exactly what the first version of this gate mistook for "no prompt
+#      ever appeared". The stub REFUSES cmdline-extra under Secure Boot
+#      enforcement, which is why --secure is rejected with --luks-passphrase.
+#      plymouth is deliberately left enabled: its interaction with
+#      systemd-ask-password is part of what this exercises, and the console agent
+#      prompts on ttyS0 regardless.
+#
+#   2. a socket chardev with `logfile=`, instead of `-serial file:`. Same log on
+#      disk, but the socket also lets us write the passphrase back to
+#      /dev/console. Typing it on the emulated keyboard with `sendkey` reaches
+#      whatever owns tty0 — plymouth, mid-repaint — and drops characters; writing
+#      to the console the agent is actually reading is deterministic.
+LUKS_ARGS=()
+SERIAL_ARGS=(-serial "file:${WORKDIR}/serial.log")
+if [ -n "${LUKS_PASS}" ]; then
+    LUKS_ARGS=(-smbios "type=11,value=io.systemd.stub.kernel-cmdline-extra=console=ttyS0")
+    SERIAL_ARGS=(
+        -chardev "socket,id=luksser,path=${WORKDIR}/serial.sock,server=on,wait=off,logfile=${WORKDIR}/serial.log"
+        -serial chardev:luksser
+    )
+fi
+
 # scripts/ovmf-paths.sh (#458)
 . scripts/ovmf-paths.sh
 OVMF_VARS_SRC=""
@@ -262,8 +310,9 @@ qemu-system-x86_64 \
     -device virtio-net-pci,netdev=net0 \
     -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
     "${CRED_ARGS[@]}" \
+    "${LUKS_ARGS[@]}" \
     -display none \
-    -serial "file:${WORKDIR}/serial.log" \
+    "${SERIAL_ARGS[@]}" \
     -monitor "unix:${MONITOR_SOCK},server,nowait" \
     -daemonize -pidfile "${WORKDIR}/qemu.pid"
 
@@ -297,6 +346,48 @@ s.close()
 PY
 }
 
+# Answer a password prompt by writing to the guest's serial console.
+#
+# Deliberately NOT the emulated keyboard (`sendkey`): keystrokes land on whatever
+# owns tty0 — plymouth, possibly mid-repaint — which drops characters, and every
+# character needs a QEMU key name so a passphrase would be restricted to a
+# typeable subset. Writing to the console that systemd-ask-password's console
+# agent is reading takes arbitrary bytes and needs no mapping.
+send_passphrase() {
+    [ -S "${WORKDIR}/serial.sock" ] || {
+        echo "ERROR: no serial socket at ${WORKDIR}/serial.sock — boot-test was" >&2
+        echo "       started without --luks-passphrase, so the serial is a plain file." >&2
+        return 1
+    }
+    # One byte at a time with a pause, and the socket held open afterwards.
+    #
+    # A single sendall() followed by close() loses the tail: the guest echoed only
+    # the first 8 characters of a 14-character passphrase, then failed the unlock
+    # and dropped to emergency mode. QEMU discards whatever is still buffered for
+    # the guest when the client disconnects, so the close() raced the delivery —
+    # the same reason monitor_cmd sleeps before closing. Throttling also keeps the
+    # tty's line discipline and its echo in step.
+    LUKS_PASS="$1" python3 - "${WORKDIR}/serial.sock" <<'PY'
+import os, socket, sys, time
+
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(10)
+s.connect(sys.argv[1])
+for byte in os.environ["LUKS_PASS"].encode():
+    s.sendall(bytes([byte]))
+    time.sleep(0.05)
+s.sendall(b"\n")
+# Let the guest drain the newline and act on it before the fd goes away.
+time.sleep(2)
+s.close()
+PY
+}
+
+# The prompt systemd-cryptsetup/plymouth writes. Kept broad on purpose — the
+# exact wording differs between the console agent and plymouth, and the
+# assertion is "something asked", not "something asked in these words".
+LUKS_PROMPT_RE='(Please enter passphrase|Enter passphrase|passphrase for)'
+
 cleanup() {
     monitor_cmd system_powerdown
     [ -S "${MONITOR_SOCK}" ] && sleep 3
@@ -314,9 +405,39 @@ trap cleanup EXIT
 # Manager", and that eats most of a 120s budget on --secure runs. The loop exits
 # as soon as SSH answers, so a healthy boot is not slowed down by the larger cap.
 SSH_WAIT=240
-echo "==> [3/5] Waiting for SSH (up to ${SSH_WAIT}s)..."
+# An encrypted root adds the unlock to that budget, and the prompt itself only
+# appears after the initrd has probed the disk. `if`, not `[ … ] && …`: under
+# `set -e` a bare test that fails is the script's exit status.
+if [ -n "${LUKS_PASS}" ]; then
+    SSH_WAIT=360
+    echo "==> [3/5] Waiting for SSH (up to ${SSH_WAIT}s), answering the LUKS prompt when it appears..."
+else
+    echo "==> [3/5] Waiting for SSH (up to ${SSH_WAIT}s)..."
+fi
 SSH_UP=false
+LUKS_PROMPTED=false
+LUKS_ATTEMPTS=0
+LUKS_LAST_TRY=0
+LUKS_MAX_ATTEMPTS=3
+ELAPSED=0
 for _ in $(seq 1 $((SSH_WAIT / 2))); do
+    # Answer before probing SSH: until the root is unlocked there is no system to
+    # ssh into, so a prompt sitting unanswered would just burn the whole budget.
+    #
+    # Retried up to LUKS_MAX_ATTEMPTS, 60s apart, because a rejected passphrase
+    # re-prompts and one dropped byte should not sink a 20-minute run. Bounded, and
+    # only while SSH is still down, so a booted system never gets stray input.
+    if [ -n "${LUKS_PASS}" ] \
+       && [ "${LUKS_ATTEMPTS}" -lt "${LUKS_MAX_ATTEMPTS}" ] \
+       && [ $((ELAPSED - LUKS_LAST_TRY)) -ge 60 -o "${LUKS_ATTEMPTS}" -eq 0 ] \
+       && [ -s "${WORKDIR}/serial.log" ] \
+       && grep -qaE "${LUKS_PROMPT_RE}" "${WORKDIR}/serial.log"; then
+        LUKS_PROMPTED=true
+        LUKS_ATTEMPTS=$((LUKS_ATTEMPTS + 1))
+        LUKS_LAST_TRY="${ELAPSED}"
+        echo "    LUKS passphrase prompt seen — answering on the serial console (attempt ${LUKS_ATTEMPTS}/${LUKS_MAX_ATTEMPTS})"
+        send_passphrase "${LUKS_PASS}" || exit 1
+    fi
     if ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
            -o ConnectTimeout=2 -o BatchMode=yes -o IdentitiesOnly=yes \
            -i "${WORKDIR}/id_boottest" root@localhost true 2>/dev/null; then
@@ -324,7 +445,33 @@ for _ in $(seq 1 $((SSH_WAIT / 2))); do
         break
     fi
     sleep 2
+    # Wall-clock is not usable here — send_passphrase itself takes seconds — so the
+    # retry spacing counts loop iterations, which is what ELAPSED tracks.
+    ELAPSED=$((ELAPSED + 2))
 done
+
+# The acceptance criterion from #473: the hardware symptom was a splash that
+# never yielded a prompt, so "the disk unlocked" is not the assertion. A run that
+# somehow reached SSH without ever prompting means the root was not encrypted, or
+# was unlocked by something other than the passphrase — either way this gate
+# stopped testing what it claims to.
+if [ -n "${LUKS_PASS}" ] && [ "${LUKS_PROMPTED}" != "true" ]; then
+    BOOT_TEST_FAILED=1
+    echo "==> FAIL: no LUKS passphrase prompt ever appeared." >&2
+    echo "    Expected the initrd to ask for a passphrase matching:" >&2
+    echo "      ${LUKS_PROMPT_RE}" >&2
+    if [ "${SSH_UP}" = "true" ]; then
+        echo "    The system booted anyway, so its root is NOT an encrypted volume" >&2
+        echo "    that needs unlocking — check the installer actually applied" >&2
+        echo "    encryption.type=luks-passphrase." >&2
+    else
+        echo "    The system also never reached SSH. On real hardware this looked like" >&2
+        echo "    a plymouth splash that hangs, then a timeout on" >&2
+        echo "    dev-gpt-auto-root.device — see #473 and #474." >&2
+    fi
+    [ -s "${WORKDIR}/serial.log" ] && { echo "--- serial.log ---" >&2; cat "${WORKDIR}/serial.log" >&2; }
+    exit 1
+fi
 
 if [ "${SSH_UP}" != "true" ] && [ "${EXPECT_FAIL}" != "true" ]; then
     # Print the serial log BEFORE the EXIT trap deletes WORKDIR — the previous
