@@ -189,8 +189,8 @@ Ordered so each step's failure is cheap and unambiguous.
 1. `mise run lint` — Containerfile sane.
 2. `mise run seal-uki` — sealed build, `assert_esl` passes.
 3. `scripts/parse-efi-auth.py` on the image's three `.auth` files — expect
-   `CN=Database Key` + both Microsoft CAs, `CN=Key Exchange Key`, `CN=Platform Key`.
-4. `mise run generate-ovmf-vars` — must report `Matches …db.auth (4353 bytes)`.
+   `CN=Database Key` + all five Microsoft CAs, `CN=Key Exchange Key`, `CN=Platform Key`.
+4. `mise run generate-ovmf-vars` — must report `Matches …db.auth (8891 bytes)`.
 5. `mise run enroll-test` — 8 s, the image's own keys work.
 6. `mise run boot-test --secure` (or T3 if no root) — the signed image boots enforcing.
 7. `mise run build-iso --sealed --debug` — embed gate passes.

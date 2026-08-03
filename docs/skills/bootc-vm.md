@@ -650,32 +650,32 @@ virt-fw-vars --input /usr/share/OVMF/OVMF_VARS_4M.fd --print | grep -iE '^ *(PK|
 # no output = setup mode = correct for enroll-test
 ```
 
-### …and its `OVMF_CODE` enrols two Microsoft CAs of its own
+### …and its `OVMF_CODE` carries Microsoft CAs of its own
 
-An empty varstore does not mean an empty `db` after boot. Ubuntu's
-`OVMF_CODE_4M.secboot.fd` carries built-in default entries, so the *same* sealed
-image produces different results depending on whose firmware ran it:
+An empty varstore does not mean an empty `db` after boot: Ubuntu's
+`OVMF_CODE_4M.secboot.fd` carries built-in default entries. Measured, with the same
+sealed image booted under each firmware:
 
-```
-Fedora/Arch firmware:  db : blob: 4353 bytes   (3 certs — all ours)
-Ubuntu firmware:       db : blob: 7348 bytes   (5 certs)
-```
+| krytis ships | Fedora/Arch firmware | Ubuntu firmware |
+|---|---|---|
+| two of Microsoft's five db CAs (before #464) | `db` 4353 — 3 certs, all ours | `db` 7348 — 5 certs |
+| all five (#464 onward) | `db` 8891 — 6 certs, all ours | `db` **8891** — identical |
 
-The two extras carry owner GUID `77fa9abd-0359-4d32-bd60-28f4e78f784b`:
+The two Ubuntu added were `Microsoft UEFI CA 2023` and `Microsoft Option ROM UEFI
+CA 2023`, under owner GUID `77fa9abd-0359-4d32-bd60-28f4e78f784b` rather than the GUID
+krytis generates — which is how you tell a firmware default from a shipped cert even
+when it is the same certificate.
 
-```
-db-…-DatabaseKey.pem                            <- ours
-db-…-MicrosoftCorporationUEFICA2011.pem         <- ours (bundled since #443)
-db-…-WindowsUEFICA2023.pem                      <- ours
-db-77fa9abd-…-MicrosoftUEFICA2023.pem           <- the firmware's
-db-77fa9abd-…-MicrosoftOptionROMUEFICA2023.pem  <- the firmware's
-```
+**Shipping all five closed that gap by accident and it is worth understanding why.**
+Both of the firmware's extras are now in krytis's own `db`, and the result dedupes to
+exactly ours: 8891 either way. Before #464 a CI run trusted two CAs a real machine did
+not, so a negative test asserting some binary is *refused* could pass in CI for the
+wrong reason. That specific hazard is gone — but do not rely on it, because the
+firmware's contribution is still not ours to predict, and a different OEM ships
+different defaults.
 
-Two consequences. A CI run on Ubuntu is **more permissive** than a real machine
-enrolled only from krytis's `.auth` files, so a negative test asserting that some
-binary is *refused* cannot be trusted there without checking which CAs are loaded.
-And a `db` size or non-emptiness check is not evidence the image contributed
-anything — the firmware can satisfy it alone. `enroll-test` therefore asserts
+A `db` size or non-emptiness check is therefore still not evidence the image
+contributed anything — a firmware can satisfy it alone. `enroll-test` asserts
 `CN=Database Key` is present by name, and prints every db subject in its verdict:
 
 ```bash

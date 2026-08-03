@@ -1,23 +1,70 @@
 #!/usr/bin/env bash
-#MISE description="Fetch Microsoft UEFI CA certificates into files/microsoft-uefi-certs/ (public, committed)"
+#MISE description="Fetch Microsoft's five UEFI db certificates into files/microsoft-uefi-certs/ (public, committed)"
 
 set -euo pipefail
 
 CERTS_DIR="files/microsoft-uefi-certs"
 mkdir -p "$CERTS_DIR"
 
-# Microsoft Corporation UEFI CA 2011 (third-party binaries: Option ROMs, shim, etc.)
-# fwlink verified live 2026-07-29 -> https://www.microsoft.com/pkiops/certs/MicCorUEFCA2011_2011-06-27.crt
-curl -sSfL "https://go.microsoft.com/fwlink/p/?LinkID=321194" -o "$CERTS_DIR/microsoft-uefi-ca-2011.der"
-# Microsoft Corporation UEFI CA 2023 (successor, some newer firmware requires it)
-# fwlink verified live 2026-07-29 -> https://www.microsoft.com/pkiops/certs/windows%20uefi%20ca%202023.crt
-curl -sSfL "https://go.microsoft.com/fwlink/?linkid=2239776" -o "$CERTS_DIR/microsoft-uefi-ca-2023.der"
+# All five certificates Microsoft publishes for db, from their own repository — the
+# same source as the dbx revocation list (see fetch-microsoft-dbx), so there is one
+# authoritative origin rather than a handful of fwlink redirects.
+#
+# Shipping all five is a deliberate trust decision (#464, option 1): it matches what
+# OEM firmware trusts, so an existing Windows install and 2023-chain option ROMs keep
+# verifying after enrollment replaces the OEM's db. Enrolling FEWER than the firmware
+# had is what silently breaks dual-boot — the machine boots krytis fine and then
+# refuses Windows. What makes trusting Microsoft's CAs defensible is dbx (#446): the
+# revocation list is enrolled alongside, so binaries Microsoft has revoked are refused.
+#
+# Previously only two were fetched, and the file named microsoft-uefi-ca-2023.der
+# actually contained *Windows* UEFI CA 2023 — a different CA. Hence the CN assertion
+# below: a filename is a claim, and this one was wrong for months.
+BASE="https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DB/Certificates"
 
-for cert in "$CERTS_DIR"/*.der; do
-    openssl x509 -inform DER -in "$cert" -noout || { echo "ERROR: $cert is not a valid DER cert" >&2; exit 1; }
+# local filename : upstream filename : expected certificate CN
+CERTS=(
+  "microsoft-uefi-ca-2011.der:MicCorUEFCA2011_2011-06-27.der:Microsoft Corporation UEFI CA 2011"
+  "microsoft-windows-production-pca-2011.der:MicWinProPCA2011_2011-10-19.der:Microsoft Windows Production PCA 2011"
+  "microsoft-uefi-ca-2023.der:microsoft uefi ca 2023.der:Microsoft UEFI CA 2023"
+  "microsoft-option-rom-uefi-ca-2023.der:microsoft option rom uefi ca 2023.der:Microsoft Option ROM UEFI CA 2023"
+  "windows-uefi-ca-2023.der:windows uefi ca 2023.der:Windows UEFI CA 2023"
+)
+
+urlencode() { python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$1"; }
+
+for entry in "${CERTS[@]}"; do
+    local_name="${entry%%:*}"
+    rest="${entry#*:}"
+    upstream_name="${rest%%:*}"
+    want_cn="${rest#*:}"
+
+    curl -sSfL --max-time 120 "${BASE}/$(urlencode "${upstream_name}")" \
+        -o "${CERTS_DIR}/${local_name}"
+
+    openssl x509 -inform DER -in "${CERTS_DIR}/${local_name}" -noout 2>/dev/null || {
+        echo "ERROR: ${local_name} is not a valid DER certificate" >&2; exit 1; }
+
+    # A filename is a claim; verify it. The spacing around '=' in openssl's subject
+    # output differs between 3.0 and 3.5, so match loosely (docs/skills/bootc-vm.md).
+    got=$(openssl x509 -inform DER -in "${CERTS_DIR}/${local_name}" -noout -subject |
+          sed 's/^subject=* *//')
+    if ! grep -qE "CN *= *${want_cn}\$" <<<"${got}"; then
+        echo "ERROR: ${local_name} should be '${want_cn}' but is:" >&2
+        echo "       ${got}" >&2
+        echo "       Upstream may have renamed or reissued it — check" >&2
+        echo "       ${BASE}/ before changing this list." >&2
+        exit 1
+    fi
 done
 
-echo "==> Microsoft UEFI CA certs in $CERTS_DIR/:"
-for cert in "$CERTS_DIR"/*.der; do
-    echo "    $(basename "$cert"): $(openssl x509 -inform DER -in "$cert" -noout -subject -sha256 -fingerprint | tr '\n' ' ')"
+# The old two-cert set used different names; leave nothing stale behind for the
+# Containerfile's *.der glob to pick up twice.
+rm -f "${CERTS_DIR}/microsoft-uefi-ca-2023.der.old"
+
+echo "==> Microsoft db certificates in ${CERTS_DIR}/:"
+for cert in "${CERTS_DIR}"/*.der; do
+    printf '    %-42s %s\n' "$(basename "$cert")" \
+        "$(openssl x509 -inform DER -in "$cert" -noout -subject | sed 's/^subject=* *//' | sed 's/.*CN *= *//')"
 done
+echo "==> $(ls "${CERTS_DIR}"/*.der | wc -l) certificates — all five of Microsoft's, per #464."

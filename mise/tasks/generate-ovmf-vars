@@ -25,10 +25,11 @@ OVMF_VARS_SRC=$(ovmf_vars_pristine) || exit 1
 
 # db must hold the SAME certificates the image's own db.auth enrolls, in the same
 # order: krytis's db cert followed by the Microsoft CAs from files/. Testing a
-# narrower db than real hardware gets is how #438 stayed invisible — a machine
-# that enrolls loader/keys/auto ends up with a 4353-byte db, while this varstore
-# used to hold krytis's cert alone (1255 bytes), so `boot-test --secure` proved
-# strictly less than it appeared to. --add-db takes PEM or DER and repeats.
+# narrower db than real hardware gets is how #438 stayed invisible — a machine that
+# enrolls loader/keys/auto ends up with an 8891-byte db (krytis + Microsoft's five,
+# #464), while this varstore used to hold krytis's cert alone (1255 bytes), so
+# `boot-test --secure` proved strictly less than it appeared to. Globbing *.der keeps
+# the two in step automatically when that set changes. --add-db takes PEM or DER.
 MS_DB_ARGS=()
 if [ -d "${MS_CERTS_DIR}" ]; then
     for ms in "${MS_CERTS_DIR}"/*.der; do

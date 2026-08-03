@@ -55,27 +55,35 @@ bootctl status | grep "Secure Boot"
 
 ## What this enrollment does and doesn't preserve
 
-**Partially preserved — and the gaps matter.** Microsoft publishes **five**
-certificates for `db` ([microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)
-`PreSignedObjects/DB/Certificates/`). krytis bundles two of them:
+**Preserved:** all five certificates Microsoft publishes for `db`
+([microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)
+`PreSignedObjects/DB/Certificates/`) are bundled into `db.auth` (#464), so
+Microsoft-signed EFI binaries keep verifying after enrollment:
 
-| Microsoft's `db` certificate | in krytis's `db.auth`? | signs |
-|---|---|---|
-| Microsoft Corporation UEFI CA 2011 | **yes** | shims, most third-party option ROMs |
-| Windows UEFI CA 2023 | **yes** | Windows binaries signed under the 2023 chain |
-| Microsoft Windows Production PCA 2011 | **no** | `bootmgfw.efi` on essentially every current Windows 10/11 install |
-| Microsoft UEFI CA 2023 | **no** | newer third-party binaries |
-| Microsoft Option ROM UEFI CA 2023 | **no** | option ROMs signed under the 2023 chain |
+| Microsoft's `db` certificate | signs |
+|---|---|
+| Microsoft Corporation UEFI CA 2011 | shims, most third-party option ROMs |
+| Microsoft Windows Production PCA 2011 | `bootmgfw.efi` on essentially every current Windows 10/11 install |
+| Microsoft UEFI CA 2023 | newer third-party binaries |
+| Microsoft Option ROM UEFI CA 2023 | option ROMs signed under the 2023 chain |
+| Windows UEFI CA 2023 | Windows binaries signed under the 2023 chain |
 
-So a distro `shimx64.efi` keeps working — its chain is
-`Microsoft Windows UEFI Driver Publisher` → `Microsoft Corporation UEFI CA 2011`,
-verified directly against the cert we ship. **An existing Windows install most likely
-does not:** its boot manager is signed under Windows Production PCA 2011, which we do
-not enrol, so after enrollment the firmware refuses it. Do not enrol krytis's keys on
-a machine whose Windows partition you need to boot until that is resolved
-([#464](https://github.com/starlit-os/krytis/issues/464)).
+That includes a Windows boot manager, so dual-boot survives. It did **not** before
+#464: only two of the five were shipped, and because enrollment *replaces* the OEM's
+`db` rather than merging with it, enrolling silently made an existing Windows install
+unbootable — a distro `shimx64.efi` kept working (its chain is
+`Microsoft Windows UEFI Driver Publisher` → `Microsoft Corporation UEFI CA 2011`, one
+of the two we had) while `bootmgfw.efi`, signed under Windows Production PCA 2011, did
+not.
 
-Check any specific binary before trusting it — read the chain, do not ask a verifier:
+`dbx` is enrolled alongside (#446), so binaries Microsoft has *revoked* are still
+refused — the allow-list is not open-ended. Widening `db` also does not make krytis's
+own unsigned artifacts acceptable: verified by enrolling this key set and then
+presenting an unsigned `systemd-bootx64.efi`, which the firmware refuses with
+`Access Denied -- rejected probably by Secure Boot`.
+
+Check any specific binary before trusting it — read the chain, do not ask a verifier.
+It is the *issuer* that has to be in `db`, not the leaf:
 
 ```bash
 sbverify --list bootx64.efi | grep -A1 subject   # the issuer CN is the answer

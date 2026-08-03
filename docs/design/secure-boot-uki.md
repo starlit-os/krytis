@@ -265,6 +265,40 @@ Generate `.auth` files from PEM keys using efitools (`cert-to-efi-sig-list` + `s
 
 For QEMU testing: `virt-fw-vars` to bake keys into OVMF vars.
 
+#### Which Microsoft CAs `db` carries — decided #464, option 1
+
+**All five certificates Microsoft publishes for `db`**, fetched from
+`microsoft/secureboot_objects` by `mise run fetch-microsoft-certs`:
+
+| certificate | signs |
+|---|---|
+| Microsoft Corporation UEFI CA 2011 | shims, most third-party option ROMs |
+| Microsoft Windows Production PCA 2011 | `bootmgfw.efi` on essentially every current Windows install |
+| Microsoft UEFI CA 2023 | newer third-party binaries |
+| Microsoft Option ROM UEFI CA 2023 | option ROMs on the 2023 chain |
+| Windows UEFI CA 2023 | Windows binaries on the 2023 chain |
+
+Enrollment **replaces** the OEM's `db` rather than merging with it, so anything the
+firmware trusted and krytis does not stops verifying the moment the keys are enrolled.
+Shipping fewer than five was therefore not a neutral "narrower trust" position: it
+silently broke dual-boot and 2023-chain option ROMs on machines that had worked
+minutes earlier, with no diagnostic beyond a firmware refusing to boot something.
+
+What makes trusting Microsoft's CAs defensible is that `dbx` is enrolled alongside
+them (#446): binaries Microsoft has revoked are refused, so the allow-list is not
+open-ended. Trusting the CAs *without* the revocation list would be the indefensible
+combination, and that was the state before #446.
+
+Rejected alternatives: four certificates omitting Windows Production PCA 2011
+(deliberately refuses Windows — defensible for an appliance, hostile to dual-booters,
+and krytis is a desktop image); and keeping the original two with a documentation
+warning (narrowest trust, but the documentation cannot un-break a user's Windows
+install).
+
+Both `db.auth` in the image and `.ovmf-vars-secure.fd` for QEMU glob
+`files/microsoft-uefi-certs/*.der`, so the tested key set cannot drift from the
+shipped one — see `docs/skills/secure-boot.md` for the size table and the drift guard.
+
 ### 5. fido2-luks / TPM Breakage Gate — #312 ✅ RESOLVED
 
 Gate cleared: no TPM-bound deployments exist, so signed-UKI PCR changes cannot lock out LUKS unlock (FIDO2/passphrase paths ignore PCRs). No `--measure`, no `systemd-tpm2-*` masking. Residual verification (cmdline bake + hardware FIDO2 check) folded into #32. TPM-bound LUKS support is deferred to a backlog issue. See decision 5 above.
