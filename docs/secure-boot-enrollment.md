@@ -113,6 +113,40 @@ is chosen during step 2, not afterwards.
 OEM-signed option ROMs you may lose a device until you restore factory keys. Pick a
 machine where that is acceptable.
 
+### Writing the medium
+
+The ISO is hybrid MBR+GPT (`55 AA` at offset 510, `EFI PART` at 512), so it goes to
+the device raw. Identify the stick by **transport**, not by letter — `sda` is a USB
+stick on one machine and a system disk on the next:
+
+```bash
+lsblk -o NAME,SIZE,TYPE,TRAN,RM,MODEL     # want TRAN=usb, RM=1; nvme* are internal
+sudo umount /dev/sdX*  2>/dev/null        # unmount partitions, not the device
+sudo dd if=output/krytis-live-sealed.iso of=/dev/sdX bs=4M oflag=direct status=progress conv=fsync
+sync
+```
+
+`of=/dev/sdX`, never `sdX1`. Afterwards the stick should show three partitions
+(~50K, ~87M, and the payload) — that layout alone is decent evidence the write landed.
+
+Verify byte-exactly, and let it report *where* it differs:
+
+```bash
+sudo cmp -n "$(stat -c%s output/krytis-live-sealed.iso)" \
+     /dev/sdX output/krytis-live-sealed.iso && echo IDENTICAL
+```
+
+Two traps, both of which have produced a false "does not match":
+
+- **Do not hand-compute `bs`/`count`.** The ISO is not a whole number of MiB, so
+  `count=` arithmetic reads the wrong length and the hash cannot match. Take the size
+  from `stat -c%s`, as above.
+- **Do not use `iflag=direct` on the read-back, and never `2>/dev/null` it.** O_DIRECT
+  on a raw USB device frequently fails outright; with stderr discarded the pipeline
+  emits zero bytes and `sha256sum` cheerfully returns
+  `e3b0c442…b855` — the hash of the empty string. That value means "read nothing",
+  not "wrong data".
+
 ## 1. Record the pre-enrollment state
 
 Boot anything with an EFI shell or a live Linux and capture what the firmware shipped
