@@ -729,3 +729,47 @@ Staleness is the live hazard: Microsoft adds revocations on their own schedule.
 `track-bst-sources.yml`'s `track-microsoft-dbx` job refreshes the pair and opens a PR
 titled with the delta. Re-run `mise run seal-uki && mise run enroll-test` before
 merging one — the digest changes, so the sealed image must be rebuilt anyway.
+
+## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
+
+A UKI measures and signs its kernel cmdline *inside* the image. Nothing at install time
+can add to it — no `rd.luks.uuid=`, no `rd.luks.name=`, no `root=`. That is the point of
+a UKI, and it quietly invalidates the standard way installers configure an encrypted
+root.
+
+This shipped as an unbootable LUKS install (#473): plymouth splash, no passphrase
+prompt, ~90 s on `dev-gpt-auto-root.device`, then emergency mode — unreachable, because
+bootc images ship root locked and `sulogin` refuses. The splash is what made it look
+like a prompt problem; it was a *device* timeout.
+
+The chain, and why each link is load-bearing:
+
+1. `hostonly=no` means no `/etc/crypttab` in the initrd, so nothing enumerates volumes.
+2. The cmdline is frozen, so `rd.luks.uuid=`/`rd.luks.name=` cannot be supplied either.
+3. dracut's catch-all rule that unlocks *any* LUKS device is gated behind `rd.auto=1`
+   (`70crypt/parse-crypt.sh`: `elif getargbool 0 rd.auto`), which krytis does not set.
+4. That leaves `systemd-gpt-auto-generator` as the only mechanism — and it only
+   recognises a root partition carrying the **discoverable** GUID
+   `4f68bce3-e8cd-4db1-96e7-fbcaf984b709`, not the generic `0fc63daf-…`.
+
+fisherman typed the encrypted root generically and relied on injecting
+`rd.luks.name=<UUID>=root` into BLS entries, which a UKI install never receives. Fixed
+upstream in [tuna-os/fisherman#72](https://github.com/tuna-os/fisherman/pull/72) (fork
+commit `423a581`) by typing the partition at partition time — not by retagging
+afterwards, since by then partition 2 holds an open LUKS container that later steps
+still need.
+
+**Operator fix for a machine already installed this way** — metadata only, data
+untouched:
+
+```bash
+sudo sfdisk --part-type /dev/nvme0n1 3 4f68bce3-e8cd-4db1-96e7-fbcaf984b709
+```
+
+`mise run luks-boot-test` guards it, and its `--generic-guid` arm reproduces the failure
+so a pass cannot be luck.
+
+**The general rule:** when an installer configures anything by writing kernel arguments,
+a sealed UKI does not receive that configuration. Prefer mechanisms that live on disk
+and are discoverable — partition GUIDs, LUKS2 tokens, credentials — over anything that
+has to reach the kernel through a bootloader entry.
