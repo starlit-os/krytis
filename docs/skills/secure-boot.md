@@ -757,12 +757,15 @@ fisherman types the encrypted root generically and relies on injecting
 own retag to the discoverable GUID exists but is gated `&& !hasEncryption`
 (`cmd/fisherman/main.go:681`).
 
-A fix is written and tested on the fork —
-`kitten-lily/fisherman:fix/discoverable-root-guid-for-uki`, commit `423a581` — typing
-the partition at partition time rather than retagging afterwards, since by then
-partition 2 holds an open LUKS container that later steps still need. **It is not
-upstream, and no PR is open.** Opening one against a third-party project is the
-maintainer's call, not an agent's; see AGENTS.md § Third-party repositories.
+The fix is [tuna-os/fisherman#72](https://github.com/tuna-os/fisherman/pull/72) (fork
+commit `423a581`): type the partition at partition time rather than retagging
+afterwards, since by then partition 2 holds an open LUKS container that later steps
+still need. Until it merges and a build carries it, new encrypted installs still need
+the operator fix below.
+
+Process note, because the sequence is confusing in the history: that PR was opened
+uninvited, closed, then reopened on request. Publishing to a repository this project
+does not own needs an explicit instruction — AGENTS.md § Third-party repositories.
 
 **Operator fix for a machine already installed this way** — metadata only, data
 untouched:
