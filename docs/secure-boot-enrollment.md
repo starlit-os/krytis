@@ -187,7 +187,7 @@ Two states seen in practice that the obvious expectation does not cover:
   *already* in Setup Mode with the previous key material intact. Clearing the Platform
   Key does not necessarily clear the rest. Enrollment is armed in that state, so if you
   have not deliberately cleared it, check whether something else did before you
-  continue — and see the `db` warning in step 4 before enrolling on a dual-boot machine.
+  continue.
 
 ## 2. Install from the ISO
 
@@ -267,12 +267,12 @@ done
 ```
 
 Compare with step 1. Expected, in the same order as the sizes `virt-fw-vars` reports
-in the VM tests: `PK` 1254, `KEK` 1263, `db` 4353, `dbx` 21292 — krytis's own, *not*
+in the VM tests: `PK` 1254, `KEK` 1263, `db` 8891, `dbx` 21292 — krytis's own, *not*
 the OEM's, and `dbx` **present** (that is #446 landing on real firmware; a missing
 dbx means every revoked Microsoft-signed binary still verifies).
 
 **Add 4 to each when reading `/sys/firmware/efi/efivars/`** — efivarfs prefixes every
-variable with a 32-bit attributes field, so `db` reads as 4357 there, not 4353. A
+variable with a 32-bit attributes field, so `db` reads as 8895 there, not 8891. A
 uniform 4-byte excess is the prefix, not a corrupt list.
 
 Replaced-versus-merged is arithmetic, not judgement. Take your step 1 numbers and work
@@ -280,18 +280,22 @@ out both answers *before* you enrol, so the post-enrollment read is a lookup:
 
 | | reads (efivars, incl. +4) |
 |---|---|
-| replaced | `PK` 1258 · `KEK` 1267 · `db` 4357 · `dbx` 21296 |
+| replaced | `PK` 1258 · `KEK` 1267 · `db` 8895 · `dbx` 21296 |
 | merged | step-1 data size + krytis's payload + 4 |
 
 Worked example from a real machine whose step 1 read `KEK 2549, db 8079, dbx 18352`:
-`db` becomes **4357** if replaced, **12432** if merged. There is no ambiguity between
+`db` becomes **8895** if replaced, **16970** if merged. There is no ambiguity between
 those two numbers.
 
-**A shrinking `db` is the expected result, and it is also a loss of trust.** That
-machine's 8075-byte `db` held Microsoft's full five-certificate set; krytis's 4353-byte
-one holds two of them plus our own. Everything signed under the other three —
-Windows boot managers, 2023-chain option ROMs — stops verifying. On a dual-boot machine
-that is the moment Windows becomes unbootable. See [#464](https://github.com/starlit-os/krytis/issues/464).
+**`db` may shrink or grow, and either is expected.** Since #464 krytis enrols all five
+of Microsoft's `db` certificates plus its own, so on a typical machine the replaced `db`
+lands *close to* what the firmware shipped — the difference is krytis's cert plus
+whatever OEM-specific entries the vendor added. What matters is that it equals krytis's
+payload exactly, not the direction it moved.
+
+Before #464 krytis shipped only two of the five, so this step's expected `db` was 4357
+and enrolling made a dual-boot machine's Windows unbootable. If you are reading an
+older image, that is still true of it.
 
 `dbx` normally *grows* (krytis ships 443 revocations, typically more than the firmware
 shipped with), which is the one direction where replacing is strictly an improvement.
@@ -304,13 +308,20 @@ shipped with), which is the one direction where replacing is strictly an improve
 The *only* real test of bundling the Microsoft CAs into `db.auth`; no offline
 MS-signed binary is available to the VM path.
 
-**Use a distro `shimx64.efi`, not a Windows bootloader.** krytis enrols two of
-Microsoft's five `db` certificates (see the coverage table above, and
-[#464](https://github.com/starlit-os/krytis/issues/464)). A shim chains
-`Microsoft Windows UEFI Driver Publisher` → `Microsoft Corporation UEFI CA 2011`,
-which we ship. A Windows boot manager chains to Windows Production PCA 2011, which we
-do **not** — so a Windows entry being refused here is the *documented* state of our
-`db`, not a failure of this step. Confirm which you have before booting it:
+**Either a distro `shimx64.efi` or a Windows boot manager should run** — since #464
+krytis enrols all five of Microsoft's `db` certificates, so both chains are covered:
+
+| binary | chains to | in `db` |
+|---|---|---|
+| distro `shimx64.efi` | `Microsoft Windows UEFI Driver Publisher` → `Microsoft Corporation UEFI CA 2011` | yes |
+| `bootmgfw.efi` (Windows 10/11) | `Microsoft Windows Production PCA 2011` | yes, since #464 |
+
+**A refusal here is now a defect, not the documented state.** Before #464 a Windows
+entry being refused was expected — we shipped two of five and Production PCA 2011 was
+one of the omissions. That is fixed, so if a Microsoft-signed binary is refused, record
+which CA signed it and treat it as a finding against `db.auth`, not as a known gap.
+Confirm what you have before booting it, remembering that it is the *issuer* that has
+to be in `db`, not the leaf:
 
 ```bash
 sbverify --list bootx64.efi | grep -A1 subject     # the issuer CN is the answer
@@ -360,15 +371,17 @@ permanently.
 Boot the second USB from the firmware boot menu, under enforcement.
 
 - [ ] The shim loads
-- [ ] If you also tried a Windows entry, record which CA signed it and the result
+- [ ] A Windows entry, if the machine has one, also loads — record which CA signed it
 
 **Expected success looks like a shim error.** A standalone shim verifies, starts, then
 fails to find `grubx64.efi` — `Failed to open \EFI\BOOT\grubx64.efi - Not Found`. That
 message means the signature was accepted, which is the whole question. Only
 `Security Violation` / `Access Denied` *before* it is a failure of this step.
 
-*Failure signature:* `Security Violation` on the shim contradicts `db` being 4353
-bytes — re-check step 4 before believing it.
+*Failure signature:* `Security Violation` on either binary contradicts `db` being 8895
+bytes — re-check step 4 before believing it. If step 4 checked out and a Microsoft-signed
+binary is still refused, that is a real finding: capture the issuer CN and file it
+against `db.auth`, since all five of Microsoft's `db` CAs are supposed to be enrolled.
 
 ## 6. A revoked binary is refused
 
