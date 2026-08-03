@@ -225,8 +225,28 @@ Agents implement autonomously **except** at these gates. Stop and request human 
 | **Security Gate** | Auth, signing, supply chain, secrets handling |
 | **Breakage Gate** | Changes that affect the boot path, PAM stack, greeter session, or OCI assembly |
 | **Merge Gate** | Final PR approval and merge — always human |
+| **Upstream Gate** | Any interaction with a repository this project does not own — see below |
 
 When in doubt, open a draft PR with your implementation and ask explicitly.
+
+### Third-party repositories
+
+**Agents MUST NOT open pull requests, issues, or comments against repositories outside
+`starlit-os/` and `kitten-lily/` without an explicit instruction naming that action.**
+
+"Fix it in <component>" is not such an instruction, even when the component lives
+upstream and the fix is correct. Publishing to someone else's project speaks for the
+maintainer in public, on their reputation, and it is theirs to decide — including the
+timing, the framing, and whether to carry the change downstream instead.
+
+What an agent may do unprompted:
+
+- Fork, branch, implement, and test the change on the fork.
+- Report that a fix exists, where it lives, and how it was verified.
+- Propose opening the PR, and wait.
+
+A finished branch on a fork loses nothing by waiting for a yes. An unwanted PR cannot
+be unsent.
 
 ---
 
