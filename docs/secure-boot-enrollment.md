@@ -55,10 +55,35 @@ bootctl status | grep "Secure Boot"
 
 ## What this enrollment does and doesn't preserve
 
-**Preserved:** Microsoft's 2011 and 2023 UEFI CA certs are bundled into `db.auth`
-(see `docs/skills/secure-boot.md` § `.auth` generation), so third-party EFI binaries
-signed by Microsoft — Option ROMs, GPU/NIC firmware, a Windows bootloader for
-dual-boot — continue to verify after enrollment.
+**Partially preserved — and the gaps matter.** Microsoft publishes **five**
+certificates for `db` ([microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)
+`PreSignedObjects/DB/Certificates/`). krytis bundles two of them:
+
+| Microsoft's `db` certificate | in krytis's `db.auth`? | signs |
+|---|---|---|
+| Microsoft Corporation UEFI CA 2011 | **yes** | shims, most third-party option ROMs |
+| Windows UEFI CA 2023 | **yes** | Windows binaries signed under the 2023 chain |
+| Microsoft Windows Production PCA 2011 | **no** | `bootmgfw.efi` on essentially every current Windows 10/11 install |
+| Microsoft UEFI CA 2023 | **no** | newer third-party binaries |
+| Microsoft Option ROM UEFI CA 2023 | **no** | option ROMs signed under the 2023 chain |
+
+So a distro `shimx64.efi` keeps working — its chain is
+`Microsoft Windows UEFI Driver Publisher` → `Microsoft Corporation UEFI CA 2011`,
+verified directly against the cert we ship. **An existing Windows install most likely
+does not:** its boot manager is signed under Windows Production PCA 2011, which we do
+not enrol, so after enrollment the firmware refuses it. Do not enrol krytis's keys on
+a machine whose Windows partition you need to boot until that is resolved
+([#464](https://github.com/starlit-os/krytis/issues/464)).
+
+Check any specific binary before trusting it — read the chain, do not ask a verifier:
+
+```bash
+sbverify --list bootx64.efi | grep -A1 subject   # the issuer CN is the answer
+```
+
+`sbverify --cert <ca> <binary>` is **not** a coverage test: it reports
+`Signature verification OK` for an unrelated certificate, including krytis's own db
+cert against a Microsoft-signed shim.
 
 **NOT preserved:** enrollment via `loader/keys/auto/*.auth` **replaces** the
 firmware's PK/KEK/db outright — it does not merge with whatever `dbDefault`/
