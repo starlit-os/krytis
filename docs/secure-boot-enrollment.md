@@ -147,10 +147,18 @@ Two traps, both of which have produced a false "does not match":
   `e3b0c442…b855` — the hash of the empty string. That value means "read nothing",
   not "wrong data".
 
-## 1. Record the pre-enrollment state
+## 1. Record the pre-enrollment state — from the live ISO, before clearing anything
 
-Boot anything with an EFI shell or a live Linux and capture what the firmware shipped
-with — this is the *only* opportunity, and step 4 is meaningless without it:
+**You must install before enrollment can be triggered at all.** The `.auth` files
+reach the ESP only through `bootc install`; the live ISO's own ESP has
+`loader/loader.conf` and `loader/entries/` but **no `loader/keys/`** directory
+(verified with `mdir` on the ISO's `EFI/efi.img`), so `secure_boot_discover_keys()`
+finds nothing and the enrollment entry cannot appear in the live session. Hand-copying
+the keys onto the ISO would also defeat the point: what is under test is the ESP
+`bootc install` produces, which is exactly what was empty in #438.
+
+So the live ISO has one job before the install, and this is it — capture what the OEM
+shipped, while it is still there:
 
 ```bash
 for v in PK KEK db dbx dbDefault KEKDefault dbxDefault; do
@@ -159,8 +167,17 @@ done
 bootctl status | grep -i 'secure boot'
 ```
 
-Expect `PK absent` (or factory-populated) and the `*Default` variables sized. Save the
-output.
+Order matters, and it is easy to get backwards:
+
+1. **Disable Secure Boot** in firmware — the live ISO is unsigned by design (#371), so
+   a factory-enforcing machine refuses it. Do **not** clear the keys yet.
+2. Boot the live ISO and run the above. efivars are readable with Secure Boot merely
+   disabled; the OEM's values are still intact.
+3. Save it off the machine — photograph the screen or write to the second USB. You are
+   about to overwrite these variables.
+
+Clearing the Platform Key first would take the very values step 4 compares against.
+Expect the `*Default` variables sized and `PK` factory-populated.
 
 ## 2. Install from the ISO
 
