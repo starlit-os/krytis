@@ -79,3 +79,194 @@ caught in CI before this image was published): re-enter firmware setup and use t
 vendor's "Restore Secure Boot to factory defaults" or "Clear Secure Boot keys" option
 again. This returns the firmware to Setup Mode, from which you can either re-enroll
 or leave Secure Boot disabled.
+
+---
+
+# T4: validating a sealed release on hardware
+
+The per-release checklist. Everything above describes the *mechanism*; this is the
+ordered procedure for confirming it on a physical machine, which is the only place
+several of these can be observed at all. `docs/design/secure-boot-testing.md` § T4
+tracks *why* each item exists and what automation cannot reach.
+
+Ordered so that anything which can strand the machine comes after the cheap
+observations, and so a single boot yields as many answers as possible.
+
+## 0. Before you leave the desk
+
+```bash
+# The medium must embed the PUBLISHED image, not a local build (§ release sequence)
+mise run build-iso --sealed --payload-image ghcr.io/starlit-os/krytis:sealed \
+                   --compression release
+sha256sum output/krytis-live-sealed.iso        # record this
+podman inspect ghcr.io/starlit-os/krytis:sealed --format '{{.Created}}'
+```
+
+Bring: the USB, a **second** USB carrying a Microsoft-signed EFI binary (step 5), the
+FIDO2 key if you are testing step 7, and the vendor's key-clearing menu path.
+
+Decide now whether this run includes **LUKS** — step 7 needs a LUKS install, and that
+is chosen during step 2, not afterwards.
+
+**Read the OEM caveat above before choosing the machine.** Enrollment *replaces*
+`db`/`KEK`/`PK`; it does not merge with your vendor's defaults. On a laptop with
+OEM-signed option ROMs you may lose a device until you restore factory keys. Pick a
+machine where that is acceptable.
+
+## 1. Record the pre-enrollment state
+
+Boot anything with an EFI shell or a live Linux and capture what the firmware shipped
+with — this is the *only* opportunity, and step 4 is meaningless without it:
+
+```bash
+for v in PK KEK db dbx dbDefault KEKDefault dbxDefault; do
+  printf '%-12s %s\n' "$v" "$(stat -c%s /sys/firmware/efi/efivars/${v}-* 2>/dev/null || echo absent)"
+done
+bootctl status | grep -i 'secure boot'
+```
+
+Expect `PK absent` (or factory-populated) and the `*Default` variables sized. Save the
+output.
+
+## 2. Install from the ISO
+
+Secure Boot **off** or in Setup Mode — the live ISO is unsigned by design (#371), so an
+enforcing firmware will refuse to boot the installer itself.
+
+Choose LUKS here if step 7 is in scope. Expected: the installer completes and the
+system is installed from the offline payload with no network.
+
+*Failure signature:* `The UKI has the wrong composefs= parameter` means the embedded
+payload was mutated — the ISO is bad, not the machine. Stop and rebuild.
+
+## 3. The enrollment prompt — the item no VM can produce
+
+Put the firmware in **Setup Mode** (§ 1 above) and boot the installed system.
+
+In a VM, systemd-boot treats the platform as "safe" and `if-safe` auto-enrols without
+asking, so this prompt path has never been exercised. Here, `secure-boot-enroll manual`
+means it *must* ask.
+
+Record verbatim:
+
+- [ ] Does the systemd-boot menu show an **"Enroll Secure Boot keys"** entry?
+- [ ] Does selecting it *ask* for confirmation, or enrol immediately?
+- [ ] Does the machine reboot itself afterwards, or continue booting?
+- [ ] Exact wording of the entry and any prompt.
+
+*Failure signature:* no entry at all → the firmware did not treat `loader/keys/auto`
+as enrollable, or `loader.conf` was not written. Check `/boot/loader/loader.conf` on
+the ESP for `secure-boot-enroll manual`.
+
+## 4. Post-enrollment state — replaced, not merged
+
+```bash
+bootctl status | grep -i 'secure boot'      # expect: Secure Boot: enabled (user)
+for v in PK KEK db dbx; do
+  printf '%-5s %s\n' "$v" "$(stat -c%s /sys/firmware/efi/efivars/${v}-* 2>/dev/null || echo absent)"
+done
+```
+
+Compare with step 1. Expected, in the same order as the sizes `virt-fw-vars` reports
+in the VM tests: `PK` 1254, `KEK` 1263, `db` 4353, `dbx` 21292 — krytis's own, *not*
+the OEM's, and `dbx` **present** (that is #446 landing on real firmware; a missing
+dbx means every revoked Microsoft-signed binary still verifies).
+
+**Add 4 to each when reading `/sys/firmware/efi/efivars/`** — efivarfs prefixes every
+variable with a 32-bit attributes field, so `db` reads as 4357 there, not 4353. A
+uniform 4-byte excess is the prefix, not a corrupt list.
+
+- [ ] `db` size matches krytis's, so OEM defaults were replaced not merged
+- [ ] Every device still initialises — no missing NIC, GPU, or add-in card
+
+## 5. A Microsoft-signed binary still runs
+
+The *only* real test of bundling the Microsoft CAs into `db.auth`; no offline
+MS-signed binary is available to the VM path.
+
+Boot the second USB (Windows installer, signed UEFI shell, or a Windows dual-boot
+entry) from the firmware boot menu, under enforcement.
+
+- [ ] It loads
+
+*Failure signature:* `Security Violation` / `Access Denied` means the Microsoft CAs
+did not survive enrollment — which contradicts `db` being 4353 bytes, so re-check
+step 4 before believing it.
+
+## 6. A revoked binary is refused
+
+The other half, and the harder one to source: you need a binary whose Authenticode
+hash is in the shipped `dbx`. Confirm a candidate *before* trusting the result — the
+dbx holds PE Authenticode hashes, not file checksums:
+
+```bash
+# on the desk, not the test machine
+python3 scripts/parse-efi-auth.py --count-esl files/microsoft-uefi-certs/dbx.esl
+#  -> 443            (--count-esl takes the BARE esl; on a .auth it reports
+#                     "malformed signature list", which is the wrapper, not a fault)
+
+pesign --hash --in candidate.efi --digest_type sha256   # pesign package
+#  -> compare that Authenticode hash against the revocation list; a plain
+#     sha256sum of the file will never match, the list holds PE hashes
+```
+
+Good candidates: a pre-BootHole (CVE-2020-10713) shim or GRUB, or a Windows 7/8-era
+`bootmgfw.efi`.
+
+- [ ] The revoked binary is **refused** under enforcement
+
+If you cannot source one, record that as untested rather than passed.
+
+## 7. FIDO2 LUKS unlock under a sealed UKI
+
+Needs the LUKS install from step 2. The `rd.luks.options=fido2-device=auto` bake is
+verified statically; the unlock never has been.
+
+```bash
+mise fido2:enroll-luks     # then reboot
+```
+
+- [ ] Reboot prompts for a key touch and unlocks with **no passphrase**
+
+*Failure signature:* a passphrase prompt means the cmdline bake did not take effect —
+and because a UKI freezes its cmdline, that cannot be fixed on the installed system;
+it needs a new sealed image.
+
+## 8. Upgrade and rollback, still enforcing
+
+```bash
+bootc upgrade && systemctl reboot
+bootctl status | grep -i 'secure boot'     # still enabled (user)
+systemctl is-system-running                # running, not degraded
+bootc rollback && systemctl reboot
+```
+
+- [ ] Upgrade boots enforcing and healthy
+- [ ] Rollback boots enforcing and healthy
+
+The upgraded image must be *newer than the installed one* or `bootc` reports no update
+and this proves nothing — check `bootc status` before and after.
+
+## 9. If the machine will not boot
+
+Re-enter firmware setup, use the vendor's "Clear Secure Boot keys" / "Restore factory
+keys". That returns the firmware to Setup Mode, from which you can re-enrol or leave
+Secure Boot off. Nothing in this procedure writes anything that survives that reset.
+
+## Reporting
+
+Paste into the release issue — an unrecorded pass is indistinguishable from an
+untested item, which is how #438 stayed invisible for months:
+
+```
+machine:        <vendor/model, firmware version>
+ISO sha256:     <from step 0>
+payload:        <image Created + digest>
+step 3 prompt:  <verbatim menu text; asked / did not ask>
+step 4 sizes:   PK … KEK … db … dbx …   (before: …)
+step 5 MS bin:  <what you booted> → loaded / refused
+step 6 revoked: <binary> → refused / could not source
+step 7 FIDO2:   touch-unlock / passphrase / not in scope
+step 8:         upgrade … rollback …
+devices lost:   <none, or which>
+```

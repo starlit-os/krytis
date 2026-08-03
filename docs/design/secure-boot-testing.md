@@ -161,6 +161,10 @@ a boot that comes up fine with enforcement silently off proves nothing.
 
 Nothing below has ever been executed. It is the honest edge of our coverage.
 
+This list is the *inventory* — what is uncovered and why. The ordered procedure for
+actually running it, with expected values and failure signatures, is
+[`docs/secure-boot-enrollment.md`](../secure-boot-enrollment.md) § T4.
+
 - [ ] Firmware in Setup Mode, `secure-boot-enroll manual`: the systemd-boot menu
       offers the key set, the user selects it, enrollment succeeds, the machine boots
       enforcing. (In a VM `if-safe` auto-enrols and never shows the prompt, so the
