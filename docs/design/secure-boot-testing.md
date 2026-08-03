@@ -477,6 +477,67 @@ units we rely on for conditions the VMs cannot meet.
 synthetic ESP, and a `--no-tpm` control whose passing *demonstrates* the blind spot
 rather than describing it.
 
+### G-8 · ~~No gate installed to an encrypted root, and a second dlopen'ed library was missing~~ — found on hardware, #473
+
+Same shape as G-7, one layer up. Every install gate — `boot-test`,
+`iso-install-test`, `selfenroll-test`, `upgrade-test` — used an **unencrypted** disk,
+so nothing exercised the passphrase prompt, `rd.luks.options=` being honoured, or
+plymouth's interaction with `systemd-ask-password`. `libfido2.so.1` was absent from
+the initrd for the same `dlopen` reason as G-7's TCTI, and survived undetected
+because no gate ever reached an unlock at all.
+
+`mise run luks-install-test` closes the install half: encrypted install via the ISO
+chain, then `boot-test --luks-passphrase` detects the prompt on the serial console and
+answers it by writing to a socket chardev. It asserts the prompt **appeared** — the
+hardware symptom was a splash that never yielded one, so "the disk unlocked" would be
+the wrong assertion. `mise run luks-boot-test` (#474) covers the boot half
+synthetically, with no installer. Both mechanisms and the traps in them are in
+`docs/skills/bootc-vm.md` § A sealed image's console goes to tty0.
+
+Verified on both arms: the default run passes, and `--strict-installer` fails on
+today's installer with the generic root GUID — so it doubles as the detector for
+`tuna-os/fisherman#72` landing.
+
+#### FIDO2 unlock stays a T4-only item — deliberately
+
+The remaining acceptance item from #473 was "a FIDO2 unlock path exercised somewhere".
+It is **not** gated in QEMU, and that is a decision rather than an omission: a FIDO2
+unlock needs a real USB HID security key, and QEMU can only reach one by passing
+through physical hardware (`-device usb-host`), which no CI runner has and which would
+make the gate depend on a key being plugged into a particular machine. A software
+emulator would test our plumbing against a fake, and the two bugs in this area were
+both *missing libraries*, which the build-time assertion now catches directly and far
+more cheaply.
+
+So FIDO2 unlock remains T4 step 7 on real hardware — which is now *possible* for the
+first time, because `libfido2.so.1` is in the initrd. Before this it could not have
+passed on any machine.
+
+#### Auditing the dlopen set — and why the ELF notes are not enough
+
+G-7's lesson said the class was worth auditing. Doing it properly: systemd records
+each `dlopen` in a `.note.dlopen` ELF note, so the initrd can be audited mechanically
+rather than one library at a time.
+
+```bash
+objdump -s -j .note.dlopen <binary>    # JSON: soname, priority, feature
+```
+
+Result against the initrd, after this fix — 440 ELFs, 19 declared sonames, and the
+only absences are `priority: suggested` features that have no business in an initrd
+(`libarchive`, `libbpf`, `libdw`, `libelf`).
+
+Two traps in reading it:
+
+- **A note lists ALTERNATIVE sonames.** `{"feature":"crypt", "soname":
+  ["libcrypt.so.2","libcrypt.so.1","libcrypt.so.1.1"]}` is satisfied by *any* one of
+  them. Auditing per-soname reports two false gaps here; audit per note.
+- **The notes would NOT have caught G-7.** `libtss2-tcti-device.so.0` is `dlopen`ed by
+  `libtss2-tctildr`, not by systemd, so no systemd note declares it. A note-driven
+  audit is necessary and insufficient — which is why `elements/core/initramfs.bst`
+  keeps an explicit named list with an assertion per entry, rather than deriving the
+  list from the notes.
+
 ---
 
 ## 7. Cross-references

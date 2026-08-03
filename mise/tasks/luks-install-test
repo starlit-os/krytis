@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+#MISE description="Install Krytis to an ENCRYPTED root from a live ISO in QEMU, then boot it and answer the passphrase prompt (#473)"
+#USAGE flag "--iso <path>" help="ISO to install from. Default: output/krytis-live-sealed.iso, falling back to output/krytis-live.iso"
+#USAGE flag "--passphrase <s>" default="testpassphrase" help="LUKS passphrase to install with and answer the prompt with"
+#USAGE flag "--payload-ref <ref>" help="Payload image ref for the fisherman recipe. Default: matches the ISO variant"
+#USAGE flag "--strict-installer" help="Fail instead of repairing when the installer types the root partition with the generic linux GUID (fisherman#72). Use this to check whether that fix has landed"
+#USAGE flag "--keep" help="Keep the installed disk image after the run, for post-mortem inspection"
+
+set -euo pipefail
+
+# Why this gate exists, and how it differs from the ones next to it:
+#
+#   boot-test          image -> disk, unencrypted
+#   iso-install-test   ISO -> fisherman -> disk, unencrypted
+#   luks-boot-test     synthetic LUKS2 disk + the real UKI (#474). Proves the
+#                      *boot* path prompts, with no installer involved.
+#   THIS               ISO -> fisherman -> ENCRYPTED disk -> boot -> answer
+#
+# Before this, no gate did an encrypted install at all (#473), so nothing
+# exercised the passphrase prompt, `rd.luks.options=` being honoured, or
+# plymouth's interaction with systemd-ask-password. Two bugs reached real
+# hardware through that gap, and the reported symptom was specifically a splash
+# that never yielded a prompt — which is why the verdict asserts a prompt
+# APPEARED rather than that the disk unlocked.
+#
+# The install is delegated to dakota-iso's sealed-test-qemu chain, the same one
+# mise run iso-install-test uses, with LUKS_PASSPHRASE set. That chain is
+# root-free and needs no sshpass; dakota-iso's older luks-test-qemu chain
+# predates e2e-lib.sh and hardcodes sshpass, so it is deliberately NOT used here.
+# The verdict is delegated to boot-test, which already owns SMBIOS-credential
+# provisioning (the only way into a sealed system whose cmdline cannot be
+# touched), OVMF secboot selection, and now --luks-passphrase.
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# Resolve dakota-iso from the MAIN worktree via git-common-dir: inside a git
+# worktree REPO_ROOT is nested under .worktrees/ and a naive "${REPO_ROOT}/.."
+# points at the wrong place. Same block as mise/tasks/build-iso.
+if [[ -z "${DAKOTA_ISO_DIR:-}" ]]; then
+    COMMON_GIT="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    MAIN_ROOT="${COMMON_GIT:+$(dirname "${COMMON_GIT}")}"
+    MAIN_ROOT="${MAIN_ROOT:-${REPO_ROOT}}"
+    DAKOTA_ISO_DIR="$(realpath "${MAIN_ROOT}/../dakota-iso" 2>/dev/null || echo "${MAIN_ROOT}/../dakota-iso")"
+fi
+
+PASSPHRASE="${usage_passphrase:-testpassphrase}"
+STRICT=$([[ "${usage_strict_installer:-}" == "true" ]] && echo 1 || echo 0)
+KEEP=$([[ "${usage_keep:-}" == "true" ]] && echo 1 || echo 0)
+
+if [[ -n "${usage_iso:-}" ]]; then
+    ISO="${usage_iso}"
+elif [[ -f "output/krytis-live-sealed.iso" ]]; then
+    ISO="output/krytis-live-sealed.iso"
+else
+    ISO="output/krytis-live.iso"
+fi
+
+if [[ "${ISO}" == *sealed* ]]; then
+    DEFAULT_REF="ghcr.io/starlit-os/krytis:sealed"
+else
+    DEFAULT_REF="ghcr.io/starlit-os/krytis:latest"
+fi
+PAYLOAD_REF="${usage_payload_ref:-${DEFAULT_REF}}"
+
+# Everything is checked before QEMU starts. An install run is tens of minutes;
+# discovering a missing prerequisite at minute 30 is the failure this prevents.
+if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
+    echo "ERROR: dakota-iso not found at ${DAKOTA_ISO_DIR}" >&2
+    echo "       Clone kitten-lily/dakota-iso as a sibling of the krytis checkout, or set DAKOTA_ISO_DIR." >&2
+    exit 1
+fi
+
+if ! grep -q 'sealed-test-qemu' "${DAKOTA_ISO_DIR}/justfile"; then
+    echo "ERROR: ${DAKOTA_ISO_DIR} has no 'sealed-test-qemu' recipe (#371)." >&2
+    echo "       Update the sibling checkout: git -C ${DAKOTA_ISO_DIR} pull" >&2
+    exit 1
+fi
+
+# The encryption knob is what makes this gate possible; without it the chain
+# installs unencrypted and this run would assert a prompt that can never appear.
+# Check for it explicitly instead of producing that confusing failure.
+if ! grep -q 'LUKS_PASSPHRASE' "${DAKOTA_ISO_DIR}/scripts/plain-install-qemu.sh"; then
+    echo "ERROR: ${DAKOTA_ISO_DIR}/scripts/plain-install-qemu.sh has no LUKS_PASSPHRASE" >&2
+    echo "       support, so the install would be UNENCRYPTED and this gate would" >&2
+    echo "       fail asserting a passphrase prompt that cannot appear (#473)." >&2
+    echo "       Update the sibling checkout: git -C ${DAKOTA_ISO_DIR} pull" >&2
+    exit 1
+fi
+
+if [[ ! -f "${ISO}" ]]; then
+    echo "ERROR: ISO not found: ${ISO}" >&2
+    echo "       Build it:  mise run build-iso$([[ "${ISO}" == *sealed* ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
+
+# Deliberately no --secure. Answering the prompt needs console=ttyS0 injected via
+# io.systemd.stub.kernel-cmdline-extra, and systemd-stub ignores cmdline additions
+# under enforcement — so a --secure run could never see or answer a prompt, and
+# would fail for a harness reason rather than an image one. boot-test rejects the
+# combination too. Enforcement is asserted separately by
+# `mise run iso-install-test --secure`; this gate asserts the unlock.
+
+if ! command -v qemu-system-x86_64 &>/dev/null && ! command -v qemu-kvm &>/dev/null; then
+    echo "ERROR: needs qemu-system-x86_64 or qemu-kvm on the host." >&2
+    exit 1
+fi
+
+# sfdisk only: the disk is inspected by reading the image file, never by
+# attaching a loop device, so no cryptsetup/blkid and no root.
+for tool in sfdisk; do
+    command -v "${tool}" &>/dev/null || { echo "ERROR: needs ${tool} on the host." >&2; exit 1; }
+done
+
+# The install is driven over SSH into the live session, which needs a --debug
+# ISO: krytis is pubkey-only by policy, so a production ISO refuses the
+# installer's password login and the run stalls until the readiness probe times
+# out minutes later. Same check, and same reasoning, as iso-install-test.
+DEBUG_DROPIN="etc/ssh/sshd_config.d/05-live-debug.conf"
+SFS_OFFSET="$(python3 scripts/iso-squashfs-offset.py "${ISO}")"
+if ! unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${DEBUG_DROPIN}" >/dev/null 2>&1; then
+    echo "ERROR: ${ISO} has no ${DEBUG_DROPIN} — it was built without --debug." >&2
+    echo "       Krytis's pubkey-only sshd will refuse the installer's password login." >&2
+    echo "  Rebuild it:  mise run build-iso$([[ "${ISO}" == *sealed* ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
+
+ISO_ABS="$(realpath "${ISO}")"
+OUTPUT_DIR="$(dirname "${ISO_ABS}")"
+INSTALL_DISK="/var/tmp/dakota-sealed-install.img"
+
+echo "==> Installing Krytis to an ENCRYPTED root from an ISO in QEMU"
+echo "    dakota-iso:  ${DAKOTA_ISO_DIR}"
+echo "    iso:         ${ISO_ABS}"
+echo "    payload:     ${PAYLOAD_REF}"
+echo "    passphrase:  ${PASSPHRASE}"
+
+echo "==> [1/3] Live ISO boot + encrypted install"
+set +e
+ISO_PATH="${ISO_ABS}" \
+PAYLOAD_REF="${PAYLOAD_REF}" \
+LUKS_PASSPHRASE="${PASSPHRASE}" \
+INSTALL_ONLY=1 \
+    just --justfile "${DAKOTA_ISO_DIR}/justfile" \
+         --working-directory "${DAKOTA_ISO_DIR}" \
+         output_dir="${OUTPUT_DIR}" \
+         sealed-test-qemu krytis
+RESULT=$?
+set -e
+
+if [[ "${RESULT}" -ne 0 ]]; then
+    echo "==> FAILED during install (exit ${RESULT}). Serial logs from the run:" >&2
+    ls -la /tmp/dakota-sealed-qemu-*serial*.log 2>/dev/null >&2 || true
+    exit "${RESULT}"
+fi
+
+[[ -f "${INSTALL_DISK}" ]] || { echo "ERROR: installer reported success but ${INSTALL_DISK} is missing." >&2; exit 1; }
+
+if [[ "${KEEP}" -eq 0 ]]; then
+    trap 'rm -f "${INSTALL_DISK}"' EXIT
+fi
+
+echo "==> [2/3] Inspecting the installed disk"
+
+# One probe of the partition table and the root partition's magic, read straight
+# out of the image file. No loop devices and no cryptsetup: attaching a loop
+# device needs root, and the whole point of this chain is that it runs
+# unprivileged.
+#
+# The magic is classified in python and reported as a WORD. Reading it through
+# `$(dd …)` instead puts raw bytes ("LUKS\xba\xbe") through command substitution,
+# where NUL stripping and invalid UTF-8 made the comparison fail against a disk
+# that was in fact encrypted — a false negative that looked like an installer bug.
+#
+# Root is the LAST partition — the ESP is 1 and root fills the remaining space —
+# which is how fisherman's PartitionSystemdBoot lays it out.
+read -r ROOT_PART ROOT_TYPE ROOT_KIND <<<"$(python3 - "${INSTALL_DISK}" <<'PY'
+import json, subprocess, sys
+
+disk = sys.argv[1]
+d = json.loads(subprocess.run(['sfdisk', '--json', disk],
+                              capture_output=True, text=True, check=True).stdout)['partitiontable']
+parts = d['partitions']
+root = parts[-1]
+offset = root['start'] * d.get('sectorsize', 512)
+with open(disk, 'rb') as f:
+    f.seek(offset)
+    magic = f.read(6)
+# LUKS2 headers start "LUKS\xba\xbe" — same magic as LUKS1, the version follows.
+kind = 'luks' if magic.startswith(b'LUKS\xba\xbe') else 'other:' + magic.hex()
+# sfdisk numbers partitions by their order in the table, 1-based.
+print(len(parts), root['type'].lower(), kind)
+PY
+)"
+sfdisk -l -o Device,Start,Size,Type-UUID "${INSTALL_DISK}" 2>/dev/null | sed 's/^/    /'
+
+# Assert the install really is encrypted BEFORE booting it. Otherwise a recipe
+# that silently lost its encryption block produces a system that boots fine and
+# never prompts, and the verdict below would blame the boot path for an install
+# that never encrypted anything.
+if [[ "${ROOT_KIND}" != "luks" ]]; then
+    echo "ERROR: partition ${ROOT_PART} of ${INSTALL_DISK} is not a LUKS container." >&2
+    echo "       First 6 bytes: ${ROOT_KIND#other:}" >&2
+    echo "       The recipe asked for encryption.type=luks-passphrase but the" >&2
+    echo "       installer produced an unencrypted root, so there is nothing to" >&2
+    echo "       unlock and this gate cannot test what it exists to test." >&2
+    exit 1
+fi
+echo "    partition ${ROOT_PART} carries a LUKS header — the install is encrypted"
+
+# The root partition's GPT type decides whether a sealed UKI can find it at all.
+# A UKI's cmdline is signed, so it carries no rd.luks.uuid, and hostonly=no means
+# no /etc/crypttab in the initrd — leaving systemd-gpt-auto-generator as the only
+# thing that can discover the volume, and it only recognises the Discoverable
+# Partitions root GUID. Typed generic `linux`, the boot times out on
+# dev-gpt-auto-root.device and drops to emergency mode with no prompt: exactly
+# the hardware symptom in #473/#474.
+#
+# Fix is upstream at tuna-os/fisherman#72 but unmerged, so an ISO built today
+# still produces the wrong GUID. Repair it and carry on by default — the point of
+# this gate is the boot path, and stopping here would test nothing — but say so
+# loudly, and offer --strict-installer for checking whether the fix has landed.
+DISCOVERABLE_ROOT="4f68bce3-e8cd-4db1-96e7-fbcaf984b709"
+GENERIC_LINUX="0fc63daf-8483-4772-8e79-3d69d8477de4"
+
+if [[ "${ROOT_TYPE}" == "${GENERIC_LINUX}" ]]; then
+    if [[ "${STRICT}" -eq 1 ]]; then
+        echo "ERROR: the installer typed the root partition ${GENERIC_LINUX} (generic linux)." >&2
+        echo "       A sealed UKI cannot find an encrypted root with that type: the signed" >&2
+        echo "       cmdline has no rd.luks.uuid and the initrd has no crypttab, so" >&2
+        echo "       systemd-gpt-auto-generator is the only discovery mechanism and it" >&2
+        echo "       needs ${DISCOVERABLE_ROOT}." >&2
+        echo "       Fix: tuna-os/fisherman#72 (unmerged). Drop --strict-installer to" >&2
+        echo "       repair the disk and test the boot path anyway." >&2
+        exit 1
+    fi
+    echo "    !! installer used the generic linux root GUID — the known fisherman bug"
+    echo "       (tuna-os/fisherman#72, unmerged). Retagging to ${DISCOVERABLE_ROOT}"
+    echo "       so the boot path below is still exercised. Metadata only; data untouched."
+    sfdisk --part-type "${INSTALL_DISK}" "${ROOT_PART}" "${DISCOVERABLE_ROOT}" >/dev/null
+    INSTALLER_REPAIRED=1
+elif [[ "${ROOT_TYPE}" == "${DISCOVERABLE_ROOT}" ]]; then
+    echo "    root partition carries the Discoverable Partitions GUID — installer is correct"
+    INSTALLER_REPAIRED=0
+else
+    echo "ERROR: unexpected root partition type ${ROOT_TYPE}." >&2
+    echo "       Expected ${DISCOVERABLE_ROOT} (correct) or ${GENERIC_LINUX} (fisherman#72)." >&2
+    exit 1
+fi
+
+echo "==> [3/3] Verdict: boot the encrypted disk and answer the prompt"
+./mise/tasks/boot-test --reuse-disk "${INSTALL_DISK}" --luks-passphrase "${PASSPHRASE}"
+
+echo "==> PASS: encrypted install booted, a passphrase prompt appeared, and it unlocked"
+if [[ "${INSTALLER_REPAIRED}" -eq 1 ]]; then
+    echo "    NOTE: the disk needed a root-GUID repair first (tuna-os/fisherman#72)."
+    echo "          Until that merges, a real encrypted install still lands unbootable;"
+    echo "          re-run with --strict-installer to check whether it has."
+fi

@@ -49,6 +49,11 @@ config:
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-fix-bootc-module.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-fix-bootc-module.conf"
 
+      # Libraries the boot path dlopen()s. dracut cannot see a dlopen, so each has to
+      # be named explicitly or it is silently omitted — and the frozen UKI cmdline
+      # then asks the initrd for a capability it does not have. Both entries below
+      # were found on real hardware after shipping, not by any gate.
+      #
       # tpm2-tss is NOT optional here despite nothing in the initrd linking it.
       # dracut's 73tpm2-tss module ends its check() with `return 255` — "include
       # only if another module requires it" — and nothing does, so it is omitted.
@@ -64,25 +69,49 @@ config:
       # rc, sys, tctildr — all ELF deps of the tpm2 binaries) landed while the
       # dlopen'ed modules did not. install_items takes an explicit path and errors
       # if it cannot install it, which is what we want: loud, not silent.
-      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 "\n' \
+      #
+      # libfido2 is the same shape (#473). The cmdline carries
+      # rd.luks.options=fido2-device=auto, so every LUKS unlock tries FIDO2 first,
+      # and systemd reaches it by dlopen. Unlike the TCTI this one is not fatal —
+      # cryptsetup.c returns EAGAIN, clears the FIDO2 args and falls through to a
+      # passphrase — so the only symptom is that a documented, shipped feature
+      # cannot work. Its ELF deps (libcbor, libcrypto, libudev, libz) resolve
+      # automatically; only the dlopen'ed entry point needs naming.
+      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 "\n' \
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf"
 
       dracut --force "%{install-root}/usr/lib/modules/${KVER}/initramfs.img"
 
     - |
-      # Assert the TPM userspace actually made it in. This bug shipped because
-      # nothing checked the initrd's CONTENTS — dracut omitted a dlopen'ed library
-      # without failing, every QEMU gate skipped the unit that needed it for want of
-      # a TPM, and the first symptom was a physical machine reboot-looping (#466).
-      # A build-time assertion is the cheapest place to catch it.
+      # Assert each dlopen'ed library actually landed. Both bugs this guards shipped
+      # because nothing checked the initrd's CONTENTS: dracut omits a dlopen'ed
+      # library without failing, no QEMU gate had the hardware to exercise the unit
+      # that needed it, and the first symptom was a physical machine (#466 reboot
+      # loop, #473 FIDO2 unlock that cannot work). A build-time assertion is the
+      # cheapest place to catch the whole class.
+      #
+      # Add a line when naming a new dlopen'ed library above. Keep the consequence
+      # in the message: an assertion that only says "missing" makes the next reader
+      # guess whether it matters.
       KVER=$(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d | head -1 | xargs basename)
       IMG="%{install-root}/usr/lib/modules/${KVER}/initramfs.img"
-      if ! lsinitrd "${IMG}" | grep -q 'libtss2-tcti-device\.so\.0'; then
-        echo "ERROR: libtss2-tcti-device.so.0 is missing from the initramfs." >&2
-        echo "       systemd-pcrextend dlopen()s it, and systemd-pcrphase-initrd" >&2
-        echo "       carries FailureAction=reboot-force, so every TPM-equipped machine" >&2
-        echo "       would reboot-loop on this image. See #466 and mise/tasks/tpm-boot-test." >&2
-        exit 1
-      fi
-      echo "==> initramfs carries the TPM TCTI module"
+      CONTENTS=$(lsinitrd "${IMG}")
+      MISSING=0
+      assert_lib() {
+        if ! printf '%s\n' "${CONTENTS}" | grep -q "$1"; then
+          echo "ERROR: $2 is missing from the initramfs." >&2
+          echo "       $3" >&2
+          MISSING=1
+        fi
+      }
+      assert_lib 'libtss2-tcti-device\.so\.0' 'libtss2-tcti-device.so.0' \
+        'systemd-pcrextend dlopen()s it, and systemd-pcrphase-initrd carries
+       FailureAction=reboot-force, so every TPM-equipped machine would
+       reboot-loop on this image. See #466 and mise/tasks/tpm-boot-test.'
+      assert_lib 'libfido2\.so\.1' 'libfido2.so.1' \
+        'systemd-cryptsetup dlopen()s it for fido2-device=auto, which the UKI
+       cmdline always sets, so FIDO2 LUKS unlock silently cannot work and every
+       unlock falls back to a passphrase. See #473 and mise/tasks/luks-install-test.'
+      [ "${MISSING}" -eq 0 ] || exit 1
+      echo "==> initramfs carries every dlopen'ed library the boot path needs"

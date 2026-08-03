@@ -68,6 +68,52 @@ Root cause: `bootc upgrade`/`bootc status` work fine and use their own code path
 
 Confirmed the BLS entries themselves are real, editable Type #1 text files at `<ESP>/loader/entries/*.conf` with a normal `options=` line — this is not a UKI/Type #2 boot setup. `loader-entries` failing is specific to how it locates/tracks deployments internally, not a fact about the boot chain itself. **Known limitation:** since composefs-native writes a fresh BLS entry per deployment on each `bootc upgrade`, any *runtime* per-host karg (via direct `options=` edit or a future working `loader-entries` fix) would not carry forward automatically — reinforces why kargs.d (baked into the image, applied at every deployment) is the right mechanism for anything that should persist across upgrades.
 
+## The karg is not enough either — `libfido2.so.1` has to be IN the initrd (#473)
+
+Three things must line up for a boot-time FIDO2 unlock, and the third went missing
+for months without any symptom:
+
+1. a `systemd-fido2` token slot in the LUKS2 header (`mise fido2:enroll-luks`)
+2. `rd.luks.options=fido2-device=auto` on the cmdline (baked, see above)
+3. **`libfido2.so.1` inside the initrd**
+
+`systemd-cryptsetup` reaches FIDO2 by `dlopen`, and **dracut cannot see a `dlopen`**,
+so the library was simply omitted from every initrd we ever built. It is present in
+the rootfs, which is what makes this so easy to miss: `ls /usr/lib/*/libfido2*` in the
+running system says yes, and the initrd — the only place that matters for unlocking
+root — says no.
+
+Fixed by naming it in `install_items` in `elements/core/initramfs.bst`, with a
+build-time assertion so it cannot silently vanish again. Its ELF dependencies
+(`libcbor`, `libcrypto`, `libudev`, `libz`) resolve automatically; only the `dlopen`ed
+entry point needs naming. Identical mechanism and identical fix to #466's
+`libtss2-tcti-device.so.0` — see `docs/design/secure-boot-testing.md` § G-8 for the
+audit of the whole `dlopen` set, including why systemd's `.note.dlopen` metadata finds
+this one but *not* #466's.
+
+**Why nothing broke visibly.** Unlike the TPM case, this one is not fatal:
+`src/cryptsetup/cryptsetup.c:1584` returns `EAGAIN` with *"Automatic FIDO2 metadata
+discovery was not possible … falling back to traditional unlocking"*, and on error the
+FIDO2 arguments are cleared so the attempt loop continues to a passphrase (2736-2739).
+So the only consequence was that a documented, shipped feature could not work, and
+every unlock quietly used the passphrase instead. Worth knowing when diagnosing "my
+key is enrolled but it always asks for the passphrase" — check the initrd before the
+token.
+
+```bash
+# What the initrd actually contains, from a sealed image:
+cid=$(podman create localhost/krytis:sealed true)
+podman cp "$cid":/boot/EFI/Linux/krytis.efi /var/tmp/uki.efi && podman rm "$cid"
+objcopy -O binary --only-section=.initrd /var/tmp/uki.efi /var/tmp/i.zstd
+
+# .initrd is early-microcode cpio PLUS the real zstd archive, concatenated. Piping
+# it straight to zstdcat silently decompresses only the microcode segment — 6 files
+# instead of 7881 — and grepping that reports every library as missing. Seek to the
+# zstd magic (28 b5 2f fd) first:
+python3 -c 'd=open("/var/tmp/i.zstd","rb").read(); o=d.index(bytes([0x28,0xB5,0x2F,0xFD])); open("/var/tmp/main.zstd","wb").write(d[o:])'
+zstdcat /var/tmp/main.zstd 2>/dev/null | cpio -t 2>/dev/null | grep -E 'libfido2|libtss2-tcti-device'
+```
+
 ## FIDO2 boot unlock race: LUKS2-token-plugin path has no retry
 
 `rd.luks.options=fido2-device=auto` alone isn't sufficient in practice — even with the karg and an enrolled token both present and correct, unlock can still silently fall back to passphrase if the security key isn't enumerated by udev yet. Verified against upstream systemd `src/cryptsetup/cryptsetup.c` source directly (not guessed):

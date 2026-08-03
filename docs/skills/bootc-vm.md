@@ -505,6 +505,9 @@ sends the installed system to the wrong upgrade stream.
 | `mise run iso-install-test` | ISO → live session → fisherman → disk, boot |
 | `mise run iso-install-test --secure` | as above, installed disk under enforcement |
 | `mise run iso-install-test --secure --expect-fail` | enforcement refuses an unsigned install |
+| `mise run luks-install-test` | ISO → fisherman → **encrypted** disk, boot, answer the passphrase |
+| `mise run luks-install-test --strict-installer` | as above, but fail if the installer types the root GUID wrongly |
+| `mise run luks-boot-test` | synthetic LUKS2 disk + real UKI — the boot half, no installer |
 
 Two things about the ISO variants that are easy to get wrong:
 
@@ -530,6 +533,58 @@ As with `build-iso`, the QEMU/fisherman orchestration lives in dakota-iso
 defaults, checks every prerequisite *before* the tens-of-minutes run starts, and
 copies the enrolled varstore to scratch so an enforcing boot never writes back to
 `.ovmf-vars-secure.fd`.
+
+## A sealed image's console goes to tty0, so an interactive prompt is invisible on serial
+
+Cost two 16-minute gate runs while building `luks-install-test`. The gate reported
+*"no LUKS passphrase prompt ever appeared"* against a system that was prompting
+perfectly well.
+
+With a VGA device present — and `-display none` still creates one — the kernel's
+default console is `tty0`. A sealed UKI's cmdline is signed and cannot be edited, so
+`console=ttyS0` is not in it, and the serial log therefore ends at:
+
+```
+systemd-boot@0x101300000 260.2
+systemd-stub@0x14df91000 260.2
+```
+
+which is a *healthy* boot, not a hang. The prompt was written to a framebuffer nobody
+was reading. **Absence of expected output on serial is not evidence of absence** — the
+same trap `iso-install-test` documents for its verdict, met again one layer down.
+
+**Fix: inject `console=ttyS0` through systemd-stub's SMBIOS cmdline-extra.** The stub
+accepts additions when Secure Boot is *not* enforcing, and refuses them when it is —
+which is the whole point of sealing, and means this technique and `--secure` are
+mutually exclusive. `boot-test` rejects that flag combination up front rather than
+running for six minutes to produce a harness artefact:
+
+```bash
+-smbios "type=11,value=io.systemd.stub.kernel-cmdline-extra=console=ttyS0"
+```
+
+plymouth stays enabled deliberately: `rd.plymouth=0` would make the prompt easier to
+see and would stop testing plymouth's interaction with `systemd-ask-password`, which
+is the thing that failed on hardware. The console agent prompts on `ttyS0` regardless.
+
+### To *answer* a prompt, write to a socket chardev — not the emulated keyboard
+
+`sendkey` over the HMP monitor reaches whatever owns tty0 (plymouth, possibly
+mid-repaint), needs a QEMU key name per character, and drops characters. A socket
+chardev with `logfile=` gives the same log on disk plus a writable channel to the
+console the agent is actually reading:
+
+```bash
+-chardev socket,id=luksser,path=${WORKDIR}/serial.sock,server=on,wait=off,logfile=${WORKDIR}/serial.log
+-serial chardev:luksser
+```
+
+**Throttle the write and hold the socket open afterwards.** A single `sendall()` then
+`close()` delivered only the first 8 characters of a 14-character passphrase — the
+guest echoed `********`, rejected it, and dropped to emergency mode. QEMU discards
+whatever is still buffered for the guest when the client disconnects. One byte every
+50 ms, then `\n`, then a 2 s sleep before closing: reliable on the first attempt. Same
+class of bug as `monitor_cmd`'s deliberate sleep before `close()`.
 
 ## An in-guest probe cannot observe `is-system-running` — it is waiting on itself
 
