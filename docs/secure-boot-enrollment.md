@@ -184,14 +184,30 @@ uniform 4-byte excess is the prefix, not a corrupt list.
 The *only* real test of bundling the Microsoft CAs into `db.auth`; no offline
 MS-signed binary is available to the VM path.
 
-Boot the second USB (Windows installer, signed UEFI shell, or a Windows dual-boot
-entry) from the firmware boot menu, under enforcement.
+**Use a distro `shimx64.efi`, not a Windows bootloader.** krytis enrols two of
+Microsoft's five `db` certificates (see the coverage table above, and
+[#464](https://github.com/starlit-os/krytis/issues/464)). A shim chains
+`Microsoft Windows UEFI Driver Publisher` → `Microsoft Corporation UEFI CA 2011`,
+which we ship. A Windows boot manager chains to Windows Production PCA 2011, which we
+do **not** — so a Windows entry being refused here is the *documented* state of our
+`db`, not a failure of this step. Confirm which you have before booting it:
 
-- [ ] It loads
+```bash
+sbverify --list bootx64.efi | grep -A1 subject     # the issuer CN is the answer
+```
 
-*Failure signature:* `Security Violation` / `Access Denied` means the Microsoft CAs
-did not survive enrollment — which contradicts `db` being 4353 bytes, so re-check
-step 4 before believing it.
+Boot the second USB from the firmware boot menu, under enforcement.
+
+- [ ] The shim loads
+- [ ] If you also tried a Windows entry, record which CA signed it and the result
+
+**Expected success looks like a shim error.** A standalone shim verifies, starts, then
+fails to find `grubx64.efi` — `Failed to open \EFI\BOOT\grubx64.efi - Not Found`. That
+message means the signature was accepted, which is the whole question. Only
+`Security Violation` / `Access Denied` *before* it is a failure of this step.
+
+*Failure signature:* `Security Violation` on the shim contradicts `db` being 4353
+bytes — re-check step 4 before believing it.
 
 ## 6. A revoked binary is refused
 
