@@ -457,6 +457,26 @@ alongside "a Microsoft-signed EFI binary still runs".
 Everything is OVMF on x86_64. No aarch64 (krytis is x86_64-only today) and no real
 firmware variety, which is where enrollment quirks live.
 
+### G-7 · ~~No gate had a TPM, and the image reboot-looped because of it~~ — found on hardware, #466
+
+Every QEMU gate ran without a TPM, which is not merely thin coverage — it silently
+disabled the check. `systemd-pcrphase-initrd.service` is guarded by
+`ConditionSecurity=measured-uki`, satisfiable only when systemd-stub measured the UKI,
+which needs a TPM. No TPM → condition false → unit **skipped** → green.
+
+On a machine with a TPM the condition passes, `systemd-pcrextend` dies because
+`libtss2-tcti-device.so.0` is `dlopen`ed and dracut therefore never put it in the
+initrd, and the unit's `FailureAction=reboot-force` turns that into a reboot loop.
+T1, T2, T3 and CI all passed on an image that could not boot.
+
+The lesson generalises past TPMs: **a `Condition*=` that our test bed never satisfies
+converts a test into a no-op that still reports success.** Worth auditing the other
+units we rely on for conditions the VMs cannot meet.
+
+`mise run tpm-boot-test` closes it — swtpm in a container, the UKI booted from a
+synthetic ESP, and a `--no-tpm` control whose passing *demonstrates* the blind spot
+rather than describing it.
+
 ---
 
 ## 7. Cross-references
