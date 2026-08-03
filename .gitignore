@@ -62,5 +62,8 @@ krytis-push-digests.env
 # Host-side build tools (compiled ad hoc)
 files/fakecap/fakecap-restore
 
-# ISO build artifacts (mise run build-iso) — multi-GB, never committed
-output/
+# ISO build artifacts (mise run build-iso) — multi-GB, never committed.
+# Glob, not just `output/`: --output-dir takes any path, and building a debug
+# twin into output-debug/ put a 4.5GB ISO into a commit (which GitHub then
+# rejected with an HTTP 500 that `git push` reported as "Everything up-to-date").
+output*/
