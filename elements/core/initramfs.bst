@@ -49,7 +49,22 @@ config:
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-fix-bootc-module.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-fix-bootc-module.conf"
 
-      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth "\n' \
+      # tpm2-tss is NOT optional here despite nothing in the initrd linking it.
+      # dracut's 73tpm2-tss module ends its check() with `return 255` — "include
+      # only if another module requires it" — and nothing does, so it is omitted.
+      # The TPM *kernel driver* still gets in, and that combination bricks any
+      # machine that has a TPM: systemd-stub measures the UKI, so
+      # systemd-pcrphase-initrd's ConditionSecurity=measured-uki SUCCEEDS, then
+      # systemd-pcrextend dies because libtss2-tcti-device.so.0 is dlopen'ed (not
+      # linked, so undiscoverable by dracut) and absent:
+      #
+      #   Shared library 'libtss2-tcti-device.so.0' is not available
+      #   TPM device not usable ... (AES-128-CFB missing?)
+      #
+      # and that unit carries FailureAction=reboot-force, so the machine
+      # reboot-loops. Reproduced with swtpm; see #466 and mise/tasks/tpm-boot-test.
+      # No QEMU gate had a TPM, so every test passed on an unbootable image.
+      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\n' \
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf"
 
