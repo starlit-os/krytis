@@ -177,7 +177,17 @@ Order matters, and it is easy to get backwards:
    about to overwrite these variables.
 
 Clearing the Platform Key first would take the very values step 4 compares against.
-Expect the `*Default` variables sized and `PK` factory-populated.
+
+Two states seen in practice that the obvious expectation does not cover:
+
+- **`dbDefault` / `KEKDefault` / `dbxDefault` may all be `absent`.** Plenty of firmware
+  never populates them. They are not the baseline — the live `PK`/`KEK`/`db`/`dbx`
+  values you capture here are, which is the whole reason this step exists.
+- **`PK absent` while `KEK`/`db`/`dbx` are still populated** means the machine is
+  *already* in Setup Mode with the previous key material intact. Clearing the Platform
+  Key does not necessarily clear the rest. Enrollment is armed in that state, so if you
+  have not deliberately cleared it, check whether something else did before you
+  continue — and see the `db` warning in step 4 before enrolling on a dual-boot machine.
 
 ## 2. Install from the ISO
 
@@ -264,6 +274,27 @@ dbx means every revoked Microsoft-signed binary still verifies).
 **Add 4 to each when reading `/sys/firmware/efi/efivars/`** — efivarfs prefixes every
 variable with a 32-bit attributes field, so `db` reads as 4357 there, not 4353. A
 uniform 4-byte excess is the prefix, not a corrupt list.
+
+Replaced-versus-merged is arithmetic, not judgement. Take your step 1 numbers and work
+out both answers *before* you enrol, so the post-enrollment read is a lookup:
+
+| | reads (efivars, incl. +4) |
+|---|---|
+| replaced | `PK` 1258 · `KEK` 1267 · `db` 4357 · `dbx` 21296 |
+| merged | step-1 data size + krytis's payload + 4 |
+
+Worked example from a real machine whose step 1 read `KEK 2549, db 8079, dbx 18352`:
+`db` becomes **4357** if replaced, **12432** if merged. There is no ambiguity between
+those two numbers.
+
+**A shrinking `db` is the expected result, and it is also a loss of trust.** That
+machine's 8075-byte `db` held Microsoft's full five-certificate set; krytis's 4353-byte
+one holds two of them plus our own. Everything signed under the other three —
+Windows boot managers, 2023-chain option ROMs — stops verifying. On a dual-boot machine
+that is the moment Windows becomes unbootable. See [#464](https://github.com/starlit-os/krytis/issues/464).
+
+`dbx` normally *grows* (krytis ships 443 revocations, typically more than the firmware
+shipped with), which is the one direction where replacing is strictly an improvement.
 
 - [ ] `db` size matches krytis's, so OEM defaults were replaced not merged
 - [ ] Every device still initialises — no missing NIC, GPU, or add-in card
