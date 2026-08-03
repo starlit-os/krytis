@@ -225,25 +225,20 @@ CRED_ARGS=(
     -smbios "type=11,value=io.systemd.credential.binary:krytis.boottest_authorized_keys=$(cred_b64 "${WORKDIR}/id_boottest.pub")"
 )
 
-OVMF_CODE="" ; OVMF_VARS_SRC=""
+# scripts/ovmf-paths.sh (#458)
+. scripts/ovmf-paths.sh
+OVMF_VARS_SRC=""
 if [ "${SECURE}" = "true" ]; then
-    for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
-             /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
-        [ -f "$c" ] && OVMF_CODE="$c" && break
-    done
+    OVMF_CODE=$(ovmf_code_secboot) || exit 1
+    # The ENROLLED varstore, not a pristine one: --secure boots against the db key
+    # generate-ovmf-vars baked in, which is what makes a rejection meaningful.
     [ -f ".ovmf-vars-secure.fd" ] || { echo "ERROR: .ovmf-vars-secure.fd missing — run 'mise run generate-ovmf-vars' first." >&2; exit 1; }
     cp ".ovmf-vars-secure.fd" "${WORKDIR}/vars.fd"
     MACHINE_ARGS="q35,smm=on"
     FLASH_SECURE_ARGS=(-global driver=cfi.pflash01,property=secure,value=on)
 else
-    for c in /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd \
-             /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/qemu/OVMF_CODE.fd; do
-        [ -f "$c" ] && OVMF_CODE="$c" && break
-    done
-    for c in /usr/share/edk2/ovmf/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd \
-             /usr/share/edk2/x64/OVMF_VARS.4m.fd /usr/share/qemu/OVMF_VARS.fd; do
-        [ -f "$c" ] && OVMF_VARS_SRC="$c" && break
-    done
+    OVMF_CODE=$(ovmf_code_plain) || exit 1
+    OVMF_VARS_SRC=$(ovmf_vars_plain) || exit 1
     cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars.fd"
     # q35, not qemu's default `pc` (i440fx). Distro edk2 ships OvmfPkgX64, which
     # is q35-targeted: on i440fx this firmware emits ZERO serial output and never
@@ -255,7 +250,6 @@ else
     MACHINE_ARGS="q35"
     FLASH_SECURE_ARGS=()
 fi
-[ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF firmware not found." >&2; exit 1; }
 
 echo "==> [2/5] Booting headless (secure=${SECURE:-false})..."
 qemu-system-x86_64 \

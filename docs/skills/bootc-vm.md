@@ -635,8 +635,30 @@ would pass locally and fail the gate in CI. Use `CN *= *`. Display-only callers
 (`scripts/parse-efi-auth.py`, `mise/tasks/fetch-microsoft-certs`) are unaffected;
 only code that *matches* on a subject needs this.
 
-`mise/tasks/enroll-test` carries the Debian/Ubuntu paths. The other five OVMF
-consumers (`boot-test`, `boot-vm`, `generate-ovmf-vars`, `selfenroll-test`,
-`upgrade-test`) still have the Fedora/Arch-only lists and will need the same
-treatment before they can run on a runner — [#458](https://github.com/starlit-os/krytis/issues/458),
-which also proposes collapsing all six lists into one resolver.
+### Resolve OVMF through `scripts/ovmf-paths.sh`, never inline
+
+All six QEMU tasks used to carry their own candidate lists. They drifted, and the
+drift stayed invisible until CI ran on a distro none of them covered. One resolver
+now owns it (#458) — source it and call one of four functions:
+
+```bash
+. scripts/ovmf-paths.sh
+OVMF_CODE=$(ovmf_code_secboot)    || exit 1   # firmware that enforces signatures
+OVMF_CODE=$(ovmf_code_plain)      || exit 1   # firmware that does not
+VARS=$(ovmf_vars_pristine)        || exit 1   # SETUP MODE — no PK, guest enrols its own
+VARS=$(ovmf_vars_plain)           || exit 1   # non-Secure-Boot varstore
+```
+
+They are four functions rather than two with a flag because mixing up *pristine* and
+*enrolled* is a silent hollow test, not a crash. `ovmf_vars_pristine` refuses a
+varstore that already has a Platform Key, so the `.ms.fd` substitution cannot happen
+by accident.
+
+Two constraints to preserve when editing the lists:
+
+- **Keep the CODE and VARS lists in the same distro order.** They are a matched pair
+  whose sizes must sum to 2MB or 4MB; drawing CODE from one distro's directory and
+  VARS from another's can straddle the 2M/4M split, and the symptom is a firmware
+  that emits no serial output at all rather than an error (#414).
+- **`.fd` before `.qcow2`.** Every caller passes `format=raw`, which silently
+  misreads a qcow2; the resolver warns if only a qcow2 is available.

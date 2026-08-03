@@ -42,17 +42,11 @@ fi
 
 command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
 
-OVMF_CODE=""; OVMF_VARS_SRC=""
-for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
-         /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
-    [ -f "$c" ] && OVMF_CODE="$c" && break
-done
-for v in /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd /usr/share/OVMF/OVMF_VARS_4M.secboot.qcow2 \
-         /usr/share/edk2/x64/OVMF_VARS.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_VARS.secboot.fd; do
-    [ -f "$v" ] && OVMF_VARS_SRC="$v" && break
-done
-[ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF secboot firmware not found." >&2; exit 1; }
-[ -n "${OVMF_VARS_SRC}" ] || { echo "ERROR: OVMF secboot vars template not found." >&2; exit 1; }
+# scripts/ovmf-paths.sh (#458). Pristine, not .ovmf-vars-secure.fd — the whole
+# point is what a machine that has never seen krytis does with this image.
+. scripts/ovmf-paths.sh
+OVMF_CODE=$(ovmf_code_secboot) || exit 1
+OVMF_VARS_SRC=$(ovmf_vars_pristine) || exit 1
 
 WORKDIR=$(mktemp -d /var/tmp/krytis-selfenroll.XXXXXX)
 cleanup() {

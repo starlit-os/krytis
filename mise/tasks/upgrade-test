@@ -47,12 +47,8 @@ KEEP="${CLI_KEEP:-${usage_keep:-}}"
 }
 command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
 
-OVMF_CODE=""
-for c in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.secboot.qcow2 \
-         /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd; do
-    [ -f "$c" ] && OVMF_CODE="$c" && break
-done
-[ -n "${OVMF_CODE}" ] || { echo "ERROR: OVMF secboot firmware not found." >&2; exit 1; }
+. scripts/ovmf-paths.sh   # distro OVMF layout, one place (#458)
+OVMF_CODE=$(ovmf_code_secboot) || exit 1
 
 WORKDIR=$(mktemp -d /var/tmp/krytis-upgrade-test.XXXXXX)
 cleanup() {
