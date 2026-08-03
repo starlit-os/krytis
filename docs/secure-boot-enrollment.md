@@ -230,6 +230,47 @@ do **not** — so a Windows entry being refused here is the *documented* state o
 sbverify --list bootx64.efi | grep -A1 subject     # the issuer CN is the answer
 ```
 
+### Preparing that USB — formatting the first partition is not enough
+
+If the stick previously had a hybrid ISO written to it, `mkfs.vfat` on partition 1
+leaves the *original ESP* in place, and the firmware boots that, not your new
+partition. A stick in exactly that state looked prepared and was not:
+
+```
+sda1  vfat  LABEL=MSTEST   PART_ENTRY_NAME=ISO9660   type ebd0a0a2…  <- basic data
+sda2  vfat  LABEL=EFI      PART_ENTRY_NAME=Appended2 type c12a7328…  <- the real ESP
+sda3        PART_ENTRY_NAME=Gap1                     type ebd0a0a2…
+```
+
+The freshly-formatted `sda1` is a **basic data** partition; `sda2` carries the ESP type
+GUID and a whole `shim`+`grub` stack from the old image. Two ways that ruins step 5:
+the binary actually executed is one you never verified, and `grubx64.efi` sitting
+beside the shim means it proceeds into GRUB instead of producing the "Not Found" that
+proves the signature was accepted.
+
+Check with udev, which needs no privileges:
+
+```bash
+for p in /dev/sdX?; do
+  udevadm info --query=property --name="$p" |
+    grep -E 'ID_PART_ENTRY_(TYPE|NAME)|ID_FS_(TYPE|LABEL)'
+done
+```
+
+Put the shim on the partition whose type is `c12a7328-f81f-11d2-ba4b-00a0c93ec93b`, as
+the **only** file in `EFI/BOOT/`, and move anything already there aside rather than
+deleting it:
+
+```bash
+mkdir -p /run/media/$USER/EFI/EFI/BOOT.orig
+mv /run/media/$USER/EFI/EFI/BOOT/* /run/media/$USER/EFI/EFI/BOOT.orig/
+cp shimx64.efi /run/media/$USER/EFI/EFI/BOOT/BOOTX64.EFI
+sync
+```
+
+Or wipe the stick and create a single `ef00` partition, which removes the question
+permanently.
+
 Boot the second USB from the firmware boot menu, under enforcement.
 
 - [ ] The shim loads
