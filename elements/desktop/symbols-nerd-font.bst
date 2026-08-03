@@ -2,9 +2,9 @@ kind: manual
 
 sources:
 - kind: tar
-  url: github_files:ryanoasis/nerd-fonts/releases/download/v3.4.0/NerdFontsSymbolsOnly.tar.xz
+  url: github_files:ryanoasis/nerd-fonts/releases/download/v3.5.0/NerdFontsSymbolsOnly.tar.xz
   base-dir: ""
-  ref: 7f8c090da3b0eaa7108646bf34cbbb6ed13d5358a72460522108b06c7ecd716a
+  ref: b7ef2283462b435f1fe91d729dc412d5dbe34269dd2c7f4e1d803e4105c8d883
 # Local fontconfig conf overrides the simpler upstream version from the tarball.
 # Provides <alias> rules that make Symbols Nerd Font a fallback for all
 # common monospace families so glyphs render without per-user configuration.
