@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#MISE description="Assert an encrypted root reaches a passphrase prompt instead of timing out into emergency (#473)"
+#USAGE flag "--image <ref>" default="localhost/krytis:sealed" help="Sealed image whose UKI is booted"
+#USAGE flag "--generic-guid" help="Negative arm: give the LUKS root the generic Linux GUID instead of the discoverable one, which must FAIL to prompt"
+#USAGE flag "--keep" help="Keep the workdir (disk images, serial logs) for inspection"
+
+# The gate that would have caught a LUKS install being unbootable. No other gate
+# encrypts anything: boot-test, iso-install-test, selfenroll-test and upgrade-test all
+# use a plain disk, so the entire unlock path shipped unexercised and the first symptom
+# was a physical machine sitting on a plymouth splash for 90 seconds and dropping to
+# an emergency console nobody could log into (root is locked).
+#
+# What it proves, and why the negative arm exists: a sealed UKI freezes its cmdline, so
+# there is no rd.luks.uuid= to enumerate volumes, and hostonly=no means no /etc/crypttab
+# in the initrd. systemd-gpt-auto-generator is therefore the ONLY thing that can find an
+# encrypted root, and it only recognises one carrying the discoverable partition GUID:
+#
+#   4f68bce3-e8cd-4db1-96e7-fbcaf984b709  root-x86-64  -> prompt appears
+#   0fc63daf-8483-4772-8e79-3d69d8477de4  linux generic -> no prompt, dev-gpt-auto-root
+#                                                          times out, emergency mode
+#
+# Synthetic media on purpose: a real ESP with the real UKI, and a real LUKS2 header
+# made by cryptsetup on a plain file (no privileges needed), but no installer and no
+# root filesystem. The unlock decision happens long before anything mounts /sysroot,
+# so this answers the question in ~3 minutes instead of a 20-minute install.
+
+set -euo pipefail
+
+CLI_IMAGE=""; CLI_GENERIC=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)        CLI_IMAGE="$2"; shift 2 ;;
+        --generic-guid) CLI_GENERIC=true; shift ;;
+        --keep)         CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:sealed}}"
+GENERIC="${CLI_GENERIC:-${usage_generic_guid:-}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+PASSPHRASE=testpassphrase
+
+podman image exists "${IMAGE}" || {
+    echo "ERROR: ${IMAGE} not found locally — run 'mise run seal-uki' first." >&2
+    exit 1
+}
+for t in cryptsetup sfdisk mkfs.vfat mcopy qemu-system-x86_64; do
+    command -v "$t" >/dev/null || { echo "ERROR: ${t} not found." >&2; exit 1; }
+done
+[ -r /dev/kvm ] || { echo "ERROR: /dev/kvm not readable — KVM is required." >&2; exit 1; }
+
+. scripts/ovmf-paths.sh
+OVMF_CODE=$(ovmf_code_plain) || exit 1
+OVMF_VARS=$(ovmf_vars_plain) || exit 1
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-luks-boot.XXXXXX)
+cleanup() { if [ -n "${KEEP}" ]; then echo "==> Kept ${WORKDIR}"; else rm -rf "${WORKDIR}"; fi; }
+trap cleanup EXIT
+
+ROOT_GUID=4f68bce3-e8cd-4db1-96e7-fbcaf984b709
+ARM=discoverable
+if [ -n "${GENERIC}" ]; then
+    ROOT_GUID=0fc63daf-8483-4772-8e79-3d69d8477de4
+    ARM=generic
+fi
+
+echo "==> [1/4] Extracting the UKI from ${IMAGE}..."
+CID=$(podman create "${IMAGE}" true)
+podman cp "${CID}":/boot/EFI/Linux/krytis.efi "${WORKDIR}/uki.efi"
+podman rm "${CID}" >/dev/null
+[ -s "${WORKDIR}/uki.efi" ] || { echo "ERROR: ${IMAGE} has no UKI — not a sealed build." >&2; exit 1; }
+
+echo "==> [2/4] Building a GPT disk with an ESP and a real LUKS2 root (${ARM} GUID)..."
+ESP_MB=$(( ( $(stat -c%s "${WORKDIR}/uki.efi") / 1048576 ) + 40 ))
+LUKS_MB=48
+truncate -s "${ESP_MB}M" "${WORKDIR}/esp.raw"
+mkfs.vfat -F32 -n ESP "${WORKDIR}/esp.raw" >/dev/null
+export MTOOLS_SKIP_CHECK=1
+mmd -i "${WORKDIR}/esp.raw" ::/EFI ::/EFI/BOOT
+mcopy -i "${WORKDIR}/esp.raw" "${WORKDIR}/uki.efi" ::/EFI/BOOT/BOOTX64.EFI
+
+# pbkdf2 with a low iteration count: this container is thrown away, and the default
+# argon2id costs seconds of CPU per run for no benefit here.
+truncate -s "${LUKS_MB}M" "${WORKDIR}/luks.raw"
+printf '%s' "${PASSPHRASE}" | cryptsetup luksFormat --batch-mode --type luks2 \
+    --pbkdf pbkdf2 --pbkdf-force-iterations 1000 "${WORKDIR}/luks.raw" - 2>/dev/null
+
+DISK="${WORKDIR}/disk.img"
+truncate -s "$(( ESP_MB + LUKS_MB + 8 ))M" "${DISK}"
+sfdisk --quiet --label gpt "${DISK}" >/dev/null <<EOF
+start=2048, size=$(( ESP_MB * 2048 )), type=c12a7328-f81f-11d2-ba4b-00a0c93ec93b, name=ESP
+size=$(( LUKS_MB * 2048 )), type=${ROOT_GUID}, name=root
+EOF
+dd if="${WORKDIR}/esp.raw" of="${DISK}" bs=512 seek=2048 conv=notrunc status=none
+LUKS_START=$(sfdisk -J "${DISK}" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])')
+dd if="${WORKDIR}/luks.raw" of="${DISK}" bs=512 seek="${LUKS_START}" conv=notrunc status=none
+
+echo "==> [3/4] Booting (root GUID ${ROOT_GUID:0:8}…, LUKS at sector ${LUKS_START})..."
+cp "${OVMF_VARS}" "${WORKDIR}/vars.fd"
+# rd.plymouth=0 and ignore_loglevel are what make this observable at all: the UKI bakes
+# `quiet splash`, and on hardware the splash hid both the prompt and the timeout.
+timeout 200 qemu-system-x86_64 \
+    -enable-kvm -m 2048 -cpu host -smp 2 -machine q35 \
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+    -drive "file=${DISK},format=raw,if=virtio" \
+    -smbios "type=11,value=io.systemd.stub.kernel-cmdline-extra=console=ttyS0 loglevel=7 ignore_loglevel rd.plymouth=0 systemd.log_level=info" \
+    -display none -no-reboot \
+    -serial "file:${WORKDIR}/serial.log" >/dev/null 2>&1 || true
+
+LOG="${WORKDIR}/serial.log"
+[ -s "${LOG}" ] || { echo "FAIL: no serial output — the guest never ran." >&2; exit 1; }
+
+echo "==> [4/4] Verdict"
+grep -aiE 'please enter passphrase|Timed out waiting for device|dev-gpt.auto.root|emergency mode' "${LOG}" |
+    head -5 | sed 's/^/    /' || true
+
+prompted() { grep -aqiE 'please enter passphrase for disk' "${LOG}"; }
+# Keep these patterns SHORT. The serial console wraps at 80 columns, so a longer
+# phrase like "Timed out waiting for device dev-gpt-auto-root" gets split across a
+# newline and never matches a line-based grep — which is how the first version of this
+# assertion failed on a run whose output was visibly correct.
+timed_out() {
+    grep -aqiE 'Timed out waiting for device' "${LOG}" ||
+    grep -aqiE 'Dependency failed for sysroot' "${LOG}" ||
+    grep -aqiE 'Reached target emergency' "${LOG}"
+}
+
+if [ "${ARM}" = generic ]; then
+    # Negative arm: proves the GUID is what decides, so a pass in the positive arm
+    # cannot be luck. Also documents the exact hardware failure.
+    if timed_out && ! prompted; then
+        echo "==> PASS (negative arm): a generic-GUID LUKS root produced NO prompt and timed"
+        echo "    out on dev-gpt-auto-root, exactly as reported from hardware. Only the"
+        echo "    discoverable GUID is usable when the UKI freezes the cmdline."
+        exit 0
+    fi
+    echo "FAIL: expected the generic GUID to prevent unlocking, but it did not." >&2
+    exit 1
+fi
+
+if prompted; then
+    echo "==> PASS: the encrypted root was discovered and systemd asked for a passphrase,"
+    echo "    so an installed LUKS system reaches its prompt rather than emergency mode."
+    exit 0
+fi
+
+echo "FAIL: no passphrase prompt for an encrypted root carrying the discoverable GUID." >&2
+timed_out &&
+    echo "      It timed out on dev-gpt-auto-root instead — nothing created an unlock job." >&2
+echo "      A sealed UKI has no rd.luks.uuid= and the initrd has no crypttab, so" >&2
+echo "      systemd-gpt-auto-generator is the only thing that can find the volume." >&2
+echo "      Inspect with --keep; the serial log is the whole story." >&2
+exit 1
