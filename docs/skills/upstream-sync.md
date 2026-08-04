@@ -81,9 +81,10 @@ without mining anything — there was no prior ref to diff against, so "mine the
 history" would have been a firehose rather than a diff. Real mining starts on the next
 sync once there's an actual commit range.
 
-## `docs/skills/dakota.md` Doesn't Exist Yet
+## `docs/skills/dakota.md`
 
-Unlike `zirconium-hawaii.md`, no dakota reference file exists yet — nothing's been mined
-from it. The `upstream-lessons` skill creates it on the first accepted dakota lesson,
-following `zirconium-hawaii.md`'s shape (What It Is / Directory Layout / per-topic
-sections) rather than starting from a blank template.
+Created on the first accepted dakota lesson (PR #303/#141) and grown since — unlike
+`zirconium-hawaii.md`'s "What It Is / Directory Layout / per-topic sections" shape, it uses
+a flatter "What It Is / Lessons Mined" structure with one `### <title>` + `*Source: ...*`
+entry per lesson. Match that existing shape when adding new entries rather than
+introducing a third structure.

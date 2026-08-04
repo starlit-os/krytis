@@ -80,4 +80,19 @@ Krytis DOES junction `gnome-build-meta` today (`elements/gnome-build-meta.bst`, 
 
 *Source: zirconium-hawaii `b96b398` / [gnome-build-meta `1d96e6f`](https://gitlab.gnome.org/GNOME/gnome-build-meta/-/commit/1d96e6f43e8f6c0db4441ec2d51c1250c22275e7)*
 
-Krytis's `freedesktop-sdk.bst` overrides `components/gtk-doc.bst` → `gnome-build-meta.bst:sdk/gtk-doc.bst`, mirroring gnome-build-meta's own overrides list. Checked against the gnome-build-meta ref krytis currently tracks (`50.3-5-g4b25046df8a03b6341db7aa8956c55fbbc0c1365`, branch `gnome-50`): gnome-build-meta's own `elements/freedesktop-sdk.bst` at that ref STILL contains `components/gtk-doc.bst: sdk/gtk-doc.bst` in its overrides. The upstream fix (`1d96e6f`) has not propagated to the `gnome-50` branch krytis tracks — the override remains required. **Re-check this at every future junction bump** (starting with the eventual 26.08 bump, #305) rather than treating this verdict as permanent; drop the override only once the ref krytis tracks stops carrying it upstream.
+Krytis's `freedesktop-sdk.bst` overrides `components/gtk-doc.bst` → `gnome-build-meta.bst:sdk/gtk-doc.bst`, mirroring gnome-build-meta's own overrides list. Checked against the gnome-build-meta ref krytis currently tracks (`50.3-5-g4b25046df8a03b6341db7aa8956c55fbbc0c1365`, branch `gnome-50`): gnome-build-meta's own `elements/freedesktop-sdk.bst` at that ref STILL contains `components/gtk-doc.bst: sdk/gtk-doc.bst` in its overrides. The upstream fix (`1d96e6f`) has not propagated to the `gnome-50` branch krytis tracks — the override remains required. **Re-check this at every future junction bump** (starting with the eventual 26.08 bump, #305) rather than treating this verdict as permanent; drop the override only once the ref krytis tracks stops carrying it upstream in gnome-50.
+
+### GHCR manifest visibility lag + authenticated visibility probes (2026-07-26 .. 2026-07-28)
+
+*Sources: dakota `3bb0825` (verify public GHCR tags before signing), `8f8c7eb` (remove `--creds` from all skopeo inspect visibility checks), `3fd2573` (widen visibility check from 120s to 360s)*
+
+Dakota's publish pipeline pushes an image to GHCR and then immediately probes/signs it. Two distinct GHCR quirks surfaced across three fix commits:
+
+1. **Public GHCR visibility checks must not use runner credentials.** `skopeo inspect --creds "$GH_ACTOR:$GH_TOKEN" docker://ghcr.io/...` can fail for a *public* package even while the same tag is readable unauthenticated. Authenticated probes against a public GHCR package are not equivalent to the public read path — use the unauthenticated probe for visibility checks; keep `--creds` only on `skopeo copy` operations that actually write.
+2. **Newly-pushed manifests can take a long time to become visible.** A 12×10s (2 min) polling loop was originally deemed generous; it still failed in production on 2026-07-28 because GHCR propagation exceeded 120s on a large push. Dakota widened the loop to 36×10s (6 min) to absorb the observed lag.
+
+**Krytis exposure:** `.github/workflows/publish.yml` pushes (`mise run push`) and then immediately runs `mise run sign` (cosign sign) followed by a blocking `cosign verify ghcr.io/starlit-os/krytis@${digest}` step, with **no visibility-wait loop** in between. This is the same push-then-immediately-probe shape that bit dakota. Krytis hasn't hit the race yet (image size/timing may differ), but if `cosign verify` starts intermittently failing with a not-found/unknown-manifest error right after a push that otherwise succeeded, this is the known cause — add a `skopeo inspect --no-tags` polling loop (unauthenticated) between push and sign, sized to at least 6 minutes, rather than adding retries to cosign itself.
+
+## Referencing This Project
+
+Copy patterns from `../dakota/` and adapt — don't symlink or junction into dakota from krytis. Independent BST artifact caches and element trees, same as the `zirconium-hawaii.md` convention.

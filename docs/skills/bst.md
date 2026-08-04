@@ -76,6 +76,7 @@ The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only 
 | Kind | Use case |
 |------|---------|
 | `git_repo` | Most elements |
+| `git_module` | A dependency vendors its own deps as git submodules (`.gitmodules`). Use this for each submodule path — `git_repo` + a manual `directory:` checks the submodule out but does **not** register it with `bst source track`, so `bst source track` silently stops updating that submodule while the parent ref keeps tracking (the update-path-gate blind spot AGENTS.md calls out for `tar`/`remote` also applies here). See zirconium-hawaii's gamescope element for the fix. |
 | `tar` | Release tarballs. Use `base-dir: ""` if tarball has no wrapping dir. |
 | `remote` | Single file download (not extracted). Use `directory:` to place it. |
 | `local` | Files from the repo's `files/` directory |
@@ -1182,6 +1183,17 @@ config:
 ```
 
 Without both, any binary linking against `libgbm`, `libEGL`, etc. fails at runtime with "cannot open shared object file". Mesa's DRI drivers and GBM backend modules have the GL/default prefix baked in at compile time, so `LIBGL_DRIVERS_PATH`/`GBM_BACKENDS_PATH` are not needed separately.
+
+**Never install a real directory at a `GL/` extension path from a layer.** Several paths
+under `%{libdir}/GL/` are symlinks into Mesa's own extension tree (e.g.
+`GL/glvnd/egl_vendor.d -> ../default/glvnd/egl_vendor.d`). A layer that installs a real
+directory at one of those paths shadows the symlink at OCI compose/merge time and evicts
+the files behind it — dakota lost `50_mesa.json` (and with it the llvmpipe fallback) this
+way by installing a vendor EGL ICD to `%{libdir}/GL/glvnd/egl_vendor.d/`. Vendor ICDs
+belong in `/etc/glvnd/egl_vendor.d` instead — fdsdk's libglvnd only searches `/etc/glvnd`
+and the GL extension dir, never `/usr/share/glvnd`. The same shadowing hazard applies to
+any path under `GL/`: check with `ls -ld` on a composed image before choosing an install
+location there.
 
 **Cargo features for systemd integration:** Rust binaries that integrate with systemd (socket notification, session management) must include `systemd` in the feature list:
 
