@@ -1,106 +1,14 @@
 # Battery-Triggered Power Profile Switch
 
-Status: **Design Gate cleared** (issue #261, decisions below). Implementation not yet started —
-see `docs/plans/2026-08-04-battery-power-profile-switch.md` for the execution plan.
+Status: **Implemented** (issue #261). No noctalia source patch, no fork carry — see
+"Superseding the fork-and-patch plan" below for why.
 
 ## Problem
 
 Live-verified (session behind #261): none of `power-profiles-daemon`, `falcond`, or `noctalia`
 change `power-profiles-daemon`'s `ActiveProfile` in response to AC/battery state. Unplug AC,
 `ActiveProfile` sits wherever it was left, indefinitely. Many desktop environments treat this as
-baseline behavior (GNOME's `gsd-power` calls ppd on low battery); krytis currently doesn't.
-
-## Ownership: this is upstream noctalia code, not a krytis element
-
-`desktop/noctalia.bst` builds `github:noctalia-dev/noctalia.git` (`kind: git_repo`, `track: v*`,
-currently pinned `v5.0.0-beta.7-0-g...`). Krytis carries **no source patches** against it today —
-the codebase is upstream's, not ours (`docs/skills/desktop.md` § noctalia build deps). This is
-**not** a `.bst`-only change; it requires C++ changes to noctalia's own source.
-
-Decision (Design Gate): **fork-and-patch only for now.** Build and verify on a fork
-(`kitten-lily/noctalia`, matching the historical fork naming used for the pre-merge
-wifi-persist-polkit-async patch), carry it into krytis as a `kind: patch` source once verified.
-**No upstream PR** to `noctalia-dev/noctalia` without a separate, later explicit go-ahead per
-AGENTS.md's Upstream Gate — not authorized as part of this decision. Worth re-checking later:
-the *related* upstream issue (`noctalia-dev/noctalia-shell#2051`, different feature — TLP-style
-per-profile tuning) was closed 2026-05-16 with "we aren't quite ready to open up the v5 tracker
-for public bug reports or feature requests just yet."
-
-## Architecture: where this hooks in
-
-Noctalia already has every primitive needed except the policy glue:
-
-- `src/dbus/upower/upower_service.{h,cpp}` — `UPowerService` maintains `UPowerState::onBattery`
-  (read from `org.freedesktop.UPower`'s `OnBattery` property), refreshed on the `PropertiesChanged`
-  D-Bus signal, exposed via `setChangeCallback()`. Purely read-only today — no code path reacts to
-  `onBattery` flipping.
-- `src/dbus/power/power_profiles_service.{h,cpp}` — `PowerProfilesService::setActiveProfile()`
-  writes `org.freedesktop.UPower.PowerProfiles`'s `ActiveProfile` property (async, optimistic
-  local update + `PropertiesChanged` reconciliation). Also tracks
-  `PowerProfilesChangeOrigin` (`Noctalia` vs `External`) via `consumeActiveProfileChangeOrigin()`,
-  so a component can tell "did *I* cause this transition" apart from "did something else."
-- Both services are constructed once and owned by the app root (per DeepWiki's line-anchored
-  read of `src/app/application.h`: `PowerProfilesService` ~L126, `UPowerService` ~L136) and handed
-  by pointer to consumers like `PowerTab` (`src/shell/control_center/tabs/power_tab.cpp`,
-  constructor `PowerTab(UPowerService*, PowerProfilesService*)`). A new `PowerAutoSwitchController`
-  (or similar) is a natural third component constructed alongside them in `application.h`/`.cpp`,
-  taking both services by pointer — no new D-Bus plumbing needed, only a new consumer.
-
-Settings persistence: noctalia writes user config to `~/.config/noctalia/settings.json` (schema
-seeded from an in-repo default-settings asset). New setting `power.autoSwitchOnBattery` (bool,
-**default `false`** — opt-in, see Design Gate decisions), plus `power.autoSwitchPowerSaverProfile`
-/ `power.autoSwitchAcProfile` string overrides (default `power-saver` / recorded-previous), is the
-persistence point, exposed as a toggle on the existing `PowerTab` profiles card
-(`buildProfilesCard()`).
-
-## Coexistence with falcond
-
-falcond is a **second, independent writer** of `ActiveProfile` — it is not merely something to
-avoid "fighting" abstractly, it literally calls the same D-Bus property setter noctalia would.
-Confirmed via falcond's own status contract (`README.md` "Monitoring" section, `RESTORE_STATE:
-Power Profile: <value>` field): on game launch falcond snapshots whatever `ActiveProfile` was
-active, forces `performance`, and on game exit restores the snapshot. If noctalia's auto-switch
-independently rewrites `ActiveProfile` while a game hold is active, the two either race or falcond
-silently clobbers noctalia's choice on the next poll (falcond's `poll_interval_ms`, default 9000ms).
-
-falcond exposes exactly the integration point needed to avoid this, and documents it as a stable
-third-party contract: `/tmp/falcond_status` — "3rd-party contract; atomic rename" (per falcond's
-build-time `-Dtmp-status-file` doc, explicitly called out as the file for consumers like
-mangohud). Its `ACTIVE_PROFILE:` field is non-empty exactly when a game-profile hold is in effect.
-Proposed rule: **`PowerAutoSwitchController` reads `/tmp/falcond_status` before writing
-`ActiveProfile`; if `ACTIVE_PROFILE` is non-empty, skip the write** (falcond's own restore-on-exit
-already returns the profile to whatever noctalia last set as the "resting" state, since falcond's
-`RESTORE_STATE` snapshot was taken *after* noctalia's prior write). This requires no new IPC
-surface — parsing one small text file already documented as a stable external contract.
-
-Caveat: falcond has no libnotify/D-Bus signal for "hold started/ended," only the file and a
-9-second poll cadence — so there's an unavoidable small window (up to one falcond poll interval)
-where a plug/unplug event and a game launch/exit can interleave and briefly disagree. Acceptable:
-worst case is one stale profile for a few seconds, self-corrects on the next check.
-
-## Policy (Design Gate decisions — locked in)
-
-- **Opt-in, default off.** `power.autoSwitchOnBattery = false` by default; user enables it from
-  the `PowerTab` profiles card. No behavior change for existing users on an update.
-- **Trigger: any AC unplug**, not a percentage threshold. Subscribe to `UPowerService`'s change
-  callback; act only on `onBattery` transitions (not every battery-percentage tick —
-  `UPowerState::onBattery` changing is a `PropertiesChanged` on `org.freedesktop.UPower`'s
-  `OnBattery` key specifically, distinct from percentage/rate updates on device objects).
-- **Revert target: recorded previous profile**, not a fixed `balanced`. On `onBattery: false →
-  true`: if `/tmp/falcond_status`'s `ACTIVE_PROFILE` is empty, record the current `ActiveProfile`
-  (skip recording if it's already `power-saver` — avoid capturing our own prior auto-switch as
-  the "previous" value on a rapid unplug/replug/unplug sequence), then
-  `setActiveProfile("power-saver")`. On `onBattery: true → false`: if `/tmp/falcond_status`'s
-  `ACTIVE_PROFILE` is empty, restore the recorded profile (fallback `balanced` if nothing was
-  recorded, e.g. the app started while already on battery).
-- **falcond coexistence: poll `/tmp/falcond_status`**, confirmed as the mechanism. Skip any
-  auto-switch write while `ACTIVE_PROFILE` is non-empty (falcond's own restore-on-exit already
-  returns the profile to whatever noctalia last set as the "resting" state, since falcond's
-  `RESTORE_STATE` snapshot is taken after noctalia's prior write).
-- Do nothing if the user manually changes `ActiveProfile` while on battery — respect
-  `PowerProfilesChangeOrigin::External` as "user overrode me, don't fight back" for the rest of
-  that battery session (re-arms on the next AC transition). This mirrors "shouldn't fight a manual
-  override" from the issue body.
+baseline behavior (GNOME's `gsd-power` calls ppd on low battery); krytis previously didn't.
 
 ## Design Gate — resolved 2026-08-04
 
@@ -108,17 +16,133 @@ worst case is one stale profile for a few seconds, self-corrects on the next che
 2. **Trigger granularity?** → **Any AC unplug** (no percentage threshold).
 3. **Revert target on AC reconnect?** → **Recorded previous profile** (fallback `balanced`).
 4. **falcond coexistence mechanism?** → **Poll `/tmp/falcond_status`**, confirmed.
-5. **Where does the code land?** → **Fork-and-patch only for now**; no upstream PR authorized.
+5. **Where does the code land?** → Originally decided "fork-and-patch only, no upstream PR" —
+   **superseded once implementation started**, see below. All five decisions above still hold;
+   only the *mechanism* changed.
+
+## Superseding the fork-and-patch plan
+
+The Design Gate above was resolved assuming this needs new noctalia C++ — confirmed at the time
+by reading `src/dbus/upower/upower_service.cpp` and `src/dbus/power/power_profiles_service.cpp`
+externally (GitHub raw, `main` branch) and finding no code path connecting the two. That
+investigation was correct as far as it went, but incomplete: those two files are not the only
+relevant subsystem.
+
+Once the `kitten-lily/noctalia` fork was fast-forwarded to upstream and branched at krytis's
+actual pinned ref (`v5.0.0-beta.7-0-gc366a35ffc30b011d03fcd122bbe7d22f932fc57`) for real
+implementation work, a local read of `src/hooks/`, `src/config/config_types.h`, and
+`src/shell/settings/settings_registry.cpp` turned up a **generic, already-shipped, GUI-exposed
+hook system** that covers this exact case:
+
+- `HookKind::BatteryDischarging` / `BatteryCharging` / `BatteryPlugged` /
+  `BatteryPercentageChanged` / `PowerProfileChanged` (`src/config/config_types.h`)
+- Fired from `Application::onUpowerStateChangedForHooks()` via `BatteryHookState::update()`
+  (`src/hooks/battery_hook_state.cpp`) on every `UPowerState` change
+- Each hook is a **user-configurable shell command**, run via `/bin/sh -lc "<command>"`
+  (`src/core/process/process.cpp`), settable per-hook from **Settings → Hooks** in the GUI
+  (`SettingsSection::Hooks`, `src/shell/settings/settings_registry.cpp`) — a text field per hook,
+  empty by default, documented in `example.toml`'s commented-out `[hooks]` block
+
+This is precisely the extension point the feature needs, already built, tested, and exposed to
+users — a fork patch duplicating it would be pure unnecessary abstraction. **No noctalia source
+change is needed at all.** Krytis's job shrinks to: ship a script that implements the
+falcond-aware switch/revert policy, and document the two hook commands a user pastes in to
+opt in.
+
+## Implementation
+
+- **Script**: `files/battery-power-profile-hook/battery-power-profile-hook.sh`, installed by
+  `elements/config/battery-power-profile-hook.bst` to
+  `/usr/libexec/krytis/battery-power-profile-hook.sh` (added to `stacks/desktop.bst`).
+- **Opt-in mechanism**: user pastes two commands into noctalia's Settings → Hooks:
+
+  ```
+  battery_discharging = "/usr/libexec/krytis/battery-power-profile-hook.sh discharging"
+  battery_charging    = "/usr/libexec/krytis/battery-power-profile-hook.sh charging"
+  ```
+
+  Krytis ships the script but sets neither hook command by default — matches the "opt-in,
+  default off" decision without needing a settings toggle of our own; noctalia's own Hooks UI
+  *is* the toggle.
+- **Profile switch**: on `battery_discharging`, read `ActiveProfile` via
+  `busctl get-property org.freedesktop.UPower.PowerProfiles …`; if it isn't already
+  `power-saver`, save it to `${XDG_RUNTIME_DIR:-/tmp}/krytis-battery-power-profile.state` and
+  `busctl set-property … ActiveProfile s power-saver`.
+- **Revert**: on `battery_charging`, restore the recorded profile via the same `busctl
+  set-property` call (fallback `balanced` if no state file — e.g. noctalia started mid-battery-
+  session, so no discharging edge was ever observed).
+- **falcond gate**: both directions check `/tmp/falcond_status`'s `ACTIVE_PROFILE` field first
+  (falcond's documented third-party contract) and no-op if non-empty (a game hold is active) —
+  or if the file is missing/unreadable at all. The latter fails **closed** (treated as "holding",
+  action suppressed): falcond is unconditionally installed and preset-enabled in
+  `stacks/desktop.bst`, so a missing status file means either a brief pre-first-write boot race
+  or a stopped/crashed daemon, not "falcond doesn't exist here" — suppressing until falcond
+  publishes real status is the safe default, and self-corrects on the next battery event.
+- **Manual override**: automatically respected without extra bookkeeping. Unlike a persistent
+  D-Bus-subscribed controller, these hooks fire only on the `Discharging`/`Charging` UPower state
+  *edges* (`BatteryHookState` is edge-triggered, not polling) — the script runs once per unplug
+  and once per reconnect, never re-asserting a profile mid-session, so there is nothing to fight
+  a manual change with between those edges.
+
+### `battery_charging` vs `battery_plugged` — a naming trap
+
+Noctalia's `HookKind` naming is not what it looks like for the "AC reconnected" case.
+`BatteryHookState::update()` maps UPower's `BatteryState` to hooks as:
+
+| UPower state | Hook fired |
+|---|---|
+| `Charging` | `HookKind::BatteryCharging` |
+| `Discharging` | `HookKind::BatteryDischarging` |
+| `FullyCharged` / `PendingCharge` | `HookKind::BatteryPlugged` |
+
+**`battery_plugged` does not fire when AC is plugged in** — it fires when the battery *reaches
+full charge* while already on AC (`FullyCharged`), which can happen hours after the actual plug
+event, or not caught at all if the machine idles below 100% (typical with charge-limiting
+firmware). `battery_charging` is the hook that actually fires on the `Discharging → Charging`
+transition, i.e. the real "AC reconnected" moment. Only `battery_charging` is used here; a
+`battery_plugged` reconnect-restore would have been unreliable (late, or missing on hardware that
+never reports `FullyCharged`). One edge case remains uncovered: a laptop that reconnects AC while
+already at exactly 100% jumps `Discharging → FullyCharged` directly, skipping the `Charging`
+edge — `battery_charging` doesn't fire for that reconnect. Accepted tradeoff; rare in practice
+(a laptop discharging while already at 100% is itself unusual) and the profile self-corrects on
+the *next* unplug/replug cycle regardless.
+
+## Coexistence with falcond — background
+
+falcond is a **second, independent writer** of `ActiveProfile` — it literally calls the same
+D-Bus property setter this script does. Confirmed via falcond's own status contract
+(`README.md` "Monitoring" section, `RESTORE_STATE: Power Profile: <value>` field): on game
+launch falcond snapshots whatever `ActiveProfile` was active, forces `performance`, and on game
+exit restores the snapshot. If this hook independently rewrote `ActiveProfile` while a game hold
+is active, the two would race or falcond would silently clobber the hook's choice on its next
+poll (`poll_interval_ms`, default 9000ms).
+
+falcond exposes exactly the integration point needed to avoid this, and documents it as a stable
+third-party contract: `/tmp/falcond_status` — "3rd-party contract; atomic rename" (falcond's
+build-time `-Dtmp-status-file` doc, explicitly called out as the file for consumers like
+mangohud). Its `ACTIVE_PROFILE:` field is non-empty exactly when a game-profile hold is in
+effect — falcond's own restore-on-exit already returns the profile to whatever this hook last
+set as the "resting" state, since falcond's `RESTORE_STATE` snapshot is taken after the hook's
+prior write, so skipping while held is sufficient; no read-modify-write coordination is needed.
+
+Caveat: falcond has no D-Bus signal for "hold started/ended," only the file and a ~9-second poll
+cadence — so there's an unavoidable small window where a plug/unplug event and a game launch/exit
+can interleave and briefly disagree. Acceptable: worst case is one stale profile for a few
+seconds, self-corrects on the next check.
 
 ## References
 
 - Issue #261
-- `docs/skills/desktop.md` § noctalia (shell) build dependencies — fork/patch precedent
-- `docs/skills/pam.md` § noctalia-greeter PAM_TEXT_INFO — patch-then-upstream-merge precedent
-- noctalia source (read at investigation time, `main` branch):
-  `src/dbus/upower/upower_service.{h,cpp}`, `src/dbus/power/power_profiles_service.{h,cpp}`,
-  `src/shell/control_center/tabs/power_tab.cpp`
+- `docs/skills/desktop.md` § "noctalia has a generic Hooks system" — the lesson this design
+  produced, and § "Carrying a local patch" for the (unused, but still valid for other cases)
+  fork-patch pattern
+- noctalia source (read locally at the pinned ref, `c366a35ff`):
+  `src/hooks/hook_manager.{h,cpp}`, `src/hooks/battery_hook_state.{h,cpp}`,
+  `src/config/config_types.h` (`HookKind`, `HooksConfig`), `src/core/process/process.cpp`
+  (`runAsync(command)` → `/bin/sh -lc`), `src/shell/settings/settings_registry.cpp`
+  (`SettingsSection::Hooks`), `example.toml` (`[hooks]` block)
 - falcond `README.md` "Monitoring" / "Build Path Options" sections —
   `/tmp/falcond_status` contract, `RESTORE_STATE` semantics
-- `noctalia-dev/noctalia-shell#2051` (closed) — evidence the v5 issue tracker may not be
-  accepting public feature requests; re-check before proposing an upstream PR
+- `noctalia-dev/noctalia-shell#2051` (closed, unrelated feature) — evidence the v5 issue tracker
+  may not be accepting public feature requests, kept for context though no upstream PR was
+  needed for this issue
