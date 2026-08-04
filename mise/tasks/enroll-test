@@ -106,12 +106,12 @@ VARS_DUMP=$(virt-fw-vars --input "${WORKDIR}/vars.fd" --print 2>/dev/null)
 sed -n 's/^ *\(PK\|KEK\|db\|dbx\|SecureBootEnable\) /    &/p' <<<"${VARS_DUMP}" |
     grep -E '(PK|KEK|db|dbx|SecureBootEnable) ' | sed 's/^ */    /'
 
-# Which certificates actually ended up in db, not just how many bytes. The byte
-# count is not ours alone to predict: Ubuntu's OVMF_CODE_4M.secboot.fd carries
-# built-in default db entries (Microsoft UEFI CA 2023 + Option ROM CA 2023, owner
-# GUID 77fa9abd-...), so the same image enrols 4353 bytes under Fedora/Arch
-# firmware and 7348 under Ubuntu's. Printing the subjects makes that visible
-# instead of surprising.
+# Which certificates actually ended up in db, not just how many bytes. The byte count
+# is not ours alone to predict: Ubuntu's OVMF_CODE_4M.secboot.fd carries built-in
+# default db entries, so the same image enrols a different total under Ubuntu's
+# firmware than under Fedora/Arch. Since #464 krytis ships all five of Microsoft's db
+# CAs, so those defaults now overlap ours rather than adding to them — which is
+# exactly why a size check is the wrong assertion and the subjects are the right one.
 CERTDIR="${WORKDIR}/certs"; mkdir -p "${CERTDIR}"
 (cd "${CERTDIR}" && virt-fw-vars --input "${WORKDIR}/vars.fd" --extract-certs >/dev/null 2>&1) || true
 echo "    --- certificates in db ---"

@@ -517,7 +517,8 @@ bytes. Anything near 44 is empty by construction. Post-enrollment varstores:
 |---|---|---|---|
 | `.ovmf-vars-secure.fd` before this fix (virt-fw-vars, krytis's cert only) | 1254 | 1263 | 1255 |
 | enrolled from the shipped `.auth` files | 44 | 44 | **132** (three empty lists) |
-| enrolled from `sbsiglist` output — and `.ovmf-vars-secure.fd` now | 1254 | 1263 | **4353** (krytis + both MS CAs) |
+| enrolled from `sbsiglist` output, when db held krytis + two MS CAs | 1254 | 1263 | **4353** |
+| **current** — krytis + all five Microsoft db CAs (#464) | 1254 | 1263 | **8891** |
 
 Two consequences beyond the boot failure. #309's "db.auth includes Microsoft's
 well-known CA certs" was never actually met (the loop concatenated three *empty*
@@ -533,9 +534,13 @@ from `localhost/krytis:sealed` and compares payload sizes, so "what we test" can
 silently drift from "what we ship" again:
 
 ```
-==> OVMF vars: .ovmf-vars-secure.fd (db: 4353 bytes)
-==> Matches localhost/krytis:sealed's db.auth (4353 bytes)
+==> OVMF vars: .ovmf-vars-secure.fd (db: 8891 bytes)
+==> Matches localhost/krytis:sealed's db.auth (8891 bytes)
 ```
+
+Both sides glob `files/microsoft-uefi-certs/*.der`, so changing that set moves the
+number in both places at once — it went 4353 → 8891 when #464 added the three
+Microsoft CAs we had been omitting, with no code change on either side.
 
 Widening db does not weaken the negative test — verified rather than assumed, since
 a bigger allow-list could plausibly have made a rejection stop happening. An
