@@ -25,6 +25,11 @@ depends:
   # ── Shell ───────────────────────────────────────────────────────────────
   - desktop/noctalia.bst
 
+  # Battery/AC power-profiles-daemon switch script for noctalia's [hooks]
+  # battery_discharging / battery_charging. Opt-in -- ships the script only,
+  # doesn't enable anything by default. See docs/design/power-profile-auto-switch.md.
+  - config/battery-power-profile-hook.bst
+
   # ── Terminal ────────────────────────────────────────────────────────────
   - desktop/ghostty.bst
 

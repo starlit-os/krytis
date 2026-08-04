@@ -113,6 +113,38 @@ Instead, pass `-Dtests=disabled` in `noctalia.bst`'s `meson-local` — we don't
 consume the test binaries, so disabling the whole feature is strictly safer
 than chasing individual broken targets across releases.
 
+### noctalia has a generic Hooks system — check it before patching for an event reaction
+
+Before assuming a "react to X and run a shell command" feature needs a noctalia source patch,
+check `src/hooks/` and `HookKind` in `src/config/config_types.h` first. Noctalia already ships
+a generic hook mechanism: `HookKind` enumerates ~20 lifecycle/state events (started, wallpaper
+changed, session locked/unlocked, wifi/bluetooth enabled/disabled, `BatteryCharging`/
+`BatteryDischarging`/`BatteryPlugged`/`BatteryPercentageChanged`, `PowerProfileChanged`, ...);
+each is a user-configurable shell command run via `/bin/sh -lc "<command>"`
+(`src/core/process/process.cpp`), settable per-hook from **Settings -> Hooks** in the GUI
+(`SettingsSection::Hooks`, empty/no-op by default) or by hand in `[hooks]` in `config.toml`
+(documented, commented out, in `example.toml`). `HookManager::fire()` is called from
+`Application::onUpowerStateChangedForHooks()` and similar event sites in `src/app/
+application_events.cpp`.
+
+This turned a planned noctalia fork-and-patch (#261, battery-triggered power profile switch —
+new C++ controller class, settings toggle, meson tests, indefinite patch-maintenance burden)
+into a krytis-side shell script plus one `kind: manual` element shipping it — zero noctalia
+source changes. Discovered only after actually forking and reading `src/hooks/` and
+`src/config/config_types.h` locally; the earlier investigation phase (external GitHub reads of
+`upower_service.cpp`/`power_profiles_service.cpp` only) missed it entirely. **Read `src/hooks/`
+before scoping any noctalia patch for an event-reaction feature** — it may already exist as a
+one-line hook command instead.
+
+**Naming trap:** `BatteryHookState::update()` (`src/hooks/battery_hook_state.cpp`) maps UPower's
+`BatteryState` to hooks non-obviously: `Charging` -> `HookKind::BatteryCharging`, but `FullyCharged`
+/`PendingCharge` -> `HookKind::BatteryPlugged` — **not** `Charging`/`Discharging` ->
+`BatteryPlugged`/`BatteryUnplugged` as the names might suggest. `battery_plugged` only fires once
+the battery reaches full charge while on AC (which can be hours after the actual plug event, or
+never on hardware that idles below 100%). For "AC was just reconnected," hook `battery_charging`,
+not `battery_plugged`. See `docs/design/power-profile-auto-switch.md` for the full writeup and
+the one edge case this leaves uncovered (reconnecting AC while already at exactly 100%).
+
 ### Hiding the brand logo
 
 The greeter renders a Noctalia brand logo above the login form. Upstream `v1.0.0` added
@@ -158,6 +190,11 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
 - Verify before committing: check out the pinned ref, `patch -p1 --dry-run <
   patches/noctalia-greeter/<name>.patch` from the repo root. Confirms both hunk context and
   strip level before `bst build` ever sees it.
+- **Add or update a row in [issue #483](https://github.com/starlit-os/krytis/issues/483)'s
+  patch inventory in the same PR** — that issue is the single tracked list of every patch
+  krytis carries against a non-krytis-owned source (own fix or upstream backport alike), and
+  removing a patch (once upstream absorbs it, as happened with
+  `0001-show-pam-info-cue.patch`) needs the same row deleted there.
 
 ## Mesa Layout in the Image
 
