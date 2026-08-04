@@ -158,6 +158,11 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
 - Verify before committing: check out the pinned ref, `patch -p1 --dry-run <
   patches/noctalia-greeter/<name>.patch` from the repo root. Confirms both hunk context and
   strip level before `bst build` ever sees it.
+- **Add or update a row in [issue #483](https://github.com/starlit-os/krytis/issues/483)'s
+  patch inventory in the same PR** — that issue is the single tracked list of every patch
+  krytis carries against a non-krytis-owned source (own fix or upstream backport alike), and
+  removing a patch (once upstream absorbs it, as happened with
+  `0001-show-pam-info-cue.patch`) needs the same row deleted there.
 
 ## Mesa Layout in the Image
 

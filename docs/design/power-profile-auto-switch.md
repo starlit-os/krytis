@@ -1,6 +1,7 @@
 # Battery-Triggered Power Profile Switch
 
-Status: **Design Gate — awaiting human sign-off** (issue #261). No implementation yet.
+Status: **Design Gate cleared** (issue #261, decisions below). Implementation not yet started —
+see `docs/plans/2026-08-04-battery-power-profile-switch.md` for the execution plan.
 
 ## Problem
 
@@ -16,23 +17,14 @@ currently pinned `v5.0.0-beta.7-0-g...`). Krytis carries **no source patches** a
 the codebase is upstream's, not ours (`docs/skills/desktop.md` § noctalia build deps). This is
 **not** a `.bst`-only change; it requires C++ changes to noctalia's own source.
 
-Two paths, not mutually exclusive:
-
-1. **Local patch** (`kind: patch` source added after the `git_repo` source in `noctalia.bst`,
-   same pattern as the historical `0001-show-pam-info-cue.patch` — see `docs/skills/pam.md`
-   § noctalia-greeter PAM_TEXT_INFO, since merged and removed once upstream absorbed it).
-   Ships immediately, survives re-pins only as long as someone re-verifies the patch applies.
-2. **Upstream PR** to `noctalia-dev/noctalia`. Per AGENTS.md Upstream Gate, opening this requires
-   an explicit go-ahead from the human, not implied by "fix it in noctalia." Also worth noting:
-   the *related* upstream issue (`noctalia-dev/noctalia-shell#2051`, different feature —
-   TLP-style per-profile tuning) was closed 2026-05-16 with "we aren't quite ready to open up
-   the v5 tracker for public bug reports or feature requests just yet." Unclear if that has
-   changed since; needs a fresh check before assuming a PR will even be triaged.
-
-Recommendation: build and verify on a fork (`kitten-lily/noctalia`, matching the historical fork
-naming used for the pre-merge wifi-persist-polkit-async patch), carry it into krytis as a
-`kind: patch` source once verified, and separately **propose** (not open) an upstream PR per the
-Upstream Gate's "propose, then wait" allowance.
+Decision (Design Gate): **fork-and-patch only for now.** Build and verify on a fork
+(`kitten-lily/noctalia`, matching the historical fork naming used for the pre-merge
+wifi-persist-polkit-async patch), carry it into krytis as a `kind: patch` source once verified.
+**No upstream PR** to `noctalia-dev/noctalia` without a separate, later explicit go-ahead per
+AGENTS.md's Upstream Gate — not authorized as part of this decision. Worth re-checking later:
+the *related* upstream issue (`noctalia-dev/noctalia-shell#2051`, different feature — TLP-style
+per-profile tuning) was closed 2026-05-16 with "we aren't quite ready to open up the v5 tracker
+for public bug reports or feature requests just yet."
 
 ## Architecture: where this hooks in
 
@@ -55,10 +47,11 @@ Noctalia already has every primitive needed except the policy glue:
   taking both services by pointer — no new D-Bus plumbing needed, only a new consumer.
 
 Settings persistence: noctalia writes user config to `~/.config/noctalia/settings.json` (schema
-seeded from an in-repo default-settings asset). A new setting, e.g. `power.autoSwitchProfiles`
-(bool, default **TBD — see open questions**) plus `power.autoSwitchPowerSaverProfile` /
-`power.autoSwitchAcProfile` string overrides, is the natural persistence point, exposed as a
-toggle on the existing `PowerTab` profiles card (`buildProfilesCard()`).
+seeded from an in-repo default-settings asset). New setting `power.autoSwitchOnBattery` (bool,
+**default `false`** — opt-in, see Design Gate decisions), plus `power.autoSwitchPowerSaverProfile`
+/ `power.autoSwitchAcProfile` string overrides (default `power-saver` / recorded-previous), is the
+persistence point, exposed as a toggle on the existing `PowerTab` profiles card
+(`buildProfilesCard()`).
 
 ## Coexistence with falcond
 
@@ -85,41 +78,37 @@ Caveat: falcond has no libnotify/D-Bus signal for "hold started/ended," only the
 where a plug/unplug event and a game launch/exit can interleave and briefly disagree. Acceptable:
 worst case is one stale profile for a few seconds, self-corrects on the next check.
 
-## Proposed policy (draft — see open questions for what's actually locked in)
+## Policy (Design Gate decisions — locked in)
 
-- Subscribe to `UPowerService`'s change callback; act only on `onBattery` transitions (not every
-  battery-percentage tick — `UPowerState::onBattery` changing is a `PropertiesChanged` on
-  `org.freedesktop.UPower`'s `OnBattery` key specifically, distinct from percentage/rate updates
-  on device objects).
-- On `onBattery: false → true`: if `/tmp/falcond_status`'s `ACTIVE_PROFILE` is empty, record the
-  current `ActiveProfile` (skip recording if it's already `power-saver` — avoid capturing our own
-  prior auto-switch as the "previous" value on a rapid unplug/replug/unplug sequence), then
-  `setActiveProfile("power-saver")`.
-- On `onBattery: true → false`: if `/tmp/falcond_status`'s `ACTIVE_PROFILE` is empty, restore the
-  recorded profile (fallback `balanced` if nothing was recorded, e.g. app started while already on
-  battery).
+- **Opt-in, default off.** `power.autoSwitchOnBattery = false` by default; user enables it from
+  the `PowerTab` profiles card. No behavior change for existing users on an update.
+- **Trigger: any AC unplug**, not a percentage threshold. Subscribe to `UPowerService`'s change
+  callback; act only on `onBattery` transitions (not every battery-percentage tick —
+  `UPowerState::onBattery` changing is a `PropertiesChanged` on `org.freedesktop.UPower`'s
+  `OnBattery` key specifically, distinct from percentage/rate updates on device objects).
+- **Revert target: recorded previous profile**, not a fixed `balanced`. On `onBattery: false →
+  true`: if `/tmp/falcond_status`'s `ACTIVE_PROFILE` is empty, record the current `ActiveProfile`
+  (skip recording if it's already `power-saver` — avoid capturing our own prior auto-switch as
+  the "previous" value on a rapid unplug/replug/unplug sequence), then
+  `setActiveProfile("power-saver")`. On `onBattery: true → false`: if `/tmp/falcond_status`'s
+  `ACTIVE_PROFILE` is empty, restore the recorded profile (fallback `balanced` if nothing was
+  recorded, e.g. the app started while already on battery).
+- **falcond coexistence: poll `/tmp/falcond_status`**, confirmed as the mechanism. Skip any
+  auto-switch write while `ACTIVE_PROFILE` is non-empty (falcond's own restore-on-exit already
+  returns the profile to whatever noctalia last set as the "resting" state, since falcond's
+  `RESTORE_STATE` snapshot is taken after noctalia's prior write).
 - Do nothing if the user manually changes `ActiveProfile` while on battery — respect
   `PowerProfilesChangeOrigin::External` as "user overrode me, don't fight back" for the rest of
   that battery session (re-arms on the next AC transition). This mirrors "shouldn't fight a manual
   override" from the issue body.
 
-## Open questions (Design Gate — human sign-off required before implementation)
+## Design Gate — resolved 2026-08-04
 
-1. **Opt-in or default-on?** Issue body suggests "configurable, maybe opt-in." A silent
-   behavioral default change (auto-downclocking on unplug) is exactly the kind of thing the
-   Design Gate exists for.
-2. **Trigger granularity:** any-AC-unplug (`OnBattery` flip, as drafted above), or gated on a
-   percentage/time threshold (e.g. only below 20%, like some DEs' "low battery" policy)? The
-   drafted proposal is the simpler any-unplug rule.
-3. **Revert target on AC reconnect:** "whatever was active before the switch" (drafted above,
-   needs the record/restore bookkeeping) vs. a fixed default (e.g. always `balanced`)? The
-   record/restore approach is more correct but has more edge cases (app restart mid-battery-session
-   loses the recorded value; drafted fallback is `balanced` in that case).
-4. **falcond coexistence mechanism:** confirmed viable via `/tmp/falcond_status` (see above) — is
-   polling a text file before each write acceptable, or is a different signal preferred?
-5. **Where does the code land:** fork-and-patch only (carried indefinitely as a `kind: patch` in
-   `noctalia.bst`), or fork-and-patch now with an explicit go-ahead to also propose it upstream to
-   `noctalia-dev/noctalia`?
+1. **Opt-in or default-on?** → **Opt-in**, default off.
+2. **Trigger granularity?** → **Any AC unplug** (no percentage threshold).
+3. **Revert target on AC reconnect?** → **Recorded previous profile** (fallback `balanced`).
+4. **falcond coexistence mechanism?** → **Poll `/tmp/falcond_status`**, confirmed.
+5. **Where does the code land?** → **Fork-and-patch only for now**; no upstream PR authorized.
 
 ## References
 
