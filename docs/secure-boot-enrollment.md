@@ -445,15 +445,37 @@ If you cannot source one, record that as untested rather than passed.
 Needs the LUKS install from step 2. The `rd.luks.options=fido2-device=auto` bake is
 verified statically; the unlock never has been.
 
+**Check the image first — this step was impossible until #476.** `libfido2.so.1` was
+missing from every initrd we built (dracut cannot see a `dlopen`), so FIDO2 unlock
+silently fell back to a passphrase on every machine. Confirm the image you installed
+actually carries it, or this step tests nothing:
+
+```bash
+# On the installed system:
+lsinitrd /boot/EFI/Linux/*.efi 2>/dev/null | grep libfido2 || \
+  echo "MISSING — image predates #476, re-test with a newer sealed build"
+```
+
 ```bash
 mise fido2:enroll-luks     # then reboot
 ```
 
 - [ ] Reboot prompts for a key touch and unlocks with **no passphrase**
 
-*Failure signature:* a passphrase prompt means the cmdline bake did not take effect —
-and because a UKI freezes its cmdline, that cannot be fixed on the installed system;
-it needs a new sealed image.
+*Failure signature:* a passphrase prompt has **two** possible causes, and they need
+different fixes:
+
+1. **`libfido2.so.1` absent from the initrd** (#473) — `systemd-cryptsetup` `dlopen`s
+   it, fails, and falls through to a passphrase. `cryptsetup.c` returns `EAGAIN` and
+   clears the FIDO2 args, so the fallback is silent by design. Check with the command
+   above *before* suspecting anything else; the build-time assertion in
+   `elements/core/initramfs.bst` makes this impossible on images built after #476.
+2. **The cmdline bake did not take effect** — and because a UKI freezes its cmdline,
+   that cannot be fixed on the installed system; it needs a new sealed image.
+
+Distinguish them by reading the frozen cmdline: `cat /proc/cmdline | tr ' ' '\n' |
+grep luks`. If `rd.luks.options=fido2-device=auto` is there, the bake worked and cause
+1 is the one to chase.
 
 ## 8. Upgrade and rollback, still enforcing
 
