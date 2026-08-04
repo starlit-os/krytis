@@ -64,12 +64,12 @@ Sort every commit worth a second look into three buckets, not two:
   subsystem it addresses — e.g. an NVIDIA-variant fix when krytis has no NVIDIA element, a
   gaming-variant/aarch64/remote-execution pattern krytis doesn't build, a merge-queue
   convention krytis's human-approved squash-merge flow doesn't use. Don't write these into
-  `docs/skills/` or `AGENTS.md` — they aren't a lesson yet, just a watch list item. File
-  them instead as a new unchecked item on [issue #479](https://github.com/starlit-os/krytis/issues/479)
-  ("Track deferred upstream lessons"): source commit SHA + repo, a one-or-two-sentence
-  summary, and the krytis precondition that would make it relevant (e.g. "krytis ships an
-  NVIDIA variant"). That issue is the durable watch list — the PR body's Deferred section
-  (step 4/6) is a per-run summary of it, not a substitute for it.
+  `docs/skills/` or `AGENTS.md`, and don't file them onto
+  [issue #479](https://github.com/starlit-os/krytis/issues/479) ("Track deferred upstream
+  lessons") automatically either — they're proposals for step 4, same as accept-candidates,
+  not a foregone conclusion. Carry source commit SHA + repo, a one-or-two-sentence summary,
+  and the krytis precondition that would make it relevant (e.g. "krytis ships an NVIDIA
+  variant") into the presentation step.
 - **Rejected outright** — routine version bumps, formatting, one-off project-specific
   fixes with no transferable idea, or something krytis already handles (verify against the
   current `docs/skills/` file and element tree before assuming it's new — krytis may have
@@ -87,11 +87,14 @@ to accept. This mirrors issue #141's design — human judgment decides what's wo
 forward, this skill just makes the candidates cheap to review.
 
 Always also present the deferred list from step 3 in the same message, as its own section
-— even when empty, say so explicitly rather than omitting the section — and add each new
-deferred item as a checklist entry on issue #479 before opening the PR. This is what lets
-the human decide "not yet" versus "actually, do this one" without re-mining the range
-later; it is not an invitation to write anything back into `docs/skills/`/`AGENTS.md` for a
-deferred item unless the user explicitly promotes it to an accept-candidate.
+— even when empty, say so explicitly rather than omitting the section — and explicitly ask
+the user which deferred items to file onto issue #479 (a checklist entry per item: source
+SHA + repo, summary, precondition). Don't assume "all of them" or "none of them" — the user
+may want a subset (e.g. skipping one that's lower-priority or already covered elsewhere).
+File only what they approve. This is what lets the human decide "not yet" versus "actually,
+do this one" versus "not worth tracking at all" without re-mining the range later; it is
+also not an invitation to write anything back into `docs/skills/`/`AGENTS.md` for a
+deferred item unless the user explicitly promotes it to an accept-candidate instead.
 
 If issue #479 already has an open item whose precondition just became true (e.g. krytis
 gained the subsystem it was waiting on), say so explicitly and ask whether to promote it to
