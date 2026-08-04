@@ -233,6 +233,37 @@ system is installed from the offline payload with no network.
 *Failure signature:* `The UKI has the wrong composefs= parameter` means the embedded
 payload was mutated — the ISO is bad, not the machine. Stop and rebuild.
 
+### On a LUKS install, retag the root partition BEFORE you reboot
+
+**Do this from the live session, while the installer's disk is still in front of you.**
+A LUKS install lands **unbootable** until `tuna-os/fisherman#72` merges: fisherman types
+the root partition with the generic `linux` GUID, and a sealed UKI cannot find an
+encrypted root that way — the signed cmdline carries no `rd.luks.uuid`, `hostonly=no`
+means the initrd has no `/etc/crypttab`, so `systemd-gpt-auto-generator` is the only
+discovery mechanism and it needs the Discoverable Partitions root GUID.
+
+Skip this and the machine boots to a plymouth splash, waits ~90 s on
+`dev-gpt-auto-root.device`, then drops to emergency mode with **no passphrase prompt** —
+which reads like a broken image and is not. Confirmed on hardware (#473) and reproduced
+synthetically (#474).
+
+```bash
+lsblk -o NAME,SIZE,FSTYPE,PARTTYPENAME,PARTUUID     # find the crypto_LUKS partition
+# It will read "Linux filesystem" (generic). Retag it — metadata only, data untouched:
+sudo sfdisk --part-type /dev/nvme0n1 3 4f68bce3-e8cd-4db1-96e7-fbcaf984b709
+sudo partprobe /dev/nvme0n1
+lsblk -o NAME,PARTTYPENAME /dev/nvme0n1             # want "Linux root (x86-64)"
+```
+
+Adjust the disk and **partition number** from your own `lsblk` output — the number is
+the crypto_LUKS partition's, not always 3.
+
+- [ ] Root partition reads `Linux root (x86-64)` before the first reboot
+
+`mise run luks-install-test` gates this in QEMU and repairs it automatically, printing
+the same warning; `--strict-installer` fails instead, which is how to check whether
+fisherman#72 has landed and this subsection can be deleted.
+
 ## 3. The enrollment prompt — the item no VM can produce
 
 Read from systemd-boot 260's own source rather than assumed, because the assumptions
