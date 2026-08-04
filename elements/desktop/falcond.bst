@@ -22,8 +22,8 @@ depends:
 sources:
   # falcond source archive (strips outer falcond/ dir; build root is then falcond/)
   - kind: tar
-    url: pikaos_files:general-packages/falcond/archive/v2.0.13.tar.gz
-    ref: a5f3683e6cfe0e6d723429c7be062dbae70cc7ae006f4e649580f33d6958c0f9
+    url: pikaos_files:general-packages/falcond/archive/v2.0.14.tar.gz
+    ref: 7cef1d6256820e1b99a0258f6d081b1e95a88842a0e519f99dcb1898160b46b3
 
   # Zig git deps — staged as Gitea commit archives; populated into the Zig cache via
   # `zig fetch <local-tarball>` (see build-commands). zig fetch handles the 0.16.0 cache
