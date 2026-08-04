@@ -18,7 +18,7 @@ bat = "0.26.1"
 # `just` drives the dakota-iso ISO build pipeline (mise run build-iso).
 # Sourced from mise (aqua) rather than a BST element — it is dev-host
 # tooling, not part of the shipped OS runtime.
-just = "1.57.0"
+just = "1.58.0"
 # pass-cli: required by `mise run pull-keys` (#311) to authenticate against the
 # Proton Pass vault holding secure boot signing keys. Dev-host tooling only.
 # The mise registry has no pass-cli entry, so Renovate's mise manager cannot
