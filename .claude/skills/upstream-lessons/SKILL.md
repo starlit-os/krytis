@@ -63,10 +63,13 @@ Sort every commit worth a second look into three buckets, not two:
   obvious, not a routine bump) but doesn't apply to krytis *yet* because krytis lacks the
   subsystem it addresses — e.g. an NVIDIA-variant fix when krytis has no NVIDIA element, a
   gaming-variant/aarch64/remote-execution pattern krytis doesn't build, a merge-queue
-  convention krytis's human-approved squash-merge flow doesn't use. Don't write these back
-  anywhere; they're a watch list, not a lesson. Track source commit SHA + one-line summary
-  + the krytis precondition that would make it relevant (e.g. "if krytis ever adds an
-  NVIDIA variant").
+  convention krytis's human-approved squash-merge flow doesn't use. Don't write these into
+  `docs/skills/` or `AGENTS.md` — they aren't a lesson yet, just a watch list item. File
+  them instead as a new unchecked item on [issue #479](https://github.com/starlit-os/krytis/issues/479)
+  ("Track deferred upstream lessons"): source commit SHA + repo, a one-or-two-sentence
+  summary, and the krytis precondition that would make it relevant (e.g. "krytis ships an
+  NVIDIA variant"). That issue is the durable watch list — the PR body's Deferred section
+  (step 4/6) is a per-run summary of it, not a substitute for it.
 - **Rejected outright** — routine version bumps, formatting, one-off project-specific
   fixes with no transferable idea, or something krytis already handles (verify against the
   current `docs/skills/` file and element tree before assuming it's new — krytis may have
@@ -84,10 +87,15 @@ to accept. This mirrors issue #141's design — human judgment decides what's wo
 forward, this skill just makes the candidates cheap to review.
 
 Always also present the deferred list from step 3 in the same message, as its own section
-— even when empty, say so explicitly rather than omitting the section. This is what lets
+— even when empty, say so explicitly rather than omitting the section — and add each new
+deferred item as a checklist entry on issue #479 before opening the PR. This is what lets
 the human decide "not yet" versus "actually, do this one" without re-mining the range
-later; it is not an invitation to write anything back for a deferred item unless the user
-explicitly promotes it to an accept-candidate.
+later; it is not an invitation to write anything back into `docs/skills/`/`AGENTS.md` for a
+deferred item unless the user explicitly promotes it to an accept-candidate.
+
+If issue #479 already has an open item whose precondition just became true (e.g. krytis
+gained the subsystem it was waiting on), say so explicitly and ask whether to promote it to
+an accept-candidate this run — don't silently leave it deferred forever.
 
 Only write the accepted ones. Match the target file's existing structure (headings,
 tables, code blocks) rather than appending a flat log of commits.
@@ -108,8 +116,9 @@ of having looked land as one unit, not a follow-up.
 Follow `AGENTS.md`'s worktree/branch policy for the commit (this is "no issue" maintenance
 work unless the user ties a specific run to a GitHub issue — branch name like
 `chore/sync-upstream-lessons-<date>`). Open a PR summarizing what was accepted, what was
-deferred (and the precondition that would revisit it), what was rejected outright and why,
-and the new tracked SHAs. Merging is the human's call per the Merge Gate — don't merge it
+deferred (and the precondition that would revisit it, linking issue #479), what was
+rejected outright and why, and the new tracked SHAs. Check off any issue #479 item promoted
+to accepted this run. Merging is the human's call per the Merge Gate — don't merge it
 yourself even if CI is green.
 
 ## Reference
