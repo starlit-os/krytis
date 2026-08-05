@@ -109,25 +109,44 @@ Expected topology once fixed — note `/` and `/sysroot` stay `ro` on purpose:
 /var      /dev/vda3[/state/os/default/var]       btrfs    rw
 ```
 
-## `systemd-firstboot` blocks the boot once `/etc` is writable
+## `systemd-firstboot` / `systemd-homed-firstboot` block the boot once `/etc` is writable — fixed by moving them off the critical path, not by disabling them
 
 `systemd-firstboot.service` is `ConditionPathIsReadWrite=/etc` +
-`ConditionFirstBoot=yes`, ordered `Before=sysinit.target`, with
+`ConditionFirstBoot=yes`, ordered `Before=sysinit.target` by default, with
 `StandardInput=tty` and `--prompt-root-password`. The image ships
 `root:!unprovisioned` in `/etc/shadow`, which firstboot reads as "no password
 set", so it prompts *"Please enter the new root password (empty to skip)"* on the
 console and waits forever. `sysinit.target` never completes, so nothing after it
-starts — no greetd, no sshd, no logind.
+starts — no greetd, no sshd, no logind. `systemd-homed-firstboot.service` (the
+homed equivalent, `homectl firstboot`) has the same shape one target later —
+`Before=systemd-user-sessions.service`, no timeout — and ships `disable`d by
+freedesktop-sdk's own preset, presumably for this exact reason.
 
 This was latent for as long as `/etc` was read-only (the condition check failed
 and the unit was silently skipped). Fixing the `rw` karg is what exposed it.
 
-**Fix:** `kargs = ["systemd.firstboot=no"]` — see
-`files/bootc-config/40-no-firstboot.toml`. This makes PID 1 treat the boot as a
-non-first boot so `ConditionFirstBoot=yes` fails and the unit is skipped cleanly.
+**Old fix (superseded — see `docs/design/first-boot-setup.md`):**
+`kargs = ["systemd.firstboot=no"]`. This globally suppressed
+`systemd-firstboot.service`'s interactive prompting (`systemd-firstboot(1)`:
+"If off, systemd-firstboot.service will not interactively query the user...")
+— it does **not** touch `ConditionFirstBoot=` evaluation itself, and has no
+effect on `systemd-homed-firstboot.service` at all (that unit was, and would
+still be, suppressed only by its own preset). It also meant krytis could never
+use this tooling for real first-boot setup, since the karg silences *every*
+`--prompt-*` flag on the unit, not just the root-password one.
 
-It **cannot** be an install-time `bootc install --karg`: UKI images reject
-externally specified kernel arguments. It has to be baked via `kargs.d`.
+**Current fix:** `config/systemd-firstboot.bst` ships drop-ins
+(`systemd-firstboot.service.d/10-krytis.conf`,
+`systemd-homed-firstboot.service.d/10-krytis.conf`) that drop
+`--prompt-root-password` from `ExecStart` (root stays locked), re-point both
+units at a reserved VT (`TTYPath=/dev/tty2`) instead of `/dev/console`, and
+clear `Before=sysinit.target` / `Before=systemd-user-sessions.service` so
+neither one can block boot or login — an unattended boot always reaches
+graphical.target whether or not anyone answers. `systemd-homed-firstboot.service`
+is re-enabled via a numerically-prefixed preset
+(`80-systemd-homed-firstboot.preset` sorts before fdsdk's unprefixed
+`systemd-homed-firstboot.preset`, so it wins). See
+`docs/design/first-boot-setup.md` for the full rationale.
 
 Diagnosing a stall like this: a unit stuck in `activating` before
 `sysinit.target` starves the whole transaction. `systemctl list-jobs` shows
@@ -352,7 +371,7 @@ Worth dumping: `systemctl list-jobs`, `systemctl list-units --state=activating`,
 ### Screendump the console instead of guessing
 
 A UKI's cmdline has no `console=ttyS0` (it is a desktop cmdline: `rw quiet splash
-systemd.firstboot=no rd.luks.options=... composefs=...`), and under secure boot
+rd.luks.options=... composefs=...`), and under secure boot
 you cannot edit it at the systemd-boot menu — the cmdline is baked into the signed
 PE. So the serial log goes silent right after `BdsDxe: starting Boot0004 "Linux
 Boot Manager"`. **That silence is expected, not a hang.**

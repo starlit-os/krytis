@@ -1179,10 +1179,12 @@ downloaded community palettes/themes — lives in `$XDG_STATE_HOME/noctalia`
 the usual XDG config/state convention — check state dir first when looking for its settings.
 
 Because there's no live `/etc` fallback, seeding defaults for new accounts means
-`/etc/skel` (`config/noctalia-skel.bst`), copied by `useradd` at account-creation time only —
+`/etc/skel` (`config/noctalia-skel.bst`), copied at account-creation time only —
 a one-shot copy, not a synced default like niri's. Existing users are unaffected; new users'
 copy diverges from image updates immediately, since it's just a plain file in their homedir
-after that.
+after that. This applies equally to `useradd` and to the `homectl firstboot`-created
+initial user (`docs/design/first-boot-setup.md`): `homectl`'s `--skel=` defaults to
+`/etc/skel/` when unset (confirmed via `man homectl`), same as `useradd`'s.
 
 `settings.toml` is a **partial override** — noctalia merges missing keys against its own
 built-in defaults, so skel only needs to declare the keys being overridden.

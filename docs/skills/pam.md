@@ -170,9 +170,12 @@ Consequences for how you triage:
 `pam_systemd_home` cannot unlock the home from a pubkey-only login: `pam_sm_open_session`
 issues `RefHome`, which can only take a reference on an *already-active* home, never
 activate an inactive one — activation needs `AcquireHome` from the auth phase that
-pubkey-only SSH skips. So the session starts with no `$HOME` mounted. Harmless while
-accounts are created by `useradd` with plain home directories (see
-docs/skills/desktop.md § `/etc/skel`).
+pubkey-only SSH skips. So the session starts with no `$HOME` mounted. This is the
+*normal* case now, not a corner case: `docs/design/first-boot-setup.md` makes
+`systemd-homed-firstboot.service` the default path for the initial account, so a
+fresh krytis install has a homed-managed user from boot one, not a classic
+`useradd` account (`useradd` still works for any additional accounts created
+later, with plain home directories — see docs/skills/desktop.md § `/etc/skel`).
 
 Upstream's answer is **`systemd-home-fallback-shell`**, not re-enabling
 keyboard-interactive. `homectl.c` says so outright: *"if users log into a system via
