@@ -99,7 +99,7 @@ Deliberately **not** enriched: `git_repo`, `remote`, `patch`, `patch_queue`, `gi
 | Purl-scoped (`rust-crate`/`python` typed) matches | 0 | present (`gix`, `rand`, `tokio`, `rustls-webpki`, `pyo3`, ...) |
 
 
-### Known remaining gap: Grype's `stock-matcher` still cross-matches real, non-hash, non-wrapper packages against the wrong ecosystem's GHSA advisory
+### Mitigated: Grype `stock-matcher` cross-ecosystem false positives via `.grype.yaml` ignore rules
 
 `enrich-sbom-purls.py` closes the *wrapper-package* and *hash-version* false-positive
 classes above, but a **third** class survives enrichment because it doesn't fit either
@@ -123,21 +123,32 @@ checks the bare name against every GHSA language namespace, not just a plausible
 | `networkx` 3.6.1 | NetworkX (`python3-networkx.bst`) | `github:language:javascript` |
 | `paste` 1.0.14 | vendored copy in `desktop/mesa-all-codecs.bst` | `github:language:python` — PyPI `Paste` WSGI framework |
 
-42 of 111 matches in that scan (~38%) trace to these 8 packages — including 3 of the
+42 of 111 matches in that scan (~38%) traced to these 8 packages — including 3 of the
 scan's "Critical" hits (`libidn2`, `networkx`, `shaderc`, all reported with `EPSS: N/A`,
 the same "no real CVE behind this" signal as the already-documented wrapper-package
-false positives). `tar` alone is double-counted on top of the ecosystem mismatch: krytis's
-SBOM lists GNU tar as **two** separate unscoped packages at the same version
+false positives). `tar` alone was double-counted on top of the ecosystem mismatch:
+krytis's SBOM lists GNU tar as **two** separate unscoped packages at the same version
 (`bootstrap/base-sdk/tar.bst` and `components/tar.bst`), so every one of its 17 wrong
-GHSAs is matched twice (34 raw matches).
+GHSAs was matched twice (34 raw matches).
 
-**Not fixed here** — filtering this class safely needs either (a) purl/CPE enrichment
-for every BST-element-is-the-package case (large: covers most of the C/C++/non-cargo/
-non-pypi graph), or (b) an ecosystem allow-list Grype doesn't expose a config knob for
-today. Treat any `stock-matcher` match with no purl as needing manual ecosystem
-cross-check before acting on it — cross-reference `matchDetails[0].searchedBy.namespace`
-against the artifact's actual `sourceInfo`/element path (`jq '.matches[] | select(.matchDetails[0].matcher=="stock-matcher")'`
-on the Grype JSON report) rather than trusting the table at face value.
+**Fix — `.grype.yaml` ignore rules, not enrichment-script changes.** Broader purl/CPE
+enrichment for every BST-element-is-the-package case would cover most of the C/C++/
+non-cargo/non-pypi graph — too large and too risky (a wrong CPE assignment reintroduces
+the same class of mismatch) for the 8 confirmed instances actually found. Instead,
+`mise/tasks/vuln-scan` passes `grype --config .grype.yaml`, and the repo-root
+`.grype.yaml` lists all 25 confirmed (`vulnerability`, `package.name`,
+`package.version`) triples as `ignore:` rules (Grype's own suppression mechanism,
+documented in `grype config`). Pinned to the exact installed version, not name alone:
+a version bump on the underlying BST element makes the rule stop applying, and Grype
+re-flags the match — re-verify `matchDetails[0].searchedBy.namespace` before re-adding
+rather than assuming the same package name is always safe to ignore.
+
+**This does not generalize.** Any *new* purl-less BST-element package that happens to
+share a name with an unrelated ecosystem's advisory will still false-positive the same
+way — `.grype.yaml` only suppresses instances already found and verified. Treat any
+`stock-matcher` match with no purl (`jq '.matches[] | select(.matchDetails[0].matcher=="stock-matcher"
+and .artifact.purl==null)'` on the Grype JSON report) as needing the same manual
+ecosystem cross-check before trusting it or adding it to the ignore list.
 
 ### `--fail-on` / severity gating
 

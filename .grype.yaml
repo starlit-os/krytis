@@ -1,0 +1,120 @@
+# Grype ignore rules for confirmed cross-ecosystem false positives (docs/skills/sbom.md
+# § Known remaining gap: Grype's stock-matcher...). Every entry below matched via
+# Grype's stock-matcher fallback: package.type is empty (no purl/CPE), so Grype checked
+# the bare package name against every GHSA language namespace instead of the artifact's
+# real ecosystem. Verified per-entry via matchDetails[0].searchedBy.namespace on a real
+# scan (2026-08-05, Grype 0.116.1) — each `namespace` below names the *wrong* ecosystem
+# the match came from, not the artifact's real one (given in the comment).
+#
+# Pinned to name+version+vulnerability, not name alone: if the underlying BST element
+# bumps to a new version, the rule stops applying and Grype will re-flag it — re-verify
+# the new match's matchDetails[0].searchedBy.namespace before re-adding.
+ignore:
+  # json: nlohmann/json (C++, components/nlohmann-json.bst)
+  - vulnerability: GHSA-3c6g-pvg8-gqw2
+    package:
+      name: json
+      version: "3.12.0"
+  # libidn2: GNU libidn2 (C, components/libidn2.bst)
+  - vulnerability: GHSA-j6m4-68hc-mqq9
+    package:
+      name: libidn2
+      version: "2.3.8"
+  # markdown: Python-Markdown (components/python3-markdown.bst)
+  - vulnerability: GHSA-wx77-rp39-c6vg
+    package:
+      name: markdown
+      version: "3.10.2"
+  # networkx: NetworkX (components/python3-networkx.bst)
+  - vulnerability: GHSA-m4cf-q2p6-q6pv
+    package:
+      name: networkx
+      version: "3.6.1"
+  # paste: vendored copy in desktop/mesa-all-codecs.bst
+  - vulnerability: GHSA-27px-qpmj-qg38
+    package:
+      name: paste
+      version: "1.0.14"
+  - vulnerability: GHSA-7gfc-2v6g-6w9f
+    package:
+      name: paste
+      version: "1.0.14"
+  # shaderc: Google shaderc (C++, components/shaderc.bst)
+  - vulnerability: GHSA-3h68-ppv2-8p9v
+    package:
+      name: shaderc
+      version: "2025.3"
+  # tar: GNU tar (C, bootstrap/base-sdk/tar.bst + components/tar.bst)
+  - vulnerability: GHSA-23hp-3jrh-7fpw
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-34x7-hfp2-rc4v
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-3jfq-g458-7qm9
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-5955-9wpr-37jh
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-83g3-92jg-28cx
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-8qq5-rm4j-mr97
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-8x88-c5mf-7j5w
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-9ppj-qmqm-q256
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-f5x3-32g6-xq36
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-gfjr-3jmm-4g9v
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-gvwx-54wh-qm9j
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-j44m-qm6p-hp7m
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-qffp-2rhf-9h96
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-r292-9mhp-454m
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-r6q2-hw4h-h46w
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-vmf3-w455-68vh
+    package:
+      name: tar
+      version: "1.35"
+  - vulnerability: GHSA-w8wr-v893-vjvp
+    package:
+      name: tar
+      version: "1.35"
+  # zlib: zlib (C, bootstrap/zlib.bst)
+  - vulnerability: GHSA-g857-hhfv-j68w
+    package:
+      name: zlib
+      version: "1.3.1"

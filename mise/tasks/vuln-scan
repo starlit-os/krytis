@@ -19,6 +19,15 @@
 #      satisfy a semver constraint, so any match against one is spurious.
 # Also adds purls for cargo2/pypi packages (~74% of the graph) so Grype
 # matches them precisely instead of via unscoped name+version CPE fallback.
+#
+# A third false-positive class survives both preprocessing steps: purl-less
+# packages where the SBOM package IS a BST element itself (e.g. tar.bst),
+# not a cargo2/pypi *dependency* of one. Grype's stock-matcher checks these
+# against every GHSA language namespace by bare name, matching an unrelated
+# ecosystem's same-named package (confirmed: GNU tar matched npm's tar/
+# node-tar advisories, zlib matched a Ruby gem, etc). Confirmed instances are
+# suppressed via .grype.yaml ignore rules (auto-discovered by Grype from the
+# repo root, also passed explicitly below to not depend on cwd).
 # See docs/skills/sbom.md for the full investigation and verified before/
 # after numbers.
 set -euo pipefail
@@ -42,7 +51,7 @@ fi
 
 echo "==> Scanning with Grype..."
 set +e
-grype "sbom:${ENRICHED_PATH}" -o "json=${OUTPUT}" -o table "${FAIL_FLAG[@]}"
+grype "sbom:${ENRICHED_PATH}" --config .grype.yaml -o "json=${OUTPUT}" -o table "${FAIL_FLAG[@]}"
 GRYPE_EXIT=$?
 set -e
 
