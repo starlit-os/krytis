@@ -37,7 +37,6 @@ config:
   - |
     install -Dm755 -t "%{install-root}%{bindir}" \
       target/release/greetd \
-      target/release/agreety \
       target/release/fakegreet
   - |
     install -Dm644 greetd.service \
@@ -47,12 +46,24 @@ config:
       PREFIX="%{install-root}/usr" \
       MANDIR="%{install-root}%{mandir}" \
       all install
+    # agreety was dropped from the Cargo workspace (patches/greetd/
+    # drop-agreety-workspace-member.patch, #496) but man/Makefile's
+    # `install` target unconditionally installs agreety.1 regardless of
+    # which binaries were built — drop the now-orphaned man page for a
+    # command that no longer ships.
+    rm -f "%{install-root}%{mandir}/man1/agreety.1"
   - "%{install-extra}"
 
 sources:
 - kind: tar
   url: github_files:kennylevinsen/greetd/archive/refs/tags/0.10.3.tar.gz
   ref: ee5cb70e0add4ca9c9fe57e47581ab0002d44c07743fb5492469f3b570db640b
+
+- kind: patch
+  path: patches/greetd/drop-agreety-workspace-member.patch
+
+- kind: patch
+  path: patches/greetd/bump-tokio-bytes-drop-agreety-deps.patch
 
 - kind: cargo2
   url: crates:crates
@@ -79,8 +90,8 @@ sources:
     sha: cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1
   - kind: registry
     name: bytes
-    version: 1.6.0
-    sha: 514de17de45fdb8dc022b1a7975556c53c86f9f0aa5f534b98977b171857c2c9
+    version: 1.12.1
+    sha: fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04
   - kind: registry
     name: cc
     version: 1.0.95
@@ -102,6 +113,10 @@ sources:
     version: 0.28.1
     sha: 4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253
   - kind: registry
+    name: hermit-abi
+    version: 0.3.9
+    sha: d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024
+  - kind: registry
     name: itoa
     version: 1.0.11
     sha: 49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b
@@ -119,8 +134,8 @@ sources:
     sha: 9d811f3e15f28568be3407c8e7fdb6514c1cda3cb30683f15b6a1a1dc4ea14a7
   - kind: registry
     name: mio
-    version: 0.8.11
-    sha: a4a650543ca06a924e8b371db273b2756685faae30f8487da1b56505a8f78b0c
+    version: 1.0.2
+    sha: 80e04d1dcff3aae0704555fe5fee3bcfaf3d1fdf8a7e521d5b9d2b42acb52cec
   - kind: registry
     name: nix
     version: 0.27.1
@@ -145,10 +160,6 @@ sources:
     name: quote
     version: 1.0.36
     sha: 0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7
-  - kind: registry
-    name: rpassword
-    version: 5.0.1
-    sha: ffc936cf8a7ea60c58f030fd36a612a48f440610214dc54bc36431f9ea0c3efb
   - kind: registry
     name: rustc-demangle
     version: 0.1.23
@@ -191,12 +202,12 @@ sources:
     sha: c61f3ba182994efc43764a46c018c347bc492c79f024e705f46567b418f6d4f7
   - kind: registry
     name: tokio
-    version: 1.37.0
-    sha: 1adbebffeca75fcfd058afa480fb6c0b81e165a0323f9c9d39c9697e37c46787
+    version: 1.42.1
+    sha: 2209a14885b74764cce87ffa777ffa1b8ce81a3f3166c6f886b83337fe7e077f
   - kind: registry
     name: tokio-macros
-    version: 2.2.0
-    sha: 5b8a1e28f2deaa14e508979454cb3a223b10b938b45af148bc0986de36f1923b
+    version: 2.4.0
+    sha: 693d596312e88961bc67d7f1f97af8a70227d9f90c31bba5806eec004978d752
   - kind: registry
     name: unicode-ident
     version: 1.0.12
@@ -210,53 +221,21 @@ sources:
     version: 0.11.0+wasi-snapshot-preview1
     sha: 9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423
   - kind: registry
-    name: winapi
-    version: 0.3.9
-    sha: 5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419
-  - kind: registry
-    name: winapi-i686-pc-windows-gnu
-    version: 0.4.0
-    sha: ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6
-  - kind: registry
-    name: winapi-x86_64-pc-windows-gnu
-    version: 0.4.0
-    sha: 712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f
-  - kind: registry
-    name: windows-sys
-    version: 0.48.0
-    sha: 677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9
-  - kind: registry
     name: windows-sys
     version: 0.52.0
     sha: 282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d
-  - kind: registry
-    name: windows-targets
-    version: 0.48.5
-    sha: 9a2fa6e2155d7247be68c096456083145c183cbbbc2764150dda45a87197940c
   - kind: registry
     name: windows-targets
     version: 0.52.5
     sha: 6f0713a46559409d202e70e28227288446bf7841d3211583a4b53e3f6d96e7eb
   - kind: registry
     name: windows_aarch64_gnullvm
-    version: 0.48.5
-    sha: 2b38e32f0abccf9987a4e3079dfb67dcd799fb61361e53e2882c3cbaf0d905d8
-  - kind: registry
-    name: windows_aarch64_gnullvm
     version: 0.52.5
     sha: 7088eed71e8b8dda258ecc8bac5fb1153c5cffaf2578fc8ff5d61e23578d3263
   - kind: registry
     name: windows_aarch64_msvc
-    version: 0.48.5
-    sha: dc35310971f3b2dbbf3f0690a219f40e2d9afcf64f9ab7cc1be722937c26b4bc
-  - kind: registry
-    name: windows_aarch64_msvc
     version: 0.52.5
     sha: 9985fd1504e250c615ca5f281c3f7a6da76213ebd5ccc9561496568a2752afb6
-  - kind: registry
-    name: windows_i686_gnu
-    version: 0.48.5
-    sha: a75915e7def60c94dcef72200b9a8e58e5091744960da64ec734a6c6e9b3743e
   - kind: registry
     name: windows_i686_gnu
     version: 0.52.5
@@ -267,32 +246,16 @@ sources:
     sha: 87f4261229030a858f36b459e748ae97545d6f1ec60e5e0d6a3d32e0dc232ee9
   - kind: registry
     name: windows_i686_msvc
-    version: 0.48.5
-    sha: 8f55c233f70c4b27f66c523580f78f1004e8b5a8b659e05a4eb49d4166cca406
-  - kind: registry
-    name: windows_i686_msvc
     version: 0.52.5
     sha: db3c2bf3d13d5b658be73463284eaf12830ac9a26a90c717b7f771dfe97487bf
-  - kind: registry
-    name: windows_x86_64_gnu
-    version: 0.48.5
-    sha: 53d40abd2583d23e4718fddf1ebec84dbff8381c07cae67ff7768bbf19c6718e
   - kind: registry
     name: windows_x86_64_gnu
     version: 0.52.5
     sha: 4e4246f76bdeff09eb48875a0fd3e2af6aada79d409d33011886d3e1581517d9
   - kind: registry
     name: windows_x86_64_gnullvm
-    version: 0.48.5
-    sha: 0b7b52767868a23d5bab768e390dc5f5c55825b6d30b86c844ff2dc7414044cc
-  - kind: registry
-    name: windows_x86_64_gnullvm
     version: 0.52.5
     sha: 852298e482cd67c356ddd9570386e2862b5673c85bd5f88df9ab6802b334c596
-  - kind: registry
-    name: windows_x86_64_msvc
-    version: 0.48.5
-    sha: ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538
   - kind: registry
     name: windows_x86_64_msvc
     version: 0.52.5

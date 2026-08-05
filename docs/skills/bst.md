@@ -1360,6 +1360,20 @@ grep -E '^ *sha:' elements/desktop/greetd.bst | awk '{print length($2)}' | sort 
 # Must output: 64
 ```
 
+`files/scripts/generate_cargo_sources.py` didn't actually exist in this repo until #496, despite being documented here since the greetd element was added — the doc referenced a script that was never vendored (only the sibling `dakota` fork had a project-specific version). Fixed by adding a generic one (reads `Cargo.lock` via stdlib `tomllib`, emits the `ref:` list body only — paste under an existing `kind: cargo2` source's `ref:` key, not as a whole replacement source block, since elements may carry extra keys like `url:`/`git-mirrors:`/`build-args:`).
+
+### `cargo update -p X` does not cascade to transitively-satisfied dependencies
+
+Bumping a direct dependency does **not** bump its own dependencies unless the new version strictly requires a newer one. Confirmed while fixing greetd's `tokio`/`bytes` CVEs (#496): `cargo update -p tokio` alone moved `tokio` 1.37.0→1.42.1 but left `bytes` at 1.6.0 — tokio's manifest only declares `bytes = "1"`, and 1.6.0 still satisfies that caret range, so cargo's conservative resolver had no reason to touch it. `bytes`' own CVE (GHSA-434x-w66g-qw3r, fixed at 1.11.1) needed its own explicit `cargo update -p bytes`. **Don't assume a vulnerable transitive dependency "comes along for the ride"** when bumping the crate that pulls it in — check the resulting `Cargo.lock` for the actual version and `-p` it directly if it didn't move.
+
+### Dropping an unused workspace member to eliminate an unpatchable-semver-range CVE
+
+When a vulnerable crate's fix is a major-version bump outside the range the workspace's `Cargo.toml` declares (`cargo update -p <crate>` can't cross it) and that crate turns out to be needed by only one, genuinely-unused workspace member — dropping the member is often cleaner and lower-risk than bumping the constraint and hoping nothing broke. Done for `rpassword` (5.0.1→7.5.0 needed, a two-major jump) via dropping `agreety` — greetd's own unused reference text-greeter binary (krytis ships `noctalia-greeter-session`, confirmed via `greetd-config.bst`'s `[default_session]`, not `agreety`) — from `[workspace] members` in a `kind: patch` source (`patches/greetd/drop-agreety-workspace-member.patch`), then regenerating `Cargo.lock`/the `cargo2` block from the now-narrower dependency graph.
+
+Two things this doesn't automatically clean up:
+- **Install-commands still reference the now-unbuilt binary** — `install -Dm755 -t ... target/release/agreety` fails outright once the crate isn't compiled; remove it from the install line.
+- **Makefiles/build scripts that install docs unconditionally** — greetd's `man/Makefile` `install` target installs `agreety.1` regardless of which binaries were actually built (it's driven by `scdoc` source files, not the Cargo workspace). Dropping the crate without also dropping its man page leaves a doc page for a command that doesn't exist. Fixed with a targeted `rm -f "%{install-root}%{mandir}/man1/agreety.1"` after the `make install` step, rather than patching the Makefile itself.
+
 greetd links libpam via `pam-sys`. Add `linux-pam.bst` to **both** `build-depends` AND `depends` — it transitively provides `linux-pam-base.bst` which supplies `libpam.so` + `libpam_misc.so`.
 
 ## Greeter Stack: greetd display-manager Alias
