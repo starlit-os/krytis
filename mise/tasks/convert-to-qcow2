@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#MISE description="Convert a raw disk image to qcow2 (for GNOME Boxes / virt-manager, which krytis's headless qemu cannot replace)"
+#USAGE flag "--disk <path>" default="bootable.raw" help="Input raw disk image"
+#USAGE flag "--output <path>" help="Output qcow2 path (default: input path with .qcow2 extension)"
+#USAGE flag "--force" help="Overwrite the output if it already exists"
+
+# Ported from dakota's `just convert-to-qcow2` (Justfile), which krytis had no
+# equivalent for. See docs/skills/dakota.md § convert-to-qcow2.
+#
+# Why this exists: elements/dev/qemu.bst builds qemu with every display backend
+# disabled, so `mise run boot-vm` on a krytis host has no window to type into and
+# cannot do interactive in-guest work (see docs/skills/bootc-vm.md § `boot-vm` is
+# headless on a krytis host). A qcow2 can be handed to GNOME Boxes or
+# virt-manager, which ship their own qemu/SPICE stack and do have a display.
+#
+# Deliberately does NOT teach boot-vm to prefer a sibling .qcow2 the way dakota's
+# boot-vm does: there, a stale bootable.qcow2 silently shadows a freshly generated
+# bootable.raw, which dakota has to defend against with an `rm -f` in its generate
+# step. Keeping the output path explicit means krytis never has that trap.
+
+set -euo pipefail
+
+DISK="${usage_disk:-bootable.raw}"
+OUTPUT="${usage_output:-}"
+FORCE="${usage_force:-}"
+
+if [ ! -e "${DISK}" ]; then
+    echo "ERROR: ${DISK} not found — run 'mise run generate-disk --disk ${DISK}' first." >&2
+    exit 1
+fi
+
+DISK=$(realpath "${DISK}")
+[ -n "${OUTPUT}" ] || OUTPUT="${DISK%.raw}.qcow2"
+
+if [ -e "${OUTPUT}" ] && [ "${FORCE}" != "true" ]; then
+    echo "ERROR: ${OUTPUT} already exists. Pass --force to overwrite." >&2
+    echo "       Refusing by default because a stale qcow2 boots old content that" >&2
+    echo "       looks current — a confusing test result rather than an error." >&2
+    exit 1
+fi
+
+echo "==> Converting ${DISK} → ${OUTPUT}..."
+
+# -p writes one progress line per percent: useful interactively, pure noise in a
+# captured log. Only ask for it on a TTY.
+PROGRESS=()
+[ -t 1 ] && PROGRESS=(-p)
+
+if command -v qemu-img &>/dev/null; then
+    qemu-img convert "${PROGRESS[@]}" -f raw -O qcow2 "${DISK}" "${OUTPUT}"
+else
+    # Fallback for a host whose qemu build ships no tools. Same container image
+    # the boot-vm fallback uses, so nothing new is introduced.
+    echo "    qemu-img not found, using containerized qemu-img..."
+    podman run --rm \
+        -v "$(dirname "${DISK}"):/in" \
+        -v "$(dirname "${OUTPUT}"):/out" \
+        --entrypoint qemu-img \
+        ghcr.io/qemus/qemu:latest \
+        convert -f raw -O qcow2 "/in/$(basename "${DISK}")" "/out/$(basename "${OUTPUT}")"
+fi
+
+echo "==> Done: ${OUTPUT}"
+
+if command -v qemu-img &>/dev/null; then
+    # Anchored at line start on purpose: qemu-img 10 also reports a child node
+    # with its own indented "disk size:", which an unanchored match prints twice.
+    qemu-img info "${OUTPUT}" \
+        | awk '/^file format:|^virtual size:|^disk size:/ { print "    " $0 }'
+fi
+
+cat <<EOF
+
+Next, for an interactive console (which boot-vm cannot give you on this host):
+
+    GNOME Boxes -> + -> Install from file -> ${OUTPUT}
+
+Boxes is granted filesystems=host, so /var/tmp is readable; no need to move it.
+Krytis boots UEFI-only (systemd-boot + UKI, no BIOS loader). Boxes exposes no
+firmware toggle, so if the VM lands on a "no bootable device" screen, force OVMF
+in its domain XML:
+
+    ~/.var/app/org.gnome.Boxes/config/libvirt/qemu/<vm>.xml
+
+See docs/skills/bootc-vm.md § Interactive VM testing via GNOME Boxes.
+EOF

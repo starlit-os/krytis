@@ -490,6 +490,37 @@ Note `boot-vm`'s **fallback** path (no native qemu, `ghcr.io/qemus/qemu`) passes
 `ARGUMENTS=-snapshot`, which *discards* writes. Any test relying on state
 persisting across two boots silently passes for the wrong reason there.
 
+### Interactive VM testing via GNOME Boxes
+
+This is the way around the previous § on a krytis host: Boxes (and virt-manager)
+are flatpaks shipping their *own* qemu/SPICE stack, so they are unaffected by
+`dev/qemu.bst` disabling every display backend. Use them whenever a check needs
+typing inside the guest — a VT prompt, the greeter, a password.
+
+```shell
+mise run generate-disk --disk /var/tmp/krytis-vt.raw --size 15G   # needs sudo
+mise run convert-to-qcow2 --disk /var/tmp/krytis-vt.raw           # unprivileged
+# Boxes -> + -> Install from file -> /var/tmp/krytis-vt.qcow2
+```
+
+Boxes is granted `filesystems=host` (check with
+`flatpak info --show-permissions org.gnome.Boxes`), so a disk under `/var/tmp`
+is readable as-is — no copying into `~`.
+
+Two things that will bite:
+
+- **Krytis is UEFI-only** (systemd-boot + UKI; the BIOS boot partition
+  `generate-disk` creates carries no BIOS loader). Boxes exposes no firmware
+  toggle in its UI, and for an unrecognised OS it can pick SeaBIOS, which lands
+  on "no bootable device". Force OVMF in the domain XML, then restart the VM:
+  `~/.var/app/org.gnome.Boxes/config/libvirt/qemu/<vm>.xml`.
+- **Boxes copies or references the image depending on how it was added**, so
+  "the change I just rebuilt isn't there" usually means the VM is still pointing
+  at an older copy. Re-import after regenerating, or point the XML at the file.
+
+`convert-to-qcow2` refuses to overwrite an existing output without `--force`,
+precisely because a stale qcow2 boots old content that looks current.
+
 ## `podman save` Must Use `--format oci-archive` for bootc
 
 When transferring an image between rootless and rootful podman stores for `bootc install to-disk`, always use:
