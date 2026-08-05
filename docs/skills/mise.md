@@ -277,6 +277,22 @@ python = "3.12.13"     # capped below 3.13 by a packageRule, see below
 
 `pass-cli` has no entry in the mise registry (hence the `[tool_alias]` pointing at the `github:` backend), so Renovate's `mise` manager cannot resolve a datasource for it; a `custom.regex` manager covers that line instead (#25, see [`renovate.md`](renovate.md) § Custom regex managers).
 
+### `mise run` scrubs `PATH` down to declared tools — undeclared task deps fail silently
+
+A task script that shells out to a binary not listed in `[tools]` only works by
+accident, on a host that happens to have it on the system `PATH` outside mise.
+`mise run <task>` computes the task's `PATH` from `mise.toml`'s `[tools]` plus
+the base system `PATH` — it does **not** inherit ad hoc additions from the
+invoking shell, and it discards them even when explicitly re-exported
+(`export PATH="$extra:$PATH"; mise run <task>` still fails to see `$extra`).
+A `mise install <tool>` that leaves the tool unregistered in `[tools]`
+(mise's own warning: `installed but not currently active`) is invisible to
+`mise run` for the same reason. Found via `mise/tasks/sbom` calling bare `jq`
+(#41's `vuln-scan` pipeline) with no `[tools]` entry for it — worked on a box
+with `jq` preinstalled, failed with `jq: command not found` on a clean mise
+bootstrap. Fix is always the same: `mise use <tool>@<version>` to add it to
+`[tools]` (then `mise run mise-lock`), not a workaround in the calling shell.
+
 ### `mise.lock`
 
 Committed, and it must stay in step with `mise.toml`:

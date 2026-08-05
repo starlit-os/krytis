@@ -42,6 +42,14 @@ grype = "0.116.1"
 # GitHub Actions OIDC detection; locally it falls back to an interactive
 # browser-based Sigstore login.
 cosign = "3.1.2"
+# jq: required by `mise/tasks/sbom` to count packages in the generated SBOM
+# (`jq '.packages | length'`) and transitively by `mise run vuln-scan`. Was
+# previously an undeclared dependency — the task only worked on hosts with a
+# system-wide `jq` already on PATH. `mise run` scrubs PATH down to what
+# `[tools]` declares plus the base system PATH, so an ad hoc `jq` (even one
+# `mise install`ed but not registered here) is invisible to task scripts; see
+# docs/skills/mise.md § Tool declarations.
+jq = "1.8.2"
 
 [settings]
 python.uv_venv_auto = "create|source"
