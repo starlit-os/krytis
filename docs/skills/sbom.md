@@ -98,6 +98,58 @@ Deliberately **not** enriched: `git_repo`, `remote`, `patch`, `patch_queue`, `gi
 | Blank-version (wrapper false positives) | dozens, incl. 5+ "Critical/N/A confidence" | **0** |
 | Purl-scoped (`rust-crate`/`python` typed) matches | 0 | present (`gix`, `rand`, `tokio`, `rustls-webpki`, `pyo3`, ...) |
 
+
+### Mitigated: Grype `stock-matcher` cross-ecosystem false positives via `.grype.yaml` ignore rules
+
+`enrich-sbom-purls.py` closes the *wrapper-package* and *hash-version* false-positive
+classes above, but a **third** class survives enrichment because it doesn't fit either
+filter: a real (non-wrapper, non-hash) `versionInfo`, from a `sourceInfo` kind the
+enrichment script deliberately doesn't purl-scope (the package **is** the BST element
+itself — e.g. `freedesktop-sdk.bst:components/tar.bst` — not a `cargo2`/`pypi`
+*dependency of* one). Confirmed on a real scan (2026-08-05, Grype 0.116.1, 111 matches):
+every affected package has `.artifact.purl == null` and `matchDetails[0].matcher ==
+"stock-matcher"` with `searchedBy.namespace` set to a GHSA *language* namespace that does
+**not** match the artifact's real ecosystem — Grype's fallback for purl-less packages
+checks the bare name against every GHSA language namespace, not just a plausible one:
+
+| Package (installed) | Real identity | Matched against |
+|---|---|---|
+| `tar` 1.35 | GNU tar (C, `tar.bst`) | `github:language:javascript` — npm `tar`/`node-tar` (17 distinct GHSAs, `fixed-in` values like `7.5.21` that GNU tar's own versioning has never reached) |
+| `libidn2` 2.3.8 | GNU libidn2 (C) | `github:language:javascript` |
+| `zlib` 1.3.1 | zlib (C) | `github:language:ruby` |
+| `json` 3.12.0 | nlohmann/json (C++) | `github:language:javascript` |
+| `shaderc` 2025.3 | Google shaderc (C++) | `github:language:javascript` |
+| `markdown` 3.10.2 | Python-Markdown (`python3-markdown.bst`) | `github:language:javascript` (wrong *language*, despite the artifact genuinely being a Python package) |
+| `networkx` 3.6.1 | NetworkX (`python3-networkx.bst`) | `github:language:javascript` |
+| `paste` 1.0.14 | vendored copy in `desktop/mesa-all-codecs.bst` | `github:language:python` — PyPI `Paste` WSGI framework |
+
+42 of 111 matches in that scan (~38%) traced to these 8 packages — including 3 of the
+scan's "Critical" hits (`libidn2`, `networkx`, `shaderc`, all reported with `EPSS: N/A`,
+the same "no real CVE behind this" signal as the already-documented wrapper-package
+false positives). `tar` alone was double-counted on top of the ecosystem mismatch:
+krytis's SBOM lists GNU tar as **two** separate unscoped packages at the same version
+(`bootstrap/base-sdk/tar.bst` and `components/tar.bst`), so every one of its 17 wrong
+GHSAs was matched twice (34 raw matches).
+
+**Fix — `.grype.yaml` ignore rules, not enrichment-script changes.** Broader purl/CPE
+enrichment for every BST-element-is-the-package case would cover most of the C/C++/
+non-cargo/non-pypi graph — too large and too risky (a wrong CPE assignment reintroduces
+the same class of mismatch) for the 8 confirmed instances actually found. Instead,
+`mise/tasks/vuln-scan` passes `grype --config .grype.yaml`, and the repo-root
+`.grype.yaml` lists all 25 confirmed (`vulnerability`, `package.name`,
+`package.version`) triples as `ignore:` rules (Grype's own suppression mechanism,
+documented in `grype config`). Pinned to the exact installed version, not name alone:
+a version bump on the underlying BST element makes the rule stop applying, and Grype
+re-flags the match — re-verify `matchDetails[0].searchedBy.namespace` before re-adding
+rather than assuming the same package name is always safe to ignore.
+
+**This does not generalize.** Any *new* purl-less BST-element package that happens to
+share a name with an unrelated ecosystem's advisory will still false-positive the same
+way — `.grype.yaml` only suppresses instances already found and verified. Treat any
+`stock-matcher` match with no purl (`jq '.matches[] | select(.matchDetails[0].matcher=="stock-matcher"
+and .artifact.purl==null)'` on the Grype JSON report) as needing the same manual
+ecosystem cross-check before trusting it or adding it to the ignore list.
+
 ### `--fail-on` / severity gating
 
 Both `mise run vuln-scan --fail-on <severity>` and `mise run push --fail-on <severity>` pass straight through to Grype's own `-f/--fail-on` flag (`negligible|low|medium|high|critical`) — Grype exits 2 when a match at or above that severity exists; the wrapping task turns that into a normal non-zero exit. **No flag = warn-only** (report generated and attached either way, never blocks). **`mise run push`'s ordering (#392):** SBOM generation and the vuln scan run *before* login/tag/push — a `--fail-on` breach aborts there, before anything reaches the registry. This is possible because `buildstream-sbom` reads static element/source metadata via `bst show`, which does not require the image to be built (verified: `bst show` reports `oci/krytis/image.bst waiting` — not cached — in a checkout that still produces a complete, accurate SBOM). `.github/workflows/publish.yml` additionally runs `mise run vuln-scan --fail-on <severity>` as its own standalone step *before* `mise run build`, so a blocking finding skips the ~20-25 minute BST build entirely, not just the push — `mise run push`'s own scan-before-push is the defense-in-depth guarantee for the case where that earlier gate is skipped or `mise run push` is run standalone. Before #392, the image was already pushed by the time the scan ran, so `--fail-on` only failed the job after the fact (the same non-blocking shape as dakota's `publish-sbom` job, `continue-on-error: true`) — that ordering is no longer how this works.

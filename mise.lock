@@ -48,6 +48,16 @@ checksum = "sha256:69ee169bd6387331928864e94d47ed01ef649fbfe875baed1bbf27b5377a6
 url = "https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Linux_x86_64.tar.gz"
 url_api = "https://api.github.com/repos/charmbracelet/gum/releases/assets/290080949"
 
+[[tools.jq]]
+version = "1.8.2"
+backend = "aqua:jqlang/jq"
+
+[tools.jq."platforms.linux-x64"]
+checksum = "sha256:b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64"
+url_api = "https://api.github.com/repos/jqlang/jq/releases/assets/453012752"
+provenance = "github-attestations"
+
 [[tools.just]]
 version = "1.58.0"
 backend = "aqua:casey/just"
@@ -80,8 +90,8 @@ version = "3.12.13"
 backend = "core:python"
 
 [tools.python."platforms.linux-x64"]
-checksum = "sha256:7ceaf4360f4b4ab44f31d8217cfdc70df8e12b61d9561b4900ee7af87176e50d"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260728/cpython-3.12.13+20260728-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+checksum = "sha256:ce2c9c5df1b99a962a86d2f457656918ee5f01b2edea080db28416232a1fcb11"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/cpython-3.12.13+20260804-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 provenance = "github-attestations"
 
 [[tools.usage]]
