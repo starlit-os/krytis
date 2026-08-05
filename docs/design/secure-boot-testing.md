@@ -27,7 +27,7 @@ in §2.
 | `elements/config/secureboot-loader-conf.bst`, `loader.conf` handling | T2 (`enroll-test`) + T4 | Enrollment policy is firmware-visible; the VM answer differs from hardware |
 | `mise/tasks/build-iso`, `verify-iso-payload`, dakota-iso payload path | T3 | The ISO is the only artifact that exercises the offline store |
 | Kernel cmdline / `files/bootc-config/*.toml` | T1 + T2 + T4 | A UKI freezes the cmdline; FIDO2 unlock depends on it (trap T-9) |
-| Publishing (`push`, `publish.yml`) | T1 + a manual `--sealed` push review | CI never builds sealed images (§6, gap G-1) |
+| Publishing (`push`, `publish.yml`) | T1 (CI now runs `enroll-test` against the published `:sealed` tag automatically — the sealed-publishing part of G-1 is resolved, see §6) | `publish.yml` builds and pushes sealed since #450; `publish_sealed=false` opts a run out |
 | Nothing — periodic confidence check | T0 + T1 + T2 | ~10 minutes, catches drift from dependency bumps |
 
 ---
@@ -85,7 +85,7 @@ firmware. It reads each list's `SignatureSize` field; 16 means no certificate.
 | `mise run boot-test --secure` | ~3 min ⚠ root | the signed image boots against a **pre-enrolled** varstore | **it never touches `loader/keys/auto`** — this is exactly the blind spot that hid #438 |
 | `mise run boot-test --secure --expect-fail` | ~8 min ⚠ root | enforcement refuses the unsigned image, asserted on the firmware's own rejection line | that the *signature* is what was refused (any failure in that image looks the same) — the byte-flip variant isolates it |
 | `mise run boot-test --reuse-disk <disk> [--secure]` | 20 s–4 min | boot + health on an already-installed disk, unprivileged | any first-boot behaviour: host keys, `systemd-firstboot`, `/etc` writability, and enrollment policy (trap T-4) |
-| `mise run upgrade-test` | ~3 min + pull | `bootc upgrade` on an installed sealed system, then a reboot into the result, still enforcing and healthy | anything about a *newer* image — it follows whatever the configured stream holds, which today is broken (G-2) |
+| `mise run upgrade-test` | ~3 min + pull | `bootc upgrade` on an installed sealed system, then a reboot into the result, still enforcing and healthy | anything about a *newer* image — it follows whatever the configured stream holds (previously broken, see the closed G-2) |
 | `mise run selfenroll-test` | **66 s** | the full chain on a real installed disk against a pristine firmware — see T3 below, where it belongs in the sequence | the manual enrollment prompt (a VM auto-enrols) |
 
 The last two need an installed disk, which T3's `iso-install-test` leaves behind at
@@ -355,16 +355,16 @@ UKI but an *empty* `/usr/lib/bootc/install/` — no enrollment keys at all, pred
 Publishing a current sealed image is therefore a prerequisite for this gate, and is
 the same decision as G-1's "should CI build sealed images at all".
 
-### G-2 · `bootc upgrade` — now tested, and it found the stream broken
+### G-2 · ~~`bootc upgrade` on the published sealed stream~~ — closed (#448, #456)
 
-`mise run upgrade-test` exists (T2, no root). It boots an installed sealed disk under
-enforcement with the enrolled varstore, lets the guest run `bootc upgrade` against its
-own `targetImgref`, reboots into the result and asserts enforcing + healthy. It
-self-sequences across the reboot: SMBIOS credentials are re-supplied each boot, so the
-same probe upgrades on the first pass and reports on the second.
+`mise run upgrade-test` (T2, no root) boots an installed sealed disk under
+enforcement with the enrolled varstore, lets the guest run `bootc upgrade` against
+its own `targetImgref`, reboots into the result and asserts enforcing + healthy. It
+self-sequences across the reboot: SMBIOS credentials are re-supplied each boot, so
+the same probe upgrades on the first pass and reports on the second.
 
-**First real run failed, correctly.** `bootc upgrade` against the published sealed
-stream:
+**First real run failed, correctly.** `bootc upgrade` against the then-published
+sealed stream:
 
 ```
 error: Upgrading composefs: … Writing krytis.efi to ESP:
@@ -372,21 +372,37 @@ error: Upgrading composefs: … Writing krytis.efi to ESP:
   (is 'sha512:69b1f9e6…', should be 'sha512:6b7180ec…')
 ```
 
-The published image's baked digest does not match its own rootfs, so bootc refuses to
-deploy it — which means **every machine installed from a sealed ISO is on a stream it
-cannot upgrade from**. Locally built sealed images are fine (`iso-install-test
---secure` installs one and install runs the same verification), so this is specific to
-the published artifact. Tracked in #448 along with that tag's two other problems.
+The published image's baked digest did not match its own rootfs, so bootc refused
+to deploy it — every machine installed from a sealed ISO was on a stream it could
+not upgrade from. Locally built sealed images were fine (`iso-install-test
+--secure` installs one and install runs the same verification), so this was
+specific to the published artifact, which predated #443's two-phase seal fix.
+Tracked in #448 along with that tag's other two problems (stale, key-less).
 
-**Still unverified: the pass path.** There is currently no good sealed image to
-upgrade *to*, so the test has only ever been observed failing — against a real defect,
-which is meaningful evidence but not the same as watching it go green. Publishing a
-sealed image from #443 unblocks it, the same blocker as the `enroll-test` CI job. Until
-then treat a green `upgrade-test` as unproven.
+**Pass path since confirmed** (#456), against a sealed image `publish.yml` (#450)
+had published minutes earlier (`ghcr.io/starlit-os/krytis:sealed`, created
+`2026-08-02T18:26`):
 
-A second sealed build differing only in `include/image-version.yml` would let the test
-run entirely locally, but that version stamp comes from the BST build, so producing one
-costs a `mise run build` rather than a re-seal.
+```
+===KRYTIS-UPGRADE phase=post===
+state: running
+sb: Secure Boot: enabled (user)
+failed-units:
+==> PASS: bootc upgrade completed and the upgraded system booted healthy
+    under Secure Boot enforcement.
+```
+
+That is the gate that could not pass before — the published stream was stale,
+key-less and undeployable; it now upgrades and boots enforcing. One honest caveat
+carried forward from #456: the gate's `digest:`/`was:` lines read `none` (`bootc
+status --json` doesn't surface `imageDigest` for this install type), so the verdict
+never depended on them — a no-op upgrade is separately detected from bootc's own
+"no update available" message and exits `SKIP (2)`, not `PASS`. Worth strengthening
+later into an explicit before/after digest assertion; not silently relied on today.
+
+A second sealed build differing only in `include/image-version.yml` would let the
+test run entirely locally, but that version stamp comes from the BST build, so
+producing one costs a `mise run build` rather than a re-seal.
 
 ### G-3 · ~~Self-enrollment is a manual recipe, not a task~~ — closed
 
