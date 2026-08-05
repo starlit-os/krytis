@@ -447,12 +447,48 @@ in the running initramfs. It contains the full journal from the failed boot.
 Accessible only from a shell in the initramfs (e.g. via `rd.break` or emergency
 shell).
 
-### GTK display vs serial console
+### Graphical display vs serial console
 
-`mise run boot-vm` uses `-display gtk` (graphical window) plus `-serial stdio`
-(ttyS0). The serial console shows systemd journal output. The GTK window shows
-virtual consoles (tty1–tty9). If a debug shell appears on a tty other than ttyS0,
-it will only be visible in the GTK window.
+`mise run boot-vm` gives `-serial stdio` (ttyS0), which shows systemd journal
+output. The virtual consoles (tty1–tty9) live on the `virtio-vga` device, *not*
+on serial — so a debug shell or prompt on any tty other than ttyS0 is invisible
+there. Reaching it needs a graphical backend, which a krytis host does not have
+(see the next § ) — fall back to HMP `screendump`.
+
+### `boot-vm` is headless on a krytis host — there is no window to type into
+
+`elements/dev/qemu.bst` deliberately builds qemu with `--disable-gtk
+--disable-sdl --disable-vnc --disable-spice --disable-curses`, so on krytis
+itself:
+
+```console
+$ qemu-system-x86_64 -display help
+Available display backend types:
+none
+dbus
+```
+
+`mise run boot-vm` used to pass `-display gtk` unconditionally and died with
+`Parameter 'type' does not accept value 'gtk'` — it could never have worked on
+this image. It now negotiates (`gtk` → `sdl` → `none`) and accepts
+`--display <type>`, failing with the supported list instead of qemu's message.
+
+**Consequence for test planning:** any verification needing *interactive* input
+inside the guest — answering a VT prompt, using the greeter, typing a password —
+is **not** achievable with `boot-vm` on a krytis host, and `boot-test` cannot do
+it either (serial-only harness, and it boots a throwaway copy). Options:
+
+| Need | Use |
+|---|---|
+| Automated boot verdict | `mise run boot-test` — copies the disk; unprivileged except `generate-disk` |
+| State persisting across two boots (set up, reboot, re-check) | `mise run boot-vm` — boots the disk **in place**, no `-snapshot`, so writes survive |
+| See what a VT is showing | HMP `screendump /tmp/x.ppm` (§ Screendump the console instead of guessing) |
+| Send keys to a VT | HMP `sendkey ctrl-alt-f5`, then one key name per character — drops characters, so screendump after each batch |
+| Genuinely interactive session | Real hardware, or rebuild `dev/qemu.bst` with `--enable-gtk` (reverses a deliberate decision — raise it first) |
+
+Note `boot-vm`'s **fallback** path (no native qemu, `ghcr.io/qemus/qemu`) passes
+`ARGUMENTS=-snapshot`, which *discards* writes. Any test relying on state
+persisting across two boots silently passes for the wrong reason there.
 
 ## `podman save` Must Use `--format oci-archive` for bootc
 
