@@ -39,6 +39,29 @@ if [ -e "${OUTPUT}" ] && [ "${FORCE}" != "true" ]; then
     exit 1
 fi
 
+# Flatpak VM apps (GNOME Boxes) can only open the image by a path that exists
+# inside their sandbox. `--filesystem=host` does NOT bind the host's /var, so a
+# qcow2 under /var/tmp is invisible to them; the file chooser then exports it
+# through the XDG document portal (/run/user/$UID/doc/..., fuse.portal) as the
+# only way to reach it — and qemu's image locking uses F_OFD_SETLK, which FUSE
+# does not implement. The VM dies before firmware with:
+#
+#   Failed to get "consistent read" lock: Input/output error
+#   Is another process using the image [...]?
+#
+# which reads like contention and is not. $HOME *is* bound into the sandbox, so
+# an output path under it avoids the portal entirely.
+if [ "${OUTPUT#"${HOME}"/}" = "${OUTPUT}" ]; then
+    echo "NOTE: ${OUTPUT} is outside \$HOME."
+    echo "      Fine for qemu/libvirt on the host. But a flatpak VM app (GNOME"
+    echo "      Boxes) cannot open it by path and will fall back to the XDG"
+    echo "      document portal, where qemu's OFD lock fails with a misleading"
+    echo "      \"consistent read lock: Input/output error\". For Boxes, use:"
+    echo "        --output \"\$HOME/.var/app/org.gnome.Boxes/data/gnome-boxes/images/$(basename "${OUTPUT}")\""
+    echo "      (same btrfs as /var/tmp, so cp --reflink=auto is free if you"
+    echo "      already converted elsewhere)."
+fi
+
 echo "==> Converting ${DISK} → ${OUTPUT}..."
 
 # -p writes one progress line per percent: useful interactively, pure noise in a
@@ -75,12 +98,19 @@ Next, for an interactive console (which boot-vm cannot give you on this host):
 
     GNOME Boxes -> + -> Install from file -> ${OUTPUT}
 
-Boxes is granted filesystems=host, so /var/tmp is readable; no need to move it.
-Krytis boots UEFI-only (systemd-boot + UKI, no BIOS loader). Boxes exposes no
-firmware toggle, so if the VM lands on a "no bootable device" screen, force OVMF
-in its domain XML:
+Boxes picks UEFI automatically for this disk (verified: firmware="efi",
+secure-boot on with no enrolled keys, i.e. setup mode — an unsealed image still
+boots, and krytis's secure-boot-enroll.service only writes
+"secure-boot-enroll manual" into loader.conf, so nothing is enrolled behind your
+back).
 
-    ~/.var/app/org.gnome.Boxes/config/libvirt/qemu/<vm>.xml
+If the VM instead dies instantly with 'Failed to get "consistent read" lock:
+Input/output error', nothing else is using the image — the path is a document
+portal (fuse) path and qemu cannot take an OFD lock there. Repoint it:
+
+    virsh -c qemu:///session dumpxml <vm> > ~/vm.xml   # via the Boxes flatpak
+    # edit <source file=...> to a real path under \$HOME, then:
+    virsh -c qemu:///session define ~/vm.xml
 
 See docs/skills/bootc-vm.md § Interactive VM testing via GNOME Boxes.
 EOF

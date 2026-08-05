@@ -498,25 +498,77 @@ are flatpaks shipping their *own* qemu/SPICE stack, so they are unaffected by
 typing inside the guest — a VT prompt, the greeter, a password.
 
 ```shell
+BOXES_IMG=~/.var/app/org.gnome.Boxes/data/gnome-boxes/images/krytis-vt.qcow2
 mise run generate-disk --disk /var/tmp/krytis-vt.raw --size 15G   # needs sudo
-mise run convert-to-qcow2 --disk /var/tmp/krytis-vt.raw           # unprivileged
-# Boxes -> + -> Install from file -> /var/tmp/krytis-vt.qcow2
+mise run convert-to-qcow2 --disk /var/tmp/krytis-vt.raw --output "$BOXES_IMG"
+# Boxes -> + -> Install from file -> $BOXES_IMG
 ```
 
-Boxes is granted `filesystems=host` (check with
-`flatpak info --show-permissions org.gnome.Boxes`), so a disk under `/var/tmp`
-is readable as-is — no copying into `~`.
+Verified end to end on 2026-08-05: this reaches the noctalia greeter on vt1, and
+`Ctrl+Alt+F5` reaches `krytis-firstboot.service`'s wizard on tty5, which creates
+the initial homed user (#487).
 
-Two things that will bite:
+**Put the qcow2 under `$HOME`, not `/var/tmp`.** Boxes is granted
+`filesystems=host`, which sounds like `/var/tmp` works — it does not. Flatpak's
+`host` does **not** bind the host's `/var`, so the sandbox has its own empty
+`/var/tmp` and cannot see the file at that path at all:
 
-- **Krytis is UEFI-only** (systemd-boot + UKI; the BIOS boot partition
-  `generate-disk` creates carries no BIOS loader). Boxes exposes no firmware
-  toggle in its UI, and for an unrecognised OS it can pick SeaBIOS, which lands
-  on "no bootable device". Force OVMF in the domain XML, then restart the VM:
-  `~/.var/app/org.gnome.Boxes/config/libvirt/qemu/<vm>.xml`.
-- **Boxes copies or references the image depending on how it was added**, so
-  "the change I just rebuilt isn't there" usually means the VM is still pointing
-  at an older copy. Re-import after regenerating, or point the XML at the file.
+```console
+$ flatpak run --command=sh org.gnome.Boxes -c 'ls /var/tmp'   # empty
+```
+
+Boxes' file chooser then exports the file through the **XDG document portal** as
+the only way to reach it, and the VM dies before firmware with:
+
+```
+Failed to get "consistent read" lock: Input/output error
+Is another process using the image [/run/user/1000/doc/…/krytis-vt.qcow2]?
+```
+
+That message is misleading — nothing else has the image. `/run/user/$UID/doc` is
+`fuse.portal`, qemu locks images with `F_OFD_SETLK`, and FUSE does not implement
+it, so the lock attempt returns `EIO`. Reproducible with no VM involved:
+
+```console
+$ qemu-io -c quit -f qcow2 /run/user/1000/doc/…/krytis-vt.qcow2
+qemu-io: can't open device …: Failed to get "consistent read" lock: Input/output error
+$ qemu-io -c quit -f qcow2 /var/tmp/krytis-vt.qcow2     # clean
+```
+
+`$HOME` *is* bound into the sandbox (that is where Boxes keeps its own nvram), so
+write there in the first place — `mise run convert-to-qcow2` warns when the
+output is outside `$HOME`:
+
+```shell
+mise run convert-to-qcow2 --disk /var/tmp/krytis-vt.raw \
+    --output ~/.var/app/org.gnome.Boxes/data/gnome-boxes/images/krytis-vt.qcow2
+```
+
+`$HOME` and `/var/tmp` are the same btrfs, so `cp --reflink=auto` moves an
+already-converted image across for free. To repoint an existing VM, edit
+`<source file=…>` via the flatpak's own virsh — Boxes ships one at `/app/bin`:
+
+```shell
+V() { flatpak run --command=virsh org.gnome.Boxes -c qemu:///session "$@"; }
+V dumpxml <vm> > ~/vm.xml     # NB: write to $HOME; the flatpak has its own /tmp
+V define ~/vm.xml
+V start <vm>
+```
+
+Two more things:
+
+- **Firmware is fine unattended.** Boxes selected `firmware="efi"` with
+  `secure-boot` on and `enrolled-keys` off — setup mode, so an unsealed image
+  boots, and krytis's `secure-boot-enroll.service` only appends
+  `secure-boot-enroll manual` to `loader.conf`; it enrols nothing by itself.
+- **Boxes may hold an older copy** of the image depending on how it was added, so
+  "the change I just rebuilt isn't there" usually means the VM still points at a
+  previous file. Check `<source file=…>` before re-testing.
+
+`virsh screenshot <vm> ~/shot.ppm` (then `magick ~/shot.ppm ~/shot.png`) reads
+the SPICE display without touching the guest — the reliable way to see which VT
+is showing what, and `V send-key <vm> --codeset linux KEY_LEFTCTRL KEY_LEFTALT
+KEY_F5` switches VT from outside the guest.
 
 `convert-to-qcow2` refuses to overwrite an existing output without `--force`,
 precisely because a stale qcow2 boots old content that looks current.
