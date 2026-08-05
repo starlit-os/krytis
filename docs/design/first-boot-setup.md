@@ -12,78 +12,120 @@ systemd already ships the tooling for this (`systemd-firstboot.service`,
 `systemd-homed-firstboot.service`), and krytis already has both in the
 image (`base-system.bst` depends on `freedesktop-sdk.bst:vm/config/
 systemd-homed-firstboot.bst` and krytis's own `config/systemd-firstboot.bst`).
-Neither runs today:
+Neither runs today, and neither is usable as shipped:
 
-- `systemd-firstboot.service` is enabled, but neutered by the kernel arg
+- `systemd-firstboot.service` is neutered by the kernel arg
   `systemd.firstboot=no` (`files/bootc-config/40-no-firstboot.toml`). It was
   added because the unit's default `ExecStart` passes
   `--prompt-root-password`, and `root:!unprovisioned` reads as "no password
-  set" — the prompt then waits forever on a console nothing answers
-  (headless, serial-only, or UKI/secure-boot boots), and because the unit is
-  `Before=sysinit.target`, the *entire* boot stalls: greetd, sshd, logind,
-  networking — nothing after `sysinit.target` starts.
+  set" — the prompt then waits forever (`TimeoutStartSec=infinity`) on a
+  console nothing answers, and because the unit is `Before=sysinit.target`,
+  the *entire* boot stalls: greetd, sshd, logind, networking — nothing after
+  `sysinit.target` starts.
 - `systemd-homed-firstboot.service` (which runs `homectl firstboot`, the
   systemd-homed equivalent — interactively creates a homed-managed user if
   none exists) is `disable`d by freedesktop-sdk's own preset. It is ordered
-  `Before=systemd-user-sessions.service` with no timeout — the same class of
-  hang, one target later: an unanswered prompt blocks all logins.
+  `Before=systemd-user-sessions.service`, also with no timeout — the same
+  class of hang, one target later: an unanswered prompt blocks all logins.
 
 ## Decision
 
-Re-enable both units, but move them **off the critical boot path** so an
-unattended boot (CI, headless, or a human who hasn't sat down yet) always
-reaches a healthy graphical session regardless of whether anyone answers.
-Root stays locked; the created user is the sudoer.
+Krytis ships **its own unit**, `krytis-firstboot.service`, which runs both of
+systemd's wizards in sequence on a reserved VT, off the critical boot path.
+Both upstream units are **neutralised in place**. Root stays locked; the
+created user is the sudoer.
 
-| Unit | Purpose | ExecStart override |
+### Why not drop-ins on the upstream units
+
+The obvious approach — keep both upstream units and fix them with drop-ins —
+cannot work, and failing quietly is the trap:
+
+**systemd's dependency directives are purely additive in drop-ins.** An empty
+`Before=` does *not* reset the accumulated list, unlike `ExecStart=` and most
+other list-valued settings. So `Before=sysinit.target` and
+`Before=systemd-user-sessions.service` survive any drop-in, and the units stay
+exactly as boot-blocking as before while *appearing* to be fixed. Verified on
+systemd 260 — see `docs/skills/bootc-vm.md`
+§ Dependency directives cannot be reset from a drop-in.
+
+A preset cannot retire `systemd-firstboot.service` either: it is `static` (no
+`[Install]` section), pulled in by systemd's own shipped
+`sysinit.target.wants/systemd-firstboot.service` symlink, which
+`systemctl disable` does not touch. And overwriting the unit file in
+`/usr/lib/systemd/system/` would collide with the file freedesktop-sdk's
+systemd element already provides there.
+
+What a drop-in *can* reach is `ExecStart=`, which is resettable. So both
+upstream units get `ExecStart=/usr/bin/true` plus `StandardInput=null`: they
+still run, instantly and silently, cannot prompt, and cannot stall the target
+they are ordered before. `first-boot-complete.target` is satisfied as usual.
+
+### The krytis unit
+
+| Step | Command | Notes |
 |---|---|---|
-| `systemd-firstboot.service` | keymap + timezone (optional) | `systemd-firstboot --prompt-keymap-auto --prompt-timezone --welcome=no` — no locale/root-password prompt. `--prompt-keymap-auto` (added systemd 259) self-skips when not invoked on a local VT, so it never blocks a serial-only session either. |
-| `systemd-homed-firstboot.service` | initial user (required) | `homectl firstboot --prompt-new-user --prompt-shell=no --prompt-groups=no --member-of=wheel --mute-console=yes` — systemd-homed managed (encrypted home, FIDO2-login-ready, matching the PAM/FIDO2 investment already in the repo), auto-granted `wheel` (sudo, see fdsdk's `vm/config/sudo.bst` → `/etc/sudoers.d/wheel`) rather than prompted — the first-boot user *is* the admin account, matching every other bootc/desktop-OS first-run flow. |
+| keymap + timezone (optional) | `systemd-firstboot --prompt-keymap-auto --prompt-timezone --welcome=no --mute-console=yes` | No locale prompt, no root-password prompt. `--prompt-keymap-auto` self-skips when not invoked on a local VT, so a serial-only session is never blocked. Values already present in `/etc` are skipped (no `--force`), so `/etc/localtime` being pre-set to UTC means only keymap normally prompts. |
+| initial user (required) | `homectl firstboot --prompt-new-user --prompt-shell=no --prompt-groups=no --member-of=wheel --mute-console=yes` | systemd-homed managed (encrypted home, FIDO2-login-ready, matching the PAM/FIDO2 investment already in the repo), auto-granted `wheel` (sudo, `%wheel ALL=(ALL) ALL` from fdsdk's `vm/config/sudo.bst`) rather than prompted — the first-boot user *is* the admin account. `--prompt-groups=no` is load-bearing for that: were the groups prompt left on, an interactive answer would overwrite `memberOf` wholesale (`homectl.c`, `create_interactively()`). |
 
-Both units:
+Both steps run from one script (`/usr/libexec/krytis/firstboot-wizard.sh`)
+rather than two units, because the unit is `Type=exec` — a second unit ordered
+`After=` the first would start as soon as the first was *exec'd*, not when it
+finished, and the two wizards would fight over the same VT.
 
-- Have `Before=` cleared of `sysinit.target` / `systemd-user-sessions.service`
-  (systemd list-type directives: an empty assignment in a drop-in resets the
-  accumulated list; `Before=first-boot-complete.target shutdown.target` is
-  re-added since that ordering is still correct and harmless).
-- Get `TTYPath=/dev/tty2` so they run on a dedicated, reserved VT instead of
-  `/dev/console` — `greetd` is fixed at `vt=1` (`greetd-config.bst`) and
-  must not be contended for.
-- Get `Conflicts=getty@tty2.service autovt@tty2.service` +
-  `Before=getty@tty2.service autovt@tty2.service` so `systemd-logind`'s
-  on-demand `autovt@` spawn (triggered when a user switches to an
-  unoccupied VT) can't race the wizard for ownership of tty2.
-- `systemd-homed-firstboot.service` gets `After=systemd-firstboot.service`
-  so the two run in a sensible order on the shared VT (settings, then
-  account) — not because the new keymap is live for the second prompt
-  (`systemd-firstboot` only writes `vconsole.conf` for the *next* boot; the
-  running VT's keymap is unaffected until then), but because it's the
-  conventional wizard order.
+Key properties of `krytis-firstboot.service`:
 
-`files/bootc-config/40-no-firstboot.toml` (the `systemd.firstboot=no` karg)
-is deleted — root-password prompting is now removed at the `ExecStart`
-level, which is more precise than suppressing it globally, and the karg
-would otherwise also suppress the keymap/timezone prompts.
+- **`WantedBy=multi-user.target`, and no `Before=` on anything on the boot
+  path.** `Wants=` implies no ordering, so `multi-user.target` /
+  `graphical.target` activate without waiting for the wizard. An unattended
+  boot (CI, headless, or a human who hasn't sat down yet) always reaches a
+  healthy graphical session regardless of whether anyone answers.
+- **`Type=exec`, not `Type=oneshot`.** The start job must complete as soon as
+  the wizard is exec'd. A oneshot keeps its job pending until `ExecStart`
+  returns, which leaves `systemctl is-system-running` reporting `starting` for
+  as long as the prompt goes unanswered — and `mise boot-test` asserts health
+  with `is-system-running --wait`, so a oneshot would *hang* the gate rather
+  than fail it.
+- **`TTYPath=/dev/tty5`** (Ctrl+Alt+F5), not `/dev/console` and not tty2:
+  `greetd` is fixed at `vt=1` (`greetd-config.bst`) and `config/kmscon.bst`
+  claims vt2–4 for kmscon. tty6 is logind's `ReserveVT`, where a getty is
+  spawned *unconditionally*, so tty5 is the first VT free of all three.
+- **`Conflicts=getty@tty5.service` + `Before=getty@tty5.service`** to win the
+  VT back if a getty got there first. This does not backfire once the wizard
+  holds the VT: logind refuses to spawn a getty over a busy VT
+  (`logind-core.c`, `manager_spawn_autovt()` → `vt_is_busy()` → `-EBUSY`), so
+  switching to tty5 to *use* the wizard cannot kill it. `autovt@tty5.service`
+  is deliberately not listed — it is an alias of the same `getty@.service`
+  unit, so naming it adds nothing.
+- **Gated on `/var/lib/krytis/firstboot-done`, not `ConditionFirstBoot=yes`.**
+  This is a direct consequence of `Type=exec`: the start job completes
+  immediately, so first-boot state gets committed
+  (`systemd-machine-id-commit.service`) while the prompt is still waiting for
+  input. Under `ConditionFirstBoot=yes` a first boot nobody answered would
+  therefore never prompt again — stranding the machine with no account and a
+  locked root, the exact failure this design exists to prevent. The marker is
+  written only once a regular user really exists, so a skipped or aborted
+  wizard comes back on the next boot. Both steps are idempotent, which is what
+  makes re-running safe: `systemd-firstboot` skips already-set values, and
+  `homectl firstboot` returns without prompting once a regular user exists
+  (`homectl.c`, `has_regular_user()`).
 
-freedesktop-sdk ships `systemd-homed-firstboot.service` `disable`d by its
-own preset file (`systemd-homed-firstboot.preset`, unprefixed). krytis's
-override ships as a numerically-prefixed file
-(`80-systemd-homed-firstboot.preset`); preset resolution takes the first
-matching filename in sort order, and digits sort before letters, so ours
-wins without touching or masking fdsdk's file. Same pattern krytis already
-uses for `systemd-firstboot.service` (`80-systemd-firstboot.preset`).
+`files/bootc-config/40-no-firstboot.toml` (the `systemd.firstboot=no` karg) is
+deleted. This is now required rather than merely tidy: `homectl firstboot`
+honours that karg too (`homectl.c`, `verb_firstboot()` sets
+`arg_prompt_new_user = false`), so leaving it in place would silence krytis's
+own wizard as well as upstream's.
 
 ## Consequence: the greeter is reachable before any account exists
 
 `greetd`/`noctalia-greeter` starts and shows its login screen immediately —
-it does not wait on either first-boot unit. On a genuinely fresh install
-there is nothing to log into yet; the actual setup wizard is on tty2
-(Ctrl+Alt+F2), which is not discoverable from the greeter itself. Making
+it does not wait on the first-boot unit. On a genuinely fresh install
+there is nothing to log into yet; the actual setup wizard is on tty5
+(Ctrl+Alt+F5), which is not discoverable from the greeter itself. Making
 the greeter surface a hint is an upstream noctalia-greeter UI feature, not
 something krytis owns — out of scope here. This is a known, accepted
 first-run rough edge, not a regression: today there is no in-band recovery
 path *at all* (an operator needs a second machine / recovery shell to
-`useradd`), so tty2 being merely undiscoverable is already strictly better.
+`useradd`), so tty5 being merely undiscoverable is already strictly better.
 A follow-up could file an upstream issue for a "no accounts configured"
 state in noctalia-greeter, or ship a `/etc/motd`-style hint that shows on
 any console session, if this proves confusing in practice.
@@ -95,20 +137,35 @@ any console session, if this proves confusing in practice.
 - No root password prompt — root stays locked by design, matching the
   existing shadow entry and the sudo-rs/pangolin passwordless-sudo posture.
 - No changes to `noctalia-greeter` or any graphical wizard — this is the
-  stock systemd TTY-based first-boot flow, not a bespoke one.
+  stock systemd TTY-based first-boot flow, not a bespoke one. The only
+  krytis-authored code is the sequencing script.
 - No credential-based (non-interactive) provisioning path is added, though
-  both units still honor `ImportCredential=firstboot.*` / `home.*` for free
+  the unit still honors `ImportCredential=firstboot.*` / `home.*` for free
   if a future installer wants to feed values via systemd credentials — that
   wiring is not built here.
 
 ## Alternatives considered
 
+- **Drop-ins on the two upstream units**, keeping them enabled. Rejected: does
+  not work at all — see *Why not drop-ins on the upstream units* above. This
+  was the first implementation of this design and it silently retained
+  `Before=sysinit.target`, reintroducing the very hang the deleted karg was
+  suppressing.
+- **Full replacement copies of both upstream unit files** in
+  `/usr/lib/systemd/system/`. Rejected: collides with the files
+  freedesktop-sdk's systemd element already installs at those paths, and
+  carries the unit definitions as permanent forks to re-sync on every systemd
+  bump.
+- **Masking the upstream units** via `/etc/systemd/system/<unit> → /dev/null`.
+  Rejected: no krytis element ships into `/etc` today (image config lives in
+  `/usr`, per bootc convention), and the `ExecStart=/usr/bin/true`
+  neutralisation achieves the same thing inside the existing convention.
 - **Classic `useradd` via a first-boot oneshot script**, instead of
-  `systemd-homed-firstboot.service`. Rejected: duplicates functionality
-  systemd already ships and tests upstream, and a second account model next
-  to the FIDO2/PAM homed support already built (`docs/skills/pam.md`,
+  `homectl firstboot`. Rejected: duplicates functionality systemd already
+  ships and tests upstream, and stands up a second account model next to the
+  FIDO2/PAM homed support already built (`docs/skills/pam.md`,
   `docs/skills/fido2.md`) rather than unifying on it.
-- **Keep both units ordered before `sysinit.target`/login (blocking)**, with
+- **Keeping the wizard ordered before `sysinit.target`/login (blocking)**, with
   a bounded timeout instead of a full input wait. Rejected in favor of
   fully decoupling from the boot-critical path — a timeout still risks
   flakiness under slow/loaded CI boots, and the non-blocking design has no

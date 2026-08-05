@@ -1,0 +1,72 @@
+# krytis-firstboot.service: optional first-boot setup wizard -- keymap,
+# timezone, and the initial systemd-homed-managed admin account.
+#
+# This is a krytis-owned unit rather than a pair of drop-ins on systemd's own
+# systemd-firstboot.service / systemd-homed-firstboot.service, because the one
+# thing that makes those unusable here cannot be undone from a drop-in: their
+# Before=sysinit.target / Before=systemd-user-sessions.service is what hangs an
+# unanswered boot, and systemd's dependency directives are purely ADDITIVE in
+# drop-ins -- an empty `Before=` does NOT reset the accumulated list. Both
+# upstream units are neutralised in place instead (see the drop-ins alongside
+# this file). Verified against systemd 260; see docs/skills/bootc-vm.md
+# § Dependency directives cannot be reset from a drop-in.
+#
+# Full rationale: docs/design/first-boot-setup.md
+[Unit]
+Description=Krytis first-boot setup wizard (keymap, timezone, initial user)
+Documentation=man:systemd-firstboot(1) man:homectl(1)
+
+# Deliberately NOT ConditionFirstBoot=yes. With Type=exec (below) the start job
+# completes as soon as the wizard is exec'd, so first-boot state is committed
+# while the prompt is still waiting for input -- a first boot nobody answers
+# would then never prompt again, stranding the machine with no account and a
+# locked root. Gate on "setup actually finished" instead: firstboot-wizard.sh
+# writes this marker only once a regular user really exists.
+ConditionPathExists=!/var/lib/krytis/firstboot-done
+# systemd-firstboot writes /etc/vconsole.conf and /etc/localtime.
+ConditionPathIsReadWrite=/etc
+
+# homed must be up to create the account. vconsole-setup owns the keymap this
+# wizard rewrites. Ordering after systemd-user-sessions.service keeps the
+# greeter reachable first -- answering the wizard is optional, logging in is not.
+Wants=systemd-homed.service
+After=systemd-homed.service systemd-vconsole-setup.service
+After=systemd-user-sessions.service
+
+# There is no Before= here, on purpose: nothing on the boot path may be ordered
+# after this unit. An unattended boot (CI, headless, or a human who has not sat
+# down yet) must reach graphical.target with both prompts left unanswered.
+#
+# The getty pair is the one exception -- it is not on the boot path. It wins the
+# VT back if a getty got there first; once this unit holds the VT, logind will
+# not spawn one over it (logind-core.c manager_spawn_autovt() -> vt_is_busy()).
+Conflicts=getty@tty5.service
+Before=getty@tty5.service
+
+[Service]
+# Type=exec, NOT oneshot. The start job must complete as soon as the wizard has
+# been exec'd: a oneshot keeps its job pending until ExecStart returns, which
+# leaves `systemctl is-system-running` reporting `starting` for as long as the
+# prompt goes unanswered. `mise boot-test` asserts health with
+# `is-system-running --wait`, so a oneshot would hang the gate rather than fail it.
+Type=exec
+ExecStart=/usr/libexec/krytis/firstboot-wizard.sh
+
+# tty5, not tty2: greetd owns vt1 (greetd-config.bst `vt = 1`) and
+# config/kmscon.bst claims vt2-4 for kmscon. tty6 is logind's ReserveVT, where a
+# getty is spawned unconditionally -- skipping the vt_is_busy() check above -- so
+# tty5 is the first VT free of all three. Reachable with Ctrl+Alt+F5.
+TTYPath=/dev/tty5
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYReset=yes
+TTYVHangup=yes
+
+# Free non-interactive provisioning: a future installer can feed either wizard's
+# values as systemd credentials with no further wiring here.
+ImportCredential=firstboot.*
+ImportCredential=home.*
+
+[Install]
+WantedBy=multi-user.target

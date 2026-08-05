@@ -172,8 +172,9 @@ issues `RefHome`, which can only take a reference on an *already-active* home, n
 activate an inactive one — activation needs `AcquireHome` from the auth phase that
 pubkey-only SSH skips. So the session starts with no `$HOME` mounted. This is the
 *normal* case now, not a corner case: `docs/design/first-boot-setup.md` makes
-`systemd-homed-firstboot.service` the default path for the initial account, so a
-fresh krytis install has a homed-managed user from boot one, not a classic
+`krytis-firstboot.service` (which runs `homectl firstboot`) the default path for
+the initial account, so a fresh krytis install has a homed-managed user from boot
+one, not a classic
 `useradd` account (`useradd` still works for any additional accounts created
 later, with plain home directories — see docs/skills/desktop.md § `/etc/skel`).
 
