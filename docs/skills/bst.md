@@ -1588,6 +1588,45 @@ Instead, enable the instances with static `.wants` symlinks in the vendor unit p
 - `systemctl is-enabled kmsconvt@tty2.service` reports **`static`**, not `enabled` — that is the expected label for a unit enabled from the vendor unit path. The dependency is still real; systemd ships `sysinit.target.wants/systemd-firstboot.service` the same way. Assert `systemctl show -p Wants --value getty.target` instead.
 - Never `systemctl enable` the instances, in an image or by hand: that materialises the `Alias=autovt@.service` symlink, after which `autovt@ttyN.service` resolves to kmscon rather than `getty@.service` and logind spawns kmscon on any VT switch.
 
+### Keep `NAutoVTs` aligned with the VT layout — but never set `ReserveVT=0`
+
+krytis's console map, once every owner is accounted for:
+
+| VT | Owner | Set by |
+|---|---|---|
+| 1 | greetd | `greetd-config.bst` (`vt = 1`) |
+| 2–4 | kmscon | `config/kmscon.bst` `getty.target.wants` symlinks |
+| 5 | first-boot wizard (first boot only) | `krytis-firstboot.service` `TTYPath=/dev/tty5` |
+| 6 | reserved rescue getty | logind's `ReserveVT` default |
+
+`NAutoVTs` defaults to **6**, so logind will spawn an on-demand getty anywhere in
+VT2–6 that isn't busy. VT2–4 are busy (kmscon starts them at boot), but once the
+wizard releases tty5, `Ctrl+Alt+F5` gets a plain getty on the wizard's own VT.
+`config/kmscon.bst` therefore ships `logind.conf.d/10-krytis-vts.conf` with
+`NAutoVTs=4`, capping the on-demand range to kmscon's.
+
+**Do not set `ReserveVT=0` to "tidy away" VT6.** logind starts a getty on the
+reserved VT *unconditionally*, skipping the `vt_is_busy()` check
+(`src/login/logind-core.c`, `manager_spawn_autovt()`); that same check order is
+why VT6 keeps its getty even though `6 > NAutoVTs`. `logind.conf(5)` states the
+intent: the reserved VT "will be marked busy unconditionally, so that no other
+subsystem will allocate it … one login getty is always" available. On krytis it is
+the *only* in-band way into a box whose greeter has wedged — root is locked
+(`root:!unprovisioned`) and sshd ships `disable`d by preset — and after the
+first-boot change the sole account is homed-managed with an encrypted home, which
+adds a failure mode (`docs/skills/pam.md`) rather than removing one. It costs
+nothing while unused: the getty unit is not even loaded until someone switches to
+VT6.
+
+Verify a change here without booting:
+
+```console
+$ systemd-analyze cat-config --root=<tree> systemd/logind.conf | grep -E 'NAutoVTs|ReserveVT'
+#NAutoVTs=6
+#ReserveVT=6
+NAutoVTs=4          # from 10-krytis-vts.conf
+```
+
 See `elements/config/kmscon.bst`.
 
 ## Commit-SHA Source Pinning (Repos Without Release Tags)

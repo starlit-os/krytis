@@ -55,4 +55,30 @@ config:
     # policy, which enables DefaultInstance=tty1 and preempts greetd on VT1.
     disable kmsconvt@.service
     EOF
+
+    install -Dm644 /dev/stdin \
+      "%{install-root}%{indep-libdir}/systemd/logind.conf.d/10-krytis-vts.conf" <<'EOF'
+    # krytis: keep logind's on-demand VT range aligned with the console layout.
+    #
+    #   vt1     greetd            (greetd-config.bst `vt = 1`)
+    #   vt2-4   kmscon            (the getty.target.wants symlinks above)
+    #   vt5     first-boot wizard (krytis-firstboot.service, first boot only)
+    #   vt6     logind's ReserveVT — left at its default on purpose
+    #
+    # NAutoVTs defaults to 6, so once the wizard releases tty5, Ctrl+Alt+F5
+    # spawns a plain getty on the wizard's own VT. Capping the range at 4 keeps
+    # the on-demand gettys inside kmscon's range: the only consoles reachable
+    # are kmscon's, plus the reserved rescue VT.
+    #
+    # ReserveVT is deliberately NOT set to 0. logind spawns a getty on the
+    # reserved VT unconditionally, skipping the vt_is_busy() check
+    # (systemd src/login/logind-core.c, manager_spawn_autovt()); that same check
+    # order is why VT6 still gets its getty even though 6 > NAutoVTs. It is the
+    # only in-band way into a box whose greeter has wedged — root is locked
+    # (root:!unprovisioned) and sshd ships disabled by preset — and it costs
+    # nothing while unused, since the unit is not loaded until someone switches
+    # to VT6.
+    [Login]
+    NAutoVTs=4
+    EOF
   - '%{install-extra}'
