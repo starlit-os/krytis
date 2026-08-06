@@ -818,6 +818,20 @@ autonomously.
 
 The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes — this does not affect cache-key matching (`max-jobs` is excluded from cache keys, see above), it's kept purely for reproducible local build parallelism across runners.
 
+### Blacksmith container caching — not applicable here (evaluated 2026-08-06)
+
+Blacksmith rolled out free org-wide "container caching" (a persistent,
+org-scoped disk cache for images pulled by GitHub Actions' own
+`container:`/`services:` job keys, so the "Initialize containers" step
+doesn't re-pull on every run). **No krytis workflow uses `container:` or
+`services:`** — every job runs steps directly on the runner VM; image
+pulls/builds happen *inside* those steps via `podman`/`mise run
+build`/`bst` (BuildStream's own source/artifact fetching), not via GitHub
+Actions' job-container mechanism. Blacksmith's feature has nothing to
+attach to, so it's a genuine no-op for this repo, not a missed
+opportunity — don't re-evaluate this without a workflow actually adding
+a `container:`/`services:` key first.
+
 ## `max-jobs` should only be set high when remote-execution is on
 
 *Source: zirconium-hawaii `aceeb13` — `fix: set max-jobs to 12 only when remote-execution is on`*
