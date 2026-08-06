@@ -111,12 +111,15 @@ With multiple `console=` kernel arguments, all consoles receive output, but `/de
 
 Reversing the order (tty1 first, ttyS0 last) breaks interactive firstboot on the VGA display.
 
-**Only relevant to non-UKI images now.** The shipped (UKI) image bakes
-`systemd.firstboot=no` via `kargs.d`, so `systemd-firstboot.service` is skipped
-entirely — it would otherwise block `sysinit.target` forever prompting for a root
-password. UKI images also reject install-time `--karg` outright. See
-docs/skills/bootc-vm.md § `systemd-firstboot` blocks the boot once `/etc` is
-writable.
+**No longer relevant to first-boot setup.** krytis's wizard
+(`krytis-firstboot.service`) prompts on a dedicated VT — `TTYPath=/dev/tty5`, not
+`/dev/console` — so `console=` ordering has no bearing on it, and the
+`systemd.firstboot=no` karg that used to suppress the upstream unit is gone
+(upstream's `systemd-firstboot.service` is neutralised instead). The rule above
+still applies to any *other* service that reads `/dev/console` interactively. UKI
+images also reject install-time `--karg` outright. See
+docs/skills/bootc-vm.md § `systemd-firstboot` / `systemd-homed-firstboot` block
+the boot once `/etc` is writable.
 
 ### `git push` fails with "gh: not found" after a `gh` version bump
 

@@ -109,31 +109,95 @@ Expected topology once fixed — note `/` and `/sysroot` stay `ro` on purpose:
 /var      /dev/vda3[/state/os/default/var]       btrfs    rw
 ```
 
-## `systemd-firstboot` blocks the boot once `/etc` is writable
+## `systemd-firstboot` / `systemd-homed-firstboot` block the boot once `/etc` is writable — fixed by moving them off the critical path, not by disabling them
 
 `systemd-firstboot.service` is `ConditionPathIsReadWrite=/etc` +
-`ConditionFirstBoot=yes`, ordered `Before=sysinit.target`, with
+`ConditionFirstBoot=yes`, ordered `Before=sysinit.target` by default, with
 `StandardInput=tty` and `--prompt-root-password`. The image ships
 `root:!unprovisioned` in `/etc/shadow`, which firstboot reads as "no password
 set", so it prompts *"Please enter the new root password (empty to skip)"* on the
 console and waits forever. `sysinit.target` never completes, so nothing after it
-starts — no greetd, no sshd, no logind.
+starts — no greetd, no sshd, no logind. `systemd-homed-firstboot.service` (the
+homed equivalent, `homectl firstboot`) has the same shape one target later —
+`Before=systemd-user-sessions.service`, no timeout — and ships `disable`d by
+freedesktop-sdk's own preset, presumably for this exact reason.
 
 This was latent for as long as `/etc` was read-only (the condition check failed
 and the unit was silently skipped). Fixing the `rw` karg is what exposed it.
 
-**Fix:** `kargs = ["systemd.firstboot=no"]` — see
-`files/bootc-config/40-no-firstboot.toml`. This makes PID 1 treat the boot as a
-non-first boot so `ConditionFirstBoot=yes` fails and the unit is skipped cleanly.
+**Old fix (superseded — see `docs/design/first-boot-setup.md`):**
+`kargs = ["systemd.firstboot=no"]`. This globally suppressed
+`systemd-firstboot.service`'s interactive prompting (`systemd-firstboot(1)`:
+"If off, systemd-firstboot.service will not interactively query the user...")
+— it does **not** touch `ConditionFirstBoot=` evaluation itself, and has no
+effect on `systemd-homed-firstboot.service` at all (that unit was, and would
+still be, suppressed only by its own preset). It also meant krytis could never
+use this tooling for real first-boot setup, since the karg silences *every*
+`--prompt-*` flag on the unit, not just the root-password one.
 
-It **cannot** be an install-time `bootc install --karg`: UKI images reject
-externally specified kernel arguments. It has to be baked via `kargs.d`.
+**Current fix:** `config/systemd-firstboot.bst` ships krytis's own
+`krytis-firstboot.service`, which runs both wizards in sequence on a reserved VT
+(`TTYPath=/dev/tty5`, Ctrl+Alt+F5) with `Type=exec` and no `Before=` on anything
+on the boot path, so an unattended boot always reaches graphical.target whether
+or not anyone answers. Root stays locked — no `--prompt-root-password`.
+
+Both upstream units are **neutralised**, not reconfigured: a drop-in gives them
+`ExecStart=/usr/bin/true`. Clearing their `Before=sysinit.target` /
+`Before=systemd-user-sessions.service` from a drop-in is impossible — see
+§ Dependency directives cannot be reset from a drop-in, the trap that made the
+first attempt at this look correct while still hanging the boot.
+`systemd-homed-firstboot.service` stays `disable`d (fdsdk's preset, restated in
+krytis's `72-krytis-firstboot.preset`); `systemd-firstboot.service` cannot be
+disabled at all — it is `static` and pulled in by systemd's own
+`sysinit.target.wants/` symlink, which is why neutralising `ExecStart` is the
+only lever. See `docs/design/first-boot-setup.md` for the full rationale.
 
 Diagnosing a stall like this: a unit stuck in `activating` before
 `sysinit.target` starves the whole transaction. `systemctl list-jobs` shows
 everything `waiting` and `systemctl list-units --state=activating` names the
 culprit. If the culprit has `StandardInput=tty`, screendump the VGA console (see
 § Reading a stalled guest without root) to see what it is asking.
+
+## Dependency directives cannot be reset from a drop-in
+
+`ExecStart=`, `ImportCredential=` and most other list-valued unit settings are
+resettable: an empty assignment in a drop-in clears the accumulated list, and a
+following assignment repopulates it. **Ordering and requirement dependencies are
+not.** `Before=`, `After=`, `Wants=` and `Requires=` are purely *additive* in a
+drop-in — an empty assignment is silently ignored and the value from the main
+unit file survives.
+
+Verified on systemd 260 with a drop-in that resets then re-adds each one:
+
+| Setting | Main unit file | Drop-in | Effective |
+|---|---|---|---|
+| `Before=` | `a.target` | `Before=` then `b.target` | `b.target a.target` — `a` survived |
+| `After=` | `x.target` | `After=` then `y.target` | `y.target x.target` — `x` survived |
+| `Wants=` | `w.target` | `Wants=` then `v.target` | `v.target w.target` — `w` survived |
+| `ExecStart=` | upstream cmd | `ExecStart=` then `/usr/bin/true` | `/usr/bin/true` — reset worked |
+
+Why this bites: it fails **silently, in the safe-looking direction**. A drop-in
+that "moves a unit off the critical boot path" by clearing
+`Before=sysinit.target` parses without warning and `systemd-analyze verify` is
+clean, while the unit stays exactly as boot-blocking as before. Always check the
+result, never the intent:
+
+```shell
+systemctl show -p Before -p After -p Wants -p ExecStart <unit>
+```
+
+To actually remove a dependency you must replace the unit file, mask the unit, or
+neutralise it through a setting that *is* resettable. krytis takes the last route
+for the two firstboot units (`ExecStart=/usr/bin/true`) because replacing the
+file would collide with freedesktop-sdk's copy at the same path, and no element
+ships into `/etc` to mask. See `docs/design/first-boot-setup.md`.
+
+Related trap in the same area: a unit that prompts for input must not be
+`Type=oneshot` if anything asserts boot health with
+`systemctl is-system-running --wait` (as `mise boot-test` does). A oneshot's
+start job stays pending until `ExecStart` returns, so an unanswered prompt keeps
+the manager in `starting` forever and the assertion *hangs* rather than failing.
+`Type=exec` completes the start job as soon as the binary has been exec'd.
 
 ## `Failed to send audit message: Invalid argument` is a libaudit rejection, not audit being broken
 
@@ -352,7 +416,7 @@ Worth dumping: `systemctl list-jobs`, `systemctl list-units --state=activating`,
 ### Screendump the console instead of guessing
 
 A UKI's cmdline has no `console=ttyS0` (it is a desktop cmdline: `rw quiet splash
-systemd.firstboot=no rd.luks.options=... composefs=...`), and under secure boot
+rd.luks.options=... composefs=...`), and under secure boot
 you cannot edit it at the systemd-boot menu — the cmdline is baked into the signed
 PE. So the serial log goes silent right after `BdsDxe: starting Boot0004 "Linux
 Boot Manager"`. **That silence is expected, not a hang.**
