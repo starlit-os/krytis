@@ -7,8 +7,13 @@
 .cache/*
 
 # Build / VM artifacts
+# *.qcow2 as a glob, not just bootable.qcow2: `mise run convert-to-qcow2` writes
+# <input>.qcow2 beside its input by default, so boot-vm's default disk becomes
+# ./bootable.qcow2 in the repo root, and --output takes any path. Same reasoning
+# as output*/ below — these are multi-GB and must never be committed.
 *.img
 *.raw
+*.qcow2
 *.tar
 .ovmf-vars.fd
 .ovmf-vars-secure.fd
