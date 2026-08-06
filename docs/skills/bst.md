@@ -2001,6 +2001,44 @@ project. `clean-cache` never touches volumes or tagged images.
 mid-build corrupts that build — the same class of mistake as removing a running
 `boot-test`'s WORKDIR (docs/skills/bootc-vm.md § Reading a stalled guest without root).
 
+### Two traps that made `clean-cache` fail exactly when it was needed
+
+**Orphaned `buildbox-fuse` mounts block the safety guard.** A build that dies mid-stage
+(including one killed by this very out-of-space error) leaves `buildbox-fuse` processes
+holding `~/.cache/buildstream/cas/staging/cas-tmpdir*`. `clean-cache` sees them, decides
+a build is in flight, and refuses — but they will never finish. Confirm no driver is
+behind them (`pgrep -af 'bst |buildstream.*__main__'` shows only `buildbox-casd`), then
+unmount rather than kill; the processes exit on their own once unmounted, and that alone
+returned ~8 GB:
+
+```shell
+findmnt -rno TARGET | grep buildstream/cas/staging | xargs -r -n1 fusermount -u
+rmdir ~/.cache/buildstream/cas/staging/cas-tmpdir* 2>/dev/null
+```
+
+**buildah leaves a directory you own but cannot read.** Its per-build `mnt` is mode
+`d--x------` — traverse, no read — and `lily:lily`, not root, so **no sudo is needed**:
+
+```console
+$ ls -ld /var/tmp/buildah316782609/mnt
+d--x------ 1 lily lily 12 /var/tmp/buildah316782609/mnt
+```
+
+Both `du` and `rm -rf` fail on it. That used to kill `clean-cache` outright: `du` exits
+1, `pipefail` propagates, and `set -e` aborts *after* the assignment is traced — so the
+run ended at `==> Disk before:` with **no error message and exit 1**, in the one
+situation the task exists for. Fixed by measuring tolerantly and `chmod -R u+rwX`-ing
+the scratch immediately before deletion (kept out of `--dry-run`, which must not
+mutate). If you hit an older copy of the task, the manual equivalent is:
+
+```shell
+chmod -R u+rwX /var/tmp/buildah* /var/tmp/container_images_oci*
+```
+
+General lesson for these tasks: under `set -euo pipefail`, `VAR=$(cmd | tail -1)` aborts
+the script when `cmd` fails, and because bash traces the assignment first, the failure
+looks like it happened on the *next* line. Wrap size probes in `if ! VAR=$(...)`.
+
 One consumer it cannot reclaim: the **root** podman store. `bootc install` copies every
 image there via `generate-disk`, and it is invisible to rootless `podman system df`.
 Check it with `sudo podman system df`.

@@ -54,10 +54,21 @@ for d in /var/tmp/buildah* /var/tmp/container_images_oci*; do
     [ -e "$d" ] && SCRATCH+=("$d")
 done
 
+# `du` must not be allowed to kill this task. buildah creates its per-build
+# `mnt` dir mode d--x------ (traverse, no read) and leaves it behind; `du` then
+# exits 1 on it, `pipefail` propagates that, and `set -e` aborts — *after* the
+# assignment, so the run ended at "Disk before:" with no message and exit 1.
+# The reclaim path failed silently in exactly the situation it exists for: a
+# disk too full to build. Measure tolerantly and say so if the total is partial;
+# the delete path below restores the read bit before removing anything.
 SCRATCH_BYTES=0
+SCRATCH_PARTIAL=""
 if [ ${#SCRATCH[@]} -gt 0 ]; then
-    SCRATCH_BYTES=$(du -sb --total "${SCRATCH[@]}" 2>/dev/null | tail -1 | cut -f1)
-    echo "==> Stale build scratch in /var/tmp ($(human "${SCRATCH_BYTES}") across ${#SCRATCH[@]} dirs):"
+    if ! SCRATCH_BYTES=$(du -sb --total "${SCRATCH[@]}" 2>/dev/null | tail -1 | cut -f1); then
+        SCRATCH_PARTIAL="; partial, some unreadable until deletion"
+    fi
+    SCRATCH_BYTES="${SCRATCH_BYTES:-0}"
+    echo "==> Stale build scratch in /var/tmp ($(human "${SCRATCH_BYTES}") across ${#SCRATCH[@]} dirs${SCRATCH_PARTIAL}):"
     for d in "${SCRATCH[@]}"; do
         printf '    %-44s %s\n' "$d" "$(stat -c %y "$d" | cut -d. -f1)"
     done
@@ -92,7 +103,16 @@ fi
 
 if [ ${#SCRATCH[@]} -gt 0 ]; then
     echo "==> Removing stale build scratch..."
-    rm -rf "${SCRATCH[@]}"
+    # `rm -rf` cannot enumerate a d--x------ directory either, so it would fail
+    # on buildah's leftover `mnt` and — under set -e — abort before the image
+    # prune below. These dirs are ours (lily:lily, just with the read bit
+    # stripped), so restoring it needs no sudo. Done here rather than at
+    # measurement time so --dry-run stays free of side effects.
+    chmod -R u+rwX "${SCRATCH[@]}" 2>/dev/null || true
+    if ! rm -rf "${SCRATCH[@]}"; then
+        echo "    WARNING: some scratch could not be removed; continuing to the" >&2
+        echo "             image prune so the run still reclaims what it can." >&2
+    fi
 fi
 
 echo "==> Pruning dangling images..."
