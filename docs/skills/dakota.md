@@ -93,6 +93,19 @@ Dakota's publish pipeline pushes an image to GHCR and then immediately probes/si
 
 **Krytis exposure:** `.github/workflows/publish.yml` pushes (`mise run push`) and then immediately runs `mise run sign` (cosign sign) followed by a blocking `cosign verify ghcr.io/starlit-os/krytis@${digest}` step, with **no visibility-wait loop** in between. This is the same push-then-immediately-probe shape that bit dakota. Krytis hasn't hit the race yet (image size/timing may differ), but if `cosign verify` starts intermittently failing with a not-found/unknown-manifest error right after a push that otherwise succeeded, this is the known cause — add a `skopeo inspect --no-tags` polling loop (unauthenticated) between push and sign, sized to at least 6 minutes, rather than adding retries to cosign itself.
 
+### `convert-to-qcow2`, ported for interactive VM testing (2026-08-05)
+
+*Source: dakota `Justfile` recipe `convert-to-qcow2`. Ported on request rather than from a mining pass, so no commit range applies.*
+
+krytis had no raw→qcow2 task. It needs one because `elements/dev/qemu.bst` builds qemu with every display backend disabled, so `mise run boot-vm` cannot give an interactive console on a krytis host (see `docs/skills/bootc-vm.md` § `boot-vm` is headless on a krytis host). A qcow2 hands the disk to GNOME Boxes or virt-manager, which are flatpaks carrying their own qemu/SPICE stack and therefore unaffected.
+
+Ported as `mise/tasks/convert-to-qcow2`, keeping dakota's native-`qemu-img`-with-containerised-fallback shape. Four deliberate divergences:
+
+1. **`--disk` / `--output` flags** instead of dakota's hardcoded `${base_dir}/bootable.raw` → `bootable.qcow2`. krytis's disks live wherever the caller puts them (`boot-test` uses `/var/tmp/krytis-boot-test.*/test.raw`), so a fixed pair of paths would be unusable.
+2. **Refuses to overwrite without `--force`.** This is the interesting one: dakota's `boot-vm` *prefers* `bootable.qcow2` over `bootable.raw` when both exist, so a stale qcow2 silently shadows a freshly generated raw — dakota has to defend against it with an `rm -f "${base_dir}/bootable.qcow2"` in its generate step. krytis does **not** copy that preference into its `boot-vm`, and the explicit `--output` plus overwrite refusal means the trap cannot form here. Do not add qcow2-preference to krytis's `boot-vm`.
+3. **`-p` only on a TTY.** Unconditional `-p` emits one progress line per percent, which is noise in any captured log.
+4. **`qemu-img info` filtered with a line-anchored match.** qemu 10 reports a child node with its own indented `disk size:`, so an unanchored `grep`/`sed` prints it twice.
+
 ## Referencing This Project
 
 Copy patterns from `../dakota/` and adapt — don't symlink or junction into dakota from krytis. Independent BST artifact caches and element trees, same as the `zirconium-hawaii.md` convention.

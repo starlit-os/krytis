@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#MISE description="Convert a raw disk image to qcow2 (for GNOME Boxes / virt-manager, which krytis's headless qemu cannot replace)"
+#USAGE flag "--disk <path>" default="bootable.raw" help="Input raw disk image"
+#USAGE flag "--output <path>" help="Output qcow2 path (default: input path with .qcow2 extension)"
+#USAGE flag "--force" help="Overwrite the output if it already exists"
+
+# Ported from dakota's `just convert-to-qcow2` (Justfile), which krytis had no
+# equivalent for. See docs/skills/dakota.md § convert-to-qcow2.
+#
+# Why this exists: elements/dev/qemu.bst builds qemu with every display backend
+# disabled, so `mise run boot-vm` on a krytis host has no window to type into and
+# cannot do interactive in-guest work (see docs/skills/bootc-vm.md § `boot-vm` is
+# headless on a krytis host). A qcow2 can be handed to GNOME Boxes or
+# virt-manager, which ship their own qemu/SPICE stack and do have a display.
+#
+# Deliberately does NOT teach boot-vm to prefer a sibling .qcow2 the way dakota's
+# boot-vm does: there, a stale bootable.qcow2 silently shadows a freshly generated
+# bootable.raw, which dakota has to defend against with an `rm -f` in its generate
+# step. Keeping the output path explicit means krytis never has that trap.
+
+set -euo pipefail
+
+DISK="${usage_disk:-bootable.raw}"
+OUTPUT="${usage_output:-}"
+FORCE="${usage_force:-}"
+
+if [ ! -e "${DISK}" ]; then
+    echo "ERROR: ${DISK} not found — run 'mise run generate-disk --disk ${DISK}' first." >&2
+    exit 1
+fi
+
+DISK=$(realpath "${DISK}")
+[ -n "${OUTPUT}" ] || OUTPUT="${DISK%.raw}.qcow2"
+
+if [ -e "${OUTPUT}" ] && [ "${FORCE}" != "true" ]; then
+    echo "ERROR: ${OUTPUT} already exists. Pass --force to overwrite." >&2
+    echo "       Refusing by default because a stale qcow2 boots old content that" >&2
+    echo "       looks current — a confusing test result rather than an error." >&2
+    exit 1
+fi
+
+# Flatpak VM apps (GNOME Boxes) can only open the image by a path that exists
+# inside their sandbox. `--filesystem=host` does NOT bind the host's /var, so a
+# qcow2 under /var/tmp is invisible to them; the file chooser then exports it
+# through the XDG document portal (/run/user/$UID/doc/..., fuse.portal) as the
+# only way to reach it — and qemu's image locking uses F_OFD_SETLK, which FUSE
+# does not implement. The VM dies before firmware with:
+#
+#   Failed to get "consistent read" lock: Input/output error
+#   Is another process using the image [...]?
+#
+# which reads like contention and is not. $HOME *is* bound into the sandbox, so
+# an output path under it avoids the portal entirely.
+if [ "${OUTPUT#"${HOME}"/}" = "${OUTPUT}" ]; then
+    echo "NOTE: ${OUTPUT} is outside \$HOME."
+    echo "      Fine for qemu/libvirt on the host. But a flatpak VM app (GNOME"
+    echo "      Boxes) cannot open it by path and will fall back to the XDG"
+    echo "      document portal, where qemu's OFD lock fails with a misleading"
+    echo "      \"consistent read lock: Input/output error\". For Boxes, use:"
+    echo "        --output \"\$HOME/.var/app/org.gnome.Boxes/data/gnome-boxes/images/$(basename "${OUTPUT}")\""
+    echo "      (same btrfs as /var/tmp, so cp --reflink=auto is free if you"
+    echo "      already converted elsewhere)."
+fi
+
+echo "==> Converting ${DISK} → ${OUTPUT}..."
+
+# -p writes one progress line per percent: useful interactively, pure noise in a
+# captured log. Only ask for it on a TTY.
+PROGRESS=()
+[ -t 1 ] && PROGRESS=(-p)
+
+if command -v qemu-img &>/dev/null; then
+    qemu-img convert "${PROGRESS[@]}" -f raw -O qcow2 "${DISK}" "${OUTPUT}"
+else
+    # Fallback for a host whose qemu build ships no tools. Same container image
+    # the boot-vm fallback uses, so nothing new is introduced.
+    echo "    qemu-img not found, using containerized qemu-img..."
+    podman run --rm \
+        -v "$(dirname "${DISK}"):/in" \
+        -v "$(dirname "${OUTPUT}"):/out" \
+        --entrypoint qemu-img \
+        ghcr.io/qemus/qemu:latest \
+        convert -f raw -O qcow2 "/in/$(basename "${DISK}")" "/out/$(basename "${OUTPUT}")"
+fi
+
+echo "==> Done: ${OUTPUT}"
+
+if command -v qemu-img &>/dev/null; then
+    # Anchored at line start on purpose: qemu-img 10 also reports a child node
+    # with its own indented "disk size:", which an unanchored match prints twice.
+    qemu-img info "${OUTPUT}" \
+        | awk '/^file format:|^virtual size:|^disk size:/ { print "    " $0 }'
+fi
+
+cat <<EOF
+
+Next, for an interactive console (which boot-vm cannot give you on this host):
+
+    GNOME Boxes -> + -> Install from file -> ${OUTPUT}
+
+Boxes picks UEFI automatically for this disk (verified: firmware="efi",
+secure-boot on with no enrolled keys, i.e. setup mode — an unsealed image still
+boots, and krytis's secure-boot-enroll.service only writes
+"secure-boot-enroll manual" into loader.conf, so nothing is enrolled behind your
+back).
+
+If the VM instead dies instantly with 'Failed to get "consistent read" lock:
+Input/output error', nothing else is using the image — the path is a document
+portal (fuse) path and qemu cannot take an OFD lock there. Repoint it:
+
+    virsh -c qemu:///session dumpxml <vm> > ~/vm.xml   # via the Boxes flatpak
+    # edit <source file=...> to a real path under \$HOME, then:
+    virsh -c qemu:///session define ~/vm.xml
+
+See docs/skills/bootc-vm.md § Interactive VM testing via GNOME Boxes.
+EOF
