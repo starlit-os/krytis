@@ -2,11 +2,13 @@
 #MISE description="Boot bootable.raw in QEMU (native KVM+UEFI) or qemux/qemu-docker fallback"
 #USAGE flag "--disk <path>" default="bootable.raw" help="Disk image to boot"
 #USAGE flag "--secure" help="Boot with OVMF secure boot enabled (requires 'mise run generate-ovmf-vars' first)"
+#USAGE flag "--display <type>" help="QEMU -display backend. Default: first of gtk, sdl, none that this qemu actually supports"
 
 set -euo pipefail
 
 DISK="${usage_disk:-bootable.raw}"
 SECURE="${usage_secure:-}"
+WANT_DISPLAY="${usage_display:-}"
 
 if [ ! -e "${DISK}" ]; then
     echo "ERROR: ${DISK} not found — run 'mise run generate-disk' first." >&2
@@ -17,6 +19,42 @@ DISK=$(realpath "${DISK}")
 
 if command -v qemu-system-x86_64 &>/dev/null; then
     echo "==> Using native qemu-system-x86_64..."
+
+    # elements/dev/qemu.bst builds qemu --disable-gtk --disable-sdl
+    # --disable-vnc --disable-spice --disable-curses, so on a krytis host the
+    # ONLY backends are `none` and `dbus`. This task used to hardcode
+    # `-display gtk`, which made it fail outright with the unhelpful
+    # "Parameter 'type' does not accept value 'gtk'". Negotiate against what
+    # the binary reports instead of assuming. See docs/skills/bootc-vm.md
+    # § boot-vm is headless on a krytis host.
+    qemu_displays() {
+        qemu-system-x86_64 -display help 2>/dev/null \
+            | sed -n '/^Available display backend types:/,/^$/p' \
+            | tail -n +2 | sed '/^$/d'
+    }
+
+    if [ -n "${WANT_DISPLAY}" ]; then
+        if ! qemu_displays | grep -qx -- "${WANT_DISPLAY}"; then
+            echo "ERROR: this qemu does not support -display ${WANT_DISPLAY}." >&2
+            echo "       Supported here: $(qemu_displays | tr '\n' ' ')" >&2
+            echo "       A graphical backend needs elements/dev/qemu.bst rebuilt with" >&2
+            echo "       --enable-gtk (or --enable-vnc); it currently disables all of them." >&2
+            exit 1
+        fi
+        DISPLAY_TYPE="${WANT_DISPLAY}"
+    else
+        DISPLAY_TYPE=""
+        for cand in gtk sdl none; do
+            if qemu_displays | grep -qx -- "${cand}"; then
+                DISPLAY_TYPE="${cand}"
+                break
+            fi
+        done
+        if [ -z "${DISPLAY_TYPE}" ]; then
+            echo "ERROR: qemu reports no usable -display backend (not even 'none')." >&2
+            exit 1
+        fi
+    fi
 
     . scripts/ovmf-paths.sh   # distro OVMF layout, one place (#458)
     if [ "${SECURE}" = "true" ]; then
@@ -46,7 +84,18 @@ if command -v qemu-system-x86_64 &>/dev/null; then
     echo "==> Booting ${DISK}"
     echo "    RAM: ${VM_RAM}M  CPUs: ${VM_CPUS}  Firmware: ${OVMF_CODE}  Secure boot: ${SECURE:-false}"
     echo "    SSH forward: localhost:2222 → guest:22"
+    echo "    Display: ${DISPLAY_TYPE}"
     echo "    Serial console on stdio (ttyS0) — Ctrl-A x to quit QEMU"
+    if [ "${DISPLAY_TYPE}" = "none" ]; then
+        echo ""
+        echo "    No graphical backend in this qemu build, so there is no window to type"
+        echo "    into. The VGA console still exists on the virtio-vga device — drive it"
+        echo "    over the HMP monitor (Ctrl-A c toggles serial/monitor on stdio):"
+        echo "      sendkey ctrl-alt-f5          # switch the guest to VT5"
+        echo "      screendump /tmp/vt.ppm       # then: magick /tmp/vt.ppm /tmp/vt.png"
+        echo "    sendkey needs one QEMU key name per character and can drop them, so"
+        echo "    screendump after each batch. See docs/skills/bootc-vm.md."
+    fi
     echo ""
 
     qemu-system-x86_64 \
@@ -60,7 +109,7 @@ if command -v qemu-system-x86_64 &>/dev/null; then
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -device virtio-vga \
-        -display gtk \
+        -display "${DISPLAY_TYPE}" \
         -device virtio-keyboard \
         -device virtio-mouse \
         -device virtio-net-pci,netdev=net0 \

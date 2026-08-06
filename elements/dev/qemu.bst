@@ -14,6 +14,18 @@ kind: autotools
 # networking, a monitor socket). Building against freedesktop-sdk's own
 # components directly avoids pulling that entire GUI stack into the image
 # for a headless testing tool.
+#
+# Consequence, worth knowing before you reach for `mise run boot-vm`: with every
+# display backend disabled above, `qemu-system-x86_64 -display help` on a krytis
+# host reports only `none` and `dbus`. There is no window to type into, so
+# interactive in-guest work (answering a VT prompt, driving a greeter) is NOT
+# possible against this build — drive the console over the HMP monitor
+# (`sendkey`, `screendump`) instead, or use real hardware. boot-vm used to
+# hardcode `-display gtk` against this build and could therefore never run at
+# all; it now negotiates. If interactive VM testing becomes a real requirement,
+# adding `--enable-gtk` here (gtk3 is already in the image) is the change to
+# make, and it reverses the deliberate decision above — so raise it rather than
+# assuming. See docs/skills/bootc-vm.md § boot-vm is headless on a krytis host.
 build-depends:
 - freedesktop-sdk.bst:components/perl.bst          # configure/build scripts
 - freedesktop-sdk.bst:components/python3.bst        # meson invoked via configure
