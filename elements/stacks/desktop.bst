@@ -35,8 +35,8 @@ depends:
 
   # ── Virtual console (VT2-4) ─────────────────────────────────────────────
   # kmscon replaces fbcon with a KMS/DRM-rendered console on VT2-4, leaving
-  # VT1 to greetd. config/kmscon.bst installs the preset enabling only the
-  # tty2/tty3/tty4 instances of kmsconvt@.
+  # VT1 to greetd. config/kmscon.bst enables only the tty2/tty3/tty4 instances
+  # of kmsconvt@, via static getty.target.wants symlinks (#503).
   - config/kmscon.bst
 
   # ── XDG portals ────────────────────────────────────────────────────────
