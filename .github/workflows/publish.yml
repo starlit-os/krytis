@@ -31,11 +31,22 @@ concurrency:
 
 jobs:
   publish:
-    # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
-    # runner (docs/skills/ci-runner.md) to debug on the real hardware or
-    # work around a Blacksmith outage/limit — same escape hatch as
-    # cache-warm.yml. Nothing else in this job is Blacksmith-specific.
-    runs-on: ${{ inputs.force_self_hosted && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-8vcpu-ubuntu-2404' }}
+    # Blacksmith by default; the self-hosted runner (docs/skills/ci-runner.md)
+    # when either the caller forces it, or the run builds the SEALED image.
+    #
+    # Sealed builds are pinned to self-hosted because they are engine-version
+    # sensitive: the two-phase squash that keeps the UKI's composefs= digest
+    # valid was established empirically against podman 5.x, and Blacksmith's
+    # Ubuntu image can only offer apt's 4.9.3 — a major version behind.
+    # mise/tasks/seal-uki refuses anything older than 5, so without this the
+    # DEFAULT dispatch (publish_sealed=true) would fail there.
+    #
+    # The unsigned path keeps Blacksmith's speed, which is what #511 was for.
+    # Moving sealed onto a hosted runner is possible, but needs someone to first
+    # confirm the baked digest still matches on that engine — an image whose UKI
+    # digest is subtly wrong boots to "The UKI has the wrong composefs=
+    # parameter" on hardware, after it has been published and signed.
+    runs-on: ${{ (inputs.force_self_hosted || inputs.publish_sealed) && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 420
     steps:
       - name: Gate on ref (only main may publish)
@@ -85,6 +96,23 @@ jobs:
 
       - name: Install system dependencies
         run: mise bootstrap --yes
+
+      - name: Ensure podman is present
+        # mise's [bootstrap.packages] does not declare podman — it was always
+        # assumed to be baked into the runner, which held while this job ran on
+        # the self-hosted runner. #511 made Blacksmith's hosted Ubuntu image the
+        # default, and that image has no podman, so the first publish after it
+        # died at `mise run build` with
+        #   ./mise/tasks/load-image: line 69: podman: command not found
+        # (exit 127, run 31126498486).
+        #
+        # Guarded by `command -v` so a self-hosted run with podman 5.x already
+        # installed is untouched — apt would otherwise DOWNGRADE it to 4.9.3,
+        # which mise/tasks/seal-uki now refuses outright.
+        #
+        # Same shape as the install already in verify-sealed.yml, which has run
+        # on a hosted runner from the start and hit this first.
+        run: command -v podman >/dev/null || sudo apt-get install -y -qq podman
 
       - name: Install Python dependencies
         run: uv sync

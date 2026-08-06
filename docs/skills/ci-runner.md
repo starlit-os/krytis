@@ -813,7 +813,7 @@ autonomously.
 | Workflow | Runner | Rationale |
 |---|---|---|
 | `cache-warm.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith by default since #351; self-hosted override exists to keep bow's cache-key shape aligned with the host that originally populated it (`VM_CPUS=4`), to prime bow ahead of a heavy element update, or to reproduce a build on the real hardware |
-| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Same escape hatch as `cache-warm.yml` — debug a publish failure on the real hardware, or fall back when Blacksmith is degraded/unavailable. `publish.yml` is `workflow_dispatch`-only (no schedule), so the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard needed, unlike `cache-warm.yml` which also has a `schedule` trigger |
+| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` when `force_self_hosted` **or `publish_sealed`** is set | Same escape hatch as `cache-warm.yml` — debug a publish failure on the real hardware, or fall back when Blacksmith is degraded/unavailable. `publish.yml` is `workflow_dispatch`-only (no schedule), so the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard needed, unlike `cache-warm.yml` which also has a `schedule` trigger. **Sealed runs are pinned to self-hosted** — see § A hosted runner has no podman, and its apt podman is a major version behind |
 | `track-bst-sources.yml` | `ubuntu-24.04` | Lightweight; must run when local machine is off |
 
 The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes — this does not affect cache-key matching (`max-jobs` is excluded from cache keys, see above), it's kept purely for reproducible local build parallelism across runners.
@@ -831,6 +831,53 @@ Actions' job-container mechanism. Blacksmith's feature has nothing to
 attach to, so it's a genuine no-op for this repo, not a missed
 opportunity — don't re-evaluate this without a workflow actually adding
 a `container:`/`services:` key first.
+
+## A hosted runner has no podman, and its apt podman is a major version behind
+
+Two separate problems, both introduced the moment `publish.yml`'s default runner moved
+off self-hosted in #511. The first publish after that flip (run `31126498486`) died
+with:
+
+```
+./mise/tasks/load-image: line 69: podman: command not found
+```
+
+**1 · podman is not a declared dependency.** `mise.toml`'s `[bootstrap.packages]`
+covers bubblewrap, lzip, xz, bzip2, gzip and patch — not podman, which was always
+assumed to be baked into the runner. That assumption held for as long as the job ran
+self-hosted. `verify-sealed.yml` has always run on a hosted runner and therefore
+already carried the fix, which is where the pattern comes from:
+
+```yaml
+run: command -v podman >/dev/null || sudo apt-get install -y -qq podman
+```
+
+The `command -v` guard is load-bearing in the other direction too: on a self-hosted run
+an unguarded `apt-get install podman` would **downgrade** the working 5.x engine.
+
+A red herring in that log: `dnf: 6 package(s) skipped (dnf not found)`. That is
+expected on Ubuntu — `[bootstrap.packages]` lists both `apt:` and `dnf:` variants and
+only the matching set applies. It is not related to the failure.
+
+**2 · Ubuntu's podman is 4.9.3; the sealed build was verified on 5.x.** This is the
+more dangerous half. `mise/tasks/seal-uki`'s two-phase squash — squash, compute the
+composefs digest against the already-squashed reference, squash again — is *empirical*
+behaviour of a specific podman: which mtimes a squash rewrites, and whether the digest
+baked into the UKI still matches the committed image. Nothing specifies it.
+
+Running that on a major version older engine risks a **signed, published** image whose
+baked digest does not match its own rootfs, whose symptom is
+`The UKI has the wrong composefs= parameter` on real hardware, after the fact. So:
+
+- `seal-uki` refuses podman < 5 outright, with the remedy in the error message. A guard
+  that only warns would be pointless here — the cost is paid post-publish.
+- `publish.yml` routes any `publish_sealed` run to self-hosted, so the default dispatch
+  keeps working. The unsigned path keeps Blacksmith's speed, which is what #511 wanted.
+
+**Moving sealed builds onto a hosted runner is possible but is not a config change** —
+it needs someone to confirm the baked digest still matches on that engine first
+(`mise run tpm-boot-test` plus an install gate against the resulting image). Treat the
+engine as part of the sealed build's input, not as interchangeable infrastructure.
 
 ## `max-jobs` should only be set high when remote-execution is on
 
