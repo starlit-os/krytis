@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#MISE description="Build the gamerslop systemd-sysext delta image (elements/sysext/gamerslop/layer.bst)"
+#MISE sources=[
+#MISE   "elements/**",
+#MISE   "files/**",
+#MISE   "patches/**",
+#MISE   "project.conf",
+#MISE   "include/aliases.yml",
+#MISE   "include/variables.yml",
+#MISE   ".git/HEAD",
+#MISE   ".git/refs/heads/**",
+#MISE ]
+#MISE outputs=["_build/sysext/"]
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+#USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
+#USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
+
+set -euo pipefail
+CONTAINER=${usage_container:+--container}
+PUSH=${usage_push:+--push}
+PULL=${usage_pull:+--pull}
+
+ELEMENT="sysext/gamerslop/layer.bst"
+OUT_DIR="_build/sysext"
+
+./mise/tasks/generate-image-version
+
+echo "==> Building ${ELEMENT}..."
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build "${ELEMENT}"
+
+echo "==> Checking out artifact to ${OUT_DIR}..."
+rm -rf "${OUT_DIR}"
+mkdir -p "${OUT_DIR}"
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} artifact checkout --directory "${OUT_DIR}" "${ELEMENT}"
+
+echo "==> Done:"
+find "${OUT_DIR}" -name '*.raw' -exec echo "  {}" \;
+echo "==> Install with: install -Dm644 ${OUT_DIR}/gamerslop-*.raw /var/lib/extensions/gamerslop.raw && systemd-sysext refresh"

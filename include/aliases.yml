@@ -17,6 +17,8 @@ aliases:
   pypi: https://files.pythonhosted.org/packages/
   qemu: https://download.qemu.org/
   warp_releases: https://releases.warp.dev/
+  xorg-freedesktop: https://xorg.freedesktop.org/
+  steampowered: https://repo.steampowered.com/
 
   # git aliases
   codeberg: https://codeberg.org/
@@ -27,3 +29,4 @@ aliases:
   gnome_gitlab: https://gitlab.gnome.org/
   kernel: https://git.kernel.org/pub/scm/
   sourcehut: https://git.sr.ht/
+  sigrok: git://sigrok.org/
