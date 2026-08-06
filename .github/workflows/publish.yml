@@ -15,6 +15,10 @@ on:
         description: 'Also build and publish the sealed (signed UKI) image to :sealed. Needs the PROTON_PASS_PAT secret; runs after the unsigned image is published and verified.'
         type: boolean
         default: true
+      force_self_hosted:
+        description: 'Run on the self-hosted runner instead of Blacksmith'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,11 +31,11 @@ concurrency:
 
 jobs:
   publish:
-    # Blacksmith to start (#380) — no self-hosted fallback input yet. If
-    # Blacksmith proves unfeasible (disk/time), swap this to
-    # ["self-hosted","linux","x64"] (docs/skills/ci-runner.md); nothing
-    # else in this job is Blacksmith-specific.
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
+    # runner (docs/skills/ci-runner.md) to debug on the real hardware or
+    # work around a Blacksmith outage/limit — same escape hatch as
+    # cache-warm.yml. Nothing else in this job is Blacksmith-specific.
+    runs-on: ${{ inputs.force_self_hosted && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 420
     steps:
       - name: Gate on ref (only main may publish)

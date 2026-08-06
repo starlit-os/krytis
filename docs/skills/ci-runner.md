@@ -813,9 +813,24 @@ autonomously.
 | Workflow | Runner | Rationale |
 |---|---|---|
 | `cache-warm.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith by default since #351; self-hosted override exists to keep bow's cache-key shape aligned with the host that originally populated it (`VM_CPUS=4`), to prime bow ahead of a heavy element update, or to reproduce a build on the real hardware |
+| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Same escape hatch as `cache-warm.yml` — debug a publish failure on the real hardware, or fall back when Blacksmith is degraded/unavailable. `publish.yml` is `workflow_dispatch`-only (no schedule), so the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard needed, unlike `cache-warm.yml` which also has a `schedule` trigger |
 | `track-bst-sources.yml` | `ubuntu-24.04` | Lightweight; must run when local machine is off |
 
 The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes — this does not affect cache-key matching (`max-jobs` is excluded from cache keys, see above), it's kept purely for reproducible local build parallelism across runners.
+
+### Blacksmith container caching — not applicable here (evaluated 2026-08-06)
+
+Blacksmith rolled out free org-wide "container caching" (a persistent,
+org-scoped disk cache for images pulled by GitHub Actions' own
+`container:`/`services:` job keys, so the "Initialize containers" step
+doesn't re-pull on every run). **No krytis workflow uses `container:` or
+`services:`** — every job runs steps directly on the runner VM; image
+pulls/builds happen *inside* those steps via `podman`/`mise run
+build`/`bst` (BuildStream's own source/artifact fetching), not via GitHub
+Actions' job-container mechanism. Blacksmith's feature has nothing to
+attach to, so it's a genuine no-op for this repo, not a missed
+opportunity — don't re-evaluate this without a workflow actually adding
+a `container:`/`services:` key first.
 
 ## `max-jobs` should only be set high when remote-execution is on
 
