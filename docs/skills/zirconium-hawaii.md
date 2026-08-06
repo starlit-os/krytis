@@ -173,3 +173,42 @@ config:
     mv "%{install-root}%{datadir}/xdg-terminal-exec/xdg-terminals.list" \
        "%{install-root}%{docdir}/xdg-terminal-exec"
 ```
+
+
+## Gaming sysext port: zirconium-hawaii's `jackrabbit` diff pattern → krytis's `gamerslop`
+
+Krytis's first systemd-sysext image (`elements/sysext/gamerslop/`) ports
+zirconium-hawaii's `sysext/jackrabbit/` dual-sysroot-diff pattern verbatim —
+see `docs/design/gaming-variant.md` for the full investigation. Two things
+that weren't obvious going in:
+
+**A directory-wide `cp` port leaves stale self-references.** Copying
+`elements/sysext/jackrabbit/*.bst` file-by-file into
+`elements/sysext/gamerslop/` preserves every *external* junction/deps
+reference correctly (krytis and zirconium-hawaii use identical
+`freedesktop-sdk.bst:`/`gnome-build-meta.bst:`/`deps/*.bst` paths), but
+**internal same-directory references keep the old directory name** — e.g.
+`sysext/jackrabbit/lib32-filter.bst`'s `build-depends:` still said
+`sysext/jackrabbit/lib32.bst` after being copied to
+`sysext/gamerslop/lib32-filter.bst`. `cp` doesn't know the directory is being
+renamed. After any multi-file verbatim port, grep the new directory for the
+*old* directory name before trusting the port — a plain YAML-parse pass
+won't catch this (the reference is still valid YAML, just pointing at a
+nonexistent file in the new tree).
+
+**`kind: filter` needs no `project.conf` registration.** Like `compose`,
+`stack`, and `manual`, `filter` ships as a core BuildStream plugin
+(`buildstream/plugins/elements/filter.py` in the installed package) — no
+`plugins:` entry required, same as every other core element kind already
+used throughout krytis.
+
+**No full-build verification was possible for this port.** `bst show`/`bst
+build` require `bwrap`, and the sandbox this port was authored in had
+neither `bwrap` installed nor passwordless `sudo` to install it. Verification
+was limited to: YAML parses on every new/changed file, every internal
+element reference (`gamerslop/*`, `deps/*`, `sysext/gamerslop/*`) resolves to
+a real file on disk, and every `sources: kind: local` path exists. A real
+`bst show --deps all sysext/gamerslop/layer.bst` (or a full
+`mise run build-sysext-gamerslop`) still needs to run once bwrap is
+available — treat this port as unverified against an actual BST graph
+resolution until then.

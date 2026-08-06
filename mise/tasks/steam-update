@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Update gamerslop/steam.bst to the latest steampowered beta archive"
+
+set -euo pipefail
+
+ELEMENT="elements/gamerslop/steam.bst"
+CURRENT_VER=$(grep -oP 'steam_version:\s*\K\S+' "${ELEMENT}")
+echo "==> Current steam_version: ${CURRENT_VER}"
+echo "==> repo.steampowered.com has no machine-readable release feed — check by hand:"
+echo "      https://repo.steampowered.com/steam/archive/beta/"
+echo "==> To bump: edit steam_version in ${ELEMENT}, then:"
+echo "      curl -sSL https://repo.steampowered.com/steam/archive/beta/steam_<new_version>.tar.gz | sha256sum"
+echo "    and replace the ref: value with the printed hash."
+exit 0

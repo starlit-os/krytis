@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#MISE description="Update gamerslop/mangohud.bst to the latest GitHub release"
+
+set -euo pipefail
+
+ELEMENT="elements/gamerslop/mangohud.bst"
+REPO="flightlessmango/MangoHud"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+CURRENT_VER=$(grep -oP '^\s*version:\s*\K\S+' "${ELEMENT}" | head -1)
+echo "==> Latest: ${LATEST_TAG}  Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ARCHIVE="MangoHud-v${LATEST_VER}-Source.tar.xz"
+BASE_URL="https://github.com/${REPO}/releases/download/v${LATEST_VER}"
+
+echo "==> Downloading ${ARCHIVE}..."
+curl -sSfL "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+NEW_SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
+echo "    sha256=${NEW_SHA}"
+
+CURRENT_SHA=$(grep 'ref:' "${ELEMENT}" | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+sed -i "s|version: ${CURRENT_VER}|version: ${LATEST_VER}|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."
