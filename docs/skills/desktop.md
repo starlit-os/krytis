@@ -1196,3 +1196,36 @@ theme. **Filename gotcha:** noctalia names cached palette files by percent-encod
 palette name — e.g. palette `"Rose Pine Moon"` is cached as literal filename
 `Rose%20Pine%20Moon.json` (percent signs literally in the filename, not real spaces). Match
 this exactly or the lookup misses.
+
+## noctalia's niri template silently orphans /etc/niri/config.kdl if no user config exists
+
+noctalia's `theme.templates` niri integration (`assets/templates/niri/apply.sh`
+in noctalia-dev/noctalia, active when `theme.templates.builtin_ids` contains
+`"niri"`) writes theme colors to `~/.config/niri/noctalia.kdl` and, in its
+`apply` post-hook: if `~/.config/niri/config.kdl` does not already exist, it
+creates one containing **only** `include "noctalia.kdl"`; if it already
+exists, it only *appends* that include line (checked via `grep`, not
+duplicated on repeat runs).
+
+Krytis used to ship niri's config as a system-wide fallback only
+(`config/niri-config.bst` → `/etc/niri/config.kdl`, consulted via niri's own
+`$XDG_CONFIG_HOME/niri/config.kdl` → `/etc/niri/config.kdl` lookup order) with
+no per-user config ever seeded. That meant noctalia's "doesn't exist" branch
+always fired the first time its niri template ran, creating a one-line stub
+`~/.config/niri/config.kdl` that niri then preferred forever — permanently
+hiding `/etc/niri/config.kdl` (and every keybind, window rule, and the
+`GTK_IM_MODULE=simple` compose-key fix in it) behind a file containing nothing
+but an `include` of the noctalia colors fragment. Silent: no error, no log
+line, the session just came up with almost none of krytis's niri config.
+
+Fixed by `config/niri-skel.bst` (#490): it ships the identical `files/niri/`
+source tree to `/etc/skel/.config/niri/` instead. Every new account now starts
+with a real `config.kdl` in place — `useradd --create-home` and `homectl
+firstboot` (`docs/design/first-boot-setup.md`) both default their skel
+directory to `/etc/skel/` (confirmed `SKEL=/etc/skel` in the shipped
+`/etc/default/useradd`; `homectl`'s `--skel=` default per `man homectl`) — so
+noctalia's template always hits the *append* branch, not the *create* one.
+`config/niri-config.bst`'s `/etc/niri/config.kdl` fallback is kept as-is
+alongside this, for any account-creation path that bypasses skel copy; it is
+not removed.
+

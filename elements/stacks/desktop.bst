@@ -187,6 +187,7 @@ depends:
 
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
+  - config/niri-skel.bst
   - config/noctalia-skel.bst
   - config/noctalia-assets.bst
 
