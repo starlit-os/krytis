@@ -20,6 +20,27 @@ set -u
 MARKER_DIR=/var/lib/krytis
 MARKER="${MARKER_DIR}/firstboot-done"
 
+# The unit runs StandardError=tty so the wizards' own messages ("password too
+# weak", homectl's errors) stay in front of the human at the VT. That also sent
+# this script's diagnostics there and nowhere else, which made a first boot that
+# went wrong undiagnosable after the fact: `journalctl -u krytis-firstboot`
+# showed only systemd's own Started/exited lines, never a reason. Log to both --
+# the tty for whoever is sitting there, the journal for whoever looks later.
+log() {
+    echo "krytis-firstboot: $*" >&2
+    printf 'krytis-firstboot: %s\n' "$*" \
+        | systemd-cat -t krytis-firstboot -p warning 2>/dev/null || true
+}
+
+# Same idea at info level, for the two facts that make a later "why did/didn't
+# this run?" answerable: that it started at all, and that it finished.
+note() {
+    printf 'krytis-firstboot: %s\n' "$*" \
+        | systemd-cat -t krytis-firstboot -p info 2>/dev/null || true
+}
+
+note "starting first-boot wizard on $(tty 2>/dev/null || echo 'unknown tty')"
+
 # Keymap and timezone are optional and must not gate account creation, which is
 # the step that makes the machine usable at all -- hence no `set -e`: a failure
 # here is logged and stepped over.
@@ -28,7 +49,7 @@ MARKER="${MARKER_DIR}/firstboot-done"
 # --prompt-root-password (root stays locked as root:!unprovisioned).
 if ! systemd-firstboot --prompt-keymap-auto --prompt-timezone \
         --welcome=no --mute-console=yes; then
-    echo "krytis-firstboot: keymap/timezone step failed, continuing" >&2
+    log "keymap/timezone step failed, continuing"
 fi
 
 # --member-of=wheel grants sudo (%wheel ALL=(ALL) ALL, from freedesktop-sdk's
@@ -37,7 +58,7 @@ fi
 # groups prompt left on, an interactive answer would overwrite memberOf wholesale.
 if ! homectl firstboot --prompt-new-user --prompt-shell=no \
         --prompt-groups=no --member-of=wheel --mute-console=yes; then
-    echo "krytis-firstboot: initial user creation failed" >&2
+    log "initial user creation failed"
 fi
 
 # Stop prompting only once a regular user really exists. A skipped or aborted
@@ -50,6 +71,7 @@ fi
 if getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 { found = 1 } END { exit !found }'; then
     mkdir -p "${MARKER_DIR}"
     : > "${MARKER}"
+    note "setup complete, wrote ${MARKER}; will not prompt again"
 else
-    echo "krytis-firstboot: no regular user yet, will prompt again next boot" >&2
+    log "no regular user yet, will prompt again next boot"
 fi

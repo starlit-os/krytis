@@ -568,9 +568,38 @@ mise run convert-to-qcow2 --disk /var/tmp/krytis-vt.raw --output "$BOXES_IMG"
 # Boxes -> + -> Install from file -> $BOXES_IMG
 ```
 
-Verified end to end on 2026-08-05: this reaches the noctalia greeter on vt1, and
-`Ctrl+Alt+F5` reaches `krytis-firstboot.service`'s wizard on tty5, which creates
-the initial homed user (#487).
+Verified end to end (2026-08-06, image `25.08.202608061924`): reaches the noctalia
+greeter on vt1, the wizard prompts on tty5, `homectl firstboot` creates the account
+(`Successfully created account 'tester'.`), the account lands in `wheel`
+(`uid=60253(tester) gid=60253 groups=…,997(wheel)`), a text-console login on
+kmscon's tty2 decrypts the home, and `/etc/skel` is copied in full — all seven
+`.config/niri/*.kdl` files — confirming `homectl`'s `--skel=` really does default
+to `/etc/skel/`. Note the uid is inside systemd-homed's **60001-60513** range, not
+the conventional 1000-60000.
+
+**Boxes cannot send `Ctrl+Alt+Fn` into the guest, and this is the trap.** The host
+compositor and logind claim those combinations for host VT switching, and Boxes has
+no "Send Key" menu to forward them (virt-manager does). Pressing `Ctrl+Alt+F5` in
+the Boxes window switches *your* VT, not the guest's — the guest never sees it, the
+wizard sits unanswered on tty5, and it looks exactly like first-boot user creation
+is broken. Drive VT switches from the host side instead:
+
+```shell
+V() { flatpak run --command=virsh org.gnome.Boxes -c qemu:///session "$@"; }
+V send-key <vm> --codeset linux KEY_LEFTCTRL KEY_LEFTALT KEY_F5   # the wizard
+V send-key <vm> --codeset linux KEY_LEFTCTRL KEY_LEFTALT KEY_F2   # kmscon
+V screenshot <vm> ~/shot.ppm && magick ~/shot.ppm ~/shot.png      # read the VT
+```
+
+`send-key` types too — one `KEY_*` per character — and proved reliable here (a
+12-character password entered twice, no drops), but screenshot after each batch
+rather than trusting it. Two further gotchas:
+
+- `virsh screenshot` fails with `no surface` once the guest console blanks, and a
+  keypress does not reliably wake it; switching VT forces a repaint.
+- After the wizard exits there is **no getty on tty5** (`NAutoVTs=4`, see
+  `docs/skills/bst.md` § Keep `NAutoVTs` aligned…), so to get a shell in the guest
+  switch to kmscon on tty2-4 and log in as the account just created.
 
 **Put the qcow2 under `$HOME`, not `/var/tmp`.** Boxes is granted
 `filesystems=host`, which sounds like `/var/tmp` works — it does not. Flatpak's

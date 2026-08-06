@@ -1184,7 +1184,10 @@ a one-shot copy, not a synced default like niri's. Existing users are unaffected
 copy diverges from image updates immediately, since it's just a plain file in their homedir
 after that. This applies equally to `useradd` and to the `homectl firstboot`-created
 initial user (`docs/design/first-boot-setup.md`): `homectl`'s `--skel=` defaults to
-`/etc/skel/` when unset (confirmed via `man homectl`), same as `useradd`'s.
+`/etc/skel/` when unset, same as `useradd`'s. Verified on a real first boot
+(2026-08-06), not just from the man page — the homed-created account's encrypted
+home contained `.bashrc`, `.profile`, `.local/state/noctalia` and all seven
+`.config/niri/*.kdl` files, matching `/etc/skel` exactly.
 
 `settings.toml` is a **partial override** — noctalia merges missing keys against its own
 built-in defaults, so skel only needs to declare the keys being overridden.
