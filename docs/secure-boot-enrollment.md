@@ -194,11 +194,40 @@ So the live ISO has one job before the install, and this is it — capture what 
 shipped, while it is still there:
 
 ```bash
+U=/mnt        # the second USB, mounted
+
+# 1. sizes, for the step-4 arithmetic
 for v in PK KEK db dbx dbDefault KEKDefault dbxDefault; do
   printf '%-12s %s\n' "$v" "$(stat -c%s /sys/firmware/efi/efivars/${v}-* 2>/dev/null || echo absent)"
-done
+done | tee "$U/pre-sizes.txt"
 bootctl status | grep -i 'secure boot'
+
+# 2. the variables THEMSELVES, not just their sizes. Sizes prove replaced-vs-merged;
+#    only the bytes tell you WHICH certificates you are about to lose.
+cd "$U"
+for v in PK KEK db dbx; do sudo cat /sys/firmware/efi/efivars/${v}-* > "pre-${v}.efivar"; done
+sha256sum pre-*.efivar > pre-efivars.sha256
+
+# 3. a device baseline, so step 4's "did anything stop working?" can be a DIFF
+{ ip -brief link; echo; lspci -nnk; echo; lsusb; echo
+  boltctl list 2>/dev/null || echo "(boltctl absent)"; } > "$U/pre-devices.txt" 2>&1
+sync
 ```
+
+**Capture the bytes, not only the sizes.** Sizes answer step 4's replaced-versus-merged
+question; they cannot tell you that enrollment dropped, say, `ThinkPad Product CA 2012`
+and two `dbx` CA revocations. That analysis is only possible with the raw variables, and
+the window closes the moment you enrol — see #502, which exists because one run captured
+them and could therefore quantify the loss.
+
+**The device baseline matters for the same reason.** Enrollment replaces `db`, so OEM
+option ROMs signed by vendor CAs stop verifying. Without a pre-enrollment device list,
+step 4's check can only establish "everything present has a driver and nothing is
+complaining" — which is not the same as "nothing was lost". Three commands here turn
+that into a diff.
+
+Scripts on the USB: it is FAT by firmware requirement, so `./script.sh` will not execute
+(`noexec`/`showexec`). Run `bash script.sh`, or work in `/tmp` and copy the results over.
 
 Order matters, and it is easy to get backwards:
 
@@ -423,7 +452,30 @@ older image, that is still true of it.
 `dbx` normally *grows* (krytis ships 443 revocations, typically more than the firmware
 shipped with), which is the one direction where replacing is strictly an improvement.
 
+Then diff the device list against step 1's baseline, and capture the post state for the
+same reason step 1 captured the pre state — the certificate-level analysis needs bytes:
+
+```bash
+U=/mnt
+cd "$U"
+for v in PK KEK db dbx; do sudo cat /sys/firmware/efi/efivars/${v}-* > "post-${v}.efivar"; done
+sha256sum post-*.efivar > post-efivars.sha256
+
+{ ip -brief link; echo; lspci -nnk; echo; lsusb; echo
+  boltctl list 2>/dev/null || echo "(boltctl absent)"; } > post-devices.txt 2>&1
+diff -u pre-devices.txt post-devices.txt && echo "IDENTICAL — nothing stopped enumerating"
+sudo dmesg | grep -iE 'secure boot|option rom|verification failed|denied' | tail -20
+sync
+```
+
+A PCI entry that loses its `Kernel driver in use` line, or disappears from `lspci`
+entirely, is the signature of an option ROM that no longer verifies. Without the step-1
+baseline this check degrades to "everything present has a driver and nothing is
+complaining", which does not distinguish *nothing was lost* from *something left before
+anyone looked*.
+
 - [ ] `db` size matches krytis's, so OEM defaults were replaced not merged
+- [ ] `diff pre-devices.txt post-devices.txt` is empty, or every difference is explained
 - [ ] Every device still initialises — no missing NIC, GPU, or add-in card
 
 ## 5. A Microsoft-signed binary still runs
