@@ -321,6 +321,52 @@ Setup Mode (check `bootctl status` says `(setup)`), or `\loader\keys\auto\` is m
 from the ESP. `loader.conf` is the *least* likely cause, since the default already
 permits discovery.
 
+## 3b. The first-boot wizard — the machine has no account until you do this
+
+Since #487 the initial account is created by `krytis-firstboot.service`, prompting on
+**tty5**. Nothing else creates a user, so an image built before #487 gives you an
+installed system with no way in — which is what makes an older `:sealed` unusable for a
+full hardware run regardless of how well its boot chain verifies.
+
+**The greeter comes up first and does not mention this.** `greetd`/`noctalia-greeter`
+owns vt1 and shows a login screen immediately, with nothing to log into. That is a
+known, accepted rough edge (`docs/design/first-boot-setup.md` § Consequence), not a
+fault to report — the wizard is simply somewhere else:
+
+```
+Ctrl+Alt+F5
+```
+
+In order, on that VT:
+
+1. `systemd-firstboot --prompt-keymap-auto --prompt-timezone` — keymap and timezone.
+   Locale is baked (`config/locale-data.bst`) and root stays locked
+   (`root:!unprovisioned`), so neither is asked.
+2. `homectl firstboot --prompt-new-user` — the initial account, created as a
+   **systemd-homed** user: encrypted home, FIDO2-login-ready, and `--member-of=wheel`
+   so it is the admin account. `--prompt-shell=no --prompt-groups=no` are deliberate;
+   answering a groups prompt would overwrite `memberOf` wholesale.
+
+- [ ] tty5 shows the wizard, not a bare `login:` prompt
+- [ ] Keymap/timezone accepted
+- [ ] The account is created, and `homectl list` shows it
+- [ ] Switching back to vt1 (Ctrl+Alt+F1) lets you log in as that user
+- [ ] `getent passwd <name>` resolves, and `id <name>` shows `wheel`
+
+**Deliberately not `ConditionFirstBoot=yes`, so an unanswered prompt is recoverable.**
+`Type=exec` means the start job completes once the wizard is *running*, not once it is
+answered — boot reaches `graphical.target` with the prompt still waiting, and
+`mise run boot-test`'s health assertion passes on an unanswered machine. If you skip or
+abort it, no marker is written and **the next boot asks again**; that is the designed
+behaviour, not a retry bug.
+
+*Failure signature:* tty5 shows a normal `login:` prompt instead of the wizard →
+`krytis-firstboot.service` did not start, or a regular user already exists (`homectl
+firstboot` returns without prompting once one does — systemd's `has_regular_user()`).
+Check `journalctl -u krytis-firstboot`; since #523 its diagnostics go to the journal as
+well as the VT, so a failure is readable after the fact rather than only visible on a
+screen you have since switched away from.
+
 ## 4. Post-enrollment state — replaced, not merged
 
 ```bash
