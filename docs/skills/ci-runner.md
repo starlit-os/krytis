@@ -864,7 +864,7 @@ used Blacksmith since #388; #511 only *added* the `force_self_hosted` input.
 
 #524 asserted `podman >= 5` in `seal-uki`, reasoning that the two-phase squash was only
 ever verified on 5.x, and routed sealed runs to self-hosted to satisfy it. Both halves
-were wrong, and #525 reverted them:
+were wrong, and #527 reverted them:
 
 - The engine that built the validated artifacts **is** 4.9.3. The 2026-08-04 `:sealed`
   image passed `tpm-boot-test`, `luks-install-test`, `iso-install-test --secure` and

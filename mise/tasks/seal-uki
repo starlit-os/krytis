@@ -18,7 +18,7 @@ fi
 #
 # 4.9.3 and 5.8.2 both produce a correct sealed image. The engine-sensitivity of
 # the squash is real, but the way to catch a bad digest is to CHECK THE DIGEST
-# (#525), not to guess at version numbers.
+# (#528), not to guess at version numbers.
 
 # Two-phase build — see Containerfile.seal-uki's header comment and
 # docs/skills/secure-boot.md § `bootc container ukify` must run in a
