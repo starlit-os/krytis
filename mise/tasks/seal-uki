@@ -7,33 +7,18 @@ if [ ! -f files/boot-keys/db.key ]; then
     mise run pull-keys
 fi
 
-# The two-phase squash below is ENGINE-VERSION SENSITIVE, so refuse an engine
-# older than the one it was verified against.
+# NOTE ON ENGINE VERSIONS — do not re-add a minimum-version check here without
+# evidence. #524 added `podman >= 5` on the theory that the two-phase squash was
+# only ever verified on 5.x. That was wrong: every sealed image this project has
+# published was built on a hosted runner with **podman 4.9.3 / buildah 1.33.7**
+# (GitHub's ubuntu-24.04 image, which Blacksmith mirrors), and the 2026-08-04
+# artifact built there passed `tpm-boot-test`, `luks-install-test`,
+# `iso-install-test --secure` and `selfenroll-test` — the first of which boots
+# that exact UKI, so a wrong composefs digest could not have passed.
 #
-# Everything about the digest dance was established empirically against podman
-# 5.x: which mtimes a squash rewrites, when `--squash-all` collapses layers
-# relative to when ukify runs, and whether the composefs digest baked into the
-# UKI still matches the committed image. None of that is specified behaviour —
-# it is what this podman does.
-#
-# This exists because #511 moved the publish workflow's default runner from the
-# self-hosted one (podman 5.x) to a hosted Ubuntu image, where apt ships podman
-# 4.9.3 — a major version behind. A silently-wrong UKI digest is far more
-# expensive than a refused build: it produces a signed image that boots to
-# "The UKI has the wrong composefs= parameter" on real hardware, after
-# publishing.
-MIN_PODMAN_MAJOR=5
-PODMAN_VERSION=$(podman version --format '{{.Client.Version}}' 2>/dev/null || echo 0)
-PODMAN_MAJOR=${PODMAN_VERSION%%.*}
-if [ "${PODMAN_MAJOR:-0}" -lt "${MIN_PODMAN_MAJOR}" ]; then
-    echo "ERROR: sealed builds need podman >= ${MIN_PODMAN_MAJOR}; found ${PODMAN_VERSION}." >&2
-    echo "       The two-phase squash that keeps the UKI's composefs= digest valid was" >&2
-    echo "       verified against podman 5.x only. Building with an older engine risks a" >&2
-    echo "       signed image whose baked digest does not match its own rootfs." >&2
-    echo "       In CI: re-run the publish workflow with force_self_hosted=true (#511)." >&2
-    echo "       Locally: upgrade podman, or build on a host that has 5.x." >&2
-    exit 1
-fi
+# 4.9.3 and 5.8.2 both produce a correct sealed image. The engine-sensitivity of
+# the squash is real, but the way to catch a bad digest is to CHECK THE DIGEST
+# (#528), not to guess at version numbers.
 
 # Two-phase build — see Containerfile.seal-uki's header comment and
 # docs/skills/secure-boot.md § `bootc container ukify` must run in a
