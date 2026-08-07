@@ -269,69 +269,19 @@ the crypto_LUKS partition's, not always 3.
 the same warning; `--strict-installer` fails instead, which is how to check whether
 fisherman#72 has landed and this subsection can be deleted.
 
-## 3. The enrollment prompt — the item no VM can produce
+## 2b. The first-boot wizard — do this first, or you cannot do anything else
 
-Read from systemd-boot 260's own source rather than assumed, because the assumptions
-here were wrong in two ways (`src/boot/boot.c`, `src/boot/secure-boot.c`):
-
-**Setup Mode is the only hard gate.** `secure_boot_discover_keys()` returns
-immediately unless the mode is SETUP or AUDIT:
-
-```c
-if (!IN_SET(secure_boot_mode(), SECURE_BOOT_SETUP, SECURE_BOOT_AUDIT))
-        return EFI_SUCCESS;
-```
-
-No Setup Mode → **no menu entry at all**, whatever `loader.conf` says. "Secure Boot:
-disabled" without `(setup)` is not enough; the firmware must have no Platform Key.
-
-**The entry appears on the first boot too.** Discovery runs whenever
-`secure-boot-enroll != off`, and the compiled-in default is `if-safe` — so the
-first-boot oneshot that writes `manual` is not a prerequisite. It only removes the
-auto-enroll behaviour, which on hardware cannot happen anyway:
-
-```c
-bool is_safe = in_hypervisor();
-if (!is_safe && !force) return EFI_SUCCESS;    /* silent no-op on real hardware */
-```
-
-**Selecting the entry is not a yes/no prompt — it is an abortable countdown.**
-Menu selection calls `secure_boot_enroll_at(..., force=true)`, which prints:
-
-```
-Enrolling secure boot keys from directory: \loader\keys\auto
-Warning: Enrolling custom Secure Boot keys might soft-brick your machine!
-Enrolling in Ns, press any key to abort.
-```
-
-**Press nothing.** Any keypress aborts. Let it run out and it enrols, then reboots
-itself (`ENROLL_ACTION_REBOOT`).
-
-Pre-flight from the installed system before you reboot into it:
-
-```bash
-bootctl status | grep -i 'secure boot'            # want: disabled (setup)
-ls /boot/loader/keys/auto/                        # PK KEK db dbx .auth must all be here
-grep secure-boot-enroll /boot/loader/loader.conf  # absent on boot 1 is fine
-```
-
-Record verbatim:
-
-- [ ] Exact wording of the menu entry (expected `Enroll Secure Boot keys: auto`)
-- [ ] The countdown text and how many seconds it gave
-- [ ] That it rebooted itself rather than continuing to boot
-
-*Failure signature:* no entry at all → in order of likelihood, the firmware is not in
-Setup Mode (check `bootctl status` says `(setup)`), or `\loader\keys\auto\` is missing
-from the ESP. `loader.conf` is the *least* likely cause, since the default already
-permits discovery.
-
-## 3b. The first-boot wizard — the machine has no account until you do this
+**This is a prerequisite for step 3, not a follow-up to it.** A fresh install has *no
+way in*: no account exists in the image (nothing with uid ≥ 1000), `root` ships locked
+as `root:!unprovisioned`, and the only login surfaces are greetd on vt1 — which lists no
+accounts — and gettys that have no valid credentials to accept. So every command from
+step 3 onward, starting with `sudo bootctl status`, is unrunnable until an account
+exists.
 
 Since #487 the initial account is created by `krytis-firstboot.service`, prompting on
 **tty5**. Nothing else creates a user, so an image built before #487 gives you an
-installed system with no way in — which is what makes an older `:sealed` unusable for a
-full hardware run regardless of how well its boot chain verifies.
+installed system that verifies its boot chain perfectly and is still unusable — which is
+what makes an older `:sealed` unfit for a hardware run.
 
 **The greeter comes up first and does not mention this.** `greetd`/`noctalia-greeter`
 owns vt1 and shows a login screen immediately, with nothing to log into. That is a
@@ -371,6 +321,64 @@ firstboot` returns without prompting once one does — systemd's `has_regular_us
 Check `journalctl -u krytis-firstboot`; since #523 its diagnostics go to the journal as
 well as the VT, so a failure is readable after the fact rather than only visible on a
 screen you have since switched away from.
+
+## 3. The enrollment prompt — the item no VM can produce
+
+Read from systemd-boot 260's own source rather than assumed, because the assumptions
+here were wrong in two ways (`src/boot/boot.c`, `src/boot/secure-boot.c`):
+
+**Setup Mode is the only hard gate.** `secure_boot_discover_keys()` returns
+immediately unless the mode is SETUP or AUDIT:
+
+```c
+if (!IN_SET(secure_boot_mode(), SECURE_BOOT_SETUP, SECURE_BOOT_AUDIT))
+        return EFI_SUCCESS;
+```
+
+No Setup Mode → **no menu entry at all**, whatever `loader.conf` says. "Secure Boot:
+disabled" without `(setup)` is not enough; the firmware must have no Platform Key.
+
+**The entry appears on the first boot too.** Discovery runs whenever
+`secure-boot-enroll != off`, and the compiled-in default is `if-safe` — so the
+first-boot oneshot that writes `manual` is not a prerequisite. It only removes the
+auto-enroll behaviour, which on hardware cannot happen anyway:
+
+```c
+bool is_safe = in_hypervisor();
+if (!is_safe && !force) return EFI_SUCCESS;    /* silent no-op on real hardware */
+```
+
+**Selecting the entry is not a yes/no prompt — it is an abortable countdown.**
+Menu selection calls `secure_boot_enroll_at(..., force=true)`, which prints:
+
+```
+Enrolling secure boot keys from directory: \loader\keys\auto
+Warning: Enrolling custom Secure Boot keys might soft-brick your machine!
+Enrolling in Ns, press any key to abort.
+```
+
+**Press nothing.** Any keypress aborts. Let it run out and it enrols, then reboots
+itself (`ENROLL_ACTION_REBOOT`).
+
+Pre-flight from the installed system before you reboot into it. **Needs the account from
+step 2b** — there is no shell on a fresh install until the wizard has run:
+
+```bash
+sudo bootctl status | grep -i 'secure boot'       # want: disabled (setup)
+ls /boot/loader/keys/auto/                        # PK KEK db dbx .auth must all be here
+grep secure-boot-enroll /boot/loader/loader.conf  # absent on boot 1 is fine
+```
+
+Record verbatim:
+
+- [ ] Exact wording of the menu entry (expected `Enroll Secure Boot keys: auto`)
+- [ ] The countdown text and how many seconds it gave
+- [ ] That it rebooted itself rather than continuing to boot
+
+*Failure signature:* no entry at all → in order of likelihood, the firmware is not in
+Setup Mode (check `bootctl status` says `(setup)`), or `\loader\keys\auto\` is missing
+from the ESP. `loader.conf` is the *least* likely cause, since the default already
+permits discovery.
 
 ## 4. Post-enrollment state — replaced, not merged
 
