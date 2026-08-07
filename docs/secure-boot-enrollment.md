@@ -248,11 +248,16 @@ which reads like a broken image and is not. Confirmed on hardware (#473) and rep
 synthetically (#474).
 
 ```bash
-lsblk -o NAME,SIZE,FSTYPE,PARTTYPENAME,PARTUUID     # find the crypto_LUKS partition
+# sudo on the lsblk calls too: FSTYPE, LABEL and PARTTYPENAME come from probing the
+# device, not from sysfs, so unprivileged they come back EMPTY. A blank PARTTYPENAME
+# reads exactly like a failed retag, and a blank FSTYPE hides which partition is the
+# crypto_LUKS one. NAME/SIZE/TYPE/TRAN/RM need no root, which is why the USB step
+# above works without it.
+sudo lsblk -o NAME,SIZE,FSTYPE,PARTTYPENAME,PARTUUID   # find the crypto_LUKS partition
 # It will read "Linux filesystem" (generic). Retag it — metadata only, data untouched:
 sudo sfdisk --part-type /dev/nvme0n1 3 4f68bce3-e8cd-4db1-96e7-fbcaf984b709
 sudo partprobe /dev/nvme0n1
-lsblk -o NAME,PARTTYPENAME /dev/nvme0n1             # want "Linux root (x86-64)"
+sudo lsblk -o NAME,PARTTYPENAME /dev/nvme0n1           # want "Linux root (x86-64)"
 ```
 
 Adjust the disk and **partition number** from your own `lsblk` output — the number is
@@ -476,7 +481,29 @@ sync
 ```
 
 Or wipe the stick and create a single `ef00` partition, which removes the question
-permanently.
+permanently — and is what to do if the stick ever had a hybrid ISO written to it:
+
+```bash
+D=/dev/sdX                                   # CONFIRM first; sda is not a stable name
+sudo umount ${D}* 2>/dev/null; true
+sudo wipefs -a "$D"                          # clears iso9660 + GPT + MBR signatures
+printf 'label: gpt\ntype=uefi, name="MSTEST"\n' | sudo sfdisk "$D"
+sudo partprobe "$D"
+sudo mkfs.vfat -F32 -n MSTEST "${D}1"
+
+# Populate without mounting — mtools writes straight to the partition:
+sudo mcopy -i "${D}1" -s /path/to/EFI ::
+sudo mdir -i "${D}1" ::/EFI/BOOT             # want BOOTX64 EFI <size>
+```
+
+`sfdisk`, not `sgdisk` — util-linux is already a dependency and `gdisk` may not be
+installed. `type=uefi` is sfdisk's alias for `c12a7328-f81f-11d2-ba4b-00a0c93ec93b`;
+omitting `size=` fills the device.
+
+Confirm the result with **`sudo`** — see the note in step 2: unprivileged, `FSTYPE`
+and `PARTTYPENAME` come back empty and a correctly prepared stick looks unformatted.
+`udevadm info --query=property --name=/dev/sdX1` reads the udev database instead and
+works without root, which is a useful cross-check when the two disagree.
 
 Boot the second USB from the firmware boot menu, under enforcement.
 
