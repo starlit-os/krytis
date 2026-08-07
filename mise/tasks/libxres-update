@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#MISE description="Update deps/libxres.bst to the latest xorg.freedesktop.org release"
+
+set -euo pipefail
+
+ELEMENT="elements/deps/libxres.bst"
+INDEX="https://xorg.freedesktop.org/releases/individual/lib/"
+
+echo "==> Fetching ${INDEX}..."
+LATEST_VER=$(curl -sSfL "${INDEX}" \
+  | grep -oP 'libXres-\K[0-9]+\.[0-9]+\.[0-9]+(?=\.tar\.xz")' \
+  | sort -V | tail -1)
+echo "==> Latest: ${LATEST_VER}"
+
+CURRENT_VER=$(grep -oP 'libXres-\K[0-9]+\.[0-9]+\.[0-9]+(?=\.tar\.xz)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ARCHIVE="libXres-${LATEST_VER}.tar.xz"
+echo "==> Downloading ${ARCHIVE}..."
+curl -sSfL "${INDEX}${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+NEW_SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
+echo "    sha256=${NEW_SHA}"
+
+CURRENT_SHA=$(grep 'ref:' "${ELEMENT}" | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+sed -i "s|libXres-${CURRENT_VER}.tar.xz|libXres-${LATEST_VER}.tar.xz|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "${ELEMENT}"
+
+echo "==> Done. Run 'mise run validate' to verify."
