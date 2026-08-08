@@ -70,8 +70,60 @@ if pos != len(payload):
 if hashes + certs == 0:
     sys.exit("revocation list is empty — refusing to ship a dbx that revokes nothing")
 
-dst.write_bytes(payload)
-print(f"    lists={lists} sha256-hashes={hashes} x509-certs={certs} -> {dst} ({len(payload)} bytes)")
+# Extra certificate-level revocations Microsoft does not publish (#502). Appended as
+# one X509 signature list per file, because SignatureSize is fixed per list and
+# certificates differ in length — they cannot share a list.
+#
+# The owner GUID is preserved as captured (Microsoft's) rather than invented: these
+# reproduce entries a real firmware carried, and keeping the GUID makes our entry
+# byte-identical to the one being restored. A random GUID would also break
+# reproducibility, since this .esl is committed.
+MS_OWNER = uuid.UUID("77fa9abd-0359-4d32-bd60-28f4e78f784b")
+extra_dir = pathlib.Path("files/dbx-extra-revocations")
+extra = sorted(extra_dir.glob("*.der")) if extra_dir.is_dir() else []
+
+chunks = [payload]
+for der_path in extra:
+    der = der_path.read_bytes()
+    if not der or der[0] != 0x30:
+        sys.exit(f"{der_path} is not DER (expected a SEQUENCE tag 0x30)")
+    sig_size = 16 + len(der)
+    chunks.append(
+        X509.bytes_le
+        + struct.pack("<III", 28 + sig_size, 0, sig_size)
+        + MS_OWNER.bytes_le
+        + der
+    )
+    certs += 1
+    print(f"    + x509 revocation {der_path.name} ({len(der)} bytes)")
+
+combined = b"".join(chunks)
+dst.write_bytes(combined)
+
+# Re-walk what we just wrote. An appended list with a wrong size field produces a dbx
+# the firmware rejects wholesale, which would disable every revocation rather than
+# adding two — a silent downgrade, so it is worth parsing back.
+pos = check_hashes = check_certs = 0
+while pos + 28 <= len(combined):
+    lt = uuid.UUID(bytes_le=combined[pos:pos + 16])
+    size, header, sig = struct.unpack_from("<III", combined, pos + 16)
+    if size < 28 or pos + size > len(combined) or sig == 0:
+        sys.exit(f"produced a malformed signature list at offset {pos}")
+    n = (size - 28 - header) // sig
+    if lt == SHA256:
+        check_hashes += n
+    elif lt == X509:
+        check_certs += n
+    pos += size
+if pos != len(combined):
+    sys.exit("produced trailing bytes after the last signature list")
+if (check_hashes, check_certs) != (hashes, certs):
+    sys.exit(f"read back {check_hashes} hashes / {check_certs} certs, expected {hashes} / {certs}")
+if check_certs != len(extra):
+    sys.exit(f"expected {len(extra)} x509 revocation(s) from {extra_dir}, read back {check_certs}")
+
+print(f"    lists={lists + len(extra)} sha256-hashes={check_hashes} x509-certs={check_certs}"
+      f" -> {dst} ({len(combined)} bytes)")
 PY
 
 cp "$TMP/DBXUpdate.bin" "$CERTS_DIR/dbx.bin"

@@ -42,15 +42,35 @@ if [ "${#MS_DB_ARGS[@]}" -eq 0 ]; then
     echo "         what db.auth enrolls. Run 'mise run fetch-microsoft-certs'." >&2
 fi
 
-# Same argument for dbx (#446): the image now enrols Microsoft's revocation list,
-# so a test varstore without it trusts binaries a real machine refuses — the
-# inverse of the db gap above, and just as invisible.
+# Same argument for dbx (#446): the image now enrols a revocation list, so a test
+# varstore without it trusts binaries a real machine refuses — the inverse of the db
+# gap above, and just as invisible.
+#
+# Prefer the SEALED IMAGE's own dbx.auth over upstream dbx.bin. Since #502 the shipped
+# list is Microsoft's 443 hashes PLUS two X509 CA revocations that Microsoft does not
+# publish, so dbx.bin is no longer what the image enrols and using it would recreate
+# exactly the varstore-narrower-than-hardware drift #438 was about. virt-fw-vars reads
+# our KEK-signed .auth fine — it is an EFI_VARIABLE_AUTHENTICATION_2 like Microsoft's.
 DBX_ARGS=()
-if [ -f "${MS_CERTS_DIR}/dbx.bin" ]; then
-    DBX_ARGS=(--set-dbx "${MS_CERTS_DIR}/dbx.bin")
+DBX_SRC=""
+if IMG_DBX=$(mktemp) && podman create --name "krytis-dbx-$$" "${SEALED_TAG}" true >/dev/null 2>&1; then
+    if podman cp "krytis-dbx-$$:/usr/lib/bootc/install/secureboot-keys/auto/dbx.auth" "${IMG_DBX}" 2>/dev/null; then
+        DBX_SRC="${IMG_DBX}"
+        echo "==> dbx from ${SEALED_TAG}'s own dbx.auth ($(wc -c < "${IMG_DBX}") bytes)"
+    fi
+    podman rm "krytis-dbx-$$" >/dev/null 2>&1 || true
+fi
+if [ -z "${DBX_SRC}" ] && [ -f "${MS_CERTS_DIR}/dbx.bin" ]; then
+    DBX_SRC="${MS_CERTS_DIR}/dbx.bin"
+    echo "WARNING: ${SEALED_TAG} unavailable — falling back to upstream dbx.bin, which since" >&2
+    echo "         #502 is NARROWER than what the image enrols (no X509 CA revocations)." >&2
+    echo "         boot-test --secure will trust binaries a real enrolled machine refuses." >&2
+fi
+if [ -n "${DBX_SRC}" ]; then
+    DBX_ARGS=(--set-dbx "${DBX_SRC}")
 else
-    echo "WARNING: ${MS_CERTS_DIR}/dbx.bin missing — the varstore will have an empty dbx" >&2
-    echo "         while the image enrols one. Run 'mise run fetch-microsoft-dbx'." >&2
+    echo "WARNING: no dbx source — the varstore will have an empty dbx while the image" >&2
+    echo "         enrols one. Run 'mise run fetch-microsoft-dbx'." >&2
 fi
 
 echo "==> Baking keys into OVMF vars (source: ${OVMF_VARS_SRC}, GUID: ${GUID})..."
