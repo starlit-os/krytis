@@ -2,4 +2,16 @@
 # systemd-fido2 token enrolled (via systemd-cryptenroll / mise fido2:enroll-luks).
 # No-op for volumes without one — they fall through to passphrase as before.
 # Applied by bootc at deploy time via /usr/lib/bootc/kargs.d/.
+#
+# THIS DOES NOT AFFECT THE ROOT VOLUME. rd.luks.options= is read by
+# systemd-cryptsetup-generator, which builds units from crypttab-style input. The root
+# is created by systemd-gpt-auto-generator instead, which constructs its own option
+# string and ignores this karg entirely — measured on hardware, where the boot log
+# showed only "No valid TPM2 token data found" while this karg sat on /proc/cmdline.
+# The root is handled by config/fido2-root-unlock.bst's drop-in; see
+# docs/skills/fido2.md § gpt-auto-generator owns the root's crypt options and #250.
+#
+# Kept anyway, because it IS the right mechanism for any non-root LUKS volume that
+# reaches /etc/crypttab. Do not read its presence as evidence that root unlock works —
+# check the boot journal for a FIDO2 attempt instead.
 kargs = ["rd.luks.options=fido2-device=auto"]
