@@ -48,6 +48,14 @@ fi
 
 ## LUKS header enrollment alone does not enable FIDO2 unlock at boot
 
+> **CORRECTION (2026-08-08, measured on hardware): none of this applies to krytis's
+> ROOT volume.** `rd.luks.options=` is consumed by `systemd-cryptsetup-generator`, which
+> owns `/etc/crypttab`-style entries. Our root is discovered by
+> `systemd-gpt-auto-generator`, which builds its own option string and **never reads that
+> karg**. Read § `gpt-auto-generator` owns the root's crypt options below before acting
+> on anything in this section. What follows is correct for *non-root* volumes, which do
+> go through `systemd-cryptsetup-generator`.
+
 `systemd-cryptenroll --fido2-device=auto` only writes a token slot into the LUKS2 header. It does **not** make the initrd try FIDO2 at boot. The initrd's `systemd-cryptsetup-generator` needs `rd.luks.options=fido2-device=auto` on the kernel cmdline — without it, boot falls back to passphrase prompt even though the token slot exists and `mise fido2:status` shows it enrolled.
 
 **Bake this in at build time**, don't try to set it per-host at runtime. Ship it as `/usr/lib/bootc/kargs.d/*.toml` (see `files/bootc-config/30-fido2-luks.toml`, installed by `elements/config/bootc.bst`):
@@ -114,7 +122,82 @@ python3 -c 'd=open("/var/tmp/i.zstd","rb").read(); o=d.index(bytes([0x28,0xB5,0x
 zstdcat /var/tmp/main.zstd 2>/dev/null | cpio -t 2>/dev/null | grep -E 'libfido2|libtss2-tcti-device'
 ```
 
-## FIDO2 boot unlock race: LUKS2-token-plugin path has no retry
+## `gpt-auto-generator` owns the root's crypt options, and only ever adds TPM2
+
+**This is why FIDO2 unlock of krytis's root has never worked, and it is not a missing
+file.** `rd.luks.options=` is parsed by `systemd-cryptsetup-generator`, which builds units
+from `/etc/crypttab`-style input. krytis's root is not in anyone's crypttab: the sealed
+UKI's cmdline carries no `rd.luks.uuid=`, and `hostonly=no` means the initrd has no
+`/etc/crypttab` (see `docs/skills/secure-boot.md`). So the root's unit is created by
+**`systemd-gpt-auto-generator`** instead — the device even names itself
+`/dev/gpt-auto-root-luks` in the journal.
+
+That generator constructs the option string itself, from `src/gpt-auto-generator/gpt-auto-generator.c`:
+
+```c
+r = efi_measured_os(LOG_WARNING);
+if (r > 0) {
+        /* Enable TPM2 based unlocking automatically, if we have a TPM. See #30176. */
+        if (!strextend_with_separator(&options, ",", "tpm2-device=auto"))
+                return log_oom();
+}
+```
+
+`tpm2-device=auto` when the OS was measured, `read-only` when not RW, and **nothing
+else**. It never reads `rd.luks.options=`. So on a measured UKI the root's unit asks for
+TPM2 and only TPM2, which is exactly what the hardware journal shows:
+
+```
+systemd-cryptsetup[401]: No valid TPM2 token data found.
+```
+
+`rd.luks.options=fido2-device=auto` — baked by `files/bootc-config/30-fido2-luks.toml` —
+has therefore been **decorative on the root volume** since it was introduced. It is not
+wrong for other volumes; it simply never reaches this one.
+
+### Consequences for the three obvious fixes
+
+1. **TPM2 instead of FIDO2.** The one mechanism gpt-auto enables unprompted. `No valid
+   TPM2 token data found` means it is already *trying*, so enrolling a TPM2 token
+   (`systemd-cryptenroll --tpm2-device=auto`) plausibly just works with no image change.
+   Read `docs/design/secure-boot-testing.md` on PCR choice first — PCR 15's file-system
+   identity is empty on a composefs root (#368), so it is weaker than it looks.
+2. **A drop-in on the generated unit.** `systemd-cryptsetup@root.service` is
+   generator-created, so a `.d/` override appending `fido2-device=auto` must be forced
+   into the initrd with `install_items+=`; a drop-in that only exists in the build root is
+   invisible to dracut. That plumbing was proven to work during #253's second attempt —
+   the plumbing succeeded, only its ordering theory failed.
+3. **Generate an `/etc/crypttab` at install time** so `systemd-cryptsetup-generator` owns
+   the volume, which also unlocks the retry-capable manual `fido2-cid=` path. Conflicts
+   with `hostonly=no` and needs installer support, so it is the most invasive.
+
+**Whatever is tried, verify against the journal rather than the karg.** `/proc/cmdline`
+showing `rd.luks.options=fido2-device=auto` proves nothing about the root — the unit's
+actual `Options=` is what matters, and the honest check is whether the boot log mentions
+FIDO2 at all.
+
+## ~~FIDO2 boot unlock race: LUKS2-token-plugin path has no retry~~ — DISPROVEN on hardware
+
+> **CORRECTION (2026-08-08).** The upstream code reading below is accurate and worth
+> keeping. The *diagnosis* — that krytis's root fails to unlock because the key loses a
+> udev enumeration race — is **wrong**, and was measured wrong on a Lenovo ThinkPad
+> (#535, #250):
+>
+> ```
+> [ 2.021042] hid-generic 0003:1050:0402.0001: hiddev96,hidraw0 … [Yubico YubiKey FIDO]
+> [ 2.605844] Starting systemd-cryptsetup@root.service …        <- 584 ms LATER
+> [ 2.625046] systemd-cryptsetup[401]: No valid TPM2 token data found.
+> ```
+>
+> The key was enumerated and had a `hidraw` node **584 ms before** cryptsetup started, so
+> there was no race to lose. And the only token systemd looked for was **TPM2** — FIDO2
+> was never attempted, because the root's unit never carried a FIDO2 option. See
+> § `gpt-auto-generator` owns the root's crypt options.
+>
+> Two fix attempts were spent on this theory (#253), both boot-tested on initrds that
+> also lacked `libfido2` and the token plugin, so their "no change" results were
+> uninformative twice over. **Do not spend a third on timing without first measuring
+> `hidraw` versus the cryptsetup start in `journalctl -o short-monotonic`.**
 
 `rd.luks.options=fido2-device=auto` alone isn't sufficient in practice — even with the karg and an enrolled token both present and correct, unlock can still silently fall back to passphrase if the security key isn't enumerated by udev yet. Verified against upstream systemd `src/cryptsetup/cryptsetup.c` source directly (not guessed):
 
