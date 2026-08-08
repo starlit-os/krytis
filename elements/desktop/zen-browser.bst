@@ -18,7 +18,7 @@ depends:
 - freedesktop-sdk.bst:components/gtk3.bst
 
 variables:
-  version: "1.21.11b"
+  version: "1.21.12b"
   strip-binaries: ''
 
 config:
@@ -66,8 +66,8 @@ sources:
 - kind: tar
   (?):
   - arch == "x86_64":
-      url: github_files:zen-browser/desktop/releases/download/1.21.11b/zen.linux-x86_64.tar.xz
-      ref: 4fd27eef0049bb6282f1d8af0faaef2f4106a2bf30e9fad80026b1820c12d4f4
+      url: github_files:zen-browser/desktop/releases/download/1.21.12b/zen.linux-x86_64.tar.xz
+      ref: 47e1492bedca5ae4142f54a220559e0bef7a784fb530908f6059da766d16222f
   - arch == "aarch64":
-      url: github_files:zen-browser/desktop/releases/download/1.21.11b/zen.linux-aarch64.tar.xz
-      ref: ff5153d8caf08f8ac4d4e6bfba40b4f5883dc8efc79d4f5ad870a3dbd2314a67
+      url: github_files:zen-browser/desktop/releases/download/1.21.12b/zen.linux-aarch64.tar.xz
+      ref: eb197e6dd6459bb9fff2e3081a7745c02ebef33400ca28b49e4a85e5014c3230
