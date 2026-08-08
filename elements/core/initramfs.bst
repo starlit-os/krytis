@@ -77,7 +77,22 @@ config:
       # passphrase — so the only symptom is that a documented, shipped feature
       # cannot work. Its ELF deps (libcbor, libcrypto, libudev, libz) resolve
       # automatically; only the dlopen'ed entry point needs naming.
-      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 "\n' \
+      #
+      # libcryptsetup-token-systemd-fido2.so is the THIRD instance, and libfido2
+      # alone was necessary but not sufficient (#476 shipped the library and unlock
+      # still failed on hardware). `systemd-cryptenroll --fido2-device=auto` writes a
+      # LUKS2 JSON token, so at boot determine_token_type() detects TOKEN_FIDO2 and —
+      # use_token_plugins() being true by default — unlock goes through
+      # attach_luks2_by_fido2_via_plugin(), which dlopens this plugin out of
+      # %{libdir}/cryptsetup/. dracut cannot see that dlopen either, so the whole
+      # directory was absent from every initrd and the plugin path could never run:
+      # no plugin, no libfido2 scan, no user-presence request, straight to passphrase.
+      #
+      # Its siblings libcryptsetup-token-systemd-tpm2.so and -pkcs11.so are equally
+      # absent. They are NOT added here because nothing ships TPM-bound or PKCS#11
+      # LUKS today; whichever lands first (#368 for TPM) must add its own plugin and
+      # an assertion below, or it will fail exactly this way.
+      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 %{libdir}/cryptsetup/libcryptsetup-token-systemd-fido2.so "\n' \
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf"
 
@@ -113,5 +128,10 @@ config:
         'systemd-cryptsetup dlopen()s it for fido2-device=auto, which the UKI
        cmdline always sets, so FIDO2 LUKS unlock silently cannot work and every
        unlock falls back to a passphrase. See #473 and mise/tasks/luks-install-test.'
+      assert_lib 'libcryptsetup-token-systemd-fido2\.so' 'libcryptsetup-token-systemd-fido2.so' \
+        'libcryptsetup dlopen()s it to service the LUKS2 FIDO2 token that
+       systemd-cryptenroll writes, so without it attach_luks2_by_fido2_via_plugin()
+       never runs: no scan, no touch request, straight to a passphrase. Having
+       libfido2 present is not enough — this is what calls it. See #250.'
       [ "${MISSING}" -eq 0 ] || exit 1
       echo "==> initramfs carries every dlopen'ed library the boot path needs"
