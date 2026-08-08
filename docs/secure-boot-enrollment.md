@@ -389,6 +389,24 @@ Enrolling in Ns, press any key to abort.
 **Press nothing.** Any keypress aborts. Let it run out and it enrols, then reboots
 itself (`ENROLL_ACTION_REBOOT`).
 
+**The countdown is 15 seconds and it overwrites one line, so a photograph will always
+show `0s`.** Upstream: `ENROLL_TIMEOUT_DEFAULT = 15` in `src/boot/secure-boot.h`, printed
+by `src/boot/secure-boot.c` as
+
+```c
+printf("\rEnrolling in %"PRIu64"s, press any key to abort.", timeout_sec);
+```
+
+The `\r` means each second overwrites the previous, so the screen's final state — and
+every photo of it — reads `Enrolling in 0s`. That is the *end* of a 15-second window, not
+the absence of one. Recorded because `0s` looks alarming and reads as "there was no
+chance to abort", which is wrong.
+
+krytis sets `secure-boot-enroll manual` (`elements/config/secureboot-loader-conf.bst`)
+and deliberately no `secure-boot-enroll-timeout-sec`, so the upstream 15 applies. Setting
+it to `0` would mean `ENROLL_TIMEOUT_HIDDEN` — enrol with no prompt at all — which is not
+what we want on hardware.
+
 Pre-flight from the installed system before you reboot into it. **Needs the account from
 step 2b** — there is no shell on a fresh install until the wizard has run:
 
