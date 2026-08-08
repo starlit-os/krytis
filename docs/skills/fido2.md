@@ -163,10 +163,13 @@ wrong for other volumes; it simply never reaches this one.
    Read `docs/design/secure-boot-testing.md` on PCR choice first — PCR 15's file-system
    identity is empty on a composefs root (#368), so it is weaker than it looks.
 2. **A drop-in on the generated unit.** `systemd-cryptsetup@root.service` is
-   generator-created, so a `.d/` override appending `fido2-device=auto` must be forced
-   into the initrd with `install_items+=`; a drop-in that only exists in the build root is
-   invisible to dracut. That plumbing was proven to work during #253's second attempt —
-   the plumbing succeeded, only its ordering theory failed.
+   generator-created, so anything targeting it must be forced into the initrd with
+   `install_items+=`; a drop-in that only exists in the build root is invisible to dracut.
+   That plumbing was proven to work during #253's second attempt — the plumbing
+   succeeded, only its ordering theory failed. **This is the route krytis took, but NOT
+   by overriding `ExecStart` to append `fido2-device=auto` — that breaks every machine
+   without an enrolled key. See the FATAL-without-a-token section below for the shape
+   that works.**
 3. **Generate an `/etc/crypttab` at install time** so `systemd-cryptsetup-generator` owns
    the volume, which also unlocks the retry-capable manual `fido2-cid=` path. Conflicts
    with `hostonly=no` and needs installer support, so it is the most invasive.
@@ -175,6 +178,57 @@ wrong for other volumes; it simply never reaches this one.
 showing `rd.luks.options=fido2-device=auto` proves nothing about the root — the unit's
 actual `Options=` is what matters, and the honest check is whether the boot log mentions
 FIDO2 at all.
+
+## `fido2-device=auto` is FATAL without an enrolled token — never put it in a shared option string
+
+**Measured 2026-08-08 by `mise run luks-boot-test`, which caught this before it shipped
+(#543 fixed by #544).** Route 2 above was implemented as an `ExecStart` override adding
+`fido2-device=auto` to the root's options. On a volume with no `systemd-fido2` token in
+its header, that turns a working passphrase prompt into instant emergency mode.
+
+The asymmetry with TPM2 is deliberate upstream, and it is the whole trap:
+
+| token | no token in header | source |
+|---|---|---|
+| TPM2 | `-EAGAIN` → falls through to passphrase | `cryptsetup.c`: *"Mangle error code: let's make any form of TPM2 failure non-fatal."* |
+| FIDO2 | **`-ENXIO`** → hard exit, no fallback | `cryptsetup-fido2.c`: `find_fido2_auto_data()` → `"No valid FIDO2 token data found."` |
+
+So `tpm2-device=auto` is safe to ship to every machine — which is exactly why gpt-auto
+adds it unprompted — and `fido2-device=auto` is not. A fresh krytis install has no
+enrolled key, so shipping it in the root's options breaks the default case.
+
+### The shape that works: add a unit, do not override the generated one
+
+`elements/config/fido2-root-unlock.bst` ships two files instead:
+
+- `krytis-fido2-root-unlock.service` — attempts FIDO2 *before* the generated unit, with
+  an `ExecStart=-` prefix so failure is ignored. `token-timeout=20s` and `TimeoutSec=60`
+  bound it, because anything stalling here delays the passphrase prompt that follows.
+- `50-krytis-fido2-root.conf` — a drop-in carrying only `Wants=` and
+  `ConditionPathExists=!/dev/mapper/root`.
+
+Three non-obvious details, each of which was a bug in an earlier draft:
+
+1. **`Before=` does not start anything.** It only orders. `Wants=` in the drop-in is what
+   pulls the attempt in, riding on whatever activates the root unlock.
+2. **The condition is required, not cosmetic.** Without it the generated unit runs a
+   second `attach` against a name already in use, failing the boot *after* a successful
+   unlock.
+3. **Do not copy `BindsTo=` from gpt-auto.** It exists to tear the unlock down with the
+   device; on a one-shot pre-attempt it is only a way to stall ahead of the prompt.
+
+Verified both arms with real systemd before building, using a throwaway systemd
+container with a stub unit in `/run/systemd/system` (note: `/run/systemd/generator` is
+wiped on `daemon-reload`, so a hand-placed unit there vanishes):
+
+| arm | attempt runs | attempt wins | generated unit runs |
+|---|---|---|---|
+| no enrolled token | yes | no | **yes** — passphrase prompt, unchanged |
+| token unlocks | yes | yes | **no** — skipped by the condition |
+
+**`mise run luks-boot-test` is the gate for this class**, and its synthetic root is
+passphrase-only, which is what makes it catch exactly this. Run it against any change to
+the root's unlock path; a green `mise run build` proves only that files landed.
 
 ## ~~FIDO2 boot unlock race: LUKS2-token-plugin path has no retry~~ — DISPROVEN on hardware
 

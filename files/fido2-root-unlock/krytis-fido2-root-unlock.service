@@ -1,0 +1,58 @@
+# Attempt FIDO2 unlock of the gpt-auto-discovered root, BEFORE the generated
+# systemd-cryptsetup@root.service gets its turn.
+#
+# Why a separate unit instead of overriding the generated one's ExecStart:
+# systemd-cryptsetup treats a missing FIDO2 token in the LUKS header as FATAL.
+# find_fido2_auto_data() returns -ENXIO ("No valid FIDO2 token data found"), and
+# unlike TPM2 - whose failures are deliberately mangled to -EAGAIN, "let's make any
+# form of TPM2 failure non-fatal" - nothing downgrades it. So putting
+# fido2-device=auto into the root's option string turns a working passphrase prompt
+# into an immediate exit 1 and emergency mode on every machine WITHOUT an enrolled
+# key, which is the default state of a fresh install.
+#
+# Measured, not reasoned: mise run luks-boot-test caught exactly that regression.
+#
+# This unit is therefore strictly additive. The `-` prefix means a machine with no
+# enrolled token fails here silently, the generated unit runs untouched, and the
+# passphrase prompt appears exactly as it does today. When a token IS enrolled, this
+# attaches the volume and the generated unit is skipped by its ConditionPathExists.
+#
+# It also means krytis never restates systemd's own option set. The generated
+# ExecStart carries tpm2-device=auto plus the tpm2-measure-* options, and an earlier
+# version of this change copied them by hand - coupling us to an upstream argv layout
+# for no benefit. See docs/skills/fido2.md § gpt-auto-generator owns the root's
+# crypt options and #250.
+#
+# Ordering mirrors what gpt-auto's own add_cryptsetup() writes for this volume, so it is
+# inherited rather than invented. Its BindsTo= on the device unit is deliberately NOT
+# copied: that exists to tear the unlock down with the device, which is meaningless for a
+# one-shot pre-attempt, and an unsatisfiable BindsTo is one more way to stall the boot
+# ahead of the passphrase prompt. After= alone gives the ordering we need.
+[Unit]
+Description=FIDO2 unlock attempt for the gpt-auto root volume
+Documentation=https://github.com/starlit-os/krytis/issues/250
+DefaultDependencies=no
+IgnoreOnIsolate=true
+
+# Absent on an unencrypted install, which is krytis's default - skip quietly there.
+ConditionPathExists=/dev/gpt-auto-root-luks
+
+After=dev-gpt\x2dauto\x2droot\x2dluks.device cryptsetup-pre.target systemd-udevd.service
+Before=systemd-cryptsetup@root.service cryptsetup.target umount.target
+Conflicts=umount.target
+
+[Service]
+Type=oneshot
+# No RemainAfterExit and no ExecStop: if this attempt wins, the volume is the ROOT and
+# is never detached during shutdown anyway; if it loses, the generated unit owns the
+# mapping and detaching it from here would fight that unit.
+#
+# Bounded, unlike the generated unit's TimeoutSec=infinity. That one can block forever
+# because a human is typing a passphrase into it; this one runs BEFORE that prompt, so
+# anything that stalls here delays the fallback rather than a person. token-timeout
+# bounds systemd's own wait-for-token udev monitor (default 30s), and TimeoutSec is the
+# backstop if it stalls anywhere else. Both failures hit the `-` and fall through.
+TimeoutSec=60
+
+# `-`: failure is the expected path on a machine with no enrolled token.
+ExecStart=-/usr/lib/systemd/systemd-cryptsetup attach root /dev/gpt-auto-root-luks '' fido2-device=auto,token-timeout=20s

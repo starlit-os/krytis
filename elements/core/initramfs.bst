@@ -93,13 +93,13 @@ config:
       # LUKS today; whichever lands first (#368 for TPM) must add its own plugin and
       # an assertion below, or it will fail exactly this way.
       #
-      # The last entry is not a library: it is the drop-in from
-      # config/fido2-root-unlock.bst that adds fido2-device=auto to the root volume's
-      # unlock options. systemd-cryptsetup@root.service is created by
-      # systemd-gpt-auto-generator at boot, and dracut does not copy drop-ins for
-      # generator-created units, so naming it here is the only way it reaches the initrd
-      # — where it has to be, since root is unlocked before switch-root. See #250.
-      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 %{libdir}/cryptsetup/libcryptsetup-token-systemd-fido2.so %{indep-libdir}/systemd/system/systemd-cryptsetup@root.service.d/50-krytis-fido2-root.conf "\n' \
+      # The last TWO entries are not libraries: they are the unit and drop-in from
+      # config/fido2-root-unlock.bst that make the root volume attempt FIDO2 unlock.
+      # systemd-cryptsetup@root.service is created by systemd-gpt-auto-generator at boot,
+      # and dracut copies neither extra units nor drop-ins for generator-created units,
+      # so naming them here is the only way they reach the initrd — where they have to
+      # be, since root is unlocked before switch-root. See #250.
+      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 %{libdir}/cryptsetup/libcryptsetup-token-systemd-fido2.so %{indep-libdir}/systemd/system/krytis-fido2-root-unlock.service %{indep-libdir}/systemd/system/systemd-cryptsetup@root.service.d/50-krytis-fido2-root.conf "\n' \
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf"
 
@@ -140,10 +140,16 @@ config:
        systemd-cryptenroll writes, so without it attach_luks2_by_fido2_via_plugin()
        never runs: no scan, no touch request, straight to a passphrase. Having
        libfido2 present is not enough — this is what calls it. See #250.'
+      assert_lib 'krytis-fido2-root-unlock\.service' 'krytis-fido2-root-unlock.service' \
+        'the unit that attempts FIDO2 unlock before the generated one. Absent, the root
+       unlocks with gpt-auto-generator options only — tpm2-device=auto and nothing else —
+       so FIDO2 is never attempted no matter what rd.luks.options= says. Not a library,
+       but it fails the same way: silently, with a passphrase fallback. See #250.'
       assert_lib '50-krytis-fido2-root\.conf' 'systemd-cryptsetup@root.service.d/50-krytis-fido2-root.conf' \
-        'without it the root volume unlocks with gpt-auto-generator options only —
-       tpm2-device=auto and nothing else — so FIDO2 is never attempted no matter what
-       rd.luks.options= says. That is not a library, but it fails the same way: silently,
-       with a passphrase fallback. See #250 and config/fido2-root-unlock.bst.'
+        'the drop-in carrying Wants= (which is what STARTS the unit above — Before= only
+       orders) and the condition that skips the generated unlock once the FIDO2 attempt
+       has attached the volume. Without it the FIDO2 unit never runs, and if it somehow
+       did, the generated unit would attach a second time onto a name already in use and
+       fail the boot into emergency. See #250 and config/fido2-root-unlock.bst.'
       [ "${MISSING}" -eq 0 ] || exit 1
-      echo "==> initramfs carries every dlopen'ed library and unlock drop-in the boot path needs"
+      echo "==> initramfs carries every dlopen'ed library and unlock unit the boot path needs"
