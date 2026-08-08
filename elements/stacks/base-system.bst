@@ -73,6 +73,10 @@ depends:
   - core/mise.bst
   - config/mise-aliases.bst
   - config/fido2-tasks.bst
+  # Drop-in making the ROOT volume try FIDO2. Must be here rather than only in the
+  # image stack: core/initramfs.bst build-depends on this stack and names the file in
+  # install_items+=, so dracut can only see it if this stack provides it.
+  - config/fido2-root-unlock.bst
 
   # ── Core utilities ─────────────────────────────────────────────────
   - core/uutils-coreutils.bst
