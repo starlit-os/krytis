@@ -1,7 +1,7 @@
 kind: filter
 
 build-depends:
-- sysext/gamerslop/lib32.bst
+- sysext/gaming/lib32.bst
 
 config:
   include:

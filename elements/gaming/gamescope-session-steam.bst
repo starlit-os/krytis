@@ -2,8 +2,8 @@ kind: manual
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
-- gamerslop/gamescope-session.bst
-- gamerslop/steam.bst
+- gaming/gamescope-session.bst
+- gaming/steam.bst
 
 sources:
 - kind: git_repo

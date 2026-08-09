@@ -8,6 +8,7 @@ sources:
   - "*.rc*"
   ref: 1.4.4-0-gcf3d1b107147480c447ffbfb3f789dc74335074c
 - kind: cargo2
+  url: crates:crates
   ref:
   - kind: registry
     name: base16ct

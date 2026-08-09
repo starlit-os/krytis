@@ -1,7 +1,7 @@
 kind: compose
 
 build-depends:
-- sysext/gamerslop/deps.bst
+- sysext/gaming/deps.bst
 
 config:
   exclude:

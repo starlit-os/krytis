@@ -175,22 +175,31 @@ config:
 ```
 
 
-## Gaming sysext port: zirconium-hawaii's `jackrabbit` diff pattern → krytis's `gamerslop`
+## Gaming sysext port: zirconium-hawaii's `jackrabbit` diff pattern → krytis's `gaming`
 
-Krytis's first systemd-sysext image (`elements/sysext/gamerslop/`) ports
+Krytis's first systemd-sysext image (`elements/sysext/gaming/`) ports
 zirconium-hawaii's `sysext/jackrabbit/` dual-sysroot-diff pattern verbatim —
-see `docs/design/gaming-variant.md` for the full investigation. Two things
-that weren't obvious going in:
+see `docs/design/gaming-variant.md` for the full investigation.
+
+**Name mapping — the trees do not share vocabulary.** Upstream's gaming
+package directory is `elements/gamerslop/` and its sysext/OCI trees are
+`sysext/jackrabbit/`/`oci/jackrabbit/`; krytis uses `elements/gaming/` and
+`elements/sysext/gaming/` throughout (artifact `gaming-<arch>.raw`, extension
+ID `gaming`). When diffing upstream during an `upstream-lessons` pass, map
+`gamerslop` → `gaming` and `jackrabbit` → `gaming` before concluding a file
+is missing downstream.
+
+Three things that weren't obvious going in:
 
 **A directory-wide `cp` port leaves stale self-references.** Copying
 `elements/sysext/jackrabbit/*.bst` file-by-file into
-`elements/sysext/gamerslop/` preserves every *external* junction/deps
+`elements/sysext/gaming/` preserves every *external* junction/deps
 reference correctly (krytis and zirconium-hawaii use identical
 `freedesktop-sdk.bst:`/`gnome-build-meta.bst:`/`deps/*.bst` paths), but
 **internal same-directory references keep the old directory name** — e.g.
 `sysext/jackrabbit/lib32-filter.bst`'s `build-depends:` still said
 `sysext/jackrabbit/lib32.bst` after being copied to
-`sysext/gamerslop/lib32-filter.bst`. `cp` doesn't know the directory is being
+`sysext/gaming/lib32-filter.bst`. `cp` doesn't know the directory is being
 renamed. After any multi-file verbatim port, grep the new directory for the
 *old* directory name before trusting the port — a plain YAML-parse pass
 won't catch this (the reference is still valid YAML, just pointing at a
@@ -202,13 +211,24 @@ nonexistent file in the new tree).
 `plugins:` entry required, same as every other core element kind already
 used throughout krytis.
 
-**No full-build verification was possible for this port.** `bst show`/`bst
-build` require `bwrap`, and the sandbox this port was authored in had
-neither `bwrap` installed nor passwordless `sudo` to install it. Verification
-was limited to: YAML parses on every new/changed file, every internal
-element reference (`gamerslop/*`, `deps/*`, `sysext/gamerslop/*`) resolves to
-a real file on disk, and every `sources: kind: local` path exists. A real
-`bst show --deps all sysext/gamerslop/layer.bst` (or a full
-`mise run build-sysext-gamerslop`) still needs to run once bwrap is
-available — treat this port as unverified against an actual BST graph
-resolution until then.
+**A ported `cargo2` source loses `url: crates:crates`.** krytis's
+`project.conf` lists `unaliased-url` under `fatal-warnings:`, so every source URL
+must go through an alias. zirconium-hawaii's `cargo2` blocks omit `url:`
+entirely (the plugin defaults to `https://static.crates.io/crates/`), which is
+legal there and fatal here. Both ported Rust elements — `gaming/inputplumber.bst`
+and `gaming/umu-launcher.bst` — needed `url: crates:crates` added under
+`kind: cargo2`, matching `core/bootc.bst`/`desktop/greetd.bst`. This fails at
+`bst show`'s *resolve* stage, not at load, so it survives any YAML- or
+reference-only verification pass:
+
+```
+[unaliased-url]: cargo2 source at gaming/inputplumber.bst [line 8 column 2]:
+  Use of unaliased source download URL: https://static.crates.io/crates/
+```
+
+**Graph resolution is verified; the build is not.** `bst show --deps all
+sysext/gaming/layer.bst` resolves the full 1126-element graph, including all
+eight `gaming/*` packages, the six `sysext/gaming/*` elements, and the i686
+cross-compiler junction that `lib32.bst` pulls in. A real
+`mise run build-sysext-gaming` (and a sysext-refresh smoke test on a booted
+krytis system) has not run yet.

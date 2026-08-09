@@ -7,14 +7,14 @@ kind: stack
 # gap, not gaming-specific — scx_loader has no scheduler binaries to load
 # either way and predates this work).
 depends:
-  - config/gamerslop.bst
-  - gamerslop/steam.bst
-  - gamerslop/gamescope.bst
-  - gamerslop/gamescope-session.bst
-  - gamerslop/gamescope-session-steam.bst
-  - gamerslop/mangohud.bst
-  - gamerslop/scopebuddy.bst
-  - gamerslop/umu-launcher.bst
-  - gamerslop/inputplumber.bst
+  - config/gaming.bst
+  - gaming/steam.bst
+  - gaming/gamescope.bst
+  - gaming/gamescope-session.bst
+  - gaming/gamescope-session-steam.bst
+  - gaming/mangohud.bst
+  - gaming/scopebuddy.bst
+  - gaming/umu-launcher.bst
+  - gaming/inputplumber.bst
 
-  - sysext/gamerslop/lib32-filter.bst
+  - sysext/gaming/lib32-filter.bst

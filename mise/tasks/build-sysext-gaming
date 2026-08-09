@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Build the gamerslop systemd-sysext delta image (elements/sysext/gamerslop/layer.bst)"
+#MISE description="Build the gaming systemd-sysext delta image (elements/sysext/gaming/layer.bst)"
 #MISE sources=[
 #MISE   "elements/**",
 #MISE   "files/**",
@@ -20,7 +20,7 @@ CONTAINER=${usage_container:+--container}
 PUSH=${usage_push:+--push}
 PULL=${usage_pull:+--pull}
 
-ELEMENT="sysext/gamerslop/layer.bst"
+ELEMENT="sysext/gaming/layer.bst"
 OUT_DIR="_build/sysext"
 
 ./mise/tasks/generate-image-version
@@ -35,4 +35,4 @@ mkdir -p "${OUT_DIR}"
 
 echo "==> Done:"
 find "${OUT_DIR}" -name '*.raw' -exec echo "  {}" \;
-echo "==> Install with: install -Dm644 ${OUT_DIR}/gamerslop-*.raw /var/lib/extensions/gamerslop.raw && systemd-sysext refresh"
+echo "==> Install with: install -Dm644 ${OUT_DIR}/gaming-*.raw /var/lib/extensions/gaming.raw && systemd-sysext refresh"

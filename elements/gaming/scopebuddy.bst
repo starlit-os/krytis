@@ -10,7 +10,7 @@ depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
 
 runtime-depends:
-- gamerslop/gamescope.bst
+- gaming/gamescope.bst
 - freedesktop-sdk.bst:components/grep.bst
 - freedesktop-sdk.bst:components/procps.bst
 - freedesktop-sdk.bst:components/perl.bst

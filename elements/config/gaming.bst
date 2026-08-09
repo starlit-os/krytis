@@ -1,4 +1,4 @@
-# gamerslop: Proton/Wine environment defaults for the gaming sysext.
+# gaming: Proton/Wine environment defaults for the gaming sysext.
 # WOW64, ntsync (kernel module already autoloaded unconditionally by
 # config/desktop-udev.bst — not duplicated here), and native Wayland.
 # Ported from zirconium-hawaii's files/gamerslop-config/etc/profile.d/gamerslop.sh.
@@ -15,7 +15,7 @@ config:
   install-commands:
   - |
     install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/profile.d/gamerslop.sh" <<'EOF'
+      "%{install-root}%{sysconfdir}/profile.d/gaming.sh" <<'EOF'
     export PROTON_ENABLE_WOW64=1
     export PROTON_USE_WOW64=1
     export PROTON_ENABLE_NTSYNC=1

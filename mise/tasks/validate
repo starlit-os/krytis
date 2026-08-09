@@ -17,3 +17,4 @@ fi
 ./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all stacks/base-system.bst
 ./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all stacks/bootc.bst
 ./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all oci/krytis/image.bst
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} show --deps all sysext/gaming/layer.bst

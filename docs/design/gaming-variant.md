@@ -115,7 +115,7 @@ option toggle. Recommend mirroring zirconium's structure:
 
 ```
 elements/
-├── gamerslop/                 # packages, ported from zirconium-hawaii/elements/gamerslop/
+├── gaming/                     # packages, ported from zirconium-hawaii/elements/gamerslop/
 │   ├── steam.bst
 │   ├── gamescope.bst
 │   ├── gamescope-session.bst
@@ -125,16 +125,16 @@ elements/
 │   ├── umu-launcher.bst
 │   └── inputplumber.bst       # scope question below covers handheld-only pieces
 ├── config/
-│   └── gamerslop.bst           # local config file drop
+│   └── gaming.bst              # local config file drop
 ├── stacks/
-│   └── gamerslop.bst            # dep aggregator: stacks/desktop.bst + gamerslop/* + lib32-filter
-├── oci/gamerslop/                # Path A — full alternate bootable image
+│   └── gaming.bst              # dep aggregator: stacks/desktop.bst + gaming/* + lib32-filter
+├── oci/gaming/                 # Path A — full alternate bootable image
 │   ├── image.bst
 │   ├── filesystem.bst
 │   ├── stack.bst
 │   ├── manifest.bst
 │   └── init-scripts.bst
-└── sysext/gamerslop/               # Path B — runtime-loadable delta sysext
+└── sysext/gaming/              # Path B — runtime-loadable delta sysext
     ├── deps.bst
     ├── filesystem.bst
     ├── init-scripts.bst
@@ -151,10 +151,12 @@ elements/
 - lib32 support requires adding an i686 cross-compiler junction override to
   `elements/freedesktop-sdk.bst` first — a prerequisite, not part of the
   gaming element tree itself.
-- Internal element-tree name `gamerslop` kept deliberately — matches the
-  vocabulary already used in `docs/skills/zirconium-hawaii.md`, so future
-  `upstream-lessons` passes diff cleanly against it. The shippable/user-facing
-  name (image tag, sysext filename) is a separate, undecided question below.
+- Internal element-tree name is `gaming`, not upstream's `gamerslop` — plain
+  and descriptive, and it matches this doc, the `docs/design/gaming-variant.md`
+  filename, and the user-facing artifact name. `gamerslop` stays confined to
+  `docs/skills/zirconium-hawaii.md` where it describes *zirconium-hawaii's*
+  tree, so `upstream-lessons` passes still diff against the right upstream
+  names.
 
 ## Decisions (resolved 2026-08-06)
 
@@ -167,14 +169,14 @@ elements/
    `gamescope-session`, `gamescope-session-steam`, `mangohud`, `scopebuddy`,
    `umu-launcher`, `inputplumber`.
 2. **Sequencing: sysext first, OCI variant deferred.** This doc and the
-   landed elements cover Path B only. Path A (`elements/oci/gamerslop/*`,
-   `stacks/gamerslop.bst` as a full desktop-stack superset, second
+   landed elements cover Path B only. Path A (`elements/oci/gaming/*`,
+   `stacks/gaming.bst` as a full desktop-stack superset, second
    publish/boot-test/sbom/sign CI leg) is intentionally not built — revisit
    once the sysext ships and the package set is validated in the field.
 3. **Steam delivery: native.** Matches both upstreams; required for
    `gamescope-session-steam` integration regardless.
-4. **Naming:** sysext artifact is `gamerslop-<arch>.raw`, extension ID
-   `gamerslop`, dropped at `/var/lib/extensions/gamerslop.raw` on a running
+4. **Naming:** sysext artifact is `gaming-<arch>.raw`, extension ID
+   `gaming`, dropped at `/var/lib/extensions/gaming.raw` on a running
    base krytis system, activated via `systemd-sysext refresh` (the mechanism
    `gnomeos/reload-sysext.bst` already wires up). OCI variant tag/repo
    naming is deferred along with Path A itself.

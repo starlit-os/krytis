@@ -2,7 +2,7 @@ kind: manual
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
-- gamerslop/gamescope.bst
+- gaming/gamescope.bst
 
 sources:
 - kind: git_repo

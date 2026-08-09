@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Update gamerslop/mangohud.bst to the latest GitHub release"
+#MISE description="Update gaming/mangohud.bst to the latest GitHub release"
 
 set -euo pipefail
 
-ELEMENT="elements/gamerslop/mangohud.bst"
+ELEMENT="elements/gaming/mangohud.bst"
 REPO="flightlessmango/MangoHud"
 
 echo "==> Fetching latest ${REPO} release..."

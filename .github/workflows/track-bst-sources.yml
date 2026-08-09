@@ -41,7 +41,7 @@ on:
           - libtsm
           - warp
           - qemu
-          - gamerslop
+          - gaming
           - steam
           - mangohud
           - libxres
@@ -840,7 +840,7 @@ jobs:
       github.event.inputs.group == 'stb' ||
       github.event.inputs.group == 'kmscon' ||
       github.event.inputs.group == 'libtsm' ||
-      github.event.inputs.group == 'gamerslop' ||
+      github.event.inputs.group == 'gaming' ||
       github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -892,15 +892,15 @@ jobs:
             branch: auto/track-vim
             title: "chore(deps): update vim"
           - group: manual-merge
-            element: gamerslop/gamescope.bst
+            element: gaming/gamescope.bst
             branch: auto/track-gamescope
             title: "chore(deps): update gamescope"
           - group: manual-merge
-            element: gamerslop/inputplumber.bst
+            element: gaming/inputplumber.bst
             branch: auto/track-inputplumber
             title: "chore(deps): update inputplumber"
           - group: manual-merge
-            element: gamerslop/umu-launcher.bst
+            element: gaming/umu-launcher.bst
             branch: auto/track-umu-launcher
             title: "chore(deps): update umu-launcher"
           - group: papirus-icon-theme
@@ -935,35 +935,35 @@ jobs:
             element: desktop/libtsm.bst
             branch: auto/track-libtsm
             title: "chore(deps): update libtsm"
-          - group: gamerslop
-            element: gamerslop/gamescope-session.bst
+          - group: gaming
+            element: gaming/gamescope-session.bst
             branch: auto/track-gamescope-session
             title: "chore(deps): update gamescope-session"
-          - group: gamerslop
-            element: gamerslop/gamescope-session-steam.bst
+          - group: gaming
+            element: gaming/gamescope-session-steam.bst
             branch: auto/track-gamescope-session-steam
             title: "chore(deps): update gamescope-session-steam"
-          - group: gamerslop
-            element: gamerslop/scopebuddy.bst
+          - group: gaming
+            element: gaming/scopebuddy.bst
             branch: auto/track-scopebuddy
             title: "chore(deps): update scopebuddy"
-          - group: gamerslop
+          - group: gaming
             element: deps/google-benchmark.bst
             branch: auto/track-google-benchmark
             title: "chore(deps): update google-benchmark"
-          - group: gamerslop
+          - group: gaming
             element: deps/luajit.bst
             branch: auto/track-luajit
             title: "chore(deps): update luajit"
-          - group: gamerslop
+          - group: gaming
             element: deps/libiio.bst
             branch: auto/track-libiio
             title: "chore(deps): update libiio"
-          - group: gamerslop
+          - group: gaming
             element: deps/libserialport.bst
             branch: auto/track-libserialport
             title: "chore(deps): update libserialport"
-          - group: gamerslop
+          - group: gaming
             element: deps/glfw.bst
             branch: auto/track-glfw
             title: "chore(deps): update glfw"
@@ -2211,7 +2211,7 @@ jobs:
       - name: Read current version
         id: current
         run: |
-          echo "version=$(grep -oP '^\s*version:\s*\K\S+' elements/gamerslop/mangohud.bst | head -1)" >> "$GITHUB_OUTPUT"
+          echo "version=$(grep -oP '^\s*version:\s*\K\S+' elements/gaming/mangohud.bst | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Update mangohud element
         env:
@@ -2221,7 +2221,7 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet elements/gamerslop/mangohud.bst; then
+          if git diff --quiet elements/gaming/mangohud.bst; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "Already up to date"
           else
@@ -2233,7 +2233,7 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
         run: |
-          echo "version=$(grep -oP '^\s*version:\s*\K\S+' elements/gamerslop/mangohud.bst | head -1)" >> "$GITHUB_OUTPUT"
+          echo "version=$(grep -oP '^\s*version:\s*\K\S+' elements/gaming/mangohud.bst | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
@@ -2248,11 +2248,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git stash push -- elements/gamerslop/mangohud.bst
+          git stash push -- elements/gaming/mangohud.bst
           git checkout -B "$BRANCH" origin/main
           git stash pop
 
-          git add elements/gamerslop/mangohud.bst
+          git add elements/gaming/mangohud.bst
           git commit -m "$TITLE"
           git push --force-with-lease origin "$BRANCH"
 

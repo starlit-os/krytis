@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Update gamerslop/steam.bst to the latest steampowered beta archive"
+#MISE description="Update gaming/steam.bst to the latest steampowered beta archive"
 
 set -euo pipefail
 
-ELEMENT="elements/gamerslop/steam.bst"
+ELEMENT="elements/gaming/steam.bst"
 CURRENT_VER=$(grep -oP 'steam_version:\s*\K\S+' "${ELEMENT}")
 echo "==> Current steam_version: ${CURRENT_VER}"
 echo "==> repo.steampowered.com has no machine-readable release feed — check by hand:"
