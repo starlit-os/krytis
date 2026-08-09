@@ -155,6 +155,46 @@ systemd-cryptsetup[401]: No valid TPM2 token data found.
 has therefore been **decorative on the root volume** since it was introduced. It is not
 wrong for other volumes; it simply never reaches this one.
 
+### Why this works on Fedora and CachyOS but not here
+
+It is not the UKI. It is the absence of **per-host** volume identity, which a generic
+signed image cannot have.
+
+`rd.luks.options=` is read by `systemd-cryptsetup-generator`, and grepping where it lands
+(`arg_default_options` in `cryptsetup-generator.c`) shows it reaches a unit through exactly
+two doors:
+
+- `add_crypttab_devices()` — an `/etc/crypttab` entry, present in the initrd
+- `add_proc_cmdline_devices()` — a volume declared by `rd.luks.uuid=` on the cmdline
+
+Ordinary distros walk through one of those doors as a side effect of installation. Fedora's
+installer writes `/etc/crypttab` and `rd.luks.uuid=` into the boot entry, and dracut's
+default `hostonly=yes` copies that crypttab into the initrd. Arch-family setups pass
+`rd.luks.uuid=`/`rd.luks.name=` for the `sd-encrypt` hook. Either way the generator that
+*reads the option* is the one that *creates the root's unit*, so FIDO2 applies — and the
+retry-capable manual `fido2-cid=` path becomes available too.
+
+krytis walks through neither, by design:
+
+- `hostonly=no` (`elements/core/initramfs.bst`) — the initrd is generic and reproducible,
+  so it carries no crypttab
+- the sealed UKI's baked cmdline is identical on every machine, so it cannot carry a
+  per-host UUID. Verified against the artifact:
+  `rw quiet splash rd.luks.options=fido2-device=auto composefs=<digest>` — no `root=`,
+  no `rd.luks.uuid=`
+
+With neither, the only thing that can find the volume is `systemd-gpt-auto-generator`,
+which builds its own option string. **Same karg, two generators, only one reads it.** A
+hostonly krytis UKI with a crypttab would behave exactly like Fedora; that is the thing
+being traded away for a signed, reproducible, identical-for-everyone image.
+
+The upstream-blessed way back is a **signed UKI addon** carrying per-host `rd.luks.uuid=`
+(`.cmdline` addon; sd-stub loads addons signed by a key in `db` — see
+`Containerfile.uki-addon` in travier/fedora-atomic-desktops-sealed). It is not free: the
+installing machine would need a signing key, which conflicts with #371's decision that the
+installer ships unsigned and keys live in CI. SMBIOS `kernel-cmdline-extra` is a VM-only
+trick (`mise/tasks/luks-boot-test` uses it) and cannot help on hardware under enforcement.
+
 ### Consequences for the three obvious fixes
 
 1. **TPM2 instead of FIDO2.** The one mechanism gpt-auto enables unprompted. `No valid
