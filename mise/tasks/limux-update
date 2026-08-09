@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="Update limux element to the latest stable release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/limux.bst"
+
+echo "==> Fetching latest am-will/limux release..."
+LATEST_TAG=$(gh api repos/am-will/limux/releases/latest --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
+
+echo "==> Latest: ${LATEST_VER}  Current: ${CURRENT_VER}"
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+TARBALL="limux-${LATEST_VER}-linux-x86_64.tar.gz"
+URL="https://github.com/am-will/limux/releases/download/${LATEST_TAG}/${TARBALL}"
+echo "==> Downloading ${URL}..."
+curl -sSfL "$URL" -o "${TMPDIR}/${TARBALL}"
+SHA256=$(sha256sum "${TMPDIR}/${TARBALL}" | awk '{print $1}')
+echo "    sha256=${SHA256}"
+
+sed -i "s|limux-${CURRENT_VER}-linux-x86_64.tar.gz|${TARBALL}|" "${ELEMENT}"
+sed -i "s|/v${CURRENT_VER}/|/v${LATEST_VER}/|g" "${ELEMENT}"
+sed -i "s|version: \"${CURRENT_VER}\"|version: \"${LATEST_VER}\"|" "${ELEMENT}"
+sed -i "/limux-${LATEST_VER}-linux-x86_64.tar.gz/{n;s|ref: .*|ref: ${SHA256}|}" "${ELEMENT}"
+
+echo "==> Done: ${CURRENT_VER} → ${LATEST_VER}. Run 'mise run validate' to verify."

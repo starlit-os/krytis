@@ -19,3 +19,12 @@ depends:
   # ── Terminal ───────────────────────────────────────────────────────────────
   # Warp: agentic terminal, prebuilt .deb, x86_64 + aarch64. Closes #315.
   - desktop/warp.bst
+
+  # ── Terminal workspace manager ─────────────────────────────────────────────
+  # limux: GPU-accelerated workspace manager with embedded Ghostty, splits,
+  # tabs, browser panes, and an agent-drivable CLI. Prebuilt tarball, x86_64.
+  # Pulls webkitgtk-6.0 into the image (hard NEEDED of limux-host). Closes #550.
+  - desktop/limux.bst
+  # /etc/ld.so.conf.d entry for limux's bundled libghostty.so — the binaries'
+  # RUNPATH points at /usr/local, which is /var state under bootc.
+  - config/limux-ldconfig.bst
