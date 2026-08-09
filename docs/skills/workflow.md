@@ -67,28 +67,26 @@ The ≤ 5-word issue title constraint means no truncation is needed.
 
 ## Cleaning Up Merged Worktrees and Branches
 
-After a PR is merged:
-
 ```shell
-git worktree remove <worktree-path>   # may need --force (see below)
-git branch -D <branch>                # -D required — see below
+mise run prune-worktrees --dry-run   # report only
+mise run prune-worktrees             # remove, with a confirmation prompt
 ```
 
-**`git branch -d` fails on rebased+merged branches.** When a branch was rebased before merging, the local tip SHA differs from the merge commit on main. Git considers the branch "not fully merged" even though the PR is closed. Always use `-D` after confirming the PR is merged on GitHub.
+It removes a worktree and its branch only when GitHub says the branch's newest PR is `MERGED`. Do not hand-roll the `git worktree remove` / `git branch -D` pair — the task encodes four things that are easy to get wrong:
 
-**`include/image-version.yml` is always locally modified.** `mise generate-image-version` writes a timestamp and commit SHA into this file. Any worktree that ran a build command will have it dirty, causing `git worktree remove` to refuse. Use `--force`. It is safe — the file is fully generated and has no unrecoverable content.
+**Ancestry checks all lie on a squash-only repo.** `git branch -d`, `git branch --merged main` and `git log --merged` all treat a merged branch as unmerged, because the squashed commit on `main` shares no ancestry with it. The PR state is the only trustworthy signal; `-D` is mandatory once it says `MERGED`.
 
-**Remove empty parent directories after worktree removal.** Worktrees under `<cc-type>/` (e.g. `feat/`, `chore/`, `fix/`) or `gh<number>/` parent dirs leave those directories behind when the last child worktree is removed. They must be cleaned up manually:
+**`include/image-version.yml` is always locally modified.** `mise generate-image-version` writes a timestamp and commit SHA into it, so any worktree that ran a build carries it dirty and `git worktree remove` refuses. The task ignores that one path and refuses on anything else, rather than blanket-forcing.
 
-```shell
-# Prune stale git registry entries (worktrees deleted from disk without git worktree remove):
-git worktree prune
+**Empty parent dirs survive their children.** Worktrees under `<cc-type>/` (`feat/`, `fix/`, …) or `gh<number>/` leave the parent directory behind. The task runs `git worktree prune` and deletes empty parents; `git worktree list` shows `prunable` next to stale entries if you are checking by hand.
 
-# Remove empty parent dirs left behind:
-find krytis.worktrees -mindepth 1 -maxdepth 1 -type d -empty -delete
+**A diverged tip is held back on purpose.** A local tip that does not match the merged PR's head means the branch was reused, force-pushed, or carries unpushed commits — the task reports it and keeps it:
+
+```
+.worktrees/fido-dropin    tip c62ebb1 != #543 head 3e02894 (--allow-diverged to override)
 ```
 
-`git worktree list` shows `prunable` next to stale entries — run `prune` first, then check for empty dirs. `rmdir` also works for individual dirs.
+Verify before overriding. `git diff origin/main <branch>` must show only content `main` already has (deletions relative to `main`, no additions of the branch's own) — then re-run with `--allow-diverged`.
 
 ## Opening Pull Requests
 
