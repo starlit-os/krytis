@@ -230,6 +230,44 @@ wiped on `daemon-reload`, so a hand-placed unit there vanishes):
 passphrase-only, which is what makes it catch exactly this. Run it against any change to
 the root's unlock path; a green `mise run build` proves only that files landed.
 
+### The pre-attempt MUST be `headless=yes`, or it prompts and stalls the boot
+
+`systemd-cryptsetup attach … fido2-device=auto` is not a FIDO2-only operation. When the
+token path comes up empty it falls through to **asking for a passphrase itself**. In a
+pre-attempt unit that is a boot stall, not a fallback, and with plymouth up it is an
+*invisible* one. Measured on 2026-08-08 with the journal forwarded to console:
+
+```
+[ 3.442] systemd-cryptsetup[291]: Set cipher aes ... /dev/gpt-auto-root-luks
+[ 3.452] Started systemd-ask-password-plymouth.service   <- the pre-attempt prompting
+[63.497] krytis-fido2-root-unlock.service: start operation timed out
+```
+
+The gate still passed — the real prompt appeared after the unit was killed — so **a green
+`luks-boot-test` does not prove the attempt behaved**. Read the timings.
+
+`headless=yes` makes password and PIN querying return `-ENOPKG` immediately, so the unit
+can only ever succeed via the token and never competes for the password agent. The
+consequence is that a credential enrolled **with** a client PIN cannot unlock at boot
+here: enroll touch-only (`--fido2-with-client-pin=no`).
+
+### No prior art: peer projects do TPM2, not FIDO2
+
+Checked `travier/fedora-atomic-desktops-sealed` and krytis's fork of it in full (every
+text file in both trees, 2026-08-08). **Zero** occurrences of `fido2`, `crypttab`,
+`rd.luks`, or `gpt-auto`. Their encrypted root is `Encrypt=key-file` via `repart.d/`, and
+the only unlock guidance is one README line:
+
+```console
+systemd-cryptenroll --tpm2-device=/dev/tpmrm0 --tpm2-pcrs=7:sha256 /dev/nvme0n1p2
+```
+
+So the absence of a working FIDO2 example elsewhere is not an oversight to copy from — it
+is the same asymmetry from the other side. TPM2 needs no unit, no drop-in and no
+`install_items` entry precisely because gpt-auto enables it natively and upstream makes
+its failures non-fatal. Note also `--tpm2-pcrs=7:sha256` — policy PCR only, deliberately
+not PCR 11, so enrollment survives image updates. Relevant to #368.
+
 ## ~~FIDO2 boot unlock race: LUKS2-token-plugin path has no retry~~ — DISPROVEN on hardware
 
 > **CORRECTION (2026-08-08).** The upstream code reading below is accurate and worth

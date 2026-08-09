@@ -47,12 +47,31 @@ Type=oneshot
 # is never detached during shutdown anyway; if it loses, the generated unit owns the
 # mapping and detaching it from here would fight that unit.
 #
+# headless=yes is what makes this safe to run first, and it was NOT obvious. Without it
+# this is a full unlock attempt, not a FIDO2-only one: after the token path comes up empty
+# systemd-cryptsetup falls through to ASKING FOR A PASSPHRASE itself. Measured 2026-08-08
+# — the attempt sat for the whole TimeoutSec while its password request went to plymouth,
+# invisible, and the real prompt only appeared once this unit was killed:
+#
+#   [ 3.442] systemd-cryptsetup[291]: Set cipher aes ... /dev/gpt-auto-root-luks
+#   [ 3.452] Started systemd-ask-password-plymouth.service   <- this unit prompting
+#   [63.497] krytis-fido2-root-unlock.service: start operation timed out
+#
+# With headless=yes both password and PIN querying return -ENOPKG immediately ("Password
+# querying disabled via 'headless' option"), so this unit can only ever succeed via the
+# token and can never compete with the generated unit for the password agent.
+#
+# Consequence worth knowing: a credential enrolled WITH a client PIN cannot unlock here,
+# because supplying the PIN needs the prompt this option forbids. It fails, the generated
+# unit asks for the passphrase, and the boot is correct but keyless. Enroll touch-only
+# (systemd-cryptenroll --fido2-with-client-pin=no) for FIDO2 boot unlock.
+#
 # Bounded, unlike the generated unit's TimeoutSec=infinity. That one can block forever
-# because a human is typing a passphrase into it; this one runs BEFORE that prompt, so
-# anything that stalls here delays the fallback rather than a person. token-timeout
-# bounds systemd's own wait-for-token udev monitor (default 30s), and TimeoutSec is the
-# backstop if it stalls anywhere else. Both failures hit the `-` and fall through.
-TimeoutSec=60
+# because a human is typing a passphrase into it; this one runs BEFORE that prompt, so a
+# stall here delays the fallback rather than a person. token-timeout bounds systemd's
+# wait-for-token udev monitor (default 30s) for the case where a token IS enrolled but the
+# key is not plugged in; TimeoutSec is the backstop. Both failures hit the `-`.
+TimeoutSec=30
 
 # `-`: failure is the expected path on a machine with no enrolled token.
-ExecStart=-/usr/lib/systemd/systemd-cryptsetup attach root /dev/gpt-auto-root-luks '' fido2-device=auto,token-timeout=20s
+ExecStart=-/usr/lib/systemd/systemd-cryptsetup attach root /dev/gpt-auto-root-luks '' fido2-device=auto,headless=yes,token-timeout=10s
