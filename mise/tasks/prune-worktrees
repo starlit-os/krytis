@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+#MISE description="Remove worktrees and local branches whose PR is merged"
+#USAGE flag "--dry-run" help="Report what would be removed and delete nothing"
+#USAGE flag "--yes" help="Skip the confirmation pause and remove immediately"
+#USAGE flag "--allow-diverged" help="Also remove branches whose local tip differs from the merged PR head (verify the content is upstream first)"
+
+# Why this exists: this repo is squash-only (AGENTS.md § Merge strategy), so a
+# merged branch shares no ancestry with the squashed commit on main. Every
+# ancestry-based check lies here:
+#
+#   git branch -d <branch>      refuses — "not fully merged"
+#   git branch --merged main    never lists it
+#   git log --merged            never shows it
+#
+# The only trustworthy signal is the PR state on GitHub, so that is what this
+# task asks. See docs/skills/workflow.md § Cleaning Up Merged Worktrees and
+# Branches.
+
+set -euo pipefail
+
+DRY_RUN="${usage_dry_run:-}"
+ASSUME_YES="${usage_yes:-}"
+ALLOW_DIVERGED="${usage_allow_diverged:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run)        DRY_RUN=true; shift ;;
+        --yes)            ASSUME_YES=true; shift ;;
+        --allow-diverged) ALLOW_DIVERGED=true; shift ;;
+        *) break ;;
+    esac
+done
+
+command -v gh >/dev/null 2>&1 || { echo "ERROR: gh is required" >&2; exit 1; }
+
+SELF=$(git rev-parse --show-toplevel)
+PRIMARY=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+cd "$PRIMARY"
+
+git fetch --prune --quiet origin
+
+# ── PR lookup ─────────────────────────────────────────────────────────────────
+# Newest PR for the branch wins: a head ref can be reused across PRs (a reverted
+# change re-landed, a branch recycled), and only the latest one describes the
+# state the local tip is in.
+pr_for_branch() {
+    gh pr list --head "$1" --state all --limit 20 \
+        --json number,state,headRefOid,updatedAt \
+        -q 'sort_by(.updatedAt) | last | "\(.number) \(.state) \(.headRefOid)"' 2>/dev/null
+}
+
+# Only `include/image-version.yml` may be dirty: `mise generate-image-version`
+# rewrites it on every build, so any worktree that built anything carries it.
+# It is fully generated — nothing is lost. Anything else is real work.
+dirty_beyond_generated() {
+    git -C "$1" status --porcelain | grep -v ' include/image-version\.yml$' || true
+}
+
+declare -a REMOVE_WT=() REMOVE_BR=() SKIP=()
+
+# ── Worktrees ─────────────────────────────────────────────────────────────────
+while read -r wt; do
+    [ -n "$wt" ] || continue
+    [ "$wt" = "$PRIMARY" ] && continue
+    if [ "$wt" = "$SELF" ]; then
+        SKIP+=("$wt|standing in it")
+        continue
+    fi
+
+    branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD || true)
+    if [ -z "$branch" ]; then
+        SKIP+=("$wt|detached HEAD")
+        continue
+    fi
+
+    read -r num state oid <<<"$(pr_for_branch "$branch")"
+    if [ -z "${num:-}" ]; then
+        SKIP+=("$wt|no PR for $branch")
+        continue
+    fi
+    if [ "$state" != "MERGED" ]; then
+        SKIP+=("$wt|#$num is $state")
+        continue
+    fi
+
+    tip=$(git -C "$wt" rev-parse HEAD)
+    if [ "$tip" != "$oid" ] && [ -z "$ALLOW_DIVERGED" ]; then
+        SKIP+=("$wt|tip ${tip:0:7} != #$num head ${oid:0:7} (--allow-diverged to override)")
+        continue
+    fi
+
+    leftover=$(dirty_beyond_generated "$wt")
+    if [ -n "$leftover" ]; then
+        SKIP+=("$wt|uncommitted changes: $(echo "$leftover" | wc -l) file(s)")
+        continue
+    fi
+
+    REMOVE_WT+=("$wt|$branch|#$num")
+done < <(git worktree list --porcelain | sed -n 's/^worktree //p')
+
+# ── Branches with no worktree ─────────────────────────────────────────────────
+# Two removable shapes: a merged PR, or no commits of its own at all (a branch
+# cut from main and never used).
+while read -r branch; do
+    [ -n "$branch" ] || continue
+    [ "$branch" = "main" ] && continue
+    git worktree list --porcelain | grep -qx "branch refs/heads/$branch" && continue
+
+    if [ -z "$(git log --oneline origin/main.."$branch")" ]; then
+        REMOVE_BR+=("$branch|no commits of its own")
+        continue
+    fi
+
+    read -r num state oid <<<"$(pr_for_branch "$branch")"
+    if [ -z "${num:-}" ]; then
+        SKIP+=("$branch|no PR")
+    elif [ "$state" != "MERGED" ]; then
+        SKIP+=("$branch|#$num is $state")
+    elif [ "$(git rev-parse "$branch")" != "$oid" ] && [ -z "$ALLOW_DIVERGED" ]; then
+        SKIP+=("$branch|tip != #$num head ${oid:0:7} (--allow-diverged to override)")
+    else
+        REMOVE_BR+=("$branch|#$num merged")
+    fi
+done < <(git for-each-ref --format='%(refname:short)' refs/heads)
+
+# ── Report ────────────────────────────────────────────────────────────────────
+if [ ${#REMOVE_WT[@]} -gt 0 ]; then
+    echo "Worktrees to remove:"
+    for e in "${REMOVE_WT[@]}"; do
+        IFS='|' read -r wt branch num <<<"$e"
+        printf '  %-70s %s (%s)\n' "${wt#"$PRIMARY"/}" "$branch" "$num"
+    done
+fi
+if [ ${#REMOVE_BR[@]} -gt 0 ]; then
+    echo "Branches to delete (no worktree):"
+    for e in "${REMOVE_BR[@]}"; do
+        IFS='|' read -r branch why <<<"$e"
+        printf '  %-70s %s\n' "$branch" "$why"
+    done
+fi
+if [ ${#SKIP[@]} -gt 0 ]; then
+    echo "Keeping:"
+    for e in "${SKIP[@]}"; do
+        IFS='|' read -r what why <<<"$e"
+        printf '  %-70s %s\n' "${what#"$PRIMARY"/}" "$why"
+    done
+fi
+
+if [ ${#REMOVE_WT[@]} -eq 0 ] && [ ${#REMOVE_BR[@]} -eq 0 ]; then
+    echo "Nothing to remove."
+    exit 0
+fi
+
+if [ -n "$DRY_RUN" ]; then
+    echo "--dry-run: nothing removed."
+    exit 0
+fi
+
+if [ -z "$ASSUME_YES" ]; then
+    echo
+    read -r -p "Remove the above? [y/N] " reply
+    case "$reply" in [yY]*) ;; *) echo "Aborted."; exit 0 ;; esac
+fi
+
+# ── Remove ────────────────────────────────────────────────────────────────────
+# --force covers a still-dirty include/image-version.yml, which the check above
+# already decided is acceptable. `git branch -D` (not -d) is mandatory: see the
+# squash-only note at the top of this file.
+for e in "${REMOVE_WT[@]}"; do
+    IFS='|' read -r wt branch _ <<<"$e"
+    git worktree remove --force "$wt"
+    git branch -D "$branch"
+    echo "removed ${wt#"$PRIMARY"/}"
+done
+for e in "${REMOVE_BR[@]}"; do
+    IFS='|' read -r branch _ <<<"$e"
+    git branch -D "$branch"
+done
+
+# Nested worktree paths (`feat/`, `fix/`, `gh<parent>/`) leave their parent dir
+# behind once the last child is gone.
+git worktree prune
+for base in "$PRIMARY/.worktrees" "$PRIMARY/../$(basename "$PRIMARY").worktrees"; do
+    [ -d "$base" ] || continue
+    find "$base" -mindepth 1 -maxdepth 1 -type d -empty -delete
+done
+
+echo "Done."

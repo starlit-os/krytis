@@ -557,6 +557,7 @@ tasks while `mise/tasks/` held 53.
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
 | Docs & upstreams | `docs-links` `upstream-sync` |
+| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock` |
 | Element updates | one `<name>-update` per tracked element — see § Element update tasks |
 
