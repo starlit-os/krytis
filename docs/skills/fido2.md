@@ -298,6 +298,49 @@ can only ever succeed via the token and never competes for the password agent. T
 consequence is that a credential enrolled **with** a client PIN cannot unlock at boot
 here: enroll touch-only (`--fido2-with-client-pin=no`).
 
+### `timeout=` must be shorter than `TimeoutSec=`, or the prompt is orphaned (#547)
+
+The pre-attempt carries **three** nested bounds, and their order matters:
+
+| bound | what it limits |
+|---|---|
+| `token-timeout=10s` | systemd's wait-for-token udev monitor — enrolled token, key not plugged in |
+| `timeout=20s` | systemd-cryptsetup's **own** deadline for the presence wait |
+| `TimeoutSec=30` | systemd's backstop for a stall anywhere else |
+
+Without `timeout=`, `arg_timeout` is `USEC_INFINITY`, so systemd-cryptsetup waits for the
+touch forever and `TimeoutSec` **SIGTERMs** it. Reported from hardware: the plymouth
+message *"Please confirm presence on security token to unlock."* then stays on screen
+underneath the passphrase prompt, and touching the key does nothing.
+
+The cause is a cleanup handler that only runs on a normal return
+(`src/shared/libfido2-util.c`):
+
+```c
+_cleanup_(plymouth_end_interaction) bool plymouth_displayed = false;
+```
+
+A killed process never unwinds. Giving systemd-cryptsetup a deadline of its own makes it
+return normally, so the interaction ends and the fallback prompt appears alone.
+
+**The key keeps blinking regardless, and that part is upstream.** systemd never cancels the
+CTAP2 assertion — `fido_dev_cancel` is not in its dlopen symbol table at all, only
+`fido_dev_close` — so the authenticator holds its user-presence request until its own
+internal timeout. Closing the fd looks identical to the key whether the exit was clean or
+a SIGTERM, so do not expect a unit option to stop the blink; it needs a patch to
+`libfido2-util.c`.
+
+Verify an option string is actually accepted before trusting it — an unrecognised crypttab
+option only *warns*:
+
+```console
+$ systemd-cryptsetup attach probe /tmp/img '' 'fido2-device=auto,bogus-option=1'
+Encountered unknown /etc/crypttab option 'bogus-option=1', ignoring.
+```
+
+Run that as a positive control alongside the real string; silence on the real one is only
+meaningful once you have seen the bogus one complain.
+
 ### No prior art: peer projects do TPM2, not FIDO2
 
 Checked `travier/fedora-atomic-desktops-sealed` and krytis's fork of it in full (every
