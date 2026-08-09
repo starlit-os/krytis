@@ -68,10 +68,28 @@ Type=oneshot
 #
 # Bounded, unlike the generated unit's TimeoutSec=infinity. That one can block forever
 # because a human is typing a passphrase into it; this one runs BEFORE that prompt, so a
-# stall here delays the fallback rather than a person. token-timeout bounds systemd's
-# wait-for-token udev monitor (default 30s) for the case where a token IS enrolled but the
-# key is not plugged in; TimeoutSec is the backstop. Both failures hit the `-`.
+# stall here delays the fallback rather than a person.
+#
+# THREE nested bounds, and the order between them is load-bearing (#547):
+#
+#   token-timeout=10s   systemd's wait-for-token udev monitor, for an enrolled token whose
+#                       key is not plugged in
+#   timeout=20s         systemd-cryptsetup's OWN deadline for the presence wait
+#   TimeoutSec=30       systemd's backstop if it stalls anywhere else
+#
+# timeout= must stay STRICTLY LESS than TimeoutSec, or the visible bug in #547 comes back.
+# Without it, arg_timeout is USEC_INFINITY, systemd-cryptsetup waits for the touch forever,
+# and TimeoutSec SIGTERMs it. The plymouth "Please confirm presence on security token"
+# message is torn down by `_cleanup_(plymouth_end_interaction)` in libfido2-util.c, which
+# only runs when the function RETURNS — a killed process never unwinds, so the message is
+# orphaned on screen underneath the passphrase prompt, inviting a touch that now unlocks
+# nothing. With a deadline of its own, systemd-cryptsetup returns normally, the cleanup
+# runs, and the fallback prompt appears alone.
+#
+# What this does NOT fix: the key keeps blinking until its own internal timeout, because
+# systemd never cancels the CTAP2 assertion — fido_dev_cancel is not even in its dlopen
+# symbol table (only fido_dev_close). That needs an upstream patch; see #547.
 TimeoutSec=30
 
 # `-`: failure is the expected path on a machine with no enrolled token.
-ExecStart=-/usr/lib/systemd/systemd-cryptsetup attach root /dev/gpt-auto-root-luks '' fido2-device=auto,headless=yes,token-timeout=10s
+ExecStart=-/usr/lib/systemd/systemd-cryptsetup attach root /dev/gpt-auto-root-luks '' fido2-device=auto,headless=yes,token-timeout=10s,timeout=20s
