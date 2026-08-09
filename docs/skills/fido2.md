@@ -195,6 +195,13 @@ installing machine would need a signing key, which conflicts with #371's decisio
 installer ships unsigned and keys live in CI. SMBIOS `kernel-cmdline-extra` is a VM-only
 trick (`mise/tasks/luks-boot-test` uses it) and cannot help on hardware under enforcement.
 
+**Tracked in #545**, which watches
+[travier#13](https://github.com/travier/fedora-atomic-desktops-sealed/issues/13) and
+[bootc#1780](https://github.com/bootc-dev/bootc/pull/1780). Note the asymmetry recorded
+there: addons could retire #531's keymap problem cleanly, because a fixed set of
+`vconsole.keymap=` addons can be signed in CI — but they can only fix this FIDO2 case if
+per-host signing is solved, since a per-install UUID cannot be pre-signed.
+
 ### Consequences for the three obvious fixes
 
 1. **TPM2 instead of FIDO2.** The one mechanism gpt-auto enables unprompted. `No valid
