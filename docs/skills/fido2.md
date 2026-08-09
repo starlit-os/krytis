@@ -155,6 +155,53 @@ systemd-cryptsetup[401]: No valid TPM2 token data found.
 has therefore been **decorative on the root volume** since it was introduced. It is not
 wrong for other volumes; it simply never reaches this one.
 
+### Why this works on Fedora and CachyOS but not here
+
+It is not the UKI. It is the absence of **per-host** volume identity, which a generic
+signed image cannot have.
+
+`rd.luks.options=` is read by `systemd-cryptsetup-generator`, and grepping where it lands
+(`arg_default_options` in `cryptsetup-generator.c`) shows it reaches a unit through exactly
+two doors:
+
+- `add_crypttab_devices()` — an `/etc/crypttab` entry, present in the initrd
+- `add_proc_cmdline_devices()` — a volume declared by `rd.luks.uuid=` on the cmdline
+
+Ordinary distros walk through one of those doors as a side effect of installation. Fedora's
+installer writes `/etc/crypttab` and `rd.luks.uuid=` into the boot entry, and dracut's
+default `hostonly=yes` copies that crypttab into the initrd. Arch-family setups pass
+`rd.luks.uuid=`/`rd.luks.name=` for the `sd-encrypt` hook. Either way the generator that
+*reads the option* is the one that *creates the root's unit*, so FIDO2 applies — and the
+retry-capable manual `fido2-cid=` path becomes available too.
+
+krytis walks through neither, by design:
+
+- `hostonly=no` (`elements/core/initramfs.bst`) — the initrd is generic and reproducible,
+  so it carries no crypttab
+- the sealed UKI's baked cmdline is identical on every machine, so it cannot carry a
+  per-host UUID. Verified against the artifact:
+  `rw quiet splash rd.luks.options=fido2-device=auto composefs=<digest>` — no `root=`,
+  no `rd.luks.uuid=`
+
+With neither, the only thing that can find the volume is `systemd-gpt-auto-generator`,
+which builds its own option string. **Same karg, two generators, only one reads it.** A
+hostonly krytis UKI with a crypttab would behave exactly like Fedora; that is the thing
+being traded away for a signed, reproducible, identical-for-everyone image.
+
+The upstream-blessed way back is a **signed UKI addon** carrying per-host `rd.luks.uuid=`
+(`.cmdline` addon; sd-stub loads addons signed by a key in `db` — see
+`Containerfile.uki-addon` in travier/fedora-atomic-desktops-sealed). It is not free: the
+installing machine would need a signing key, which conflicts with #371's decision that the
+installer ships unsigned and keys live in CI. SMBIOS `kernel-cmdline-extra` is a VM-only
+trick (`mise/tasks/luks-boot-test` uses it) and cannot help on hardware under enforcement.
+
+**Tracked in #545**, which watches
+[travier#13](https://github.com/travier/fedora-atomic-desktops-sealed/issues/13) and
+[bootc#1780](https://github.com/bootc-dev/bootc/pull/1780). Note the asymmetry recorded
+there: addons could retire #531's keymap problem cleanly, because a fixed set of
+`vconsole.keymap=` addons can be signed in CI — but they can only fix this FIDO2 case if
+per-host signing is solved, since a per-install UUID cannot be pre-signed.
+
 ### Consequences for the three obvious fixes
 
 1. **TPM2 instead of FIDO2.** The one mechanism gpt-auto enables unprompted. `No valid
@@ -229,6 +276,44 @@ wiped on `daemon-reload`, so a hand-placed unit there vanishes):
 **`mise run luks-boot-test` is the gate for this class**, and its synthetic root is
 passphrase-only, which is what makes it catch exactly this. Run it against any change to
 the root's unlock path; a green `mise run build` proves only that files landed.
+
+### The pre-attempt MUST be `headless=yes`, or it prompts and stalls the boot
+
+`systemd-cryptsetup attach … fido2-device=auto` is not a FIDO2-only operation. When the
+token path comes up empty it falls through to **asking for a passphrase itself**. In a
+pre-attempt unit that is a boot stall, not a fallback, and with plymouth up it is an
+*invisible* one. Measured on 2026-08-08 with the journal forwarded to console:
+
+```
+[ 3.442] systemd-cryptsetup[291]: Set cipher aes ... /dev/gpt-auto-root-luks
+[ 3.452] Started systemd-ask-password-plymouth.service   <- the pre-attempt prompting
+[63.497] krytis-fido2-root-unlock.service: start operation timed out
+```
+
+The gate still passed — the real prompt appeared after the unit was killed — so **a green
+`luks-boot-test` does not prove the attempt behaved**. Read the timings.
+
+`headless=yes` makes password and PIN querying return `-ENOPKG` immediately, so the unit
+can only ever succeed via the token and never competes for the password agent. The
+consequence is that a credential enrolled **with** a client PIN cannot unlock at boot
+here: enroll touch-only (`--fido2-with-client-pin=no`).
+
+### No prior art: peer projects do TPM2, not FIDO2
+
+Checked `travier/fedora-atomic-desktops-sealed` and krytis's fork of it in full (every
+text file in both trees, 2026-08-08). **Zero** occurrences of `fido2`, `crypttab`,
+`rd.luks`, or `gpt-auto`. Their encrypted root is `Encrypt=key-file` via `repart.d/`, and
+the only unlock guidance is one README line:
+
+```console
+systemd-cryptenroll --tpm2-device=/dev/tpmrm0 --tpm2-pcrs=7:sha256 /dev/nvme0n1p2
+```
+
+So the absence of a working FIDO2 example elsewhere is not an oversight to copy from — it
+is the same asymmetry from the other side. TPM2 needs no unit, no drop-in and no
+`install_items` entry precisely because gpt-auto enables it natively and upstream makes
+its failures non-fatal. Note also `--tpm2-pcrs=7:sha256` — policy PCR only, deliberately
+not PCR 11, so enrollment survives image updates. Relevant to #368.
 
 ## ~~FIDO2 boot unlock race: LUKS2-token-plugin path has no retry~~ — DISPROVEN on hardware
 
