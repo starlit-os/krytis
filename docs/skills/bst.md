@@ -320,6 +320,53 @@ The `image.bst` script must run steps in this order:
 
 Running `build-oci` before `systemd-sysusers` means the greeter user (`greeter`) won't exist in the image.
 
+### `ldconfig -r <root>` in the BST sandbox needs a build-only config file
+
+`/etc/ld.so.conf.d/*.conf` entries are worthless unless `image.bst`'s `ldconfig -r /layer`
+actually reads them, and the obvious invocations do not. `image.bst` carried this bug from
+the day the call was added: `00_mesa.conf` and `codecs-extra.conf` were both present in the
+image and both absent from `/etc/ld.so.cache`, so `config/codecs-extra-ldconfig.bst` had
+never once worked. Two glibc behaviours combine (`elf/ldconfig.c`):
+
+1. **`-r` is only "virtual" when the real `chroot()` fails.** `main()` tries
+   `chroot(opt_chroot)` first and, on success, sets `opt_chroot = NULL` — every later path
+   is then plain. The unprivileged BST sandbox has no `CAP_SYS_CHROOT`, so the call fails
+   and `opt_chroot` stays set, meaning **every** path — including `-f` — is run through
+   `chroot_canon()`. `-f /layer/etc/ld.so.conf` therefore resolves to
+   `/layer/layer/etc/ld.so.conf`, misses, and `parse_conf` returns **silently**: exit 0,
+   nothing on stderr, cache holding only the default trusted dirs. This is why testing the
+   command in a privileged `podman run` is misleading — there `chroot()` succeeds and the
+   same line works.
+2. **With `opt_chroot` set, a relative `include` is fatal.** `parse_conf_include()` starts
+   with `if (opt_chroot != NULL && pattern[0] != '/') error (EXIT_FAILURE, …)` →
+   `need absolute file name for configuration file when using -r`. fdsdk's
+   `/etc/ld.so.conf` ships `include ld.so.conf.d/*.conf`, i.e. relative — so both
+   `-f /etc/ld.so.conf` and omitting `-f` (which defaults to the same file) hard-fail.
+
+Working form — a build-only config carrying the absolute include, deleted afterwards so the
+shipped `/etc/ld.so.conf` (correct for the unchrooted ldconfig on a booted system) is
+untouched:
+
+```bash
+printf 'include /etc/ld.so.conf.d/*.conf\n' > /layer/etc/ld.so.conf.build
+ldconfig -r /layer -f /etc/ld.so.conf.build
+rm /layer/etc/ld.so.conf.build
+```
+
+The standard search paths are always added on top (`add_system_dir (SLIBDIR/LIBDIR)` runs
+unconditionally after `parse_conf`), so nothing is lost by not reading the shipped file.
+
+Verify on the built image, never on the build succeeding — failure mode 1 is invisible:
+
+```bash
+podman run --rm --entrypoint= localhost/krytis:latest \
+  sh -c 'ldconfig -p | grep -c GL/default'   # must be non-zero
+```
+
+To experiment with ldconfig under the same constraints the assembly script has, use
+`mise run bst shell --build oci/krytis/image.bst -- sh -c '…'` — a privileged container is
+not a valid stand-in.
+
 ## Compose Element Structure
 
 ```yaml
