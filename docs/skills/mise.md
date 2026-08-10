@@ -441,6 +441,32 @@ class of bug.** Go binaries built `CGO_ENABLED=0` use the pure-Go resolver, whic
 `/etc/resolv.conf` for exactly the same reason musl does, and there is no "gnu variant" of
 a Go release to switch to. `/etc/resolv.conf` has to be correct regardless.
 
+### Probing the Go side: `pangolin`
+
+Go's resolver **prints the nameserver it queried** in the error, which makes it a better
+diagnostic than mise's opaque `dns error`. `pangolin login <hostname>` reaches the network
+before it needs any credentials, so it works as a probe with no account. Sandbox `HOME` so
+it cannot touch real config:
+
+```bash
+H=$(mktemp -d)
+HOME=$H XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share \
+  timeout 20 pangolin login example.com </dev/null
+```
+
+Read the nameserver in the output, not the failure itself — the command always fails
+(example.com is not a Pangolin server), the question is *how far it got*:
+
+| Output | Meaning |
+|---|---|
+| `failed to unmarshal response: invalid character '<'` | **healthy** — DNS, TCP and TLS all succeeded; it got HTML back |
+| `lookup … on 127.0.0.53:53: no such host` | healthy resolver, hostname genuinely does not exist (expected for a `.invalid` probe) |
+| `lookup … on [::1]:53: … connection refused` | **broken** — `/etc/resolv.conf` is missing or unreadable, so Go fell back to localhost and nothing is listening |
+
+That last row is the same underlying fault as mise's `dns error`, just legible. The
+`[::1]`/`127.0.0.1` fallback is what both resolvers do with no usable nameserver;
+systemd-resolved binds `127.0.0.53` and `127.0.0.54`, never plain localhost.
+
 Related: [`bst.md`](bst.md) § resolv.conf and /etc/hosts Are Already Covered — No
 network.bst Needed.
 
