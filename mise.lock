@@ -31,13 +31,13 @@ provenance = "github-attestations"
 provenance_verified = true
 
 [[tools.grype]]
-version = "0.116.1"
+version = "0.117.0"
 backend = "aqua:anchore/grype"
 
 [tools.grype."platforms.linux-x64"]
-checksum = "sha256:0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458"
-url = "https://github.com/anchore/grype/releases/download/v0.116.1/grype_0.116.1_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/anchore/grype/releases/assets/493235685"
+checksum = "sha256:38525dab1e06f162ebaa02f94d82d1f807076b011a44180cf2777edf1a7b9c26"
+url = "https://github.com/anchore/grype/releases/download/v0.117.0/grype_0.117.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/509013292"
 
 [[tools.gum]]
 version = "0.17.0"
