@@ -467,6 +467,53 @@ That last row is the same underlying fault as mise's `dns error`, just legible. 
 `[::1]`/`127.0.0.1` fallback is what both resolvers do with no usable nameserver;
 systemd-resolved binds `127.0.0.53` and `127.0.0.54`, never plain localhost.
 
+### If it goes missing again: naming the deleter
+
+Confirmed on real hardware: **`systemd-tmpfiles` does recreate the symlink.** After
+`sudo rm /etc/resolv.conf`, this brings it straight back:
+
+```bash
+sudo systemd-tmpfiles --boot --create /usr/lib/tmpfiles.d/systemd-resolve.conf
+```
+
+So the boot-time path is healthy, and a machine found *without* `/etc/resolv.conf` had it
+deleted **after** boot. That narrows the hunt to a running process.
+
+**`pangolin` is not the culprit — do not re-run this investigation.** It looks like the
+obvious suspect: it is a tunnel client, it embeds `github.com/fosrl/olm@v1.8.2/dns/`, it
+has a `reset-dns` subcommand ("Force-clear stale DNS overrides"), and `strings` on the
+binary shows `FileDNSConfigurator.backupResolvConf`, `writeResolvConf`, `RestoreDNS`,
+`CleanupStaleResolvconfDNS` and the literal
+`# Original file backed up to /etc/resolv.conf.olm.backup`. Reading the module source
+clears it:
+
+- No `os.Remove` anywhere in `dns/` targets `/etc/resolv.conf`. The three in
+  `platform/file.go` (lines 78, 102, 239) remove `resolvConfBackupPath`
+  (`/etc/resolv.conf.olm.backup`); the four in `platform/network_manager.go` remove NM's
+  own conf.d drop-in. Restore is `copyFile(backup, resolvConfPath)` — a write, never an
+  unlink.
+- On krytis `DetectDNSManager` returns `SystemdResolvedManager` (the stub file names
+  systemd-resolved, and resolved is running), selecting the D-Bus/`resolvectl`
+  configurator. `FileDNSConfigurator` is never constructed, so the file is not touched.
+
+Worth knowing anyway: `FileDNSConfigurator` uses `os.WriteFile(resolvConfPath, …)`, which
+**follows the symlink**. On a distro where that configurator *is* selected, it would
+overwrite `/run/systemd/resolve/stub-resolv.conf` rather than replace `/etc/resolv.conf`.
+That is a `/run` tmpfs file, so a reboot clears it. Not our failure mode, but the reason
+to check *which* configurator is active before blaming a tunnel client.
+
+Since the cause is still unidentified, arm a trap rather than guess — `auditd` is active
+and enabled in the image:
+
+```bash
+sudo auditctl -w /etc/resolv.conf -p wa -k resolvconf-watch   # until reboot
+sudo ausearch -k resolvconf-watch -i                          # after it recurs
+```
+
+Persist it across reboots by dropping the same rule in `/etc/audit/rules.d/`. `ausearch -i`
+resolves the syscall and names the executable, which is the one thing source-reading
+cannot give you.
+
 Related: [`bst.md`](bst.md) § resolv.conf and /etc/hosts Are Already Covered — No
 network.bst Needed.
 
