@@ -1200,6 +1200,79 @@ palette name — e.g. palette `"Rose Pine Moon"` is cached as literal filename
 `Rose%20Pine%20Moon.json` (percent signs literally in the filename, not real spaces). Match
 this exactly or the lookup misses.
 
+## Apps launched from noctalia share its cgroup — one app's OOM kills the shell
+
+By default (`launch_apps_as_systemd_services = false`) noctalia `fork`+`exec`s launcher,
+dock, and taskbar launches, so every app it starts stays in noctalia's own transient
+scope — `app-niri-noctalia-<pid>.scope`, created by niri's `spawn-at-startup`. That
+scope is a single systemd unit with `OOMPolicy=stop` (the `DefaultOOMPolicy`), so:
+
+1. Kernel OOM-kills *any* process in the scope (the app, not noctalia).
+2. systemd logs `<scope>: The kernel OOM killer killed some processes in this unit`
+   and, per `OOMPolicy=stop`, stops the unit — `SIGTERM` to every survivor.
+3. noctalia's main loop exits only on `SIGTERM`/`SIGINT` (`s_shutdownRequested`), logs
+   `closing bar surfaces for clean shutdown`, and tears down. The bar, dock, tray, and
+   notification state all die with it. `spawn-at-startup` does **not** respawn it.
+
+The scope's exit line reads `Failed with result 'oom-kill'` with the *scope's* combined
+memory peak, which reads as "noctalia leaked GiBs" — it is not. Attribute the memory to
+`task=` in the kernel `oom-kill:` line, and cross-check the coredump size.
+
+Fix, shipped in `config/noctalia-skel.bst` since 2026-08-11:
+
+```toml
+[shell]
+launch_apps_as_systemd_services = true
+```
+
+noctalia then launches through `systemd-run --user --slice=app.slice
+--property=ExitType=cgroup --unit=app-<name>@<uuid>.service` (`src/core/process/process.cpp`,
+`startSystemdService`). Each app is its own unit, so an app OOM stops only that app, and
+per-app limits become possible via drop-ins in
+`~/.config/systemd/user/app-<desktop-id>@.service.d/` (e.g. `MemoryMax=` for an editor
+that indexes large trees). `ExitType=cgroup` is why launcher-script apps (vscode-style)
+don't exit early.
+
+**Skel only reaches new accounts** (see the section above) — existing users must add the
+key to `~/.local/state/noctalia/settings.toml` themselves. noctalia picks it up live:
+`[config] reloading …/settings.toml` appears in `~/.cache/noctalia/noctalia.log`.
+
+Same trap applies to *how noctalia itself is started*: launching it from a terminal puts
+it in that terminal's scope (`app-ghostty-surface-transient-<pid>.scope`), so closing the
+terminal — or an OOM inside it — takes the bar with it. Restart it detached instead:
+
+```shell
+systemd-run --user --unit=noctalia --slice=app.slice --collect -p OOMPolicy=continue noctalia
+```
+
+Verification recipes:
+
+```shell
+# Which cgroup did a launched app land in? (want app-<name>@<uuid>.service, not the shell's scope)
+cat /proc/$(pgrep -n <app>)/cgroup
+
+# Reproduce the policy itself: a sibling OOM inside one scope SIGTERMs the survivors
+systemd-run --user --scope --slice=app.slice -p MemoryMax=64M -p MemorySwapMax=0 \
+  sh -c 'trap "echo SURVIVOR_GOT_SIGTERM; exit 0" TERM; (exec python3 -c "
+b=bytearray()
+while True: b.extend(b\"x\"*(4<<20))") & sleep 30'
+
+# Check any settings.toml (unknown keys, bad values, syntax) without restarting the shell
+noctalia config validate [path]
+```
+
+Incident of record (2026-08-11): `zed-editor`, launched from noctalia's launcher, was given
+`/var/home/lily` as a project root — ~6.7M inodes, 4.5M of them in `~/.local/share/containers`
+— blew past `fs.inotify.max_user_watches` (274125), rescan-looped
+(`fs::fs_watcher: filesystem watcher lost sync for many files`, 1400 lines in 29 s), reached
+18.7 GiB anon RSS, and triggered a global OOM. noctalia was SIGTERM'd by the chain above and
+then segfaulted during teardown in `Calculator::~Calculator` → `__gmp_randclear`
+(libqalculate/libgmp) — the still-latent upstream destructor bug from
+[noctalia#3213](https://github.com/noctalia-dev/noctalia/issues/3213), which was closed by
+fixing that reporter's exit trigger, not the double-clear. Any clean noctalia shutdown after
+the launcher panel has been constructed can still dump a core on the way out; it is cosmetic,
+but it makes `coredumpctl` blame noctalia for someone else's OOM.
+
 ## noctalia's niri template silently orphans /etc/niri/config.kdl if no user config exists
 
 noctalia's `theme.templates` niri integration (`assets/templates/niri/apply.sh`
