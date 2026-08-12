@@ -273,6 +273,12 @@ the whole namespace question: podman resolves and mounts the source image for th
 container directly, no separate `unshare`/`mount`/`umount` lifecycle to get wrong, and it
 is still a genuine read-only OCI-derived view of the committed image, not a rebuild.
 
+`mise/tasks/verify-composefs-digest` (#528) automates exactly these two steps and is
+now `mise/tasks/seal-uki`'s `[3/3]` phase — reach for the by-hand version above only
+when debugging the task itself or checking an image outside the seal-uki flow (e.g.
+a pulled `ghcr.io/starlit-os/krytis:sealed`, as this section's own verification was
+done).
+
 
 
 

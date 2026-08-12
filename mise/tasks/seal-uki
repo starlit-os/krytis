@@ -18,7 +18,10 @@ fi
 #
 # 4.9.3 and 5.8.2 both produce a correct sealed image. The engine-sensitivity of
 # the squash is real, but the way to catch a bad digest is to CHECK THE DIGEST
-# (#528), not to guess at version numbers.
+# (#528), not to guess at version numbers. Phase [3/3] below
+# (mise/tasks/verify-composefs-digest) is that check — it runs on every
+# seal-uki invocation, engine-agnostic, and fails loudly naming both digests
+# on a real mismatch instead of guessing from a version number.
 
 # Two-phase build — see Containerfile.seal-uki's header comment and
 # docs/skills/secure-boot.md § `bootc container ukify` must run in a
@@ -32,7 +35,7 @@ fi
 # reference, then squash again for the final image — verified to produce a
 # matching digest AND a single-layer image.
 
-echo "==> [1/2] Building + squashing sealed rootfs -> localhost/krytis:sealed-base..."
+echo "==> [1/3] Building + squashing sealed rootfs -> localhost/krytis:sealed-base..."
 podman build --squash-all --target sealed -t localhost/krytis:sealed-base \
     --build-arg SEAL_SECURE_BOOT=true \
     --secret id=db_key,src=files/boot-keys/db.key \
@@ -78,7 +81,7 @@ except OSError as exc:
     exit 1
 fi
 
-echo "==> [2/2] Building UKI against sealed-base -> localhost/krytis:sealed..."
+echo "==> [2/3] Building UKI against sealed-base -> localhost/krytis:sealed..."
 podman build --squash-all -t localhost/krytis:sealed \
     --build-arg SEAL_SECURE_BOOT=true \
     --secret id=db_key,src=files/boot-keys/db.key \
@@ -86,4 +89,7 @@ podman build --squash-all -t localhost/krytis:sealed \
     -v "${UKI_TMP}:/var/tmp" \
     -f Containerfile.seal-uki .
 
-echo "==> Sealed image built: localhost/krytis:sealed"
+echo "==> [3/3] Verifying baked composefs digest against the committed image (#528)..."
+./mise/tasks/verify-composefs-digest --image localhost/krytis:sealed
+
+echo "==> Sealed image built and verified: localhost/krytis:sealed"
