@@ -37,7 +37,15 @@ mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
   `bst` and `validate` tasks declare `depends=["generate-image-version"]` so it's always
   regenerated automatically. `mise bootstrap` also generates it for fresh clones.
   Manual `mise generate-image-version` is only needed if you want to regenerate without building.
-- `lint` must be run after `load-image` — not automatically re-triggered.
+- `lint` must be run after `load-image` — not automatically re-triggered. **`mise lint` on
+  its own is not a build and will happily pass against a stale image.** It runs the
+  Containerfile against whatever `localhost/krytis-input:latest` currently is, so on a branch
+  whose elements have never been loaded it validates the *previous* branch's image and reports
+  success. Observed while testing an element swap: `lint` passed while the image still
+  contained the elements the branch had removed. Use `mise run build`
+  (`generate-image-version` → `load-image` → `lint`), and confirm the change by inspecting
+  image *contents* — `podman run --rm localhost/krytis:latest ...`, or `/usr/manifest.json`
+  for element-level presence — never by the lint exit code alone.
 - `generate-disk` requires `sudo` (bootc loopback install needs root).
 - `boot-vm` requires `qemu-system-x86_64` + `edk2-ovmf`, or falls back to `docker.io/qemux/qemu-docker`.
 - `.ovmf-vars.fd` (writable UEFI state) and `bootable.raw` are `.gitignore`d.
