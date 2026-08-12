@@ -660,8 +660,35 @@ Two more things:
 
 `virsh screenshot <vm> ~/shot.ppm` (then `magick ~/shot.ppm ~/shot.png`) reads
 the SPICE display without touching the guest — the reliable way to see which VT
-is showing what, and `V send-key <vm> --codeset linux KEY_LEFTCTRL KEY_LEFTALT
-KEY_F5` switches VT from outside the guest.
+is showing what.
+
+#### Boxes cannot send Ctrl+Alt+F5, so the first-boot wizard is unreachable
+
+Boxes' **Send Key** menu offers a fixed subset — Ctrl+Alt+F1/F2/F3/F6/F7/F9 —
+with **no F4, F5 or F8**, and the host compositor swallows the real key press.
+krytis's first-boot setup wizard runs on **tty5**
+(`config/systemd-firstboot.bst`, `TTYPath=/dev/tty5`; see
+`docs/design/first-boot-setup.md`), so on a fresh image the wizard is running and
+waiting and there is no way in the UI to type into it.
+
+Inject the keystroke through libvirt instead:
+
+```shell
+mise run boxes-vt --vt 5              # auto-detects the only running domain
+mise run boxes-vt --vm krytis-vt --vt 5
+mise run boxes-vt --list              # which domains exist / are running
+```
+
+The task prefers a host `virsh` and falls back to the one bundled in the Boxes
+flatpak, so it needs no libvirt install on a krytis host. Equivalent by hand:
+
+```shell
+V send-key <vm> --codeset linux --holdtime 100 KEY_LEFTCTRL KEY_LEFTALT KEY_F5
+```
+
+`send-key` validates the keycodes before it checks domain state, so
+`Requested operation is not valid: domain is not running` means the invocation
+was correct and the VM simply is not up.
 
 `convert-to-qcow2` refuses to overwrite an existing output without `--force`,
 precisely because a stale qcow2 boots old content that looks current.

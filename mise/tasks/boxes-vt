@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#MISE description="Switch a GNOME Boxes / libvirt VM to a virtual terminal — Boxes' Send Key menu cannot reach tty5"
+#USAGE flag "--vm <vm>" help="libvirt domain name (default: the only running domain)"
+#USAGE flag "--vt <vt>" default="5" help="Virtual terminal number, 1-12"
+#USAGE flag "--list" help="List libvirt domains and exit"
+
+# Why this exists: krytis's first-boot setup wizard runs on tty5
+# (config/systemd-firstboot.bst, TTYPath=/dev/tty5 — see
+# docs/design/first-boot-setup.md), and GNOME Boxes' "Send Key" menu only offers
+# a fixed subset of combinations: Ctrl+Alt+F1/F2/F3/F6/F7/F9. There is no
+# Ctrl+Alt+F5 entry, and the host compositor swallows the real key press, so the
+# wizard is unreachable from the Boxes UI — the VM boots, the wizard is running
+# and waiting, and there is no way to type into it.
+#
+# libvirt can inject the keystroke directly, which sidesteps both the missing
+# menu entry and the host grab. Boxes has no host virsh dependency: it is a
+# flatpak that bundles its own libvirt, so /app/bin/virsh inside the sandbox
+# talks to the same qemu:///session instance Boxes itself uses.
+#
+# See docs/skills/bootc-vm.md § Reaching tty5 (and other VTs) in GNOME Boxes.
+
+set -euo pipefail
+
+VM="${usage_vm:-}"
+VT="${usage_vt:-5}"
+LIST="${usage_list:-}"
+
+URI="qemu:///session"
+
+# Prefer a host virsh; fall back to the one inside the Boxes flatpak. Boxes is
+# the common case on a krytis host, which ships no libvirt client of its own.
+if command -v virsh &>/dev/null; then
+    VIRSH=(virsh)
+elif command -v flatpak &>/dev/null && flatpak info org.gnome.Boxes &>/dev/null; then
+    VIRSH=(flatpak run --command=virsh org.gnome.Boxes)
+else
+    echo "ERROR: no virsh found — install libvirt-client, or GNOME Boxes (which bundles one)." >&2
+    exit 1
+fi
+
+virsh_run() { "${VIRSH[@]}" -c "${URI}" "$@"; }
+
+if [ "${LIST}" = "true" ]; then
+    virsh_run list --all
+    exit 0
+fi
+
+case "${VT}" in
+    ''|*[!0-9]*) echo "ERROR: --vt must be a number, got '${VT}'." >&2; exit 1 ;;
+esac
+if [ "${VT}" -lt 1 ] || [ "${VT}" -gt 12 ]; then
+    echo "ERROR: --vt must be 1-12, got ${VT}." >&2
+    exit 1
+fi
+
+if [ -z "${VM}" ]; then
+    # `list` without --all prints only running domains; column 2 is the name.
+    mapfile -t RUNNING < <(virsh_run list --name 2>/dev/null | sed '/^$/d')
+    case "${#RUNNING[@]}" in
+        0)
+            echo "ERROR: no running libvirt domain on ${URI}. Start the VM first." >&2
+            echo "       Domains:" >&2
+            virsh_run list --all >&2
+            exit 1
+            ;;
+        1) VM="${RUNNING[0]}" ;;
+        *)
+            echo "ERROR: several domains are running — pass --vm to pick one:" >&2
+            printf '         %s\n' "${RUNNING[@]}" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+echo "==> Sending Ctrl+Alt+F${VT} to '${VM}'..."
+
+# --codeset linux keeps this readable; the alternative is raw evdev integers.
+# Held briefly so the guest's VT switch registers reliably.
+virsh_run send-key "${VM}" --codeset linux --holdtime 100 \
+    KEY_LEFTCTRL KEY_LEFTALT "KEY_F${VT}"
+
+echo "==> Sent. The Boxes window should now show tty${VT}."
+if [ "${VT}" = "5" ]; then
+    echo "    On a first boot that is krytis-firstboot.service's setup wizard."
+    echo "    Once it completes, tty5 is released to a normal getty."
+fi
