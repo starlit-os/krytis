@@ -202,6 +202,28 @@ Upstream fixes this: composefs-rs `5a227a0` falls back to a named tmpfile on
 [composefs-rs#368](https://github.com/composefs/composefs-rs/pull/368). Drop the
 workaround once a bootc carrying it lands in the image.
 
+> **Correction/extension (#528).** *"This is invisible on a workstation whose podman
+> uses native kernel overlayfs"* is not the whole picture. `bootc container
+> compute-composefs-digest` — the same primitive, invoked standalone by
+> `mise/tasks/verify-composefs-digest` rather than as part of `ukify` — hit the
+> identical `Operation not supported (os error 95)` on this project's own workstation
+> (podman 5.4.2, confirmed native `overlay` driver, not fuse-overlayfs) when run
+> against a locally-built `localhost/krytis:sealed` carrying **bootc 1.16.6**, in the
+> same session where it succeeded against the currently published
+> `ghcr.io/starlit-os/krytis:sealed`, which happens to carry **bootc 1.16.7** — same
+> host, same overlay driver, different result, isolated by bisecting on `bootc
+> --version` inside each image. So the O_TMPFILE gap is not purely a
+> fuse-overlayfs-vs-native-overlayfs question; it also depends on which bootc build
+> `${IMAGE}` itself carries, in a way that isn't pinned or asserted anywhere. The only
+> reliable invariant is the fix already applied to `ukify`'s own phase: **always**
+> bind-mount a host directory pre-verified for `O_TMPFILE` over `/var/tmp` for any
+> container that runs `bootc container ukify` or `bootc container
+> compute-composefs-digest`, never trust the container's own default `/var/tmp`
+> regardless of how the host's graph driver looks from the outside.
+> `mise/tasks/verify-composefs-digest` does this the same way `mise/tasks/seal-uki`
+> does for its own `UKI_TMP`: `mktemp -d -p /var/tmp`, assert `O_TMPFILE` there, then
+> `-v <dir>:/var/tmp` on the `podman run` that executes the digest computation.
+
 ## `--composefs-backend` requires a single layer, but squashing breaks the UKI digest — reconcile with a two-phase build
 
 Two independent, contradictory requirements collide in a sealed build:

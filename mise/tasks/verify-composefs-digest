@@ -15,6 +15,16 @@ set -euo pipefail
 # equally correct digest and prove nothing (the whole point of #528). See
 # docs/skills/secure-boot.md § Verifying the baked digest against an already-published
 # image, no rebuild, no root for the by-hand procedure this task automates.
+#
+# `bootc container compute-composefs-digest`, like `bootc container ukify`, creates its
+# scratch composefs repo via `tempfile::tempdir_in("/var/tmp")` in the container that
+# RUNS it (hardcoded — see mise/tasks/seal-uki's own comment on this), using O_TMPFILE.
+# fuse-overlayfs never implements this; and even under this workstation's own native
+# overlay driver it silently depends on the bootc build baked into ${IMAGE} — confirmed:
+# bootc 1.16.6 fails with `Operation not supported (os error 95)` on a container's
+# unmounted default /var/tmp, 1.16.7 happens not to. seal-uki already carries a verified
+# O_TMPFILE-capable /var/tmp for its own ukify phase; give the recompute step the same
+# one rather than trusting whatever bootc version ${IMAGE} happens to carry.
 
 # Same $@-then-usage_ fallback as verify-iso-payload/boot-test: mise does not parse
 # #USAGE for a child script invoked as a plain path (seal-uki calls this directly).
@@ -31,11 +41,25 @@ podman image exists "${IMAGE}" || { echo "==> ERROR: ${IMAGE} does not exist loc
 
 echo "==> Verifying composefs digest baked into ${IMAGE}'s UKI (#528)..."
 
+DIGEST_TMP="$(mktemp -d -p /var/tmp krytis-verify-digest-XXXXXX)"
+if ! python3 -c '
+import os, sys
+try:
+    os.close(os.open(sys.argv[1], os.O_TMPFILE | os.O_RDWR, 0o600))
+except OSError as exc:
+    sys.exit(f"{exc.strerror} (errno {exc.errno})")
+' "${DIGEST_TMP}"; then
+    echo "==> ERROR: ${DIGEST_TMP} does not support O_TMPFILE, which bootc's composefs" >&2
+    echo "    digest step requires. Point it at a directory on ext4/xfs/btrfs/tmpfs." >&2
+    exit 1
+fi
+
 UKI_TMP="$(mktemp /var/tmp/krytis-verify-uki-XXXXXX.efi)"
 CID=""
 cleanup() {
     [ -n "${CID}" ] && podman rm -f "${CID}" >/dev/null 2>&1 || true
     rm -f "${UKI_TMP}"
+    rm -rf "${DIGEST_TMP}"
 }
 trap cleanup EXIT
 
@@ -61,6 +85,7 @@ BAKED_DIGEST="${MATCHES[0]#composefs=}"
 
 RECOMPUTED_DIGEST="$(podman run --rm \
     --mount type=image,src="${IMAGE}",target=/target,rw=false \
+    -v "${DIGEST_TMP}:/var/tmp" \
     "${IMAGE}" \
     bootc container compute-composefs-digest /target)"
 
