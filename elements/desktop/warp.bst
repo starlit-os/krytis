@@ -10,7 +10,7 @@ build-depends:
 - freedesktop-sdk.bst:components/tar.bst       # tar with xz
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   version: "0.2026.08.12.21.54.stable.00"

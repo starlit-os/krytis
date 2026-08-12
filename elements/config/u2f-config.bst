@@ -42,7 +42,7 @@ kind: manual
 # actual /etc/pam.d/{system-auth,password-auth} survive in the deployed image.
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 depends:
 - core/pam-u2f.bst

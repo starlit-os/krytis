@@ -15,7 +15,7 @@ build-depends:
 # man build without changing the meson invocation.
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/wayland.bst
 - freedesktop-sdk.bst:components/wayland-protocols.bst
 

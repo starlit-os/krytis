@@ -110,7 +110,7 @@ build-depends:
   - freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
 
 depends:
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
   - freedesktop-sdk.bst:components/libdrm.bst
   - freedesktop-sdk.bst:components/libva.bst
   - freedesktop-sdk.bst:components/opencl.bst

@@ -14,10 +14,10 @@ variables:
 
 build-depends:
   - desktop/zig-0.16.bst
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 depends:
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 sources:
   # falcond source archive (strips outer falcond/ dir; build root is then falcond/)

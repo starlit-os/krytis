@@ -17,7 +17,7 @@ build-depends:
 - freedesktop-sdk.bst:components/ovmf-maybe.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   # .fd firmware volumes aren't ELF binaries — nothing to strip, and

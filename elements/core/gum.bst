@@ -7,7 +7,7 @@ kind: manual
 # Pin updates via mise run gum-update / track-gum CI job.
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   strip-binaries: ''

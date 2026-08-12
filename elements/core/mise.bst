@@ -23,7 +23,7 @@ sources:
       ref: 2088fa5ad626e323d17cdf26d7ae6fc3fee43bda3b8712331e6e8b027da0dfee
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   strip-binaries: ""

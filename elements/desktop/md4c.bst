@@ -4,7 +4,7 @@ build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-cmake.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 # Markdown parser library (github.com/mity/md4c). Required by noctalia since
 # v5.0.0-beta2 (markdown rendering); not shipped by the freedesktop-sdk or

@@ -34,7 +34,7 @@ sources:
   path: patches/systemd/update-utmp-shorten-comm.patch
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
 - freedesktop-sdk.bst:bootstrap/sed.bst
 - freedesktop-sdk.bst:bootstrap/gawk.bst

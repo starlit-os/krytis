@@ -13,7 +13,7 @@ build-depends:
 depends:
 - freedesktop-sdk.bst:components/efivar.bst
 - freedesktop-sdk.bst:components/popt.bst
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   make-args: EFIDIR=krytis sbindir=%{bindir}

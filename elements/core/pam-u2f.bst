@@ -7,7 +7,7 @@ build-depends:
 - freedesktop-sdk.bst:components/openssl.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
 
 variables:

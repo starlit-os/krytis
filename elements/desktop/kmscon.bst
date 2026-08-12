@@ -14,7 +14,7 @@ build-depends:
 - freedesktop-sdk.bst:components/pkg-config.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/libdrm.bst
 - freedesktop-sdk.bst:components/libxkbcommon.bst
 - freedesktop-sdk.bst:components/pango.bst

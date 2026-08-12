@@ -4,7 +4,7 @@ kind: stack
 # Desktop stack is layered on top (stacks/desktop.bst, added in B4/B5).
 depends:
   # ── Runtime base ────────────────────────────────────────────────────
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
   - freedesktop-sdk.bst:vm/base-filesystem.bst
   - freedesktop-sdk.bst:components/util-linux-full.bst
   - config/locale-data.bst
