@@ -29,7 +29,6 @@ config:
     components/python3-gi-docgen.bst: gnome-build-meta.bst:sdk/gi-docgen.bst
     components/graphene.bst: gnome-build-meta.bst:sdk/graphene.bst
     components/gsettings-desktop-schemas.bst: gnome-build-meta.bst:sdk/gsettings-desktop-schemas.bst
-    components/gtk-doc.bst: gnome-build-meta.bst:sdk/gtk-doc.bst
     components/gtk3.bst: gnome-build-meta.bst:sdk/gtk+-3.bst
     components/libibus.bst: gnome-build-meta.bst:sdk/libibus.bst
     components/json-glib.bst: gnome-build-meta.bst:sdk/json-glib.bst
@@ -43,11 +42,10 @@ config:
     components/zenity.bst: gnome-build-meta.bst:void/zenity.bst
     components/linux-module-cert.bst: gnome-build-meta.bst:gnomeos/linux-module-cert.bst
     # gnome-build-meta's systemd-base + backported update-utmp comm fix (#417)
-    components/systemd-base.bst: overrides/systemd-base.bst
+    components/_private/systemd-base.bst: overrides/systemd-base.bst
     components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst
     components/systemd-ukify.bst: gnome-build-meta.bst:core-deps/systemd-ukify.bst
     components/systemd-libs.bst: gnome-build-meta.bst:core-deps/systemd-libs.bst
-    components/geoclue-base.bst: gnome-build-meta.bst:gnomeos-deps/geoclue-base.bst
     components/frei0r.bst: overrides/frei0r.bst
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
