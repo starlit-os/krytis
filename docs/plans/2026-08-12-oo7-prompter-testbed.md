@@ -167,25 +167,44 @@ indefinite hang rather than an error — pop-os/cosmic-epoch#3453 on our own ima
       second login produced no prompt at all, so the PAM handshake over
       `/run/user/$(id -u)/oo7-pam.sock` is working and the panel is not papering over a
       broken auto-unlock.
-- [ ] **Round-trip a secret by hand** (syntax validated against libsecret 0.21.7 + oo7 0.6.0
-      in the image):
+- [ ] **Round-trip a secret by hand.** Order matters — see the trap below.
 
-      # is it unlocked? `b false` = unlocked
+      # 1. state check: `b false` = unlocked
       busctl --user get-property org.freedesktop.secrets \
         /org/freedesktop/secrets/collection/Login \
         org.freedesktop.Secret.Collection Locked
 
+      # 2. store while UNLOCKED (no prompt expected)
       echo -n hunter2 | secret-tool store --label='krytis test' service krytis-test key demo
-      secret-tool lookup service krytis-test key demo; echo
-      secret-tool search --all service krytis-test
-      secret-tool lock --collection=Login    # then lookup again -> prompt must reappear
-      secret-tool clear service krytis-test key demo
+      secret-tool lookup service krytis-test key demo; echo   # prints hunter2
 
-      `secret-tool store` reads the secret from stdin. The lock-then-lookup cycle is the
-      repeatable prompter test. **`Login` is capitalised**: oo7 derives the collection path
-      from the keyring label, so it is `/org/freedesktop/secrets/collection/Login`, not
-      gnome-keyring's lowercase `login` — `--collection=login` fails with "No such secret
-      collection at path". See `docs/skills/pam.md`.
+      # 3. lock, and confirm it took
+      secret-tool lock --collection=Login
+      busctl --user get-property org.freedesktop.secrets \
+        /org/freedesktop/secrets/collection/Login \
+        org.freedesktop.Secret.Collection Locked              # expect b true
+
+      # 4. NOW read it back -- this is the prompt test
+      secret-tool lookup service krytis-test key demo
+
+      secret-tool clear service krytis-test key demo          # cleanup
+
+      **Trap: querying a secret that does not exist never prompts**, so "I locked it and
+      nothing happened" usually means step 2 was skipped. Verified against oo7 in the image:
+      with the collection locked and no prompter on the bus, both
+      `secret-tool lookup` and `secret-tool search --unlock` for an absent item returned in
+      0s (`rc=1` and `rc=0`) — there is nothing to unlock, so no prompt is raised. The item
+      has to exist first.
+
+      **The guaranteed trigger is `store` into a locked collection**, which must open the
+      collection to write: that is the case that emitted `BeginPrompting` and then hung for
+      the full 25s timeout with no prompter present.
+
+      `secret-tool store` reads the secret from stdin. **`Login` is capitalised**: oo7 derives
+      the collection path from the keyring label, so it is
+      `/org/freedesktop/secrets/collection/Login`, not gnome-keyring's lowercase `login` —
+      `--collection=login` fails with "No such secret collection at path". See
+      `docs/skills/pam.md`.
 - [ ] **Cancel is clean, not a hang** — dismiss the prompt with Escape and confirm the caller
       returns an error promptly rather than blocking (the pop-os/cosmic-epoch#3453 failure mode).
 - [ ] **`CreateCollection` / `ChangePassword`** — `seahorse` is not in the image, so drive
