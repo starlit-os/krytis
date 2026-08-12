@@ -141,20 +141,44 @@ These needed no boot — `podman run --rm localhost/krytis:latest` was enough:
       `shell.bogus_made_up_key: unknown setting` while `secret_prompter` produces no warning —
       so it is a recognised setting, not one silently tolerated and dropped.
 
-### In-guest checks (need a booted session)
+### Proven on the bus without booting: oo7 really does need this prompter
 
-- [ ] **oo7 is the secrets provider:**
-      `systemctl --user status oo7-daemon.service` and
-      `busctl --user introspect org.freedesktop.secrets /org/freedesktop/secrets`
-- [ ] **noctalia owns the prompter name:**
-      `busctl --user list | grep org.gnome.keyring.SystemPrompter` — the owner should be
-      noctalia's PID, not an activated helper.
-- [ ] **Password login auto-unlocks** the login collection via `pam_oo7.so auto_start`:
-      `secret-tool store --label=t a b <<<hunter2` then `secret-tool lookup a b` with no prompt.
-- [ ] **Manual unlock draws noctalia's panel, not a GTK dialog.** This is the headline test:
-      lock a secondary collection and force a prompt —
-      `secret-tool lock --collection=test` then read from it. Expect noctalia's centred
-      prompt; expect the typed password to be accepted.
+With `oo7-daemon` running in the image and **nothing** owning the prompter name, a
+`secret-tool store` against the locked `Login` collection emitted
+`org.gnome.keyring.SystemPrompter`, `org.gnome.keyring.internal.Prompter`,
+`BeginPrompting`, `/org/gnome/keyring/Prompter` and oo7's own
+`/org/gnome/keyring/Prompt/p` callback object — then **blocked until killed at 25s, printing
+nothing.** oo7 logged only `Client :1.2 connected` / `disconnected`.
+
+So oo7's `GNOMEPrompterProxy` is observed, not assumed, and the no-prompter failure mode is an
+indefinite hang rather than an error — pop-os/cosmic-epoch#3453 on our own image.
+
+### In-guest checks (booted session)
+
+- [x] **oo7 is the secrets provider** — `org.freedesktop.secrets` owned by `oo7-daemon`.
+- [x] **noctalia owns the prompter name** — `busctl --user list` shows
+      `org.gnome.keyring.SystemPrompter` owned by noctalia, and there is no `gcr-prompter` in
+      the image to fall back to.
+- [x] **The image under test is the testbed** — `/usr/manifest.json` lists `desktop/oo7.bst`.
+- [x] **Manual unlock draws noctalia's panel** and, once answered, noctalia stored a secret
+      through the Secret Service — which is only reachable with the collection unlocked. The
+      full chain ran: oo7 → `BeginPrompting` → noctalia's panel → `sx-aes-1` → unlock → store.
+- [ ] **Password login auto-unlocks** the login collection via `pam_oo7.so auto_start`
+      (i.e. no prompt at all on a fresh login). A prompt on *every* login means `auto_start`
+      is not unlocking and the panel is merely papering over it — still a working prompter,
+      separate bug. Check `/run/user/$(id -u)/oo7-pam.sock` exists and the journal for the
+      PAM handshake.
+- [ ] **Round-trip a secret by hand** (validated syntax, libsecret 0.21.7):
+
+      echo -n hunter2 | secret-tool store --label='krytis test' service krytis-test key demo
+      secret-tool lookup service krytis-test key demo; echo
+      secret-tool search --all service krytis-test
+      secret-tool lock --collection=login    # then lookup again -> prompt must reappear
+      secret-tool clear service krytis-test key demo
+
+      `secret-tool store` reads the secret from stdin. The lock-then-lookup cycle is the
+      repeatable prompter test; `--collection=login` matches the collection path oo7 exposes
+      (`/org/freedesktop/secrets/collection/login`).
 - [ ] **Cancel is clean, not a hang** — dismiss the prompt with Escape and confirm the caller
       returns an error promptly rather than blocking (the pop-os/cosmic-epoch#3453 failure mode).
 - [ ] **`CreateCollection` / `ChangePassword`** — `seahorse` is not in the image, so drive
