@@ -89,12 +89,17 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
 ## Decision
 
 **Hold the oo7 migration itself.** Leave gnome-keyring in place. Do not re-attempt #84 until
-one of:
+both of the first two hold:
 
-1. oo7#506 lands a resolution (passwordless/FIDO2 unlock has a real path), or
-2. We explicitly decide the FIDO2-keyring-stays-locked gap is acceptable to ship (it is no
-   worse than the status quo, so this is a legitimate option — it just needs to be a
-   deliberate call, not a surprise discovered mid-implementation again).
+1. oo7#506 lands a resolution (passwordless/FIDO2 unlock has a real path), **and**
+2. oo7 reports locked items from `SearchItems` so a locked collection can be discovered and
+   unlocked rather than reported as "no such secret" — see § *New blocker found while
+   testing* below. Unfixed on `main` as of 2026-08-12, and it is the stronger of the two:
+   without it, condition 3 does not help, because the user is never given the chance to
+   unlock, or
+3. We explicitly decide the FIDO2-keyring-stays-locked gap is acceptable to ship. **This is no
+   longer sufficient on its own.** It was reasonable while the gap looked like "the user
+   unlocks manually"; testing showed applications are instead told the secret does not exist.
 
 If reopening: reuse #178's BST/PAM mechanics (verified sound against current upstream —
 `auto_start` flag real, three-stack `optional` wiring matches krytis's existing convention
@@ -236,6 +241,54 @@ noctalia's panel → `sx-aes-1` exchange → unlock → store.
 
 Still not exercised: `ChangePassword`, and the mid-session `systemctl --user restart
 oo7-daemon` re-lock scenario.
+
+### New blocker found while testing: a locked oo7 collection is invisible, not prompt-worthy
+
+**This is the most consequential finding of the whole exercise, and it is not oo7#506.**
+
+`secret-tool lookup` against a *locked* collection returns "not found" in 0s. It does not
+prompt. Reproduced end to end on the testbed image by unlocking through oo7's PAM socket,
+storing a secret, locking, and reading back:
+
+```
+stored; lookup => topsecret          # unlocked: works
+Locked: b true                       # lock really took
+SearchItems -> aoao 0 0              # zero unlocked AND zero locked
+lookup -> rc=1, 0s, no prompt
+```
+
+The item demonstrably exists — it was just read. oo7 simply does not report it. Source, in
+`server/src/collection/mod.rs::search_inner_items`, identical on the 0.6.0 tag and on current
+`main`:
+
+```rust
+if keyring.is_locked() { return Ok(Vec::new()); }
+```
+
+It cannot do better as designed: oo7 encrypts item *attributes* at rest, and matching needs
+the collection key (`file_item.matches_attributes(attributes, key)`). gnome-keyring keeps
+attributes searchable while locked, which is exactly what lets a client discover a locked item
+and ask for it to be unlocked.
+
+The Secret Service API returns `SearchItems(unlocked, locked)` as two arrays *precisely* so a
+client can unlock the second group. oo7 always returns the second array empty, so libsecret's
+`on_lookup_searched` falls through to its "nothing found" branch and never requests an unlock.
+
+**Why this outranks the FIDO2 gap.** The gap was previously characterised as "the keyring
+stays locked, and the user unlocks it manually". That is too generous. The real behaviour is
+that applications are told **the secret does not exist** — a silent wrong answer, not an error
+and not a prompt. A working prompter does not rescue it, because nothing ever asks for one.
+`store` still prompts correctly (writing needs the collection open), so the failure is
+read-shaped and easy to miss in casual testing.
+
+This is arguably the real mechanism behind the Ghostty instability recorded in
+`docs/skills/pam.md` § *oo7 `default` alias requires an unlocked collection*, and it is
+**unfixed upstream as of 2026-08-12**. It should be treated as a second, independent hold
+reason alongside oo7#506 — accepting the FIDO2 gap is no longer sufficient to unblock #84,
+because even a user who is willing to unlock manually gets no opportunity to.
+
+Not reported upstream: AGENTS.md's Upstream Gate requires an explicit instruction before
+opening anything against `linux-credentials/oo7`.
 
 ## Revisit trigger
 
