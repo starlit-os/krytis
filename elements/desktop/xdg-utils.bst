@@ -4,7 +4,7 @@ build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-autotools.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
   # gio / gdbus — used by xdg-open to invoke org.freedesktop.portal.OpenURI
 - freedesktop-sdk.bst:components/glib.bst
 

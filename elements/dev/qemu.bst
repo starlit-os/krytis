@@ -38,7 +38,7 @@ depends:
 - freedesktop-sdk.bst:components/libslirp.bst       # -netdev user (boot-test's SSH port-forward)
 - freedesktop-sdk.bst:components/liburing.bst
 - freedesktop-sdk.bst:components/pixman.bst
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   # The autotools plugin's default `MAKEFLAGS: -j%{max-jobs}` doesn't reach

@@ -15,7 +15,7 @@ build-depends:
 - freedesktop-sdk.bst:components/zstd.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 config:
   # .pkg.tar.zst is a flat tar archive — extract then install usr/ only

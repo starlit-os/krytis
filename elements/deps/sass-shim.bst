@@ -8,7 +8,7 @@ kind: manual
 # -m is passed, so the flag is safe to drop. This shim exists solely to
 # bridge that one call site; it is not a general sass/sassc compat layer.
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - gnome-build-meta.bst:sdk-deps/sassc.bst
 
 config:

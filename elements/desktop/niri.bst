@@ -7,7 +7,7 @@ build-depends:
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - gnome-build-meta.bst:sdk/gtk.bst
 - freedesktop-sdk.bst:components/libdisplay-info.bst
 - freedesktop-sdk.bst:components/libinput.bst

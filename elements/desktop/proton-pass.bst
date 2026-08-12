@@ -11,7 +11,7 @@ build-depends:
 - freedesktop-sdk.bst:components/tar.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   version: "1.39.1"

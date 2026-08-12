@@ -14,7 +14,7 @@ depends:
   - gnome-build-meta.bst:sdk/gtk.bst
   - gnome-build-meta.bst:sdk/libadwaita.bst
   - desktop/gtk4-layer-shell.bst
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 sources:
   # Ghostty source tarball

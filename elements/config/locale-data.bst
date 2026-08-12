@@ -7,7 +7,7 @@ kind: script
 # Uncomment and add sv_SE.UTF-8 → en_SE.UTF-8 alias once available.
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/gzip.bst
 
 config:

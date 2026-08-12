@@ -12,7 +12,7 @@ build-depends:
 - freedesktop-sdk.bst:extensions/mesa/libdrm.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/wayland.bst
 - freedesktop-sdk.bst:components/libxkbcommon.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst

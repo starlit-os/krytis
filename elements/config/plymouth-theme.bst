@@ -38,7 +38,7 @@ sources:
   path: files/plymouth/krytis-watermark.png
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 depends:
 - freedesktop-sdk.bst:components/plymouth.bst

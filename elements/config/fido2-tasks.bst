@@ -11,7 +11,7 @@ kind: manual
 # (systemd) for the systemd-homed enrollment path.
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - core/mise.bst
 - core/gum.bst
 
