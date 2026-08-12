@@ -176,6 +176,43 @@ could not be reached in testing because oo7 writes no keyring file until a secre
 stored — a restart just re-runs the create branch. Re-test the discovered-from-disk case
 before relying on either statement.
 
+## Re-locking a collection with oo7: `Lock` looks like a no-op, restart the daemon instead
+
+`secret-tool lock --collection=Login` exits 0 and prints nothing, but the collection can stay
+unlocked. Calling the D-Bus method directly shows why — oo7 0.6.0 reports **success for an
+object it simultaneously says does not exist**:
+
+```
+$ busctl --user call org.freedesktop.secrets /org/freedesktop/secrets \
+    org.freedesktop.Secret.Service Lock ao 1 /org/freedesktop/secrets/collection/Login
+WARN oo7_daemon::service: Object: /org/freedesktop/secrets/collection/Login does not exist.
+aoo 1 "/org/freedesktop/secrets/collection/Login" "/"
+```
+
+The path is returned in the "locked" array with no prompt object (`"/"`), i.e. "already
+done" — while `get-property … Locked` on that same path answers fine, so the object plainly
+does exist. Observed against an already-locked collection, so this is not proof that `Lock`
+never works; it is enough to stop trusting a silent exit 0.
+
+**Always confirm the state changed rather than assuming the command worked:**
+
+```shell
+secret-tool lock --collection=Login
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/Login \
+  org.freedesktop.Secret.Collection Locked      # b true = it actually locked
+```
+
+**The dependable way to get back to a locked collection is to restart the daemon** —
+`systemctl --user restart oo7-daemon.service`. oo7 has no FD-store/credential resume
+(oo7#506), so a restart drops the unlocked state. That doubles as the mid-session re-lock
+scenario worth testing anyway.
+
+This matters when testing a prompter: **libsecret's `lookup` does request an unlock** — 
+`on_lookup_searched` in `secret-methods.c` branches to the unlock path when the search returns
+locked items — so "lookup did not prompt" almost always means the collection was never locked,
+not that the prompter failed.
+
 See `docs/design/secrets-service.md` for the decision this feeds (hold #84 until oo7#506 resolves, or accept the FIDO2-keyring-stays-locked gap as no worse than today).
 
 ## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
