@@ -28,7 +28,7 @@
 - Consumes: nothing from other tasks. Reads `--image <tag>` (default `localhost/krytis:sealed`) or `usage_image` (mise-parsed `#USAGE` value) when invoked directly as `mise run verify-composefs-digest`.
 - Produces: exit 0 + `sha512:<digest>` printed on stdout's last line when baked == recomputed. Exit 1 with both values printed to stderr on mismatch. Consumed by Task 2 (`mise/tasks/seal-uki` calls `./mise/tasks/verify-composefs-digest --image localhost/krytis:sealed`).
 
-- [ ] **Step 1: Write the task**
+- [x] **Step 1: Write the task**
 
 ```bash
 #!/usr/bin/env bash
@@ -108,13 +108,15 @@ fi
 echo "==> Composefs digest verified: sha512:${BAKED_DIGEST}"
 ```
 
-- [ ] **Step 2: Make it executable**
+Result: PASS — written to `mise/tasks/verify-composefs-digest` verbatim.
+
+- [x] **Step 2: Make it executable**
 
 ```bash
 chmod +x mise/tasks/verify-composefs-digest
 ```
 
-- [ ] **Step 3: Positive-path test — against a real published sealed image**
+- [x] **Step 3: Positive-path test — against a real published sealed image**
 
 ```bash
 podman pull ghcr.io/starlit-os/krytis:sealed
@@ -123,7 +125,14 @@ podman pull ghcr.io/starlit-os/krytis:sealed
 
 Expected: exit 0, last line `==> Composefs digest verified: sha512:e0f24c43742626680aaa5650859d5d5db2cbb67d134649b27468bbd2562b7f563175e37e4c8c996c021ce091bbea35c0f94c6c5545d0fedfeab27348f8483815` (the digest verified against this exact tag during the #528 investigation on 2026-08-12; it will differ once the tag is next re-sealed, which is expected — only the *match* is the assertion, not this literal value).
 
-- [ ] **Step 4: Negative-path test — not a sealed image**
+Result: PASS — actual output:
+```
+==> Verifying composefs digest baked into ghcr.io/starlit-os/krytis:sealed's UKI (#528)...
+==> Composefs digest verified: sha512:e0f24c43742626680aaa5650859d5d5db2cbb67d134649b27468bbd2562b7f563175e37e4c8c996c021ce091bbea35c0f94c6c5545d0fedfeab27348f8483815
+EXIT=0
+```
+
+- [x] **Step 4: Negative-path test — not a sealed image**
 
 ```bash
 ./mise/tasks/verify-composefs-digest --image localhost/krytis:latest
@@ -132,7 +141,15 @@ echo "exit=$?"
 
 Expected: exit 1, stderr contains `has no /boot/EFI/Linux/krytis.efi — that is not a sealed build.` (`localhost/krytis:latest` is the unsigned build; only `mise run seal-uki`'s output ever has a UKI — `docs/skills/secure-boot.md` § `--secure` picks the tag).
 
-- [ ] **Step 5: Negative-path test — genuine digest mismatch**
+Result: PASS — actual output:
+```
+==> Verifying composefs digest baked into localhost/krytis:latest's UKI (#528)...
+==> ERROR: localhost/krytis:latest has no /boot/EFI/Linux/krytis.efi — that is not a sealed build.
+    Build one first: mise run seal-uki
+EXIT=1
+```
+
+- [x] **Step 5: Negative-path test — genuine digest mismatch**
 
 Build a fixture whose rootfs differs from what the real sealed image's baked digest
 was computed against, so the two are guaranteed to disagree — without needing signing
@@ -160,7 +177,17 @@ podman rmi -f localhost/krytis-digest-mismatch-fixture
 
 Expected: exit 1, stderr contains `composefs digest mismatch (#528)` followed by two lines starting `baked in UKI:` and `recomputed:` with two different `sha512:` values, and the closing `'bootc install' would abort with: The UKI has the wrong composefs= parameter` line.
 
-- [ ] **Step 6: Commit**
+Result: PASS — actual output:
+```
+==> Verifying composefs digest baked into localhost/krytis-digest-mismatch-fixture's UKI (#528)...
+==> ERROR: composefs digest mismatch (#528) — the UKI's baked digest does not match the committed image.
+    baked in UKI:  sha512:e0f24c43742626680aaa5650859d5d5db2cbb67d134649b27468bbd2562b7f563175e37e4c8c996c021ce091bbea35c0f94c6c5545d0fedfeab27348f8483815
+    recomputed:    sha512:c46f2d53236d667445e3b76029d878449202d5f2731bc681eaf526781f70a485fcd743908bc21c2d39fa88a92c2dad0ae9d23743952321da9a89aa9bcb003d2b
+    'bootc install' would abort with: The UKI has the wrong composefs= parameter
+EXIT=1
+```
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add mise/tasks/verify-composefs-digest
@@ -175,6 +202,8 @@ loudly, naming both values, on mismatch.
 Refs #528"
 ```
 
+Result: PASS — commit `447dc16`.
+
 ---
 
 ### Task 2: Wire the check into `mise/tasks/seal-uki`
@@ -187,7 +216,7 @@ Refs #528"
 - Consumes: `./mise/tasks/verify-composefs-digest --image localhost/krytis:sealed` (Task 1's CLI contract — exit 0/1, stderr detail on failure).
 - Produces: `seal-uki` now fails (propagates the non-zero exit from `verify-composefs-digest`, `set -euo pipefail` already in effect) before printing its final success line whenever the two phases produced a mismatched digest.
 
-- [ ] **Step 1: Update the `[1/2]` label**
+- [x] **Step 1: Update the `[1/2]` label**
 
 Change the phase-1 echo:
 
@@ -195,7 +224,7 @@ Change the phase-1 echo:
 echo "==> [1/3] Building + squashing sealed rootfs -> localhost/krytis:sealed-base..."
 ```
 
-- [ ] **Step 2: Update the `[2/2]` label**
+- [x] **Step 2: Update the `[2/2]` label**
 
 Change the phase-2 echo:
 
@@ -203,7 +232,7 @@ Change the phase-2 echo:
 echo "==> [2/3] Building UKI against sealed-base -> localhost/krytis:sealed..."
 ```
 
-- [ ] **Step 3: Add phase 3, replacing the final echo**
+- [x] **Step 3: Add phase 3, replacing the final echo**
 
 The task currently ends with:
 
@@ -220,7 +249,7 @@ echo "==> [3/3] Verifying baked composefs digest against the committed image (#5
 echo "==> Sealed image built and verified: localhost/krytis:sealed"
 ```
 
-- [ ] **Step 4: Extend the "NOTE ON ENGINE VERSIONS" comment**
+- [x] **Step 4: Extend the "NOTE ON ENGINE VERSIONS" comment**
 
 That comment (near the top of the file) currently ends:
 
@@ -241,7 +270,7 @@ Append one line so the comment points at the real mechanism instead of only nami
 # on a real mismatch instead of guessing from a version number.
 ```
 
-- [ ] **Step 5: Cross-reference the shipped task from the skill doc**
+- [x] **Step 5: Cross-reference the shipped task from the skill doc**
 
 In `docs/skills/secure-boot.md`, in the section `### Verifying the baked digest against an already-published image, no rebuild, no root` (added ahead of this plan), append one sentence after the by-hand shell walkthrough:
 
@@ -253,15 +282,27 @@ a pulled `ghcr.io/starlit-os/krytis:sealed`, as this section's own verification 
 done).
 ```
 
-- [ ] **Step 6: Verify the renumbering and wiring read correctly**
+- [x] **Step 6: Verify the renumbering and wiring read correctly**
 
 ```bash
 grep -n '\[1/3\]\|\[2/3\]\|\[3/3\]\|verify-composefs-digest' mise/tasks/seal-uki
 ```
 
-Expected: four matches — the two build-phase echoes, the new phase-3 echo, and the `./mise/tasks/verify-composefs-digest` call line.
+Result: PASS — actual output:
+```
+21:# (#528), not to guess at version numbers. Phase [3/3] below
+22:# (mise/tasks/verify-composefs-digest) is that check — it runs on every
+38:echo "==> [1/3] Building + squashing sealed rootfs -> localhost/krytis:sealed-base..."
+84:echo "==> [2/3] Building UKI against sealed-base -> localhost/krytis:sealed..."
+92:echo "==> [3/3] Verifying baked composefs digest against the committed image (#528)..."
+93:./mise/tasks/verify-composefs-digest --image localhost/krytis:sealed
+```
+(six matches, not four — the NOTE ON ENGINE VERSIONS extension from Step 4 also
+contains `[3/3]` and `verify-composefs-digest`, which the "four matches" estimate
+in this step's original Expected line did not account for. All six are correct;
+the estimate was wrong, not the wiring.)
 
-- [ ] **Step 7: Full end-to-end verification (requires signing keys — run where Proton Pass vault access is configured)**
+- [ ] **Step 7: Full end-to-end verification (requires signing keys — run where Proton Pass vault access is configured)** — BLOCKED, not run
 
 ```bash
 mise run seal-uki
@@ -269,9 +310,22 @@ mise run seal-uki
 
 Expected: all three phases print, ending with `==> [3/3] Verifying baked composefs digest against the committed image (#528)...` immediately followed by Task 1's `==> Composefs digest verified: sha512:...` line and then `==> Sealed image built and verified: localhost/krytis:sealed`. This step cannot run in a sandbox without `files/boot-keys/db.key` (`mise run pull-keys` needs vault access) — whoever executes this plan with real keys must run it and paste the actual output into the PR description as the required verification evidence (AGENTS.md "Verification").
 
-`mise run tpm-boot-test` remains the end-to-end check per #528's own notes — this step is a seconds-long build-time gate in front of it, not a replacement.
+Result: BLOCKED — `files/boot-keys/` does not exist in this environment and there is
+no Proton Pass vault access to run `mise run pull-keys`. Not run. Substituted two
+checks that do not need signing keys: (1) `bash -n` on both modified/created scripts
+— syntax OK; (2) `mise run lint` (builds the unsigned `localhost/krytis:latest` via
+`Containerfile`, unaffected by this diff — no `.bst`/`Containerfile`/element files
+changed) — `Checks passed: 13, Checks skipped: 1`, `Lint passed.` The new `[3/3]`
+phase's own correctness was already exercised end-to-end in Task 1 against a real
+published sealed image, a non-sealed image, and a synthetic mismatch fixture — the
+wiring added here is two lines of already-tested plumbing calling that same task.
+`mise run tpm-boot-test` remains the end-to-end check per #528's own notes — this
+step is a seconds-long build-time gate in front of it, not a replacement, and this
+plan does not change the boot path, so a QEMU boot re-verification was judged
+unnecessary for this diff specifically (left for whoever next runs a full
+`seal-uki` with real keys).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add mise/tasks/seal-uki docs/skills/secure-boot.md
@@ -285,6 +339,8 @@ suggestion.
 
 Refs #528"
 ```
+
+Result: PASS — commit `b278e73`.
 
 ---
 
