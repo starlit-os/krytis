@@ -134,17 +134,19 @@ Expected: exit 1, stderr contains `has no /boot/EFI/Linux/krytis.efi — that is
 
 - [ ] **Step 5: Negative-path test — genuine digest mismatch**
 
-Build a fixture whose UKI is byte-identical to a real sealed image's, but whose rootfs is not — so the baked digest and the recomputed digest are guaranteed to disagree, without needing signing keys:
+Build a fixture whose rootfs differs from what the real sealed image's baked digest
+was computed against, so the two are guaranteed to disagree — without needing signing
+keys. `FROM scratch` does not work here even though it seems simpler: the recompute
+step runs `bootc` *inside* the target image itself, and a `scratch`-based image has no
+`bootc` binary to run (`crun: executable file bootc not found`, exit 127 — not a digest
+comparison at all). Base the fixture on the real sealed image instead, so `bootc` stays
+present, and perturb the rootfs with one added file:
 
 ```bash
 WORKDIR="$(mktemp -d)"
-CID="$(podman create ghcr.io/starlit-os/krytis:sealed true)"
-podman cp "${CID}:/boot/EFI/Linux/krytis.efi" "${WORKDIR}/krytis.efi"
-podman rm -f "${CID}"
 echo "mismatch-fixture" > "${WORKDIR}/extra.txt"
 cat > "${WORKDIR}/Containerfile" <<'EOF'
-FROM scratch
-COPY krytis.efi /boot/EFI/Linux/krytis.efi
+FROM ghcr.io/starlit-os/krytis:sealed
 COPY extra.txt /extra.txt
 EOF
 podman build -t localhost/krytis-digest-mismatch-fixture "${WORKDIR}"
@@ -153,7 +155,7 @@ rm -rf "${WORKDIR}"
 ./mise/tasks/verify-composefs-digest --image localhost/krytis-digest-mismatch-fixture
 echo "exit=$?"
 
-podman rmi localhost/krytis-digest-mismatch-fixture
+podman rmi -f localhost/krytis-digest-mismatch-fixture
 ```
 
 Expected: exit 1, stderr contains `composefs digest mismatch (#528)` followed by two lines starting `baked in UKI:` and `recomputed:` with two different `sha512:` values, and the closing `'bootc install' would abort with: The UKI has the wrong composefs= parameter` line.
