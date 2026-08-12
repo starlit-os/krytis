@@ -8,7 +8,7 @@ build-depends:
 # it as a shared library (libtomlplusplus.so.3, TOML_SHARED_LIB=1 in
 # noctalia's own meson flags), so it belongs in `depends` below, not here.
 - desktop/stb.bst
-- freedesktop-sdk.bst:components/nlohmann-json.bst
+- desktop/nlohmann-json.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst

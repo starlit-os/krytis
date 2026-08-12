@@ -21,7 +21,7 @@ build-depends:
 # artifact), so compile-time only — same call as in desktop/noctalia.bst.
 # Required by upstream meson.build:43 and :60 as of v1.1.0 (#412).
 - desktop/stb.bst
-- freedesktop-sdk.bst:components/nlohmann-json.bst
+- desktop/nlohmann-json.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
