@@ -66,10 +66,23 @@ Everything else (`elements/desktop/oo7.bst`, the PAM swap, the stack swap, the
       prompter really is in the artifact rather than merely in the source pin.
       (`--pull` was unavailable: the Buildbarn token comes from fnox and the local pass-cli
       database is corrupt, so this was a local-cache build.)
-- [ ] `mise run lint`
-- [ ] `mise run generate-fakecap-manifest` — the TSV still attributes files to
-      `core/gnome-keyring.bst`; it is derived data consumed by `mise run chunkify`, so it must
-      be regenerated **after** a successful build or chunkify will restore stale attributions.
+- [x] `mise run build` (= `generate-image-version` + `load-image` + `lint`) — passed;
+      `bootc container lint` reports 13 checks passed, 1 skipped, image tagged
+      `localhost/krytis:latest`.
+- [ ] `mise run generate-fakecap-manifest` — **deliberately not run on this branch.** The
+      committed TSV still attributes files to `core/gnome-keyring.bst`, so it is stale here,
+      but regenerating it produces a ~34 MB diff that is pure noise on a throwaway branch.
+      Run it before `mise run chunkify` (which feeds the TSV to `fakecap-restore`); the plain
+      `generate-disk` route below does not need it.
+
+### Careful: `mise run lint` alone does not rebuild the image
+
+`lint` only runs the Containerfile against whatever `localhost/krytis-input:latest` already
+is — it will happily pass against a stale image from a previous branch. The first run here
+did exactly that and reported success while the image still contained gnome-keyring,
+`gcr-prompter` and `pam_gnome_keyring.so`. Use `mise run build`, which chains
+`generate-image-version` → `load-image` → `lint`. Verify image *contents*, never just the
+lint exit code.
 
 ### Build gotcha worth keeping
 
@@ -93,11 +106,28 @@ mise run convert-to-qcow2 --disk /var/tmp/krytis-oo7.raw           # unprivilege
 See `docs/skills/bootc-vm.md` § *Interactive VM testing via GNOME Boxes* for the OVMF and
 stale-disk snags.
 
-### In-guest checks
+### Already verified statically against `localhost/krytis:latest`
 
-- [ ] **gcr-prompter really is gone** — otherwise every prompt result below is meaningless:
-      `ls /usr/libexec/gcr-prompter /usr/share/dbus-1/services/org.gnome.keyring.SystemPrompter.service`
-      should both fail, and `grep -c gcr /usr/manifest.json` should not turn up `gcr-3`.
+These needed no boot — `podman run --rm localhost/krytis:latest` was enough:
+
+- [x] **gcr-prompter really is gone.** Both `/usr/libexec/gcr-prompter` and
+      `/usr/share/dbus-1/services/org.gnome.keyring.SystemPrompter.service` are absent, and
+      `/usr/manifest.json` lists neither `core/gnome-keyring.bst` nor `sdk/gcr-3.bst` — only
+      `desktop/oo7.bst` and `sdk/gcr.bst` (gcr-4, for the exchange). So any prompt that
+      appears on this image is noctalia's.
+- [x] **oo7 is installed:** `/usr/libexec/oo7-daemon`,
+      `/usr/lib/x86_64-linux-gnu/security/pam_oo7.so`, and both
+      `/usr/lib/systemd/user/oo7-daemon.service` and
+      `/usr/lib/systemd/user/dbus-org.freedesktop.secrets.service`.
+- [x] **PAM is wired to oo7:** `/etc/pam.d/greetd` has `auth optional pam_oo7.so`,
+      `-password optional pam_oo7.so` (no `use_authtok`) and
+      `session optional pam_oo7.so auto_start`; no `pam_gnome_keyring.so` remains.
+- [x] **noctalia links gcr-4:** `ldd /usr/bin/noctalia` → `libgcr-4.so.4`.
+- [x] **The skel toggle ships:** `secret_prompter = true` in
+      `/etc/skel/.local/state/noctalia/settings.toml`.
+
+### In-guest checks (need a booted session)
+
 - [ ] **oo7 is the secrets provider:**
       `systemctl --user status oo7-daemon.service` and
       `busctl --user introspect org.freedesktop.secrets /org/freedesktop/secrets`
