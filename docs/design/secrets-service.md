@@ -88,7 +88,8 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
 
 ## Decision
 
-**Hold.** Leave gnome-keyring in place. Do not re-attempt #84 until one of:
+**Hold the oo7 migration itself.** Leave gnome-keyring in place. Do not re-attempt #84 until
+one of:
 
 1. oo7#506 lands a resolution (passwordless/FIDO2 unlock has a real path), or
 2. We explicitly decide the FIDO2-keyring-stays-locked gap is acceptable to ship (it is no
@@ -102,6 +103,66 @@ checking whether pam_oo7 needs it — upstream's own example omits it, and #178 
 it from the gnome-keyring line. Also worth checking whether Fedora's Rawhide
 `oo7-daemon.spec` has landed by then (queued at the time of the F45 proposal) — it will be a
 more authoritative packaging reference than reverse-engineering upstream source.
+
+**But pursue a native prompter in noctalia independently — it isn't gated on the oo7
+decision.** The `gcr-3`/`gcr-prompter` fragility documented above (§ Manual unlock on niri)
+affects the *current* gnome-keyring setup exactly as much as it would affect oo7 — niri has
+no shell-level `org.gnome.keyring.SystemPrompter` provider either way, today. Fixing this is
+valuable regardless of which Secret Service backend krytis ends up on, and de-risks a future
+oo7 attempt as a side effect rather than being blocked by it.
+
+## Path forward: a native prompter in noctalia
+
+2026-08-12 direction: implement `org.gnome.keyring.SystemPrompter` natively in noctalia (the
+shell, not noctalia-greeter — the greeter only runs pre-login; manual unlock and mid-session
+daemon-restart prompts happen in the user's running niri session, which noctalia owns), with
+the long-term goal of upstreaming it or shipping it as a noctalia plugin.
+
+**Why noctalia is a good fit, not just the only option:**
+- v5 (krytis is on `v5.0.0-beta.7`) is a from-scratch native C++23 rewrite with **no Qt or
+  GTK dependency at all** — confirmed via upstream's own README and `libsodium.bst`/`stb.bst`
+  comments in this repo. This removes the QML/Quickshell integration problem entirely; there
+  is no JS/GObject-introspection bridge to fight.
+- noctalia already depends on `libsecret`, `glib2`, and `sdbus-cpp`, and already ships a
+  substantial Secret-Service-aware subsystem: `src/security/secret_store.{cpp,h}` (29KB) is a
+  polling, cancellation-aware, async **client** of the secrets API (`SecretStoreCollectionState::
+  Locked/Unlocked` is a first-class concept there already). A prompter is the same domain
+  knowledge in the *server* role — natural extension, not a bolt-on.
+- noctalia already has its own D-Bus-facing service architecture (bars/OSDs/notifications/tray)
+  and, per its README, **a plugin system explicitly scoped for "third-party service
+  integrations"** — a real, described upstream extension point, which is what makes "ship it
+  as an extension" a credible option even before/instead of a full upstream merge.
+
+**Protocol surface to implement** (read from GCR4's `gcr/org.gnome.keyring.Prompter.xml`,
+2026-08-12 — small and stable, marked "internal" but unchanged in the ABI sense since GCR3):
+- `org.gnome.keyring.internal.Prompter`: `BeginPrompting(callback: o)`, `PerformPrompt(callback:
+  o, type: s, properties: a{sv}, exchange: s)`, `StopPrompting(callback: o)` — this is what
+  noctalia registers on the session bus as `org.gnome.keyring.SystemPrompter`.
+- `org.gnome.keyring.internal.Prompter.Callback`: `PromptReady(reply: s, properties: a{sv},
+  exchange: s)`, `PromptDone()` — this is what noctalia calls back on the *client's* exported
+  object (gnome-keyring, oo7, gcr, seahorse, pinentry-gnome3, etc. — anything that prompts
+  through the standard mechanism).
+- The `exchange` string is a `GcrSecretExchange` handshake (Diffie-Hellman-style key exchange
+  so the secret isn't a plaintext D-Bus argument) — GCR4 kept this as a small standalone
+  primitive (`gcr/gcr-secret-exchange.c`/`.h`, no UI, no removed dependency), so the plan is
+  **link only that piece from `libgcr-4`** for wire compatibility rather than reimplementing
+  the crypto handshake by hand — everything else (D-Bus service registration, dialog UI,
+  session-bus ownership) is native noctalia code, consistent with the "no Qt/GTK" ethos.
+
+**Known consumers to interop-test against, not just gnome-keyring:** oo7's `GNOMEPrompterProxy`
+(`server/src/gnome/prompter.rs`, in play if #84 is ever reopened), GCR3's own `gcr-prompter`
+(for anything that still expects the legacy binary specifically), and generic libsecret/pinentry
+clients that fall back to `org.gnome.keyring.SystemPrompter` when no portal-based prompter is
+available.
+
+**Scope note:** not started. This section is a scoping record from the 2026-08-12
+investigation, not a plan with dates or an owner yet. Next step is deciding fork-and-prototype
+vs. opening an upstream noctalia issue first to gauge maintainer interest in owning this
+(their plugin system explicitly invites "third-party service integrations", which argues for
+at least floating the idea before building in isolation) — see AGENTS.md's Upstream Gate:
+prototyping on a fork is fine unprompted, opening a PR/issue against `noctalia-dev/noctalia`
+is not, without an explicit instruction naming that action.
+
 
 ## Revisit trigger
 
