@@ -3,7 +3,7 @@ kind: manual
 # Zed: GPU-accelerated multiplayer code editor (https://zed.dev).
 # Pre-built binary release — upstream publishes x86_64 and aarch64 tarballs.
 # Installed to /usr/lib/zed/ to preserve RPATH ($ORIGIN/../lib) structure;
-# /usr/bin/zed symlinks there. glibc ≥ 2.35 required; fdsdk 25.08 ships 2.42.
+# /usr/bin/zed symlinks there. glibc ≥ 2.35 required; fdsdk 26.08beta.3 ships 2.44.
 # Update path: mise run zed-update / track-zed CI job.
 # Closes #237.
 
