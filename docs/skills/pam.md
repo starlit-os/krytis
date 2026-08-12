@@ -131,6 +131,51 @@ prompter is not a degraded mode — it is an indefinite hang in every caller, wi
 anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
 `busctl --user list | grep SystemPrompter` before anything else.
 
+## oo7's collection path is `…/collection/Login` — capital L, unlike gnome-keyring
+
+gnome-keyring exposes the login keyring at `/org/freedesktop/secrets/collection/login`. oo7
+derives the path from the keyring *label*, so it is **`/org/freedesktop/secrets/collection/Login`**.
+Anything with the lowercase path hardcoded silently fails after the swap:
+
+```
+secret-tool: No such secret collection at path: /org/freedesktop/secrets/collection/login
+```
+
+`secret-tool lock --collection=` wants the bare name, not a path — `--collection=Login` works,
+`--collection=login` and `--collection=default` both fail, and passing a full object path
+trips `g_dbus_connection_signal_subscribe: assertion 'object_path == NULL || …' failed`
+because secret-tool prepends the prefix itself.
+
+**Check whether the keyring is unlocked** (the answer is `b false` when unlocked):
+
+```shell
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/Login \
+  org.freedesktop.Secret.Collection Locked
+```
+
+Portable version that does not care what the collection is called, resolving the `default`
+alias first:
+
+```shell
+C=$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets \
+      org.freedesktop.Secret.Service ReadAlias s default | awk '{gsub(/"/,"",$2); print $2}')
+busctl --user get-property org.freedesktop.secrets "$C" \
+  org.freedesktop.Secret.Collection Locked
+```
+
+`Collections` on `org.freedesktop.Secret.Service` lists everything; expect the ephemeral
+`…/collection/session` (always `Locked=false`) alongside `…/collection/Login`.
+
+**Partial data point on the `default`-alias claim above.** On oo7 0.6.0, when the daemon
+*creates* the default keyring itself (`No default collection found, creating 'Login' keyring`
+→ `Created default 'Login' collection (locked)`), `ReadAlias default` **does** resolve to the
+Login path while it is still locked. That does not overturn § *oo7 `default` alias requires an
+unlocked collection*: the original report concerns a keyring discovered on disk, and that path
+could not be reached in testing because oo7 writes no keyring file until a secret is actually
+stored — a restart just re-runs the create branch. Re-test the discovered-from-disk case
+before relying on either statement.
+
 See `docs/design/secrets-service.md` for the decision this feeds (hold #84 until oo7#506 resolves, or accept the FIDO2-keyring-stays-locked gap as no worse than today).
 
 ## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
