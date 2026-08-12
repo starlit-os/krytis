@@ -1,0 +1,23 @@
+Drops the "bindgen-tests/tests/quickchecking" workspace member (#498).
+
+quickchecking is a fuzz-testing crate (publish = false) that generates random
+C code via quickcheck for bindgen's own property tests. It is not in the
+workspace's default-members ("bindgen", "bindgen-cli", "bindgen-tests"), so
+krytis's build command (`cargo build --release --frozen`, no -p/--workspace
+flag) never compiles it — but Cargo.lock still resolves the full workspace
+graph regardless of default-members, which is how quickchecking's dependency
+on quickcheck -> rand 0.8.5 (GHSA-cq8v-f236-94qc, fixed at 0.9.3) ends up
+vendored into the image's SBOM despite never being built.
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 67c9423..198d60b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -5,7 +5,6 @@ members = [
+     "bindgen-cli",
+     "bindgen-integration",
+     "bindgen-tests",
+-    "bindgen-tests/tests/quickchecking",
+     "bindgen-tests/tests/expectations",
+ ]
+ default-members = [
