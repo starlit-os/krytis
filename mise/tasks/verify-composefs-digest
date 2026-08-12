@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#MISE description="Assert the composefs= digest baked into a sealed image's UKI matches the committed image itself (#528)"
+#USAGE flag "--image <tag>" default="localhost/krytis:sealed" help="Sealed image to verify"
+
+set -euo pipefail
+
+# Why this exists: `bootc container ukify` bakes a composefs= digest into the UKI's
+# frozen .cmdline at seal time (mise/tasks/seal-uki). Nothing checked that the baked
+# value still matches the image that was actually committed — a mismatch was invisible
+# until a real machine booted and stopped at "The UKI has the wrong composefs=
+# parameter" (#528). The two-phase squash in seal-uki exists precisely because this is
+# fragile (docs/skills/secure-boot.md § `--composefs-backend` requires a single layer).
+#
+# Must check the COMMITTED image, never a rebuild — a rebuild can produce a different,
+# equally correct digest and prove nothing (the whole point of #528). See
+# docs/skills/secure-boot.md § Verifying the baked digest against an already-published
+# image, no rebuild, no root for the by-hand procedure this task automates.
+#
+# `bootc container compute-composefs-digest`, like `bootc container ukify`, creates its
+# scratch composefs repo via `tempfile::tempdir_in("/var/tmp")` in the container that
+# RUNS it (hardcoded — see mise/tasks/seal-uki's own comment on this), using O_TMPFILE.
+# fuse-overlayfs never implements this; and even under this workstation's own native
+# overlay driver it silently depends on the bootc build baked into ${IMAGE} — confirmed:
+# bootc 1.16.6 fails with `Operation not supported (os error 95)` on a container's
+# unmounted default /var/tmp, 1.16.7 happens not to. seal-uki already carries a verified
+# O_TMPFILE-capable /var/tmp for its own ukify phase; give the recompute step the same
+# one rather than trusting whatever bootc version ${IMAGE} happens to carry.
+
+# Same $@-then-usage_ fallback as verify-iso-payload/boot-test: mise does not parse
+# #USAGE for a child script invoked as a plain path (seal-uki calls this directly).
+CLI_IMAGE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) CLI_IMAGE="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:sealed}}"
+
+podman image exists "${IMAGE}" || { echo "==> ERROR: ${IMAGE} does not exist locally." >&2; exit 1; }
+
+echo "==> Verifying composefs digest baked into ${IMAGE}'s UKI (#528)..."
+
+DIGEST_TMP="$(mktemp -d -p /var/tmp krytis-verify-digest-XXXXXX)"
+if ! python3 -c '
+import os, sys
+try:
+    os.close(os.open(sys.argv[1], os.O_TMPFILE | os.O_RDWR, 0o600))
+except OSError as exc:
+    sys.exit(f"{exc.strerror} (errno {exc.errno})")
+' "${DIGEST_TMP}"; then
+    echo "==> ERROR: ${DIGEST_TMP} does not support O_TMPFILE, which bootc's composefs" >&2
+    echo "    digest step requires. Point it at a directory on ext4/xfs/btrfs/tmpfs." >&2
+    exit 1
+fi
+
+UKI_TMP="$(mktemp /var/tmp/krytis-verify-uki-XXXXXX.efi)"
+CID=""
+cleanup() {
+    [ -n "${CID}" ] && podman rm -f "${CID}" >/dev/null 2>&1 || true
+    rm -f "${UKI_TMP}"
+    rm -rf "${DIGEST_TMP}"
+}
+trap cleanup EXIT
+
+CID="$(podman create "${IMAGE}" true)"
+if ! podman cp "${CID}:/boot/EFI/Linux/krytis.efi" "${UKI_TMP}" 2>/dev/null; then
+    echo "==> ERROR: ${IMAGE} has no /boot/EFI/Linux/krytis.efi — that is not a sealed build." >&2
+    echo "    Build one first: mise run seal-uki" >&2
+    exit 1
+fi
+
+# .cmdline is a plain string inside the PE; SHA-512 hex (128 lowercase chars) is
+# specific enough that a raw byte-scan is safe — no ukify/objcopy dependency.
+mapfile -t MATCHES < <(grep -aoE 'composefs=[0-9a-f]{128}' "${UKI_TMP}")
+if [ "${#MATCHES[@]}" -eq 0 ]; then
+    echo "==> ERROR: no composefs= parameter found in ${IMAGE}'s UKI .cmdline section." >&2
+    exit 1
+fi
+if [ "${#MATCHES[@]}" -gt 1 ]; then
+    echo "==> ERROR: found ${#MATCHES[@]} composefs= matches in the UKI, expected exactly 1." >&2
+    exit 1
+fi
+BAKED_DIGEST="${MATCHES[0]#composefs=}"
+
+RECOMPUTED_DIGEST="$(podman run --rm \
+    --mount type=image,src="${IMAGE}",target=/target,rw=false \
+    -v "${DIGEST_TMP}:/var/tmp" \
+    "${IMAGE}" \
+    bootc container compute-composefs-digest /target)"
+
+if [ "${BAKED_DIGEST}" != "${RECOMPUTED_DIGEST}" ]; then
+    echo "==> ERROR: composefs digest mismatch (#528) — the UKI's baked digest does not match the committed image." >&2
+    echo "    baked in UKI:  sha512:${BAKED_DIGEST}" >&2
+    echo "    recomputed:    sha512:${RECOMPUTED_DIGEST}" >&2
+    echo "    'bootc install' would abort with: The UKI has the wrong composefs= parameter" >&2
+    exit 1
+fi
+
+echo "==> Composefs digest verified: sha512:${BAKED_DIGEST}"
