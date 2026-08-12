@@ -377,6 +377,16 @@ bool is_safe = in_hypervisor();
 if (!is_safe && !force) return EFI_SUCCESS;    /* silent no-op on real hardware */
 ```
 
+**On real hardware the semantics never actually depend on the oneshot.** `is_safe`
+is only ever true `in_hypervisor()`, so on hardware `force` — set by the manual
+menu selection in the next step — is what enrolls here, whether or not
+`secure-boot-enroll manual` has landed on the ESP yet. The oneshot's timing gap
+only matters in a VM, where `if-safe` silently auto-enrols on the very first boot,
+before the oneshot writes `manual`. That is accepted as intended VM/test
+behaviour, not fixed — see `docs/skills/secure-boot.md` §
+`secure-boot-enroll manual` works — but not on the first boot after install for
+the measurements and the rejected alternatives (#444, option 3).
+
 **Selecting the entry is not a yes/no prompt — it is an abortable countdown.**
 Menu selection calls `secure_boot_enroll_at(..., force=true)`, which prints:
 
