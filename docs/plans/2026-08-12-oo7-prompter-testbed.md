@@ -205,6 +205,14 @@ indefinite hang rather than an error — pop-os/cosmic-epoch#3453 on our own ima
       `/org/freedesktop/secrets/collection/Login`, not gnome-keyring's lowercase `login` —
       `--collection=login` fails with "No such secret collection at path". See
       `docs/skills/pam.md`.
+- [x] **Read-back after locking does NOT prompt — and it is oo7, not the prompter.** Confirmed
+      on the VM (`Locked` = `b true`, `secret-tool lookup` returned nothing without prompting)
+      and reproduced exactly in a container by unlocking through oo7's PAM socket, storing,
+      locking and reading back: `SearchItems` answers `aoao 0 0` for an item that was just
+      read successfully. oo7's `search_inner_items` returns an empty vec while the keyring is
+      locked, so libsecret never learns there is anything to unlock. The prompter is fine —
+      `store` into a locked collection still raises it. See
+      `docs/design/secrets-service.md` § *New blocker found while testing*.
 - [ ] **Cancel is clean, not a hang** — dismiss the prompt with Escape and confirm the caller
       returns an error promptly rather than blocking (the pop-os/cosmic-epoch#3453 failure mode).
 - [ ] **`CreateCollection` / `ChangePassword`** — `seahorse` is not in the image, so drive
