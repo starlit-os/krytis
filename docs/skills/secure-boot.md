@@ -232,6 +232,48 @@ podman build --squash-all -t localhost/krytis:sealed \
 
 `mise/tasks/lint`'s unsigned build still uses a single `--squash-all` pass with no phase split — that's fine there because the unsigned image has no baked digest to invalidate in the first place.
 
+### Verifying the baked digest against an already-published image, no rebuild, no root
+
+#528 asks for exactly the check `mise/tasks/seal-uki` is missing: after the two-phase
+build, confirm the digest baked into the UKI's `.cmdline` still matches the committed
+image, without rebuilding (a rebuild can produce a *different* correct digest and prove
+nothing — see the empirical procedure above). Verified this works end-to-end against the
+**currently published** `ghcr.io/starlit-os/krytis:sealed` (#528 investigation, no
+mismatch found — the check just doesn't exist yet to catch a future one):
+
+```bash
+# 1. Extract the baked digest — no ukify/objcopy needed, .cmdline is a plain string
+#    inside the PE, and its own format (128 lowercase hex chars, SHA-512) is specific
+#    enough that a raw byte-scan of the extracted UKI is safe:
+CID=$(podman create ghcr.io/starlit-os/krytis:sealed true)
+podman cp "${CID}:/boot/EFI/Linux/krytis.efi" /tmp/krytis.efi
+podman rm -f "${CID}"
+grep -aoE 'composefs=[0-9a-f]{128}' /tmp/krytis.efi
+
+# 2. Recompute against the COMMITTED image — bootc container compute-composefs-digest
+#    is the lower-level primitive `bootc container ukify` calls internally (hidden from
+#    --help, present since bootc 1.16.x). Run it from inside the image itself (which
+#    already carries a matching bootc) against a read-only view of that same image:
+podman run --rm \
+    --mount type=image,src=ghcr.io/starlit-os/krytis:sealed,target=/target,rw=false \
+    ghcr.io/starlit-os/krytis:sealed \
+    bootc container compute-composefs-digest /target
+```
+
+The two outputs matched byte-for-byte on the 2026-08-09 published image.
+
+`--mount type=image` (podman core since ~2.2, unrelated to the `--mount=type=bind,from=`
+Containerfile directive used elsewhere in this doc) is the load-bearing choice over the
+`docs/skills/secure-boot.md`-adjacent `podman mount`/`podman unshare` pairing used in the
+original by-hand procedure: on this project's rootless podman (5.4.2, `overlay` graph
+driver), `podman image mount` only makes its merged directory visible **inside** the
+`podman unshare` mount namespace that created it — a sibling `podman run` outside that
+namespace sees an empty directory at the same host path. `--mount type=image` sidesteps
+the whole namespace question: podman resolves and mounts the source image for the target
+container directly, no separate `unshare`/`mount`/`umount` lifecycle to get wrong, and it
+is still a genuine read-only OCI-derived view of the committed image, not a rebuild.
+
+
 
 
 ## Sealed images push under `:sealed` tags, never `:latest`
