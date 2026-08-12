@@ -163,22 +163,29 @@ indefinite hang rather than an error — pop-os/cosmic-epoch#3453 on our own ima
 - [x] **Manual unlock draws noctalia's panel** and, once answered, noctalia stored a secret
       through the Secret Service — which is only reachable with the collection unlocked. The
       full chain ran: oo7 → `BeginPrompting` → noctalia's panel → `sx-aes-1` → unlock → store.
-- [ ] **Password login auto-unlocks** the login collection via `pam_oo7.so auto_start`
-      (i.e. no prompt at all on a fresh login). A prompt on *every* login means `auto_start`
-      is not unlocking and the panel is merely papering over it — still a working prompter,
-      separate bug. Check `/run/user/$(id -u)/oo7-pam.sock` exists and the journal for the
-      PAM handshake.
-- [ ] **Round-trip a secret by hand** (validated syntax, libsecret 0.21.7):
+- [x] **Password login auto-unlocks** the login collection via `pam_oo7.so auto_start` —
+      second login produced no prompt at all, so the PAM handshake over
+      `/run/user/$(id -u)/oo7-pam.sock` is working and the panel is not papering over a
+      broken auto-unlock.
+- [ ] **Round-trip a secret by hand** (syntax validated against libsecret 0.21.7 + oo7 0.6.0
+      in the image):
+
+      # is it unlocked? `b false` = unlocked
+      busctl --user get-property org.freedesktop.secrets \
+        /org/freedesktop/secrets/collection/Login \
+        org.freedesktop.Secret.Collection Locked
 
       echo -n hunter2 | secret-tool store --label='krytis test' service krytis-test key demo
       secret-tool lookup service krytis-test key demo; echo
       secret-tool search --all service krytis-test
-      secret-tool lock --collection=login    # then lookup again -> prompt must reappear
+      secret-tool lock --collection=Login    # then lookup again -> prompt must reappear
       secret-tool clear service krytis-test key demo
 
       `secret-tool store` reads the secret from stdin. The lock-then-lookup cycle is the
-      repeatable prompter test; `--collection=login` matches the collection path oo7 exposes
-      (`/org/freedesktop/secrets/collection/login`).
+      repeatable prompter test. **`Login` is capitalised**: oo7 derives the collection path
+      from the keyring label, so it is `/org/freedesktop/secrets/collection/Login`, not
+      gnome-keyring's lowercase `login` — `--collection=login` fails with "No such secret
+      collection at path". See `docs/skills/pam.md`.
 - [ ] **Cancel is clean, not a hang** — dismiss the prompt with Escape and confirm the caller
       returns an error promptly rather than blocking (the pop-os/cosmic-epoch#3453 failure mode).
 - [ ] **`CreateCollection` / `ChangePassword`** — `seahorse` is not in the image, so drive
