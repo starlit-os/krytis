@@ -659,8 +659,24 @@ Two more things:
   previous file. Check `<source file=…>` before re-testing.
 
 `virsh screenshot <vm> ~/shot.ppm` (then `magick ~/shot.ppm ~/shot.png`) reads
-the SPICE display without touching the guest — the reliable way to see which VT
-is showing what.
+the display without touching the guest — **but not on a Boxes VM.** Boxes gives
+its machines `<video><model type='virtio'/></video>`, and qemu's `screendump`
+cannot dump a virtio-gpu surface:
+
+```
+error: internal error: unable to execute QEMU command 'screendump': no surface
+```
+
+That error is a device limitation, not a hung or blanked guest — it persists
+after a wake keystroke and regardless of which VT is showing. `screenshot` is
+therefore only useful for the `boot-vm`/`boot-test` VMs, which use a dumpable
+model. On a Boxes VM, look at the window.
+
+`virsh console` is not a fallback here either: routed through the Boxes flatpak
+it dies with `Couldn't create lock file for device '/dev/pts/N' in path
+'/var/lock/…': No such file or directory`, and `/var/lock` cannot be created
+inside the sandbox. The serial pty belongs to the sandbox's devpts, so it is not
+reachable from the host by path either.
 
 #### Boxes cannot send Ctrl+Alt+F5, so the first-boot wizard is unreachable
 
