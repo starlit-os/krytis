@@ -213,7 +213,30 @@ This matters when testing a prompter: **libsecret's `lookup` does request an unl
 locked items — so "lookup did not prompt" almost always means the collection was never locked,
 not that the prompter failed.
 
-See `docs/design/secrets-service.md` for the decision this feeds (hold #84 until oo7#506 resolves, or accept the FIDO2-keyring-stays-locked gap as no worse than today).
+## A locked oo7 collection returns "no such secret", not a prompt
+
+`secret-tool lookup` against a locked oo7 collection returns **not found in 0s** — no prompt,
+no error. The item is there; oo7 will not admit it exists.
+`server/src/collection/mod.rs::search_inner_items` returns an empty vec whenever the keyring
+is locked (same on the 0.6.0 tag and current `main`), because oo7 encrypts item attributes at
+rest and cannot match them without the collection key. `SearchItems` therefore reports
+`(0 unlocked, 0 locked)`, and libsecret's `on_lookup_searched` — which would otherwise branch
+to the unlock path — sees nothing to unlock and reports failure.
+
+Consequences when debugging:
+
+- **A silent "secret not found" on oo7 is a lock symptom first, a missing-secret symptom
+  second.** Check `Locked` on the collection before believing the lookup.
+- **`store` still prompts** (writing needs the collection open), so the prompter can look
+  perfectly healthy while every read quietly fails. Do not conclude "prompting works" from a
+  successful store alone.
+- gnome-keyring does not behave this way: it keeps attributes searchable while locked, which
+  is what lets a client discover a locked item and request an unlock.
+
+Full reproduction, source references and the effect on the #84 decision:
+`docs/design/secrets-service.md` § *New blocker found while testing*.
+
+See `docs/design/secrets-service.md` for the decision this feeds. As of 2026-08-12 the hold on #84 needs **two** things, not one: oo7#506 resolved *and* oo7 reporting locked items from `SearchItems`. Accepting the FIDO2 gap is no longer sufficient on its own — a locked collection is reported as "no such secret", so the user never gets the chance to unlock.
 
 ## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
 
