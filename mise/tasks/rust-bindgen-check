@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#MISE description="Verify overrides/rust-bindgen.bst still matches freedesktop-sdk's pinned rust-bindgen"
+
+# elements/overrides/rust-bindgen.bst mirrors freedesktop-sdk's
+# elements/components/rust-bindgen.bst so two patches can be applied on top of
+# it (#498 — bindgen's own Cargo.lock resolves the whole workspace graph
+# regardless of default-members, pulling quickchecking's quickcheck -> rand
+# 0.8.5 (GHSA-cq8v-f236-94qc) into the image's SBOM even though quickchecking
+# is never built).
+#
+# A mirrored element silently rots: bumping the freedesktop-sdk junction moves
+# the upstream bindgen ref and build config, while the copy keeps building the
+# old one. This task diffs everything except the cargo2 `ref:` list (which is
+# expected to differ — the patches drop several crates from Cargo.lock) and
+# separately confirms both patches still apply to the pinned bindgen ref.
+#
+# When it fails, either resync the copy against upstream, or — if the
+# junction now ships a rust-bindgen ref that has dropped quickchecking (or
+# bumped its rand pin) upstream — delete the override element, its patches,
+# this task and the overrides entry in elements/freedesktop-sdk.bst.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+OVERRIDE="elements/overrides/rust-bindgen.bst"
+UPSTREAM_PATH="elements/components/rust-bindgen.bst"
+PATCH1="patches/rust-bindgen/drop-quickchecking-workspace-member.patch"
+PATCH2="patches/rust-bindgen/drop-quickchecking-lockfile.patch"
+
+if [ ! -f "$OVERRIDE" ]; then
+    echo "==> $OVERRIDE is gone — nothing to check."
+    exit 0
+fi
+
+REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/freedesktop-sdk.bst | head -1)"
+SHA="${REF##*-g}"
+if [ -z "$SHA" ] || [ "$SHA" = "$REF" ]; then
+    echo "==> Could not read a git-describe ref from elements/freedesktop-sdk.bst" >&2
+    exit 1
+fi
+
+URL="https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SHA}/${UPSTREAM_PATH}"
+echo "==> Comparing $OVERRIDE against freedesktop-sdk ${SHA:0:12}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
+    echo "==> Could not fetch $URL" >&2
+    exit 1
+fi
+
+# Everything up to (not including) the cargo2 ref: list is expected to match
+# upstream exactly. The ref: list itself is expected to differ — the patches
+# drop several crates from Cargo.lock.
+head_before_cargo2_refs() {
+    awk '/^  ref:$/ { print; exit } { print }' "$1"
+}
+
+# Lines the mirror adds on purpose; everything else must match upstream.
+LOCAL_ADDITIONS=(
+    "- kind: patch"
+    "  path: $PATCH1"
+    "  path: $PATCH2"
+    "  url: crates:crates"
+)
+
+normalise() {
+    grep -vE '^\s*#|^\s*$'
+}
+
+# The mirror also prefixes every sibling-component dependency with
+# `freedesktop-sdk.bst:` — bare `components/foo.bst` only resolves inside
+# freedesktop-sdk's own project namespace, not krytis's. Strip it back off
+# before diffing.
+drop_local_additions() {
+    local args=()
+    local line
+    for line in "${LOCAL_ADDITIONS[@]}"; do
+        args+=(-e "$line")
+    done
+    grep -vxF "${args[@]}" | sed 's/freedesktop-sdk\.bst:components\//components\//'
+}
+
+head_before_cargo2_refs "$TMP/upstream.bst" | normalise >"$TMP/upstream.norm"
+head_before_cargo2_refs "$OVERRIDE" | normalise | drop_local_additions >"$TMP/override.norm"
+
+FAILED=0
+
+if ! diff -u --label "freedesktop-sdk/$UPSTREAM_PATH" "$TMP/upstream.norm" \
+        --label "$OVERRIDE" "$TMP/override.norm"; then
+    echo
+    echo "==> rust-bindgen-check FAILED — the override has drifted from the junction."
+    FAILED=1
+fi
+
+for patch in "$PATCH1" "$PATCH2"; do
+    if ! grep -q "path: $patch" "$OVERRIDE"; then
+        echo "==> $OVERRIDE no longer applies $patch" >&2
+        FAILED=1
+    fi
+done
+
+# Confirm both patches still apply cleanly to the pinned bindgen ref.
+BINDGEN_REF="$(grep -A3 '^- kind: git_repo$' "$OVERRIDE" | grep -oP '^\s*ref:\s*\K\S+')"
+BINDGEN_TAG="${BINDGEN_REF%%-*}"
+echo "==> Checking patches apply to rust-bindgen ${BINDGEN_TAG}"
+
+CLONE="$TMP/rust-bindgen"
+if ! git clone --quiet --depth 1 --branch "$BINDGEN_TAG" \
+        https://github.com/rust-lang/rust-bindgen.git "$CLONE"; then
+    echo "==> Could not clone rust-bindgen at $BINDGEN_TAG" >&2
+    FAILED=1
+else
+    CLONED_SHA="$(git -C "$CLONE" rev-parse HEAD)"
+    if [ "${BINDGEN_REF##*-g}" != "$CLONED_SHA" ]; then
+        echo "==> $BINDGEN_TAG resolved to $CLONED_SHA, expected ${BINDGEN_REF##*-g}" >&2
+        FAILED=1
+    fi
+    for patch in "$PATCH1" "$PATCH2"; do
+        if ! git -C "$CLONE" apply --check "$ROOT/$patch"; then
+            echo "==> $patch no longer applies cleanly to rust-bindgen $BINDGEN_TAG" >&2
+            FAILED=1
+        fi
+    done
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    echo
+    echo "    Resync $OVERRIDE, or drop the override if the junction now ships a"
+    echo "    rust-bindgen ref without the quickchecking rand pin."
+    exit 1
+fi
+
+echo "==> rust-bindgen-check passed."

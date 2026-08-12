@@ -1,0 +1,119 @@
+Regenerated Cargo.lock after dropping the quickchecking workspace member
+(drop-quickchecking-workspace-member.patch). Removes quickcheck, rand,
+rand_core, getrandom, wasi and the now-orphaned env_logger 0.8.4 — nothing
+else in the workspace depended on them. Produced by `cargo update --workspace`
+against the patched tree; no other crate versions changed.
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 3f27811..c5f6d35 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -59,7 +59,7 @@ name = "bindgen-cli"
+ version = "0.72.1"
+ dependencies = [
+  "bindgen",
+- "env_logger 0.10.0",
++ "env_logger",
+  "log",
+  "proc-macro2",
+  "shlex",
+@@ -193,16 +193,6 @@ version = "1.13.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
+ 
+-[[package]]
+-name = "env_logger"
+-version = "0.8.4"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a19187fea3ac7e84da7dacf48de0c45d63c6a76f9490dae389aead16c243fce3"
+-dependencies = [
+- "log",
+- "regex",
+-]
+-
+ [[package]]
+ name = "env_logger"
+ version = "0.10.0"
+@@ -235,17 +225,6 @@ dependencies = [
+  "instant",
+ ]
+ 
+-[[package]]
+-name = "getrandom"
+-version = "0.2.15"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
+-dependencies = [
+- "cfg-if",
+- "libc",
+- "wasi",
+-]
+-
+ [[package]]
+ name = "glob"
+ version = "0.3.1"
+@@ -445,26 +424,6 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
+-[[package]]
+-name = "quickcheck"
+-version = "1.0.3"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "588f6378e4dd99458b60ec275b4477add41ce4fa9f64dcba6f15adccb19b50d6"
+-dependencies = [
+- "env_logger 0.8.4",
+- "log",
+- "rand",
+-]
+-
+-[[package]]
+-name = "quickchecking"
+-version = "0.0.0"
+-dependencies = [
+- "clap",
+- "quickcheck",
+- "tempfile",
+-]
+-
+ [[package]]
+ name = "quote"
+ version = "1.0.37"
+@@ -474,24 +433,6 @@ dependencies = [
+  "proc-macro2",
+ ]
+ 
+-[[package]]
+-name = "rand"
+-version = "0.8.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+-dependencies = [
+- "rand_core",
+-]
+-
+-[[package]]
+-name = "rand_core"
+-version = "0.6.4"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+-dependencies = [
+- "getrandom",
+-]
+-
+ [[package]]
+ name = "redox_syscall"
+ version = "0.3.5"
+@@ -640,12 +581,6 @@ version = "0.9.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+ 
+-[[package]]
+-name = "wasi"
+-version = "0.11.0+wasi-snapshot-preview1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+-
+ [[package]]
+ name = "winapi"
+ version = "0.3.9"
