@@ -87,9 +87,32 @@ Re-checked this against current `linux-credentials/oo7` `main` (post-0.7.0-alpha
 **New gap found via oo7#506** (2026-08-03 comment, not previously documented here): the *unlocked* Login collection can re-lock with **no explicit `Lock()` call** if `oo7-daemon.service` restarts mid-session — the one-shot PAM helper's memfd doesn't survive the restart, and there is no FD-store/credential-based resume yet. Reporter's trigger was a package update restarting the daemon without ending the session. Lower risk for krytis specifically since bootc updates are reboot-driven rather than live in-place restarts, but still applies to `systemctl --user restart oo7-daemon` or a crash-restart mid-session — worth a boot-test scenario if #84 is re-attempted.
 
 **Two corrections to carry into any future #84 attempt** (upstream `pam/README.md`, read 2026-08-12):
-- The PAM socket is `$XDG_RUNTIME_DIR/oo7/pam.sock` (`OO7_PAM_SOCKET`-configurable) — not `oo7-pam.sock` as ArchWiki has it.
+- ~~The PAM socket is `$XDG_RUNTIME_DIR/oo7/pam.sock` (`OO7_PAM_SOCKET`-configurable) — not `oo7-pam.sock` as ArchWiki has it.~~ **Wrong — corrected 2026-08-12.** ArchWiki was right. The socket is `/run/user/<uid>/oo7-pam.sock`, still `OO7_PAM_SOCKET`-configurable. Verified three ways: read from source on **both** the 0.6.0 tag (`server/src/pam_listener/mod.rs:59`, `pam/src/socket.rs:195`) and current `main` (`server/src/pam_listener/mod.rs:100`, `pam/src/socket.rs:273`) — both sides hardcode the same `format!("/run/user/{uid}/oo7-pam.sock")` default — and observed at runtime on a built krytis image: `INFO oo7_daemon::pam_listener: PAM listener started on /run/user/1000/oo7-pam.sock`. The daemon and the PAM module agree, which is what actually matters; the earlier note would have sent a debugger to a path that never exists.
 - Upstream's own `password` stack example is `password optional pam_oo7.so`, with **no `use_authtok`**. Krytis's current gnome-keyring line is `-password optional pam_gnome_keyring.so use_authtok` — don't carry `use_authtok` over by habit; pam_oo7's password-stack path captures old+new tokens itself. Confirm whether it needs/uses the flag before porting.
 - oo7 ships no ssh-agent component at all (repo layout: cargo-credential, cli, client, git-credential, pam, portal, server, kwallet — no ssh_agent crate). This isn't "a different SSH_AUTH_SOCK path to switch to" — whatever provides `SSH_AUTH_SOCK` today has to keep existing independent of this migration.
+
+**`oo7-daemon` startup capability behaviour — the scary warning is the normal case.** On a
+real user session the daemon logs
+`WARN oo7_daemon::capability: No process capabilities, insecure memory might get used`
+and carries on. That is expected and not a failure: `server/src/capability.rs`
+`drop_unnecessary_capabilities()` branches on how many capabilities the process holds, and a
+plain user session holds none → `CapabilityState::None` → warn and return `Ok`. The daemon
+only wanted `CAP_IPC_LOCK` so it could `mlockall()` secrets out of swap.
+
+The trap is the middle case. With a *partial* capability set that lacks `IPC_LOCK` — exactly
+what `podman run` as root gives you (~11 caps, no `IPC_LOCK`) — the ≥10-caps heuristic picks
+`CapabilityState::Full`, and `set_capabilities()` then fails trying to raise `IPC_LOCK` into
+the permitted set:
+
+```
+ERROR oo7_daemon: Capability error Operation not permitted (os error 1)
+Error: Capability(Os { code: 1, kind: PermissionDenied, ... })
+```
+
+So `podman run --rm <image> /usr/libexec/oo7-daemon` "proves" the daemon is broken when it is
+fine. Reproduce daemon behaviour with `--user 1000` (zero caps, matching a real session), or
+grant `--cap-add IPC_LOCK`. Verified on a built krytis image: as uid 1000 the daemon starts,
+creates a locked `Login` collection, and owns `org.freedesktop.secrets`.
 
 See `docs/design/secrets-service.md` for the decision this feeds (hold #84 until oo7#506 resolves, or accept the FIDO2-keyring-stays-locked gap as no worse than today).
 
