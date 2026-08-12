@@ -122,6 +122,42 @@ niri sets `WAYLAND_DISPLAY`, so oo7 always resolves to `PrompterType::GNOME` the
 
 **The env-timing risk documented in `docs/skills/desktop.md` § Toolkit Vulkan / Wayland Environment mostly doesn't apply here.** That section warns `niri-session`'s `systemctl --user import-environment` fires too late for *early* D-Bus-activated services (pipewire, xdg-desktop-portal). `gcr-prompter` isn't early — it activates lazily whenever a prompt is actually needed, which in practice is well after session startup and therefore after `import-environment` has already run. Low risk, but worth an explicit boot-test assertion (`secret-tool lock` a non-login collection, then trigger `Unlock()` and confirm a GTK window actually appears) rather than assuming it from this reasoning alone.
 
+## Writing an `org.gnome.keyring.SystemPrompter` provider: reply ordering is the whole game
+
+The "eventual answer" above was built. A native prompter now exists on the noctalia fork
+(`kitten-lily/noctalia`, branch `feat/system-prompter`, commit `ba821c7da`) — see
+`docs/design/secrets-service.md` § Status for scope and verification. Lessons that will
+outlive that branch:
+
+**The `BeginPrompting` method reply MUST reach the bus before the `PromptReady` it triggers.**
+This is the one non-obvious requirement, and a hand-written test client will not catch it. gcr's
+real client (`GcrSystemPrompt`, what gnome-keyring and seahorse use) sets up its pending async
+result only once `BeginPrompting` returns; a `PromptReady` that overtakes that reply trips
+`prompt_method_ready: assertion 'G_IS_SIMPLE_ASYNC_RESULT (self->pv->pending)' failed` and the
+session then dies with the misleading *"Another prompt is already in progress"*. gcr's own
+prompter gets this right by calling `g_dbus_method_invocation_return_value()` *before*
+`prompt_next_ready()`. With `sdbus-c++`, a plain value-returning handler sends the reply only
+*after* the handler returns, so `BeginPrompting` and `StopPrompting` must take a deferred
+`sdbus::Result<>` and call `returnResults()` explicitly before dispatching anything.
+
+**Test against `GcrSystemPrompt`, not a mock.** The bug above passed a bespoke test client and
+failed the real one. Driving gcr's client in a forked child (its sync API spins its own
+`GMainLoop`, so it cannot share a thread with a hand-pumped sdbus connection) while the parent
+pumps the service is a cheap way to get a genuine interop assertion.
+
+**`gcr-4` still ships `GcrSystemPrompter`, the server-side machinery** — only the *binary* and
+its `.service` file were dropped, not the library class. Using it means implementing the
+`GcrPrompt` GObject interface (property-heavy, async vfuncs); the native route reimplements the
+small D-Bus surface instead and links only `GcrSecretExchange` for the `sx-aes-1` handshake, so
+the secret is never a plaintext D-Bus argument. Either way, read `gcr/gcr-system-prompter.c` —
+it is the authoritative spec for the wire behaviour, including that a cancelled password prompt
+still replies through `gcr_secret_exchange_send()` with a NULL secret, and that the reply
+strings are `""` / `"yes"` / `"no"`.
+
+**Owning the name is conditional.** A prompter must not claim
+`org.gnome.keyring.SystemPrompter` when gnome-shell or a live `gcr-prompter` already holds it;
+treat `requestName` failure as "stay out of the way", not as an error.
+
 ## oo7 v0→v1 keyring migration is destructive on rollback
 
 When oo7-daemon first starts, it migrates the existing gnome-keyring `login.keyring` (v0 format) to `~/.local/share/keyrings/v1/login.keyring` (oo7 v1 format) and removes the original file.

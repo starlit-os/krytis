@@ -155,14 +155,53 @@ the long-term goal of upstreaming it or shipping it as a noctalia plugin.
 clients that fall back to `org.gnome.keyring.SystemPrompter` when no portal-based prompter is
 available.
 
-**Scope note:** not started. This section is a scoping record from the 2026-08-12
-investigation, not a plan with dates or an owner yet. Next step is deciding fork-and-prototype
-vs. opening an upstream noctalia issue first to gauge maintainer interest in owning this
-(their plugin system explicitly invites "third-party service integrations", which argues for
-at least floating the idea before building in isolation) — see AGENTS.md's Upstream Gate:
-prototyping on a fork is fine unprompted, opening a PR/issue against `noctalia-dev/noctalia`
-is not, without an explicit instruction naming that action.
+## Status: implemented on a fork (2026-08-12)
 
+Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`, commit
+`ba821c7da`, based on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`). **No PR or issue
+has been opened against `noctalia-dev/noctalia`** — per AGENTS.md's Upstream Gate that needs
+an explicit instruction naming that action. The branch loses nothing by waiting.
+
+What landed:
+
+- `src/dbus/secrets/secret_prompter.{h,cpp}` — the service. Single-slot (matching
+  `GCR_SYSTEM_PROMPTER_SINGLE`) with a waiting queue, client-disconnect teardown via
+  `NameOwnerChanged`, and the full `BeginPrompting`/`PerformPrompt`/`StopPrompting` state
+  machine on `sdbus-c++`, matching the existing agent idiom in `dbus/network/iwd_secret_agent.cpp`.
+- `src/shell/secrets/secret_prompt_panel.{h,cpp}` — the UI, modelled on `shell/polkit/polkit_panel.cpp`.
+- `shell.secret_prompter` config toggle, **off by default**: if gnome-shell or a live
+  `gcr-prompter` already owns the name, noctalia must stay out of the way.
+- `tests/secret_prompter_test.cpp` — runs on a private bus via `dbus-run-session`.
+
+The plan above survived contact with the code, with one correction: only `GcrSecretExchange`
+is linked from `libgcr-4`, as intended, but `gcr-4` also still ships `GcrSystemPrompter` — the
+*server-side* machinery. It was not used (it requires implementing the `GcrPrompt` GObject
+interface, i.e. exactly the GObject subclassing the native approach avoids), but its source is
+the authoritative reference for the wire behaviour and was read line-by-line to build this.
+
+### The bug that only the real client found
+
+A hand-written test client passed while gcr's actual client failed. **The method reply to
+`BeginPrompting` must reach the bus before the `PromptReady` that follows it.** Dispatching
+`PromptReady` from inside the method handler — before sdbus writes the reply — makes gcr's
+`GcrSystemPrompt` hit
+`prompt_method_ready: assertion 'G_IS_SIMPLE_ASYNC_RESULT (self->pv->pending)' failed` and
+then refuse the session with *"Another prompt is already in progress"*. gcr's own prompter
+calls `g_dbus_method_invocation_return_value()` *before* `prompt_next_ready()`; the fix is a
+deferred `sdbus::Result<>` on both `BeginPrompting` and `StopPrompting`. Same constraint
+applies to any future re-implementation.
+
+### Verification
+
+`meson test`: 81/81 pass, including the new `secret_prompter` case. `clang-tidy` clean on the
+new sources. The test's final case drives the prompter through **`GcrSystemPrompt`** — gcr's
+real client, the one gnome-keyring and seahorse use — in a forked child, and asserts the typed
+password arrives byte-for-byte after the `sx-aes-1` round trip. That is the interop claim:
+verified against gcr's client state machine and real crypto, not against a mock.
+
+Not yet exercised: the panel on a live niri session (needs a booted image), oo7's
+`GNOMEPrompterProxy`, and the mid-session daemon-restart scenario from
+pop-os/cosmic-epoch#3453.
 
 ## Revisit trigger
 

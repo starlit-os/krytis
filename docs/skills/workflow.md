@@ -196,6 +196,39 @@ When referencing Dakota or Zirconium Hawaii, read `docs/skills/` in the sibling 
 
 **Don't read only the `.bst` file.** The element captures what the author needed to add on top of their environment. The skills docs capture what that environment provides implicitly.
 
+## Sync a Component Fork Before Branching From It (`kitten-lily/*`)
+
+Krytis pins upstream components (`noctalia-dev/noctalia`, `noctalia-dev/noctalia-greeter`, …)
+directly, so the `kitten-lily` forks are only touched when someone is actively carrying a patch.
+Between those episodes they rot silently: as of 2026-08-12 `kitten-lily/noctalia`'s `main` was
+**111 commits behind** upstream, and the local checkout was parked on a stale feature branch
+1043 commits behind, still at `v5.0.0-beta1` while krytis pinned `v5.0.0-beta.7`.
+
+**Before starting any work on a fork, sync it and check whether the old branch is still needed.**
+
+```shell
+cd <fork checkout>
+git fetch upstream --tags && git fetch origin
+# Fork-only commits on main? Empty output = clean fast-forward, safe to push.
+git log --oneline upstream/main..origin/main
+git push origin upstream/main:refs/heads/main
+git checkout main && git merge --ff-only origin/main && git push origin --tags
+```
+
+Then branch from `upstream/main`, not from the fork's stale tip:
+`git worktree add -b <branch> <path> upstream/main`. Basing a prototype on the fork's old `main`
+means writing against APIs that no longer exist — `src/security/` did not exist at `beta1` but
+is central at `beta.8`.
+
+**Check whether the stale feature branch was upstreamed before assuming it still matters.** Diff
+its change against current upstream rather than trusting the branch name: `fix/wifi-persist-polkit-async`
+turned out to be redundant because upstream had since made the same call async
+(`callMethodAsync("AddAndActivateConnection2")` in `src/dbus/network/network_manager_service.cpp`).
+Report obsolete branches to the user rather than deleting them — they are the user's work.
+
+Worktrees for fork work live beside the fork, not in krytis:
+`<parent>/<fork-name>.worktrees/<branch-leaf>`.
+
 ## Where Plan and Design Docs Go
 
 `docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.
