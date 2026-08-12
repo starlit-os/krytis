@@ -35,7 +35,7 @@ fnox = "v1.33.0"
 oras = "1.3.3"
 # grype: required by `mise run vuln-scan` / `mise run push` to scan the SBOM
 # for known CVEs (#41). Dev-host tooling only.
-grype = "0.116.1"
+grype = "0.117.0"
 # cosign: required by `mise run sign` to sign the published image and its
 # OCI referrers with Sigstore keyless/OIDC signing (#60). Dev-host tooling
 # only — in CI it needs the `id-token: write` job permission for ambient
