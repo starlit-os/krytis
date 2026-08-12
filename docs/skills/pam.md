@@ -76,6 +76,44 @@ oo7-daemon only loads keyring aliases (including `default`) when a collection is
 
 This is the root cause of Ghostty instability on FIDO2 login with oo7.
 
+### Revalidated 2026-08-12 against upstream `main` + Fedora's F45 rollout — still open, not a regression
+
+Re-checked this against current `linux-credentials/oo7` `main` (post-0.7.0-alpha) while cross-referencing Fedora's [F45 "oo7 Secrets Service Provider" change](https://fedoraproject.org/wiki/Changes/oo7_Secrets_Service_Provider) (system-wide default for F45, FESCo-approved). The mechanics above are **not stale**:
+
+- `pam/src/lib.rs::get_auth_token_internal` still returns `Err(PAM_SYSTEM_ERR)` on a null `PAM_AUTHTOK` pointer; `pam_sm_authenticate` still treats that as "nothing to stash" and returns `PAM_SUCCESS` without stashing, so `pam_sm_open_session` finds no stashed password and skips the unlock send entirely. Same behavior, verified against source, not inferred from the bug report.
+- This is genuinely unresolved upstream, not just untriaged: [oo7#506](https://github.com/linux-credentials/oo7/issues/506) is a maintainer discussion on passwordless/FIDO2 keyring unlock, still active as of 2026-08-02. Maintainer's stance is to wait on `credentiald` and a systemd PR to mature before deciding a direction — there is no near-term fix in flight.
+- **Not a regression vs. gnome-keyring** — the "Known gap, not a regression" note above already covers this: gnome-keyring has the identical gap on FIDO2-only login, since neither module gets a password to unlock with. Switching to oo7 does not make this worse; it also does not fix it.
+
+**New gap found via oo7#506** (2026-08-03 comment, not previously documented here): the *unlocked* Login collection can re-lock with **no explicit `Lock()` call** if `oo7-daemon.service` restarts mid-session — the one-shot PAM helper's memfd doesn't survive the restart, and there is no FD-store/credential-based resume yet. Reporter's trigger was a package update restarting the daemon without ending the session. Lower risk for krytis specifically since bootc updates are reboot-driven rather than live in-place restarts, but still applies to `systemctl --user restart oo7-daemon` or a crash-restart mid-session — worth a boot-test scenario if #84 is re-attempted.
+
+**Two corrections to carry into any future #84 attempt** (upstream `pam/README.md`, read 2026-08-12):
+- The PAM socket is `$XDG_RUNTIME_DIR/oo7/pam.sock` (`OO7_PAM_SOCKET`-configurable) — not `oo7-pam.sock` as ArchWiki has it.
+- Upstream's own `password` stack example is `password optional pam_oo7.so`, with **no `use_authtok`**. Krytis's current gnome-keyring line is `-password optional pam_gnome_keyring.so use_authtok` — don't carry `use_authtok` over by habit; pam_oo7's password-stack path captures old+new tokens itself. Confirm whether it needs/uses the flag before porting.
+- oo7 ships no ssh-agent component at all (repo layout: cargo-credential, cli, client, git-credential, pam, portal, server, kwallet — no ssh_agent crate). This isn't "a different SSH_AUTH_SOCK path to switch to" — whatever provides `SSH_AUTH_SOCK` today has to keep existing independent of this migration.
+
+See `docs/design/secrets-service.md` for the decision this feeds (hold #84 until oo7#506 resolves, or accept the FIDO2-keyring-stays-locked gap as no worse than today).
+
+## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
+
+Traced through `linux-credentials/oo7`'s prompter backend selection (`server/src/service/mod.rs::prompter_type`, 2026-08-12) to answer "what shows the unlock dialog on niri, a non-GNOME/non-KDE compositor, when PAM auto-unlock doesn't apply?" (secondary/locked collections, `CreateCollection`, `ChangePassword`, or any manual `Unlock()` call).
+
+**The backend choice is display-presence, not desktop-identity:**
+```rust
+let has_display = DISPLAY or WAYLAND_DISPLAY set;
+if has_display {
+    if plasma_feature_enabled && in_plasma_environment() { return Plasma; }
+    return PrompterType::GNOME;   // ← default whenever a display exists and it isn't Plasma
+}
+PrompterType::Cli                 // ← only when there is NO display at all (headless/TTY)
+```
+niri sets `WAYLAND_DISPLAY`, so oo7 always resolves to `PrompterType::GNOME` there — **not** the `Cli`/`org.freedesktop.secrets.CliPrompter` fallback. There is no niri-native or generic-wlroots prompter upstream; "GNOME" is the only GUI path offered to any Wayland session that isn't detected as Plasma.
+
+**"GNOME" here means `gcr-prompter`, not GNOME Shell.** The GNOME path calls `org.gnome.keyring.SystemPrompter` (`server/src/gnome/prompter.rs`), which is a D-Bus-activated well-known name owned by `gcr-prompter` — a standalone GTK binary shipped by GCR, not part of gnome-shell. It works on any Wayland compositor, D-Bus-activates on demand (no `no_autostart` on this proxy, unlike the CLI one), and shows a plain GTK dialog. Confirmed by community reports for Sway/Hyprland: it works, but fails with "No Gcr System Prompter available" if `WAYLAND_DISPLAY`/`DISPLAY` aren't visible to the D-Bus session when it activates.
+
+**krytis already ships this, transitively — verify it stays if #84 is re-attempted.** `gnome-keyring.bst` (`gnome-build-meta.bst:core/gnome-keyring.bst`) has a **runtime** `depends: sdk/gcr-3.bst` (checked against the staged junction source, not a local grep — see AGENTS.md's transitive-dependency warning). That's how `gcr-prompter` gets into the image today. If oo7 replaces gnome-keyring in `stacks/desktop.bst`, that dependency disappears unless `oo7.bst` (or the stack) adds `sdk/gcr-3.bst` explicitly — gh178's plan never mentioned it, so the prior attempt would have shipped a manual-unlock path that silently fails.
+
+**The env-timing risk documented in `docs/skills/desktop.md` § Toolkit Vulkan / Wayland Environment mostly doesn't apply here.** That section warns `niri-session`'s `systemctl --user import-environment` fires too late for *early* D-Bus-activated services (pipewire, xdg-desktop-portal). `gcr-prompter` isn't early — it activates lazily whenever a prompt is actually needed, which in practice is well after session startup and therefore after `import-environment` has already run. Low risk, but worth an explicit boot-test assertion (`secret-tool lock` a non-login collection, then trigger `Unlock()` and confirm a GTK window actually appears) rather than assuming it from this reasoning alone.
+
 ## oo7 v0→v1 keyring migration is destructive on rollback
 
 When oo7-daemon first starts, it migrates the existing gnome-keyring `login.keyring` (v0 format) to `~/.local/share/keyrings/v1/login.keyring` (oo7 v1 format) and removes the original file.
@@ -96,7 +134,7 @@ Note: `pkill gnome-keyring-daemon` fails silently on Linux — the process name 
 
 ## oo7 CreateCollection panics on wrong property key
 
-Upstream bug: passing the wrong property key to `CreateCollection` causes an `unwrap()` panic at `client/src/dbus/api/properties.rs:84:78` instead of returning an error.
+Upstream bug: passing the wrong property key to `CreateCollection` causes an `unwrap()` panic instead of returning an error. Originally seen at `client/src/dbus/api/properties.rs:84:78`; the file has since been restructured (deserialization now branches on `contains_key(COLLECTION_PROPERTY_LABEL)` first), but the underlying bug is unchanged as of 2026-08-12 — the wrong key falls into the item-properties branch and panics on `map.get(ITEM_PROPERTY_LABEL).unwrap()` instead, since neither the correct nor the attempted key is present there. Re-verify the exact panic line against current `main` before citing it, not this note.
 
 Correct key: `org.freedesktop.Secret.Collection.Label` (capital S, singular Secret)  
 Wrong key: `org.freedesktop.secrets.collection.Label` (lowercase, plural) → panic
