@@ -125,6 +125,21 @@ These needed no boot — `podman run --rm localhost/krytis:latest` was enough:
 - [x] **noctalia links gcr-4:** `ldd /usr/bin/noctalia` → `libgcr-4.so.4`.
 - [x] **The skel toggle ships:** `secret_prompter = true` in
       `/etc/skel/.local/state/noctalia/settings.toml`.
+- [x] **`oo7-daemon` actually runs on this image and claims the bus name.** Run it as an
+      unprivileged uid — `podman run --rm --user 1000 --tmpfs /tmp:rw,mode=1777
+      --tmpfs /run/user:rw,mode=0777 localhost/krytis:latest`, start a private
+      `dbus-daemon --session`, then `/usr/libexec/oo7-daemon`. It logs
+      `Created default 'Login' collection (locked)` and
+      `PAM listener started on /run/user/1000/oo7-pam.sock`, and `busctl --user list` shows it
+      owning `org.freedesktop.secrets` exposing `org.freedesktop.Secret.Service`.
+      **Run it as root and it dies** with `Capability error Operation not permitted` — that is
+      a container artifact, not a broken build (see `docs/skills/pam.md`).
+- [x] **`secret-tool` and `busctl` are in the image** (`seahorse` is not — use `secret-tool`
+      or a libsecret client for the `CreateCollection`/`ChangePassword` checks below).
+- [x] **noctalia accepts `secret_prompter`.** `noctalia config export` round-trips
+      `secret_prompter = true`, and a deliberately bogus sibling key produces
+      `shell.bogus_made_up_key: unknown setting` while `secret_prompter` produces no warning —
+      so it is a recognised setting, not one silently tolerated and dropped.
 
 ### In-guest checks (need a booted session)
 
@@ -142,7 +157,10 @@ These needed no boot — `podman run --rm localhost/krytis:latest` was enough:
       prompt; expect the typed password to be accepted.
 - [ ] **Cancel is clean, not a hang** — dismiss the prompt with Escape and confirm the caller
       returns an error promptly rather than blocking (the pop-os/cosmic-epoch#3453 failure mode).
-- [ ] **`CreateCollection` / `ChangePassword`** through `seahorse` or a libsecret client.
+- [ ] **`CreateCollection` / `ChangePassword`** — `seahorse` is not in the image, so drive
+      these over D-Bus directly (`busctl --user call org.freedesktop.secrets
+      /org/freedesktop/secrets org.freedesktop.Secret.Service CreateCollection ...`) or with
+      any libsecret client. Both paths are prompt-bearing, which is the point.
 - [ ] **FIDO2 login leaves the collection locked, and the prompt is now the way out.**
       Known gap, not a regression (`docs/design/secrets-service.md` § The blocker). Worth
       measuring here because the native prompter is what makes it *recoverable* rather than
