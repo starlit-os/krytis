@@ -72,10 +72,19 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
 - Manual unlock UI on niri (secondary keyrings, `CreateCollection`, `ChangePassword`) needs
   `gcr-prompter` (`sdk/gcr-3.bst`) — oo7 has no niri/wlroots-native prompter, and a
   Wayland session always resolves to the GNOME (`org.gnome.keyring.SystemPrompter`) path,
-  never the CLI fallback, since `WAYLAND_DISPLAY` counts as "has a display". Krytis gets
-  this today only transitively through `gnome-keyring.bst`'s runtime dependency — `oo7.bst`
-  must add it explicitly or manual unlock silently breaks. Full detail in `docs/skills/pam.md`
-  § Manual unlock on niri needs `gcr-3`.
+  never the CLI fallback, since `WAYLAND_DISPLAY` counts as "has a display". `gcr-4`
+  (`sdk/gcr.bst`) is **not** a substitute: GCR4 intentionally dropped the standalone
+  prompter binary, moving that responsibility into each desktop shell (gnome-shell owns
+  `org.gnome.keyring.SystemPrompter` itself via `js/ui/components/keyring.js`, built on
+  GCR4 as a library) — niri has no equivalent shell-level component, so the legacy GCR3
+  binary is the only viable path today. Krytis gets it only transitively through
+  `gnome-keyring.bst`'s runtime dependency — `oo7.bst` must add `sdk/gcr-3.bst` explicitly
+  or manual unlock silently breaks. **Confirmed as a live, currently-open failure mode on a
+  peer non-shell compositor**: [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453)
+  — `gcr-prompter` installed and present, but fails to activate after a mid-session daemon
+  restart, hanging every libsecret caller rather than erroring cleanly. Treat this as a
+  required boot-test scenario, not a theoretical edge case. Full detail in
+  `docs/skills/pam.md` § Manual unlock on niri needs `gcr-3`.
 
 ## Decision
 
