@@ -1587,6 +1587,15 @@ dakota ships `elements/bluefin/network.bst`, doing two things: (1) a tmpfiles.d 
 1. `/etc/resolv.conf` symlink: systemd itself ships `/usr/lib/tmpfiles.d/systemd-resolve.conf` (`L! /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf`) as part of the systemd package — this arrives for free once anything depends on `freedesktop-sdk.bst:vm/config/resolved.bst` (already the case via `elements/stacks/base-system.bst`). Dakota's version is redundant, not a gap-filler.
 2. `/etc/hosts`: fdsdk's `components/hosts.bst` ships the identical two-line file, pulled in transitively as a runtime-minimal dep — no krytis element needed.
 
+**Caveat — "covered" is not "unimportant".** Because the image's `nsswitch.conf` hosts line
+is `mymachines resolve [!UNAVAIL=return] files myhostname dns`, no glibc program ever reads
+`/etc/resolv.conf`; the trailing `dns` module is unreachable. That file is load-bearing for
+exactly one class of program: statically linked binaries with no NSS, of which
+`core/mise.bst` (musl static-pie) is the one shipped in the image. A missing or stale
+`/etc/resolv.conf` therefore presents as "`mise` gets DNS errors, everything else on the
+machine is fine." See [`mise.md`](mise.md) § The shipped `mise` is musl-static — it is the
+one binary that needs `/etc/resolv.conf`.
+
 Lesson: before porting a dakota element to krytis, check the target files against what fdsdk/gnome-build-meta already ship (staged junction tree under `.bst/staged-junctions/`, or ground-truth via `/usr/manifest.json` + reading the live file on a booted image per the NetworkManager section above) — "dakota has an element for X" does not imply "krytis needs an element for X."
 
 ## Upstream Project Renames (2026)

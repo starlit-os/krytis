@@ -2,8 +2,14 @@ kind: manual
 
 # Prebuilt static binary release of mise (https://mise.jdx.dev/).
 # Vendors the upstream prebuilt binary — no C/Rust build needed.
-# Uses the musl variant to avoid glibc version mismatches across
-# distro upgrades (bootc images must run on a stable userspace).
+# Uses the musl variant so the binary is self-contained: install-commands
+# below execute it inside the BST sandbox, and a static build has no
+# linkage surface there. (Note: "glibc skew across upgrades" is NOT the
+# reason — mise ships in the same atomic image as its glibc, so they can
+# never diverge.) Cost: a static binary bypasses glibc NSS entirely and
+# parses /etc/resolv.conf itself, so a missing/stale resolv.conf breaks
+# mise while every other tool keeps working. See docs/skills/mise.md
+# § The shipped `mise` is musl-static.
 # Pin updates via .github/workflows/track-bst-sources.yml (manual-merge).
 sources:
 - kind: remote

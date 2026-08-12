@@ -325,6 +325,198 @@ the doc explicitly diagrams `/etc/mise/conf.d/*.toml` as a first-class layer.
 `[tool_alias]` block (`fish`, `micro`, `tealdeer`, …) so users get short names for
 aqua/github/pipx-backed tools without needing the full backend path. Closes #153.
 
+## The shipped `mise` is musl-static — it is the one binary that needs `/etc/resolv.conf`
+
+`core/mise.bst` vendors upstream's **`linux-x64-musl`** prebuilt (`file /usr/bin/mise` →
+`static-pie linked`). That choice is deliberate — it avoids glibc version skew across
+image upgrades — but it has a consequence that only shows up as a networking bug:
+
+**A static musl binary does not use glibc NSS.** It never loads `nss-resolve`, never
+consults `/etc/nsswitch.conf`, and never talks to systemd-resolved over D-Bus. It parses
+`/etc/resolv.conf` itself and speaks DNS on the wire.
+
+Everything else on the image takes the other path. The image's hosts line is:
+
+```
+hosts:  mymachines resolve [!UNAVAIL=return] files myhostname dns
+```
+
+`resolve` (nss-resolve → systemd-resolved) comes first, and `[!UNAVAIL=return]` means the
+`dns` module at the end is effectively dead code — glibc programs never fall through to it,
+so **no glibc program on krytis ever reads `/etc/resolv.conf`**.
+
+Net effect: `/etc/resolv.conf` can be missing, empty, or stale and the system looks
+completely healthy — browser, `curl`, `git`, `getent`, `ping` all resolve fine — while
+`mise` alone fails:
+
+```
+mise ERROR client error (Connect)
+mise ERROR dns error
+mise ERROR failed to lookup address information: Try again
+```
+
+(`EAI_AGAIN` out of musl's resolver, after a ~10 s retry stall.)
+
+### Diagnosis
+
+```bash
+ls -l /etc/resolv.conf                    # expect: symlink → ../run/systemd/resolve/stub-resolv.conf
+getent ahostsv4 mise-versions.jdx.dev     # glibc/NSS path — succeeds even when resolv.conf is broken
+resolvectl status | head                  # resolv.conf mode: stub
+```
+
+If `getent` works and `mise` does not, it is `/etc/resolv.conf`, not the network.
+
+### Fix
+
+```bash
+sudo ln -sfn ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+```
+
+Relative target, matching the tmpfiles rule exactly. Takes effect immediately — no restart.
+
+### Why it can be missing in the first place
+
+The image ships **no** `/etc/resolv.conf` (verified with `podman unshare podman image mount
+localhost/krytis:latest` — the path does not exist in the layer). The symlink is created at
+every boot by `systemd-tmpfiles --boot --create` from systemd's own
+`/usr/lib/tmpfiles.d/systemd-resolve.conf`:
+
+```
+L! /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf
+```
+
+`L` creates the symlink only when the path does not already exist — it will **not** replace
+a regular file someone (a VPN client, `resolvconf`, a manual edit) dropped there. And since
+`/etc` is a writable per-deployment overlay in a bootc image, such a file survives every
+upgrade. So there are two distinct failure shapes:
+
+- **Path absent** → tmpfiles should have recreated it at boot. It didn't, so check
+  `systemctl status systemd-tmpfiles-setup.service` and whether something removes it
+  post-boot.
+- **Path present but a stale regular file** → tmpfiles will never fix it; the `L` rule is a
+  no-op against an existing path. Delete it and let the next boot recreate the symlink, or
+  apply the `ln -sfn` above.
+
+### Reproducing without breaking your machine
+
+```bash
+unshare -rm sh -c 'mount --bind /dev/null /etc/resolv.conf; mise ls-remote node'
+# → mise ERROR dns error … while getent in the same namespace still resolves
+
+printf 'nameserver 127.0.0.53\n' > /tmp/rc
+unshare -rm sh -c 'mount --bind /tmp/rc /etc/resolv.conf; mise ls-remote node'
+# → node versions print normally
+```
+
+### The general rule — and the full static inventory
+
+This applies to **every** statically linked binary in the image, not just mise. When one
+tool reports DNS failure and nothing else does, check whether it is static before looking
+at the network at all.
+
+Regenerate the inventory against a built image:
+
+```bash
+podman unshare sh -c '
+m=$(podman image mount localhost/krytis:latest)
+find "$m/usr/bin" "$m/usr/sbin" "$m/usr/libexec" -maxdepth 3 -type f -perm -u+x -print0 \
+  | xargs -0 file -N | grep -E "ELF .*(statically linked|static-pie)" | sed "s|^$m/||"
+podman image unmount localhost/krytis:latest >/dev/null'
+```
+
+As of `25.08.202608091250` that is six binaries, only two of which do DNS:
+
+| Binary | Toolchain | Resolver | DNS-exposed? |
+|---|---|---|---|
+| `mise` | musl static-pie | musl `getaddrinfo` | **yes** |
+| `pangolin` | Go 1.25.0, `CGO_ENABLED=0` | pure-Go resolver | **yes** |
+| `gum` | Go 1.25.1, `CGO_ENABLED=0` | pure-Go (unused) | no networking |
+| `catatonit` | static C | — | no |
+| `ldconfig` | glibc, static-pie by design | — | no |
+| `sln` | glibc, static-pie by design | — | no |
+
+Note the second row: **switching mise to upstream's glibc build would not close this
+class of bug.** Go binaries built `CGO_ENABLED=0` use the pure-Go resolver, which reads
+`/etc/resolv.conf` for exactly the same reason musl does, and there is no "gnu variant" of
+a Go release to switch to. `/etc/resolv.conf` has to be correct regardless.
+
+### Probing the Go side: `pangolin`
+
+Go's resolver **prints the nameserver it queried** in the error, which makes it a better
+diagnostic than mise's opaque `dns error`. `pangolin login <hostname>` reaches the network
+before it needs any credentials, so it works as a probe with no account. Sandbox `HOME` so
+it cannot touch real config:
+
+```bash
+H=$(mktemp -d)
+HOME=$H XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share \
+  timeout 20 pangolin login example.com </dev/null
+```
+
+Read the nameserver in the output, not the failure itself — the command always fails
+(example.com is not a Pangolin server), the question is *how far it got*:
+
+| Output | Meaning |
+|---|---|
+| `failed to unmarshal response: invalid character '<'` | **healthy** — DNS, TCP and TLS all succeeded; it got HTML back |
+| `lookup … on 127.0.0.53:53: no such host` | healthy resolver, hostname genuinely does not exist (expected for a `.invalid` probe) |
+| `lookup … on [::1]:53: … connection refused` | **broken** — `/etc/resolv.conf` is missing or unreadable, so Go fell back to localhost and nothing is listening |
+
+That last row is the same underlying fault as mise's `dns error`, just legible. The
+`[::1]`/`127.0.0.1` fallback is what both resolvers do with no usable nameserver;
+systemd-resolved binds `127.0.0.53` and `127.0.0.54`, never plain localhost.
+
+### If it goes missing again: naming the deleter
+
+Confirmed on real hardware: **`systemd-tmpfiles` does recreate the symlink.** After
+`sudo rm /etc/resolv.conf`, this brings it straight back:
+
+```bash
+sudo systemd-tmpfiles --boot --create /usr/lib/tmpfiles.d/systemd-resolve.conf
+```
+
+So the boot-time path is healthy, and a machine found *without* `/etc/resolv.conf` had it
+deleted **after** boot. That narrows the hunt to a running process.
+
+**`pangolin` is not the culprit — do not re-run this investigation.** It looks like the
+obvious suspect: it is a tunnel client, it embeds `github.com/fosrl/olm@v1.8.2/dns/`, it
+has a `reset-dns` subcommand ("Force-clear stale DNS overrides"), and `strings` on the
+binary shows `FileDNSConfigurator.backupResolvConf`, `writeResolvConf`, `RestoreDNS`,
+`CleanupStaleResolvconfDNS` and the literal
+`# Original file backed up to /etc/resolv.conf.olm.backup`. Reading the module source
+clears it:
+
+- No `os.Remove` anywhere in `dns/` targets `/etc/resolv.conf`. The three in
+  `platform/file.go` (lines 78, 102, 239) remove `resolvConfBackupPath`
+  (`/etc/resolv.conf.olm.backup`); the four in `platform/network_manager.go` remove NM's
+  own conf.d drop-in. Restore is `copyFile(backup, resolvConfPath)` — a write, never an
+  unlink.
+- On krytis `DetectDNSManager` returns `SystemdResolvedManager` (the stub file names
+  systemd-resolved, and resolved is running), selecting the D-Bus/`resolvectl`
+  configurator. `FileDNSConfigurator` is never constructed, so the file is not touched.
+
+Worth knowing anyway: `FileDNSConfigurator` uses `os.WriteFile(resolvConfPath, …)`, which
+**follows the symlink**. On a distro where that configurator *is* selected, it would
+overwrite `/run/systemd/resolve/stub-resolv.conf` rather than replace `/etc/resolv.conf`.
+That is a `/run` tmpfs file, so a reboot clears it. Not our failure mode, but the reason
+to check *which* configurator is active before blaming a tunnel client.
+
+Since the cause is still unidentified, arm a trap rather than guess — `auditd` is active
+and enabled in the image:
+
+```bash
+sudo auditctl -w /etc/resolv.conf -p wa -k resolvconf-watch   # until reboot
+sudo ausearch -k resolvconf-watch -i                          # after it recurs
+```
+
+Persist it across reboots by dropping the same rule in `/etc/audit/rules.d/`. `ausearch -i`
+resolves the syscall and names the executable, which is the one thing source-reading
+cannot give you.
+
+Related: [`bst.md`](bst.md) § resolv.conf and /etc/hosts Are Already Covered — No
+network.bst Needed.
+
 ## User-overrideable environment defaults
 
 Use `[env]` with `{ default = "..." }` in `mise.toml`. Mise applies the fallback only when the variable is **unset or empty** in the calling environment; existing non-empty values are preserved.
