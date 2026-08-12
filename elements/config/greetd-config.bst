@@ -168,9 +168,20 @@ config:
     _JAVA_AWT_WM_NONREPARENTING=1
     EOF
 
+  # Filename matters more than the directory here. journald.conf.d drop-ins are
+  # merged in lexicographic order of *filename*, across /etc and /usr/lib alike —
+  # /etc only beats /usr/lib for a file of the SAME name. freedesktop-sdk ships
+  # /usr/lib/systemd/journald.conf.d/99-volatile-journal.conf (Storage=volatile),
+  # so this file was previously named 10-persist.conf and lost: 10- sorted first,
+  # 99- was applied last, and the image silently ran with a volatile journal that
+  # vanished on every reboot. `systemd-analyze cat-config systemd/journald.conf`
+  # shows the merge order and is the way to confirm this.
+  #
+  # zz- sorts after any numeric prefix, so it wins without having to masquerade
+  # under upstream's filename.
   - |
     install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/systemd/journald.conf.d/10-persist.conf" <<'EOF'
+      "%{install-root}%{sysconfdir}/systemd/journald.conf.d/zz-krytis-persist.conf" <<'EOF'
     [Journal]
     Storage=persistent
     SyncIntervalSec=5s
