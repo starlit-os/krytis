@@ -114,6 +114,23 @@ fine. Reproduce daemon behaviour with `--user 1000` (zero caps, matching a real 
 grant `--cap-add IPC_LOCK`. Verified on a built krytis image: as uid 1000 the daemon starts,
 creates a locked `Login` collection, and owns `org.freedesktop.secrets`.
 
+**No prompter on the bus means libsecret callers hang, not fail — confirmed on krytis, with
+oo7.** Previously this was inferred from pop-os/cosmic-epoch#3453 (COSMIC, gnome-keyring).
+Reproduced directly: with `oo7-daemon` running and nothing owning
+`org.gnome.keyring.SystemPrompter`, `secret-tool store` against the locked `Login` collection
+blocked until killed at 25s and printed nothing. oo7 logged only `Client :N connected` and,
+on the timeout, `disconnected`. A bus trace shows what it was waiting on:
+
+```
+org.gnome.keyring.SystemPrompter · org.gnome.keyring.internal.Prompter · BeginPrompting
+/org/gnome/keyring/Prompter      · /org/gnome/keyring/Prompt/p   (oo7's Callback object)
+```
+
+So oo7's `GNOMEPrompterProxy` really does drive the GCR prompter protocol, and a missing
+prompter is not a degraded mode — it is an indefinite hang in every caller, with no error
+anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
+`busctl --user list | grep SystemPrompter` before anything else.
+
 See `docs/design/secrets-service.md` for the decision this feeds (hold #84 until oo7#506 resolves, or accept the FIDO2-keyring-stays-locked gap as no worse than today).
 
 ## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident

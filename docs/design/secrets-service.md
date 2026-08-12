@@ -199,9 +199,43 @@ real client, the one gnome-keyring and seahorse use — in a forked child, and a
 password arrives byte-for-byte after the `sx-aes-1` round trip. That is the interop claim:
 verified against gcr's client state machine and real crypto, not against a mock.
 
-Not yet exercised: the panel on a live niri session (needs a booted image), oo7's
-`GNOMEPrompterProxy`, and the mid-session daemon-restart scenario from
-pop-os/cosmic-epoch#3453.
+### Confirmed against oo7 on a real image (2026-08-12)
+
+Exercised on the `feat/oo7-prompter-testbed` branch — oo7 as the Secret Service, noctalia's
+native prompter, and **no `gcr-3` in the image at all**.
+
+**oo7 does drive this exact interface.** With `oo7-daemon` running and *nothing* owning the
+prompter name, a `secret-tool store` against the locked `Login` collection put this on the
+session bus before giving up:
+
+```
+3  org.gnome.keyring.SystemPrompter
+1  org.gnome.keyring.internal.Prompter
+1  BeginPrompting
+1  /org/gnome/keyring/Prompter
+1  /org/gnome/keyring/Prompt/p        <- oo7's own exported Callback object
+```
+
+That is precisely the protocol `secret_prompter.cpp` implements, so oo7's `GNOMEPrompterProxy`
+is no longer an assumption — it is observed traffic. It also means the prompter is not
+optional decoration: it sits on the only path oo7 has to ask for a password.
+
+**Without a prompter the caller hangs — it does not error.** The same `secret-tool store` sat
+there until killed at 25s; oo7 logged only `Client :1.2 connected` and, on the timeout,
+`disconnected`. This is pop-os/cosmic-epoch#3453 reproduced on krytis's own image rather than
+inferred from someone else's bug report, and it is the strongest argument for shipping a
+shell-owned prompter: the failure mode of *not* having one is an unkillable-looking hang in
+every libsecret caller, not a clean error anyone would think to report.
+
+**On the booted VM the loop closes.** The unlock prompt was drawn by noctalia (confirmed via
+`busctl --user list` showing noctalia owning `org.gnome.keyring.SystemPrompter`, with oo7
+owning `org.freedesktop.secrets` and `desktop/oo7.bst` in `/usr/manifest.json`), and after it
+was answered noctalia successfully stored a secret through the Secret Service — which is only
+reachable with the collection unlocked. So the whole chain ran: oo7 → `BeginPrompting` →
+noctalia's panel → `sx-aes-1` exchange → unlock → store.
+
+Still not exercised: `ChangePassword`, and the mid-session `systemctl --user restart
+oo7-daemon` re-lock scenario.
 
 ## Revisit trigger
 
