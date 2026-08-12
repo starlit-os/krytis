@@ -600,11 +600,22 @@ systemd-boot's default `secure-boot-enroll=if-safe` — which auto-enrols inside
 (recognised as "safe") and does nothing on real hardware. From the second boot on,
 `manual` governs.
 
+**Decision (#444, option 3): accept and document — not going to be fixed.**
 Consequence for real hardware: none — `if-safe` never auto-enrols there, so the
-user still gets the intended manual prompt. Consequence in a VM: a fresh install
-silently enrols its own keys and comes up enforcing, which is convenient but is not
-what the design asked for. Closing that one-boot window means getting the line onto
-the ESP at install time, which is #309 design work, not a bug in the keys.
+user still gets the intended manual prompt, on the first boot exactly as on every
+later one. Consequence in a VM: a fresh install silently enrols krytis's own keys
+on the first boot and comes up enforcing — this is what makes
+`mise run selfenroll-test` pass without a manual key-selection step, and is
+treated as convenient test behaviour, not a defect to chase.
+
+Two other directions were weighed and rejected. A systemd compile-time default for
+`secure-boot-enroll` was the cleanest candidate if it existed, but it would still
+be a build-time workaround for the same "value not on the ESP at handoff" gap, not
+a real fix, and was never confirmed to exist in the shipped systemd version.
+Writing `loader.conf` at install time needs a bootc install-time hook, which does
+not exist today. Either would require nontrivial new plumbing to change a state
+that already matches the design intent on the only surface that ships to users —
+real hardware. Not planned.
 
 **Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
 the source disk, so an install disk stays a first-boot disk no matter how many times
