@@ -204,6 +204,93 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
   removing a patch (once upstream absorbs it, as happened with
   `0001-show-pam-info-cue.patch`) needs the same row deleted there.
 
+## Lid close locks then suspends — noctalia holds the logind delay inhibit
+
+*Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7).*
+
+**Do not add swayidle/hypridle/swaylock/a `sleep.target` lock unit to get lock-on-suspend.**
+noctalia already implements it, using the same delay-inhibit pattern those tools use, and a
+second locker would race it. The full chain:
+
+```
+lid close
+  -> logind HandleLidSwitch=suspend        (config/logind-lid.bst pins this)
+       -> PrepareForSleep(true) on the system bus
+            -> noctalia locks, holding Inhibit("sleep", …, "delay")
+                 -> inhibit released once the lock surface engages
+                      -> suspend proceeds
+```
+
+Where each half lives:
+
+| Half | Owner | Evidence |
+|---|---|---|
+| lid event -> suspend request | logind | `elements/config/logind-lid.bst` -> `/usr/lib/systemd/logind.conf.d/20-krytis-lid.conf` |
+| suspend request -> locked screen | noctalia | `LogindService::acquireSleepDelayInhibit()` = `Inhibit("sleep", "noctalia", "Lock before sleep", "delay")` (`src/dbus/logind/logind_service.cpp:181-196`); `PrepareForSleep` handler `src/app/application_services.cpp:947-991` |
+
+The inhibit is acquired from `setSessionLockIntegrationEnabled()`, gated on
+`isLockScreenEnabled()` — i.e. `[lockscreen] enabled`, which defaults to `true`
+(`src/config/config_types.h:496`) and is not overridden by `files/noctalia-skel/settings.toml`.
+**Setting `[lockscreen] enabled = false` therefore also disables lock-on-suspend**, not just the
+manual lock: the handler releases the inhibit immediately and lets the machine suspend unlocked.
+
+Other ways into the same lock:
+
+- `loginctl lock-session` — noctalia subscribes to the logind Session `Lock`/`Unlock` signals
+  (`src/dbus/logind/logind_service.cpp:79-86`), so this locks the real session from any script
+  or unit. It also reports lock state back with `syncSessionLocked()`, so `loginctl show-session`
+  stays truthful.
+- `noctalia msg session lock-and-suspend` — IPC action; `lockThenSuspendDetached()` suspends from
+  a `runAfterSessionLocked` callback (`src/shell/session/session_action_runner.cpp:321`). IPC
+  names use hyphens, config keys underscores (`lock_and_suspend`).
+- `[idle.behavior.<name>]` with `action = "lock_and_suspend"`, or `action = "suspend"` plus
+  `lock_before_suspend` (defaults `true`; `action="suspend"` + `lockBeforeSuspend` normalises to
+  `lock_and_suspend` in `normalizeIdleBehaviorAction()`). Time-based, not lid-based.
+
+### Two of the three pinned keys are literal defaults — the third is not
+
+`config/logind-lid.bst` pins three keys. Verified against the running image
+(`busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager …`,
+systemd 260):
+
+| Key | Property before pinning | Pinned to | Same value? |
+|---|---|---|---|
+| `HandleLidSwitch` | `"suspend"` | `suspend` | yes — literal default |
+| `HandleLidSwitchExternalPower` | `""` | `suspend` | **no — was unset** |
+| `HandleLidSwitchDocked` | `"ignore"` | `ignore` | yes — literal default |
+
+**`HandleLidSwitchExternalPower` reads back empty, not `suspend`.** Since systemd 256 an unset
+value means *follow `HandleLidSwitch`* rather than carrying a default of its own
+(`man logind.conf`: "If unset, defaults to the value of `HandleLidSwitch`"). Because
+`HandleLidSwitch=suspend` here, pinning it to `suspend` is a no-op on **today's** behaviour — but
+it is a semantic change, not a restatement: the on-AC case is now *declared* instead of *derived*.
+If `HandleLidSwitch` is ever changed to `lock` or `ignore`, the on-AC case will **not** follow it
+any more, and this file must be edited too.
+
+That is the intended trade — the point of the element is that lid policy is a property of this
+image rather than something inherited — but do not read the pinned file as "these are the
+defaults, written down". Only two of the three are.
+
+### Knobs deliberately left at their defaults
+
+- **`InhibitDelayMaxSec` (5s)** is the ceiling on noctalia's lock window. If the lock surface is
+  not up within it, logind suspends anyway — that is the "closed the lid, woke up unlocked"
+  failure mode, and this is the knob to raise *if it is ever actually observed*. Not raised
+  pre-emptively: that would trade a real 5s delay on every suspend for a hypothetical race.
+- **`LidSwitchIgnoreInhibited` (`yes`)** means block-type `handle-lid-switch` inhibitors are
+  ignored; only *delay* inhibitors (noctalia's) are honoured. Consequence: an app cannot hold
+  the lid open — "playing a video with an inhibitor" will not stop a lid suspend.
+
+### niri `switch-events` is the wrong layer for this
+
+niri 26.04 does support it — `switch-events { lid-close { spawn "sh" "-c" "…"; } }` passes
+`niri validate` in the image. Two things to know if you ever do reach for it:
+
+- **Only `spawn` is accepted inside `lid-close`, not `spawn-sh`** (`spawn-sh` is rejected as an
+  unexpected node, and `spawn` is then reported as a required missing child).
+- It handles the lid *in the session*, so it does nothing at the greeter or on a console VT, and
+  it needs `HandleLidSwitch=ignore` alongside or both handlers fire. Keep lid policy in logind.
+
 ## Mesa Layout in the Image
 
 fdsdk installs mesa to a non-standard prefix:

@@ -104,6 +104,11 @@ depends:
   # ── System config ──────────────────────────────────────────────────
   - freedesktop-sdk.bst:vm/config/journald.bst
   - freedesktop-sdk.bst:components/hosts.bst
+  # logind-lid: pins HandleLidSwitch* so lock-then-suspend on lid close is a
+  # declared property of the image, not an inherited systemd default. Sits in
+  # base-system, not desktop: lid policy applies at the greeter and on the
+  # console too, where no session exists to lock. Closes #558.
+  - config/logind-lid.bst
 
   # ── Container / toolbox (from gnome-build-meta) ────────────────────
   - gnome-build-meta.bst:gnomeos-deps/distrobox.bst
