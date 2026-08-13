@@ -867,6 +867,10 @@ jobs:
             branch: auto/track-xdg-utils
             title: "chore(deps): update xdg-utils"
           - group: manual-merge
+            element: desktop/oo7.bst
+            branch: auto/track-oo7
+            title: "chore(deps): update oo7"
+          - group: manual-merge
             element: desktop/vainfo.bst
             branch: auto/track-vainfo
             title: "chore(deps): update vainfo"

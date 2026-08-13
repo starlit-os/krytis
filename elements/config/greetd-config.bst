@@ -49,7 +49,7 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
     #%PAM-1.0
     # Self-contained: greetd has session-specific auth requirements that differ
-    # from system-auth (pam_nologin, gnome-keyring).
+    # from system-auth (pam_nologin, oo7).
     #
     # pam_systemd_home must come first and short-circuit on success. For a
     # systemd-homed user, homed owns the entire credential flow — FIDO2
@@ -81,7 +81,7 @@ config:
     -auth      [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth       sufficient   pam_u2f.so cue pinverification
     auth       required     pam_unix.so
-    auth       optional     pam_gnome_keyring.so
+    auth       optional     pam_oo7.so
 
     account    required     pam_nologin.so
     -account   sufficient   pam_systemd_home.so
@@ -89,7 +89,11 @@ config:
 
     -password  sufficient   pam_systemd_home.so
     password   required     pam_unix.so sha512 shadow
-    -password  optional     pam_gnome_keyring.so use_authtok
+    # No use_authtok: upstream's own example (oo7 pam/README.md) omits it on the
+    # password line, and gh178 carried it over from the gnome-keyring line without
+    # checking. pam_oo7 reads both the old and new password itself to re-encrypt
+    # matching keyrings; use_authtok would only constrain where it may read from.
+    -password  optional     pam_oo7.so
 
     # pam_systemd_home takes a reference on the home area so homed does not
     # deactivate it for the lifetime of the session.
@@ -103,7 +107,7 @@ config:
     session    required     pam_env.so readenv=1
     session    required     pam_unix.so
     -session   optional     pam_systemd.so
-    session    optional     pam_gnome_keyring.so auto_start
+    session    optional     pam_oo7.so auto_start
     EOF
 
   - |

@@ -31,11 +31,17 @@ depends:
 # src/dbus/secrets/secret_prompter.cpp, which links GcrSecretExchange for the
 # "sx-aes-1" handshake that keeps prompted secrets off the bus in plaintext.
 # NOTE: this is gcr-4 (gnome-build-meta.bst:sdk/gcr.bst), NOT the legacy
-# sdk/gcr-3.bst -- gnome-keyring still pulls gcr-3 in transitively for its
-# own gcr-base-3 linkage (unrelated to the prompter binary) and keeps doing
-# so here; gcr-prompter stays in the image as an inert fallback. Verified
-# gcr-4 does not pull in GTK, and krytis ships GTK4 unconditionally anyway
-# (niri.bst, ghostty.bst, nautilus) -- see PR #568.
+# sdk/gcr-3.bst. On main, gnome-keyring pulls gcr-3 in transitively for its
+# own gcr-base-3 linkage (unrelated to the prompter binary), so gcr-prompter
+# stays in the image as an inert fallback. Verified gcr-4 does not pull in
+# GTK, and krytis ships GTK4 unconditionally anyway (niri.bst, ghostty.bst,
+# nautilus) -- see PR #568.
+#
+# THIS BRANCH DIVERGES: stacks/desktop.bst swaps gnome-keyring for oo7, which
+# takes gcr-3 -- and with it gcr-prompter -- out of the image entirely. That
+# absence is the whole point: manual unlock has no legacy prompter to fall
+# back on, so if it still works, noctalia answered. See stacks/desktop.bst
+# and docs/skills/pam.md.
 - gnome-build-meta.bst:sdk/gcr.bst
 
 # Upstream noctalia-dev/noctalia. Releases tagged v* (v5.0.0-beta2 latest
