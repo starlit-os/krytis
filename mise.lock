@@ -77,21 +77,21 @@ url = "https://github.com/oras-project/oras/releases/download/v1.3.3/oras_1.3.3_
 url_api = "https://api.github.com/repos/oras-project/oras/releases/assets/472780866"
 
 [[tools.pass-cli]]
-version = "2.2.5"
+version = "2.3.1"
 backend = "github:protonpass/pass-cli"
 
 [tools.pass-cli."platforms.linux-x64"]
-checksum = "sha256:3971bfdb5649bc59634c2195e35259ea3f4b7889bba5a4f6698b6af50b27cf7f"
-url = "https://github.com/protonpass/pass-cli/releases/download/2.2.5/pass-cli-linux-x86_64"
-url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/502436468"
+checksum = "sha256:d16333641219d6c0e0a56799f28bd66d2d8c70a25b21d5123f3ec7a89f32f4cb"
+url = "https://github.com/protonpass/pass-cli/releases/download/2.3.1/pass-cli-linux-x86_64"
+url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/511666020"
 
 [[tools.python]]
 version = "3.12.13"
 backend = "core:python"
 
 [tools.python."platforms.linux-x64"]
-checksum = "sha256:ce2c9c5df1b99a962a86d2f457656918ee5f01b2edea080db28416232a1fcb11"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260804/cpython-3.12.13+20260804-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+checksum = "sha256:506191be3ee7bd190a8834dcdc1b3bc70aab50608deccc711935aa007239cabd"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13+20260807-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 provenance = "github-attestations"
 
 [[tools.usage]]
