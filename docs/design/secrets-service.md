@@ -154,6 +154,81 @@ the long-term goal of upstreaming it or shipping it as a noctalia plugin.
   the crypto handshake by hand — everything else (D-Bus service registration, dialog UI,
   session-bus ownership) is native noctalia code, consistent with the "no Qt/GTK" ethos.
 
+**Verified 2026-08-13: linking `gcr-secret-exchange` does not pull in GTK.** Checked because
+the concern is legitimate at face value — krytis's pinned `sdk/gcr.bst` (gnome-build-meta,
+gcr-4.4.0.1) has `depends: - sdk/gtk.bst` (GTK4 4.22.4) unconditionally, and `sdk/gtk.bst`'s
+own closure is large (at-spi2-core, gdk-pixbuf, glycin, graphene, gstreamer+base+bad, pango,
+cups, hicolor-icon-theme, libepoxy, libxkbcommon, vulkan-icd-loader, wayland+protocols). That
+dependency is real but not structural — traced against upstream gcr's actual
+`meson.build`/`gcr/meson.build`/`tools/meson.build` (main, matches the pinned 4.4.0.1):
+- The `gtk4` meson option (`meson_options.txt`, default `true`) only gates
+  `tools/viewer/meson.build`'s `gcr-viewer-gtk4` — a standalone certificate-viewer
+  **executable**, not linked into `libgcr-4.so`. `-Dgtk4=false` drops GTK4 from the build
+  closure entirely; nothing else in the tree references `gtk4_dep`.
+- There is no `gtk3` option or code path in current upstream source at all — the
+  `libgcr-4-gtk3.so` line in krytis's pinned `gcr.bst` split-rules is stale relative to
+  4.4.0.1, that file isn't produced by the current meson build.
+- `gcr-secret-exchange.c` itself (`gcr/meson.build`'s `gcr_lib` target) only includes gcr's
+  internal `egg/egg-{crypto,dh,fips,hkdf,padding,secure-memory}.h` — the DH key-agreement
+  math is gcr's own vendored `libegg`, not GTK. `gcr_lib`'s full dependency list is
+  `[glib_deps, p11kit_dep, libegg_dep, gck_dep]`; `libegg`'s only non-glib dependency is
+  `crypto_deps` (libgcrypt by default, or gnutls).
+- p11-kit and libgcrypt are already in krytis's base system (`overrides/systemd-base.bst`,
+  pulled in for cryptsetup), so linking `libgcr-4.so` adds only itself plus `gck` (gcr's thin
+  PKCS#11 GObject wrapper — glib + p11-kit only) to the closure. No new crypto backend, no new
+  p11-kit.
+
+**Correction 2026-08-13: the GTK4 pull is moot for krytis anyway.** The above was worth
+verifying on principle, but krytis's OCI image already carries GTK4 unconditionally through
+several unrelated elements — `elements/desktop/niri.bst` (the compositor itself),
+`elements/desktop/ghostty.bst`, `elements/desktop/gtk4-layer-shell.bst`, `core/nautilus.bst`
+(`stacks/desktop.bst`), and even **`elements/desktop/noctalia.bst`'s own `depends:` already
+lists `gnome-build-meta.bst:sdk/gtk.bst`** — despite noctalia's C++ source having no GTK4
+build-time reference at all (only a shell template, `assets/templates/gtk/apply.sh`, that
+writes a `gtk.css` import for theming *other* GTK apps — no linking). So there is no
+dependency-count argument for forking `gcr.bst` with `-Dgtk4=false`; the whole GTK4 stack is
+already in every krytis image regardless of this feature. The finding above matters only for
+**noctalia's own build purity** as a fork (its README's "no Qt or GTK dependency" claim) —
+linking `gcr-secret-exchange` keeps that true at the noctalia-binary level even though the
+krytis *image* was never going to avoid GTK4 either way.
+
+**Decided against forking `gcr.bst` at all.** `-Dgtk4=false` would only skip building the
+unused `gcr-viewer-gtk4` binary — smaller build sandbox for that one element, nothing shipped
+differently (image-level GTK4 footprint is unchanged either way, per above). Against that:
+forking the element means krytis now owns tracking gcr's upstream releases for that override
+independently of `gnome-build-meta.bst`, and keeping `meson-local` flags valid across gcr
+version bumps — real ongoing maintenance for zero image benefit. **Depend on `sdk/gcr.bst`
+unmodified** when this gets implemented; the `gcr-secret-exchange` link works the same either
+way since `libgcr-4.so` never pulled in GTK4 to begin with. Also opened
+[#573](https://github.com/starlit-os/krytis/issues/573) to audit for other elements carrying
+dependencies the pinned upstream source doesn't actually need (seeded with the
+`noctalia.bst`/`sdk/gtk.bst` finding above) — general dependency hygiene, not specific to gcr.
+
+**Distro packaging: `gcr-4` devel package per distro (verified 2026-08-13).** The prompter
+commit added `gcr_dep = dependency('gcr-4')` to `meson.build` (unconditional — no meson
+option gates it, since `shell.secret_prompter`'s off-by-default is a runtime toggle, not a
+build-time one) but didn't touch the README's per-distro install commands, so a packager
+following the README as of `ba821c7da` would hit an unadvertised `pkg-config` failure.
+Checked each distro's actual packaging (not just guessed names) and pushed the fix directly
+to the fork branch (`kitten-lily/noctalia@fcaf05e84`):
+
+| Distro | Package | Source checked |
+|---|---|---|
+| Arch | `gcr-4` | [archlinux.org/packages/extra/x86_64/gcr-4](https://archlinux.org/packages/extra/x86_64/gcr-4/) — single package, ships headers+lib+`gcr-4.pc` together (no split `-devel`) |
+| Fedora | `gcr-devel` | [packages.fedoraproject.org/pkgs/gcr/gcr](https://packages.fedoraproject.org/pkgs/gcr/gcr/) — current `gcr` srpm is already 4.4.0.1 (GCR4); `gcr-devel` provides `pkgconfig(gcr-4)` |
+| openSUSE Tumbleweed/Slowroll | `libgcr-devel` | `gcr.spec` on `openSUSE:Factory` OBS — `%package -n libgcr-devel` owns `%{_libdir}/pkgconfig/gcr-4.pc`, `Requires: libgcr-4-4` |
+| Debian/Ubuntu | `libgcr-4-dev` | [packages.debian.org/sid/libgcr-4-dev](https://packages.debian.org/sid/libgcr-4-dev) — source package `gcr4`, pinned 4.4.0.1-8, present in trixie |
+| Void Linux | `gcr4-devel` | `srcpkgs/gcr4/template` on `void-packages` — pinned 4.4.0.1, matches krytis's own pin exactly |
+
+No package needed beyond the one above per distro: every one of these `-devel` packages pulls
+in `p11-kit`/`libgcrypt` transitively (they're already `Requires`/`makedepends` on the gcr
+package itself), and `libsecret`/`libsodium` were already in the README's lists. Consistent
+with the earlier finding in this doc — GTK is not part of this dependency on any of the five
+distros either: none of the `-devel` packages above pull in a GTK `-devel` package (openSUSE's
+`gcr` *source* package does `BuildRequires: pkgconfig(gtk4)` to build `gcr-viewer-gtk4`, but
+that's the packager's build-time requirement for the upstream tarball as a whole, not a
+dependency of the `libgcr-devel` binary package noctalia links against).
+
 **Known consumers to interop-test against, not just gnome-keyring:** oo7's `GNOMEPrompterProxy`
 (`server/src/gnome/prompter.rs`, in play if #84 is ever reopened), GCR3's own `gcr-prompter`
 (for anything that still expects the legacy binary specifically), and generic libsecret/pinentry
