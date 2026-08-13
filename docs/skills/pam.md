@@ -1,5 +1,42 @@
 # PAM & Keyring Skills
 
+## noctalia native SystemPrompter: pinning a fork branch, not a tag, and keeping gcr-3 alongside gcr-4
+
+`elements/desktop/noctalia.bst` was pinned to `kitten-lily/noctalia`'s
+`feat/system-prompter` branch (not upstream `noctalia-dev/noctalia`) to test a
+native `org.gnome.keyring.SystemPrompter` provider (see PR #568) against the
+*currently shipping* gnome-keyring backend, ahead of any oo7 cutover decision
+(#84) and ahead of upstreaming. Two non-obvious mechanics from doing this:
+
+**`git_repo` sources can pin `track:` to a branch name, not just a tag glob.**
+BuildStream doesn't care whether the `track:` value resolves to a tag or a
+branch ref — `bst source track` follows whatever it names. Pinning
+`track: feat/system-prompter` means `bst source track` starts following that
+branch's head instead of `v*` release tags, so auto-track PRs land more often
+while the pin is in effect. There's history for this exact pattern in this
+element already (`fix/wifi-persist-polkit-async`, dropped once upstream
+shipped the equivalent fix independently) — same playbook: pin, test, drop
+once upstreamed or supersede.
+
+**gcr-3 and gcr-4 coexist without conflict.** `gnome-keyring.bst` still pulls
+`sdk/gcr-3.bst` transitively (for `gcr-base-3`, unrelated to the prompter
+binary — confirmed against gnome-keyring's own `meson.build`, it's a genuine
+build dependency, not a leftover). Adding `sdk/gcr.bst` (gcr-4) alongside it
+for noctalia's `GcrSecretExchange` link does not conflict: different sonames
+(`libgcr-base-3.so`/`libgcr-3.so` vs `libgcr-4.so`), different D-Bus surface.
+`gcr-prompter` (from gcr-3) stays installed and its
+`org.gnome.keyring.SystemPrompter.service` D-Bus activation file stays in the
+image too — noctalia's `SecretPrompter` constructor calls `requestName()` and
+throws if the name is already owned, so it's a graceful first-come-first-served
+handoff, not an exclusive takeover. That means no BST change is needed to keep
+`gcr-prompter` as an inert fallback: if noctalia's prompter is ever disabled,
+crashes, or loses a startup race, `gcr-prompter` activates exactly as before.
+In krytis specifically, the race is a non-issue: `files/niri/startup.kdl` only
+`spawn-at-startup`s `noctalia`, and every manual-unlock scenario (secondary
+keyring, `CreateCollection`, `ChangePassword`) is an interactive, mid-session
+action — noctalia has been running the whole session by the time any of those
+fire.
+
 ## systemd-homed users: FIDO2 login belongs to homed, not pam_u2f
 
 Two independent things broke FIDO2 login for `systemd-homed`-managed users. Both were fixed in #409; keep them straight, because fixing only the first looks plausible and achieves nothing.
