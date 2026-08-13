@@ -116,6 +116,41 @@ no shell-level `org.gnome.keyring.SystemPrompter` provider either way, today. Fi
 valuable regardless of which Secret Service backend krytis ends up on, and de-risks a future
 oo7 attempt as a side effect rather than being blocked by it.
 
+## fdsdk 26.08 forces the oo7 swap regardless of this decision
+
+**Verified 2026-08-13.** The Decision above only holds on krytis's current freedesktop-sdk
+`25.08` baseline, where `gnome-keyring.bst` and `sdk/gcr-3.bst` both still exist upstream and
+the hold is a real, deliberate choice. That stops being true once `#305` (the fdsdk `26.08`
+bump) lands:
+
+- `gnome-build-meta` `master` deleted `gnome-keyring.bst` entirely (upstream commit
+  `528af16d74`, "Replace gnome-keyring with oo7"). `elements/stacks/desktop.bst` on the
+  `chore/gh305-upgrade-fdsdk-26-08` branch already documents this — the oo7 swap there is
+  **forced by the SDK bump, not a #84 decision**: "This is NOT the same as voluntarily
+  adopting oo7."
+- `sdk/gcr-3.bst` is gone too, confirmed absent (not just unreferenced) from the same
+  junction — so `gcr-prompter` isn't available as a fallback on fdsdk `26.08` either. This is
+  ahead of the *official* GNOME timeline (GNOME 51 Flatpak runtime drops gcr-3 end of 2026,
+  gcr-3 support continues through GNOME 50 / April 2027) — `gnome-build-meta` tracking
+  `master` is already past that milestone independent of the runtime schedule.
+- Consequence: `#305` as it currently stands ships with **no manual-unlock UI at all**, not
+  merely a fragile one. `elements/desktop/noctalia.bst` on that branch is still pinned to
+  plain upstream `v5.0.0-beta.7` — the fork pin + `gcr-4` dependency from this doc's Path
+  forward section (and PR #574) has not been ported there.
+- The oo7 blockers documented in this doc are **not fixed** at the exact oo7 commit `#305`
+  pins (`v0.6.0-alpha-219-g06b9cfe0`, via `gnome-build-meta`'s `oo7.inc`) — verified
+  `server/src/collection/mod.rs::search_inner_items` still returns `Ok(Vec::new())` for a
+  locked collection at that ref, identical to the finding above.
+
+**Practical effect on "hold #84":** it only controls whether krytis *chooses* oo7 on the
+SDK line it's on today. It does not prevent oo7 from arriving via `#305` as an SDK-forced
+side effect — that happens either way, on its own timeline, independent of this Decision.
+
+**Not yet actioned:** porting PR #574's `noctalia.bst` change (fork pin + `gcr-4` dependency)
+onto `chore/gh305-upgrade-fdsdk-26-08` before that branch merges — there it is load-bearing
+(no `gcr-prompter` fallback exists to decline gracefully behind), not the optional/reversible
+experiment it is on `main`. Recorded on issue #305 rather than done as part of this pass.
+
 ## Path forward: a native prompter in noctalia
 
 2026-08-12 direction: implement `org.gnome.keyring.SystemPrompter` natively in noctalia (the
