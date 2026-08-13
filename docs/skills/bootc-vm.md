@@ -158,6 +158,35 @@ everything `waiting` and `systemctl list-units --state=activating` names the
 culprit. If the culprit has `StandardInput=tty`, screendump the VGA console (see
 § Reading a stalled guest without root) to see what it is asking.
 
+## `/etc` does NOT beat `/usr/lib` for a *config* drop-in with a different filename
+
+Unit drop-ins and `*.conf.d` config drop-ins follow different intuitions, and the
+config one is the trap. `journald.conf.d`, `logind.conf.d`, `system.conf.d` and
+friends are merged in **lexicographic order of filename, across every directory
+at once**. `/etc` only wins over `/usr/lib` for a file of the *same* name — a
+differently-named file in `/usr/lib` that sorts later still overrides `/etc`.
+
+krytis shipped `/etc/systemd/journald.conf.d/10-persist.conf` with
+`Storage=persistent`. freedesktop-sdk ships
+`/usr/lib/systemd/journald.conf.d/99-volatile-journal.conf` with
+`Storage=volatile`. `10-` sorts first, `99-` is applied last and wins, so the
+image ran with a **volatile journal that was wiped on every reboot** while the
+repo looked like it had asked for persistence. `/var/log/journal` never existed.
+Fixed by renaming ours to `zz-krytis-persist.conf` (`z` sorts after any digit).
+
+**Never eyeball drop-in precedence — ask systemd**, which prints the files in the
+order it reads them, last-wins:
+
+```shell
+systemd-analyze cat-config systemd/journald.conf | grep -nE '^#.*conf|Storage='
+```
+
+That works offline against a built image too:
+`podman run --rm localhost/krytis:latest systemd-analyze cat-config systemd/journald.conf`.
+
+The same trap applies to any `foo.conf.d` we add: pick a filename that sorts after
+whatever fdsdk already ships, or use fdsdk's exact filename to mask it outright.
+
 ## Dependency directives cannot be reset from a drop-in
 
 `ExecStart=`, `ImportCredential=` and most other list-valued unit settings are
