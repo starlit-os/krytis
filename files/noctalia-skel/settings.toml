@@ -24,6 +24,7 @@ date_format = "%A, %F"
 font_family = "Adwaita Sans"
 launch_apps_as_systemd_services = true
 polkit_agent = true
+secret_prompter = true
 settings_show_advanced = false
 
     [shell.panel]
