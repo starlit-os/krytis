@@ -58,6 +58,14 @@ Mapping:
 | `dependency('libwebp')` | already in closure (present since old pin) | — | — |
 | `dependency('libsecret-1', version: '>=0.20')` | `freedesktop-sdk.bst:components/libsecret.bst` | `depends` | shared lib (`libsecret-1.so`), linked at runtime |
 | `dependency('libsodium', version: '>=1.0.18')` | `desktop/libsodium.bst` (autotools, `kind: tar` release asset, `mise run libsodium-update`) | `depends` | shared lib (`libsodium.so.26`); not shipped by either junction, no build-system deps of its own |
+| `dependency('gcr-4')` | `gnome-build-meta.bst:sdk/gcr.bst` | `depends` | shared lib (`libgcr-4.so.4`), linked at runtime. Only required by builds carrying the native `org.gnome.keyring.SystemPrompter` work (`GcrSecretExchange`) — **`sdk/gcr.bst` is gcr-4; `sdk/gcr-3.bst` is the legacy prompter binary and is a different thing entirely**, see `docs/skills/pam.md` |
+
+**This mapping is part of the change, not a follow-up — including when the new
+`dependency()` comes from a fork pin rather than an upstream release.** Bumping
+`elements/desktop/noctalia.bst` to a branch that added `dependency('gcr-4')` to noctalia's own
+`meson.build` fails at configure with `ERROR: Dependency "gcr-4" not found, tried pkgconfig`
+until the element gains the matching BST dep. The source pin and the dependency list are one
+edit; a fork pin does not get a pass just because the dependency is not upstream yet.
 
 **Don't assume "meson `dependency()` on a library with an upstream header-only
 design" means `build-depends`-only.** toml++ *is* header-only upstream, but fdsdk's
