@@ -86,7 +86,14 @@ It removes a worktree and its branch only when GitHub says the branch's newest P
 .worktrees/fido-dropin    tip c62ebb1 != #543 head 3e02894 (--allow-diverged to override)
 ```
 
-Verify before overriding. `git diff origin/main <branch>` must show only content `main` already has (deletions relative to `main`, no additions of the branch's own) — then re-run with `--allow-diverged`.
+Verify before overriding, by whichever of these two routes applies:
+
+- **The tip is an ancestor of a branch you are keeping.** `git merge-base --is-ancestor <tip> <kept-branch>` exiting 0 means every commit stays reachable after the delete, so nothing can be lost regardless of what the diff looks like. This is the common shape for an investigation branch whose PR merged while a longer-running branch continued from its tip.
+- **Otherwise, compare against `main`.** `git diff origin/main <branch>` must show only content `main` already has — deletions relative to `main`, no additions of the branch's own.
+
+Note that `git diff <pr-head> <tip>` is *not* available as a check: GitHub deletes the head ref on merge, so the reported head OID is not fetchable locally (`unknown revision`). Compare against `main` or a kept branch, never against the PR head.
+
+Then re-run with `--allow-diverged`.
 
 ## Opening Pull Requests
 
