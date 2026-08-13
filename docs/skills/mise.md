@@ -31,6 +31,8 @@ mise generate-fakecap-manifest # regenerate files/fakecap-manifest.tsv (only whe
 mise chunkify                 # rechunk into composefs-ready component layers
 mise generate-disk            # bootc install to-disk → bootable.raw
 mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
+mise convert-to-qcow2         # raw → qcow2 for GNOME Boxes / virt-manager
+mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot send Ctrl+Alt+F5)
 ```
 
 - `include/image-version.yml` is **gitignored** — generated at build time, never committed.

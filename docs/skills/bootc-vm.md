@@ -659,9 +659,52 @@ Two more things:
   previous file. Check `<source file=…>` before re-testing.
 
 `virsh screenshot <vm> ~/shot.ppm` (then `magick ~/shot.ppm ~/shot.png`) reads
-the SPICE display without touching the guest — the reliable way to see which VT
-is showing what, and `V send-key <vm> --codeset linux KEY_LEFTCTRL KEY_LEFTALT
-KEY_F5` switches VT from outside the guest.
+the display without touching the guest — **but not on a Boxes VM.** Boxes gives
+its machines `<video><model type='virtio'/></video>`, and qemu's `screendump`
+cannot dump a virtio-gpu surface:
+
+```
+error: internal error: unable to execute QEMU command 'screendump': no surface
+```
+
+That error is a device limitation, not a hung or blanked guest — it persists
+after a wake keystroke and regardless of which VT is showing. `screenshot` is
+therefore only useful for the `boot-vm`/`boot-test` VMs, which use a dumpable
+model. On a Boxes VM, look at the window.
+
+`virsh console` is not a fallback here either: routed through the Boxes flatpak
+it dies with `Couldn't create lock file for device '/dev/pts/N' in path
+'/var/lock/…': No such file or directory`, and `/var/lock` cannot be created
+inside the sandbox. The serial pty belongs to the sandbox's devpts, so it is not
+reachable from the host by path either.
+
+#### Boxes cannot send Ctrl+Alt+F5, so the first-boot wizard is unreachable
+
+Boxes' **Send Key** menu offers a fixed subset — Ctrl+Alt+F1/F2/F3/F6/F7/F9 —
+with **no F4, F5 or F8**, and the host compositor swallows the real key press.
+krytis's first-boot setup wizard runs on **tty5**
+(`config/systemd-firstboot.bst`, `TTYPath=/dev/tty5`; see
+`docs/design/first-boot-setup.md`), so on a fresh image the wizard is running and
+waiting and there is no way in the UI to type into it.
+
+Inject the keystroke through libvirt instead:
+
+```shell
+mise run boxes-vt --vt 5              # auto-detects the only running domain
+mise run boxes-vt --vm krytis-vt --vt 5
+mise run boxes-vt --list              # which domains exist / are running
+```
+
+The task prefers a host `virsh` and falls back to the one bundled in the Boxes
+flatpak, so it needs no libvirt install on a krytis host. Equivalent by hand:
+
+```shell
+V send-key <vm> --codeset linux --holdtime 100 KEY_LEFTCTRL KEY_LEFTALT KEY_F5
+```
+
+`send-key` validates the keycodes before it checks domain state, so
+`Requested operation is not valid: domain is not running` means the invocation
+was correct and the VM simply is not up.
 
 `convert-to-qcow2` refuses to overwrite an existing output without `--force`,
 precisely because a stale qcow2 boots old content that looks current.
