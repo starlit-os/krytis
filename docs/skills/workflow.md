@@ -156,6 +156,54 @@ If the second diff is *not* empty the maintainer edited something while merging 
 
 Worked examples: #430 rebased onto the squashed #427, #432 onto the squashed #431 — both were three commands, no conflict markers touched.
 
+## Splitting a Branch: Cherry-Pick, Never `checkout <sha> -- <paths>`
+
+*Source: the `feat/oo7-prompter-testbed` split (#579), where this nearly shipped a silent regression.*
+
+To move part of a stale branch onto a fresh one, the obvious move is to name the files you want:
+
+```shell
+git checkout <sha> -- path/a path/b        # ← DO NOT
+```
+
+**This reverts every main-side change to those files, silently.** `checkout <sha> -- <path>` writes
+that commit's *whole file*, not its delta. A stale branch is by definition missing commits that
+landed on `main` since it was cut, so any file both sides touched comes back at the old content
+with no conflict, no warning, and a diff that looks plausible.
+
+Observed: splitting a 20-commit branch that was 19 commits behind. The file-checkout form quietly
+reverted `files/noctalia-skel/settings.toml` (dropping `launch_apps_as_systemd_services = true`
+from the just-merged #563) and eight `jdx/mise-action` SHA pins in
+`.github/workflows/track-bst-sources.yml` back to v4.2.4.
+
+Use a no-commit cherry-pick instead, then drop what you don't want:
+
+```shell
+git cherry-pick -n <sha>                   # 3-way merge — conflicts surface
+git rm --cached <paths-that-belong-elsewhere>
+git commit
+```
+
+The same split with `cherry-pick -n` raised a real conflict in `elements/desktop/noctalia.bst`
+(the branch pinned a fork; `main` had moved to a newer upstream tag) — the one place a human
+decision was actually needed, and precisely what the file-checkout form hid.
+
+### Prove the split kept both sides
+
+Absolute content comparison is the *wrong* test — a branch behind `main` legitimately differs on
+files it never touched. Compare **deltas**, scoped to the branch's own merge-base:
+
+```shell
+MB=$(git merge-base origin/main <old-branch>)
+git diff --name-only "$MB" <old-branch>          # files the branch itself changed
+git diff "$MB" <old-branch>   -- <file>          # its delta ...
+git diff origin/main <new-branch> -- <file>      # ... must match here
+```
+
+Then check the other direction too — `git diff <original-sha> <new-branch> -- <file>` should show
+only the main-side lines you expect to have gained. Retire the old branch only once every file it
+changed is accounted for.
+
 ## Testing Scripts Shipped in the Image
 
 Rebuilding the OCI image to test a script change takes significant time. For scripts shipped via BST elements (e.g. `files/fido2-tasks/fido2/enroll`), iterate locally first:
