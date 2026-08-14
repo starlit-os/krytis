@@ -74,12 +74,35 @@ config:
     # for classic /etc/passwd users, so `default=ignore` is what lets them
     # fall through, while real homed auth failures stay fatal.
     #
-    # pam_u2f then covers classic users, before pam_unix; absent authfile
-    # falls through.
+    # pam_u2f would cover classic users here, before pam_unix (absent authfile
+    # falls through) -- but it is DISABLED on this testbed branch as the
+    # workaround for krytis#585.
+    #
+    # Why: pam_u2f is `sufficient`, so a successful FIDO2 auth ends the auth
+    # stack before pam_unix runs. Nothing ever populates PAM_AUTHTOK, so
+    # pam_oo7 has no password to stash and the login collection stays locked
+    # for the whole session. That is survivable on its own -- except oo7 does
+    # not report items in a locked collection (#585), so libsecret callers are
+    # told the secret "does not exist" rather than being offered an unlock.
+    # Silent wrong answers, not an error, and the prompter cannot help because
+    # nothing ever asks for it.
+    #
+    # Forcing password login means pam_oo7 gets PAM_AUTHTOK, auto_start
+    # unlocks the collection at login, and the collection is simply never
+    # locked -- so #585 has nothing to bite on.
+    #
+    # This is a mitigation, not a fix. Anything that re-locks mid-session (a
+    # `systemctl --user restart oo7-daemon`, an explicit lock) puts #585 back
+    # in play. Restore this line once #585 is fixed upstream, or if this
+    # branch is ever reworked to keep gnome-keyring.
+    #
+    # Only the *greeter* path is affected. sudo and sshd get pam_u2f from
+    # config/u2f-config.bst (system-auth / password-auth), which is untouched,
+    # so a FIDO2 key still works for sudo.
 
     auth       required     pam_nologin.so
     -auth      [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
-    auth       sufficient   pam_u2f.so cue pinverification
+    # auth     sufficient   pam_u2f.so cue pinverification   # disabled: krytis#585
     auth       required     pam_unix.so
     auth       optional     pam_oo7.so
 
