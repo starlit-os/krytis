@@ -29,6 +29,7 @@ mise load-image               # BST build → podman local storage
 mise lint                     # bootc container lint (squash-all)
 mise generate-fakecap-manifest # regenerate files/fakecap-manifest.tsv (only when elements change)
 mise chunkify                 # rechunk into composefs-ready component layers
+mise load-image-root          # copy krytis:latest into the ROOT podman store (sudo)
 mise generate-disk            # bootc install to-disk → bootable.raw
 mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 mise convert-to-qcow2         # raw → qcow2 for GNOME Boxes / virt-manager
@@ -49,6 +50,12 @@ mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot 
   image *contents* — `podman run --rm localhost/krytis:latest ...`, or `/usr/manifest.json`
   for element-level presence — never by the lint exit code alone.
 - `generate-disk` requires `sudo` (bootc loopback install needs root).
+- **Three stores, two hops.** `load-image` puts the BST artifact into the *rootless* podman
+  store; `load-image-root` copies from there into the *rootful* one. They are separate stores,
+  and `bootc install` runs as root, so it only ever sees the second. `generate-disk` still
+  calls `load-image-root` itself — the split exists so the copy can be redone on its own,
+  rather than sitting through a 30G disk install to refresh the root store.
+  It skips when both stores already hold the same image ID; `--force` copies anyway.
 - `boot-vm` requires `qemu-system-x86_64` + `edk2-ovmf`, or falls back to `docker.io/qemux/qemu-docker`.
 - `.ovmf-vars.fd` (writable UEFI state) and `bootable.raw` are `.gitignore`d.
 - `VM_RAM` and `VM_CPUS` are overrideable via `mise.toml [env]` or shell export.
@@ -753,7 +760,7 @@ tasks while `mise/tasks/` held 53.
 | Group | Tasks |
 |---|---|
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` `generate-image-version` |
-| Disk & VM | `generate-disk` `boot-vm` `boot-test` `build-iso` |
+| Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `fetch-microsoft-certs` `seal-uki` |
 | Supply chain | `sbom` `vuln-scan` `sign` |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
