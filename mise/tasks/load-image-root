@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#MISE description="Copy an image from the rootless podman store into the rootful one (needs sudo)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to copy"
+#USAGE flag "--force" help="Copy even when the root store already has this exact image ID"
+
+# Rootless and rootful podman keep separate image stores. `bootc install` runs
+# as root, so it can only see an image that exists in the *root* store — hence
+# this copy. Split out of `generate-disk`, which still calls it, so the copy can
+# be done on its own: re-running a 30G disk install just to refresh the root
+# store is a poor trade.
+#
+# `--format oci-archive` is required, not cosmetic: the default docker-archive
+# format loses the manifest bootc needs. See docs/skills/bootc-vm.md
+# § `podman save` Must Use `--format oci-archive` for bootc.
+
+set -euo pipefail
+
+# When invoked directly by another mise task (generate-disk does
+# `./mise/tasks/load-image-root --image X`), mise does not parse OUR #USAGE
+# annotations for that child call — it passes the flags as literal positional
+# args while ALSO leaving the PARENT's usage_* vars in our environment. The env
+# var would then win over the forwarded flag. Consume our own flags from $@
+# first. Same pattern as mise/tasks/generate-disk and mise/tasks/bst; see
+# docs/skills/mise.md § Propagating flags through tasks that call other tasks.
+CLI_IMAGE=""; CLI_FORCE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) CLI_IMAGE="$2"; shift 2 ;;
+        --force) CLI_FORCE="true"; shift ;;
+        *) break ;;
+    esac
+done
+
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+FORCE="${CLI_FORCE:-${usage_force:-}}"
+
+ROOTLESS_ID=$(podman image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || true)
+if [ -z "${ROOTLESS_ID}" ]; then
+    echo "ERROR: ${IMAGE} not found in the rootless podman store." >&2
+    echo "       Build it first with 'mise run build' (or pass --image)." >&2
+    exit 1
+fi
+
+ROOT_ID=$(sudo podman image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || true)
+if [ "${FORCE}" != "true" ] && [ "${ROOTLESS_ID}" = "${ROOT_ID}" ]; then
+    echo "==> Root podman store already has the current image, skipping copy."
+    echo "    ${IMAGE}  ${ROOTLESS_ID}"
+    exit 0
+fi
+
+echo "==> Copying ${IMAGE} to root podman store..."
+podman save --format oci-archive "${IMAGE}" | sudo podman load
+
+echo "==> Done: ${IMAGE} is in the root store."
