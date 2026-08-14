@@ -349,8 +349,50 @@ was answered noctalia successfully stored a secret through the Secret Service �
 reachable with the collection unlocked. So the whole chain ran: oo7 → `BeginPrompting` →
 noctalia's panel → `sx-aes-1` exchange → unlock → store.
 
+### Re-verified on live hardware, not a VM (2026-08-14)
+
+The daily-driver machine now runs the oo7 image with a real 21-item keyring migrated from
+gnome-keyring. **All of this is oo7 `0.6.0`** (`ref: 0.6.0-0-g9070389…`, tagged 2026-02-21),
+which is 221 commits behind upstream `main` — see the staleness caveat at the end.
+
+- **The v0 → v1 migration was clean.** All 21 items present with intact labels and readable
+  secrets; the pre-existing `gh:github.com` token read back as a well-formed 40-character
+  `gho_` value. No data loss.
+- **Round trip works:** store → `lookup` returns the exact value, and `SearchItems` while
+  unlocked correctly reports `aoao 1 "…/collection/Login/23" 0`.
+- **`Lock` works here** (`Locked` flips to `b true`), unlike the earlier inconclusive attempt
+  against an already-locked collection.
+- **The prompter works end to end on a real niri session.** With the collection locked, a
+  `store` raised noctalia's panel; the daemon log shows an 11-second gap between client
+  connect and `Successfully created item` — the prompt being read and answered. A secret
+  stored *before* the lock then read back correctly, so the unlock restored access rather than
+  merely permitting the new write.
+- **#585 reproduces exactly, and is narrower than first written.** The locked item still
+  answers `Item.Locked = b true` by object path and appears in the collection's `Items`
+  property; only `SearchItems` drops it, because attribute matching needs the collection key.
+  oo7 could return locked items as unmatched candidates — all libsecret needs to trigger an
+  unlock — without decrypting anything.
+- **New, and the most serious operational finding: #586.** oo7 serves
+  `/org/freedesktop/secrets/aliases/default` for introspection and property reads, but
+  Service-level method calls against that path fail (`Object: … does not exist`). Go's
+  `go-keyring` resolves the default collection that way, so **`gh auth login` silently stored
+  its OAuth token in plaintext** at `~/.config/gh/hosts.yml` instead of the keyring. oo7's
+  warnings land within microseconds of the file write, and it reproduces on a fresh,
+  never-migrated keyring — so it is not a migration artifact.
+
 Still not exercised: `ChangePassword`, and the mid-session `systemctl --user restart
 oo7-daemon` re-lock scenario.
+
+**Staleness caveat.** #585's cause was source-verified on current `main` as well as on the
+pin, so it is not an artifact of the old ref. Everything else here — the `Lock` warnings, the
+alias-path dispatch failure, PAM socket behaviour — was measured on `0.6.0` only. Re-test
+against `0.7.0.alpha` or `main` before reporting anything upstream.
+
+**Net effect on the decision: the hold hardens.** A silent downgrade of credential storage to
+plaintext affects every `go-keyring` consumer, not just `gh`, and is not something a desktop
+image should ship. That is two independent blockers on top of oo7#506 — while the *prompter*,
+the part krytis actually owns, is verified working against both gnome-keyring and oo7 and can
+proceed on its own.
 
 ### New blocker found while testing: a locked oo7 collection is invisible, not prompt-worthy
 
