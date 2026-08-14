@@ -383,16 +383,35 @@ which is 221 commits behind upstream `main` — see the staleness caveat at the 
 Still not exercised: `ChangePassword`, and the mid-session `systemctl --user restart
 oo7-daemon` re-lock scenario.
 
-**Staleness caveat.** #585's cause was source-verified on current `main` as well as on the
-pin, so it is not an artifact of the old ref. Everything else here — the `Lock` warnings, the
-alias-path dispatch failure, PAM socket behaviour — was measured on `0.6.0` only. Re-test
-against `0.7.0.alpha` or `main` before reporting anything upstream.
+**Staleness caveat — since resolved, see below.** #585's cause was source-verified on current
+`main` as well as on the pin. Everything else in this section was measured on `0.6.0` only.
 
-**Net effect on the decision: the hold hardens.** A silent downgrade of credential storage to
-plaintext affects every `go-keyring` consumer, not just `gh`, and is not something a desktop
-image should ship. That is two independent blockers on top of oo7#506 — while the *prompter*,
-the part krytis actually owns, is verified working against both gnome-keyring and oo7 and can
-proceed on its own.
+### Upgraded to 0.7.0.alpha: one blocker gone, one remains (2026-08-14)
+
+`elements/desktop/oo7.bst` was re-pinned `0.6.0` → `0.7.0.alpha` (`94a8e42`) and the machine
+now runs that image (`oo7-daemon 0.7.0-alpha`). The pin had been inherited verbatim from #178
+and never tracked, leaving it 221 commits behind.
+
+- **#586 is fixed.** `Unlock` against `/org/freedesktop/secrets/aliases/default` now returns
+  `aoo 1 "…/collection/login" "/"`, identical to the collection path, with **zero**
+  `Object: … does not exist` warnings. The practical consequence is gone too: `gh auth status`
+  reports `Logged in … (keyring)` and `~/.config/gh/hosts.yml` contains no `oauth_token`.
+  Issue closed; nothing to report upstream.
+- **#585 is not fixed.** Re-tested on `0.7.0.alpha`: store and lookup work unlocked,
+  `SearchItems` reports the item, the lock takes, and then `SearchItems` returns `aoao 0 0`
+  with `lookup` failing in 19ms and no prompt. Matches the source read of `main`.
+- **The collection path changed** from `…/collection/Login` to lowercase `…/collection/login`,
+  matching gnome-keyring. Anything that hardcoded the capitalised form during the `0.6.0`
+  period needs revisiting.
+- The 22-item keyring came through the upgrade intact.
+
+**Net effect on the decision.** The hold stands, but on narrower grounds: the plaintext-credential
+regression is gone, so what remains is **#585 plus oo7#506** rather than three blockers. #585 is
+the one that matters — while a locked collection reads back as "no such secret", a FIDO2 user is
+never offered the chance to unlock, and accepting the FIDO2 gap is not sufficient on its own.
+
+Meanwhile the *prompter*, the part krytis actually owns, is verified working against both
+gnome-keyring and oo7 and can proceed independently of any of this.
 
 ### New blocker found while testing: a locked oo7 collection is invisible, not prompt-worthy
 
