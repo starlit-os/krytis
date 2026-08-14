@@ -23,7 +23,7 @@ just = "1.58.0"
 # Proton Pass vault holding secure boot signing keys. Dev-host tooling only.
 # The mise registry has no pass-cli entry, so Renovate's mise manager cannot
 # resolve it — a custom.regex manager tracks this line instead.
-pass-cli = "2.3.1"
+pass-cli = "2.3.2"
 # fnox: the front end `mise run pull-keys` / `generate-keys` actually call
 # (fnox.toml maps the six UEFI key secrets onto the Proton Pass vault). It was
 # only ever installed globally, so `pull-keys` worked on the maintainer's box and
