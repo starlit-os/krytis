@@ -173,3 +173,45 @@ config:
     mv "%{install-root}%{datadir}/xdg-terminal-exec/xdg-terminals.list" \
        "%{install-root}%{docdir}/xdg-terminal-exec"
 ```
+
+## Gaming trees (`gamerslop`, `jackrabbit`) — deliberately not ported
+
+Upstream's gaming support is three directories: `elements/gamerslop/*`
+(packages), `elements/sysext/jackrabbit/*` (a systemd-sysext delta), and
+`elements/oci/jackrabbit/*` (a second bootable image). **krytis has no
+counterpart to any of them, by decision** — gaming is delivered through
+Flatpak instead. See `docs/design/gaming-variant.md` for the full comparison
+and the reasons.
+
+**Do not report these as a downstream gap during an `upstream-lessons` pass.**
+There is no name mapping to look for: krytis has no `gaming`/`jackrabbit`
+element tree at all. The same applies to dakota's `elements/gaming/*` and its
+`-o gaming` project option.
+
+A working port of the sysext path (Path B) does exist, unmerged and unbuilt, in
+closed PR #522. Its branch is deleted, but the commit survives at
+`refs/pull/522/head` (`e2e871c`) — `git fetch origin refs/pull/522/head`. Start
+from there rather than re-porting from upstream if this is ever revisited.
+
+Two upstream-specific details worth keeping, since they are the parts that do
+not exist anywhere in krytis:
+
+**The dual-sysroot diff is how upstream builds a sysext.**
+`sysext/jackrabbit/layer.bst` runs `prepare-image.sh` **twice** — once for the
+base `oci/zirconium/filesystem.bst` sysroot, once for
+`sysext/jackrabbit/filesystem.bst` (base + gaming) — then diffs them with
+`files/sysext/make-layer.py <lower> <upper> <output>` and packages only the
+delta as an erofs `.raw` tagged with
+`usr/lib/extension-release.d/extension-release.<id>`. `make-layer.py` is
+generic (pure `os.walk` + `shutil.copy2` + whiteouts, no upstream-specific
+paths), so it ports verbatim for any future sysext. krytis already carries the
+activation half: `gnome-build-meta.bst:gnomeos/reload-sysext.bst` is in
+`stacks/base-system.bst` with no consumer.
+
+**32-bit support is a cross-compile + filter pair.**
+`sysext/jackrabbit/lib32.bst` builds fontconfig, libglvnd, libva,
+libxkbcommon, vulkan-icd-loader, xorg-lib-xinerama, libdrm and mesa against
+`freedesktop-sdk.bst:cross-compilers/freedesktop-sdk-i686.bst`, and
+`lib32-filter.bst` (`kind: filter`) splits out only the arch-specific paths.
+krytis has **no i686 cross-compiler junction override** in
+`elements/freedesktop-sdk.bst`, so this is a prerequisite, not a copy.

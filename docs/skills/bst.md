@@ -68,8 +68,11 @@ The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only 
 | `compose` | Layer filtering (exclude debug/devel splits) |
 | `script` | OCI image assembly |
 | `collect_initial_scripts` | Collect systemd presets/sysusers/tmpfiles from the dep tree |
+| `filter` | Pass through only a subset of one dep's output (e.g. the arch-specific paths of a cross-compiled element) |
 
 **Never type a layer element as `kind: stack`.** A stack builds successfully but the OCI layer is silently empty. Verify with `grep '^kind:' elements/oci/krytis/filesystem.bst` — must show `kind: compose`.
+
+**Every kind above is a core BuildStream plugin** (`buildstream/plugins/elements/`) — none needs a `plugins:` entry in `project.conf`. That includes `filter`, which reads like an add-on but is not. Only third-party kinds (`cargo2`, `git_repo`, … from `buildstream-plugins`/`-community`) require registration.
 
 ## Source Kinds
 
@@ -525,6 +528,33 @@ Some upstream meson projects call `find_program('<tool>')` expecting a specific 
 Fix: add a tiny `kind: manual` element that installs a shim script under the expected binary name into `%{bindir}`, translating the call into the available tool's actual CLI, and list it under the consuming element's `build-depends:` (not `depends:` — it's a build-time-only tool, not part of the runtime image). See `elements/deps/sass-shim.bst` (adw-gtk3.bst's build-dep) for a worked example: it strips the one incompatible flag (`--no-source-map`, which is already sassc's default behavior) and execs `sassc "$@"`.
 
 Keep the shim narrowly scoped to the one call site that needs it — don't generalize it into a "compat layer" for the tool in general; that's speculative work the actual usage doesn't need.
+
+### Porting a whole element directory verbatim from a sibling project
+
+A directory-wide `cp` of `elements/<upstream-dir>/*.bst` into a
+differently-named local directory gets every **external** reference right —
+krytis, zirconium-hawaii and dakota all use identical
+`freedesktop-sdk.bst:`/`gnome-build-meta.bst:`/`deps/*.bst` paths — and every
+**internal same-directory** reference wrong. `cp` does not know the directory
+is being renamed, so a `build-depends: - sysext/jackrabbit/lib32.bst` inside
+the copied `lib32-filter.bst` still names the *upstream* directory after
+landing at `sysext/gaming/lib32-filter.bst`. It is still valid YAML pointing
+at a path that does not exist locally.
+
+After any multi-file port, grep the new directory for the **old** directory
+name before trusting it:
+
+```shell
+grep -rn '<upstream-dir>' elements/<local-dir>/
+```
+
+**Then resolve the graph, don't just parse it.** `mise run validate` runs
+`bst show --deps all`, which resolves sources and evaluates
+`fatal-warnings:` — that is the cheapest check that catches a dangling element
+reference or an `unaliased-url` in a ported `cargo2` block (see § Rust / Cargo
+Projects). A YAML- or reference-only audit passes clean on both. If a port adds
+a new top-level target that no existing stack pulls in, add it to
+`mise/tasks/validate` so the cheap check actually covers it.
 
 ## Element Update Path
 
@@ -1105,6 +1135,21 @@ To update after a version bump:
 1. `mise bst source track elements/krytis/<name>.bst`
 2. `mise bst shell --build elements/krytis/<name>.bst` — copy out the new Cargo.lock
 3. Regenerate cargo2 sources and replace the block in the element
+
+**`url: crates:crates` is mandatory, and its absence is legal upstream.** The
+cargo2 plugin defaults to `https://static.crates.io/crates/` when `url:` is
+omitted, and `generate_cargo_sources.py` does not emit the line. krytis lists
+`unaliased-url` under `project.conf` `fatal-warnings:`, so a cargo2 block
+without it is fatal here while being perfectly valid in a sibling project (both
+zirconium-hawaii Rust elements omit it). It fails at `bst show`'s **resolve**
+stage, not at load — a YAML-parse or reference-only check passes clean:
+
+```
+[unaliased-url]: cargo2 source at gaming/inputplumber.bst [line 8 column 2]:
+  Use of unaliased source download URL: https://static.crates.io/crates/
+```
+
+Precedents to copy: `core/bootc.bst`, `desktop/greetd.bst`.
 
 ### Strategy B: upstream vendored-dependencies tarball
 
