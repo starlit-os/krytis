@@ -197,7 +197,13 @@ prompter is not a degraded mode — it is an indefinite hang in every caller, wi
 anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
 `busctl --user list | grep SystemPrompter` before anything else.
 
-## oo7's collection path is `…/collection/Login` — capital L, unlike gnome-keyring
+## oo7's collection path: `Login` on 0.6.0, `login` from 0.7.0.alpha
+
+**Version-specific — check before hardcoding either.** On **0.6.0** oo7 derived the collection
+object path from the keyring *label*, giving `/org/freedesktop/secrets/collection/Login` with a
+capital L. **0.7.0.alpha uses lowercase `login`**, matching gnome-keyring, and logs
+`Setting up collection 'login' (alias: default)` at startup. The rest of this section describes
+the 0.6.0 behaviour, which is what an image pinned to that tag still exhibits.
 
 gnome-keyring exposes the login keyring at `/org/freedesktop/secrets/collection/login`. oo7
 derives the path from the keyring *label*, so it is **`/org/freedesktop/secrets/collection/Login`**.
