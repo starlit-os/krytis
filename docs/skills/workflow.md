@@ -91,9 +91,36 @@ Verify before overriding, by whichever of these two routes applies:
 - **The tip is an ancestor of a branch you are keeping.** `git merge-base --is-ancestor <tip> <kept-branch>` exiting 0 means every commit stays reachable after the delete, so nothing can be lost regardless of what the diff looks like. This is the common shape for an investigation branch whose PR merged while a longer-running branch continued from its tip.
 - **Otherwise, compare against `main`.** `git diff origin/main <branch>` must show only content `main` already has — deletions relative to `main`, no additions of the branch's own.
 
-Note that `git diff <pr-head> <tip>` is *not* available as a check: GitHub deletes the head ref on merge, so the reported head OID is not fetchable locally (`unknown revision`). Compare against `main` or a kept branch, never against the PR head.
+`git diff <pr-head> <tip>` **is** available, contrary to what the deleted head ref suggests: GitHub retains every PR's head commit at `refs/pull/<n>/head` after the branch is gone, for merged and closed PRs alike. Fetch it, then diff against a real local object:
+
+```shell
+git fetch origin refs/pull/543/head   # FETCH_HEAD == the PR's headRefOid
+git diff FETCH_HEAD <tip>
+```
+
+Fetching the bare OID (`git fetch origin <headRefOid>`) works too. Both were verified from a clean clone against merged #584 and closed #522, whose branches were both deleted. Comparing against `main` or a kept branch remains the better check when the question is "is anything lost" — but "the head is unfetchable" is not the reason.
 
 Then re-run with `--allow-diverged`.
+
+### Abandoning a PR: extract the lessons, then delete the branch
+
+`mise run prune-worktrees` only touches branches whose PR is `MERGED`, so an
+abandoned branch is always a manual `git push origin --delete <branch>`. Do it —
+but in this order, in one session:
+
+1. **Extract first.** Every workaround, constraint and verified fact the branch
+   discovered goes into `docs/skills/` or `docs/design/` (§ Self-Improvement
+   Loop applies to rejected work too — arguably more, since the code will not be
+   there to re-read).
+2. **Record the recovery ref**, not the branch name. Cite
+   `refs/pull/<n>/head` plus the SHA; a branch name that no longer exists is a
+   dead pointer, and the PR number alone makes a reader hunt for the commit.
+3. **Then delete the branch.** The commit is not lost — see the `refs/pull` note
+   above.
+
+Worked example: #522's gaming sysext, mined into
+`docs/design/gaming-variant.md` + two skill files by #589, branch deleted, tree
+still reachable at `refs/pull/522/head`.
 
 ## Opening Pull Requests
 

@@ -188,9 +188,10 @@ There is no name mapping to look for: krytis has no `gaming`/`jackrabbit`
 element tree at all. The same applies to dakota's `elements/gaming/*` and its
 `-o gaming` project option.
 
-A working port of the sysext path (Path B) does exist, unmerged and unbuilt,
-in PR #522 / branch `feat/gamerslop-sysext` at `e2e871c`. Start from there
-rather than re-porting from upstream if the decision is ever revisited.
+A working port of the sysext path (Path B) does exist, unmerged and unbuilt, in
+closed PR #522. Its branch is deleted, but the commit survives at
+`refs/pull/522/head` (`e2e871c`) — `git fetch origin refs/pull/522/head`. Start
+from there rather than re-porting from upstream if this is ever revisited.
 
 Two upstream-specific details worth keeping, since they are the parts that do
 not exist anywhere in krytis:

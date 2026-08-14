@@ -19,15 +19,22 @@ route was dropped, and which of those facts still bind the Flatpak route.
 | dakota's `-o gaming` build-option toggle | rejected |
 | **`gamescope-session`** as a greetd session entry (+ `gamescope-session-steam`) | rejected — no couch/handheld mode wanted, niri stays the only session |
 
-An implementation of Path B existed and is recoverable: PR
-[#522](https://github.com/starlit-os/krytis/pull/522) (closed unmerged), branch
-`feat/gamerslop-sysext` at `e2e871cd34f87187e59155b3543a16ad2f7b4edd` — 34
-files, 8 `gaming/*` packages, 6 `deps/*` build deps, the dual-sysroot diff
-tooling (`files/sysext/make-layer.py`), `mise/tasks/build-sysext-gaming`, and
-262 lines of `track-bst-sources.yml` update-path jobs. Its element graph
-resolved (1126 elements); it was **never built and never booted**. Anyone
-reviving native gaming packages should start from that commit rather than
-re-porting from upstream.
+An implementation of Path B existed and is still recoverable, though the branch
+is gone: PR [#522](https://github.com/starlit-os/krytis/pull/522) was closed
+unmerged and `feat/gamerslop-sysext` deleted. GitHub keeps a closed PR's head
+commit alive at `refs/pull/<n>/head`, so the tree is fetchable by that ref or by
+its SHA `e2e871cd34f87187e59155b3543a16ad2f7b4edd`:
+
+```shell
+git fetch origin refs/pull/522/head && git switch -c revive-gaming FETCH_HEAD
+```
+
+That commit carries 34 files: 8 `gaming/*` packages, 6 `deps/*` build deps, 6
+`sysext/gaming/*` elements, the dual-sysroot diff tooling
+(`files/sysext/make-layer.py`), `mise/tasks/build-sysext-gaming`, and 262 lines
+of `track-bst-sources.yml` update-path jobs. Its element graph resolved (1126
+elements); it was **never built and never booted**. Anyone reviving native
+gaming packages should start from that ref rather than re-porting from upstream.
 
 ### Why the native route was dropped
 
