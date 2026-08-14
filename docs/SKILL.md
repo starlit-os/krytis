@@ -19,6 +19,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
 | Generate or debug the firmware key-enrollment `.auth` files, or refresh the dbx revocation list (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
 | Decide which boot-chain tests to run for a change, or find what is still untested | [`docs/design/secure-boot-testing.md`](design/secure-boot-testing.md) |
+| Work on gaming support, or wonder why there is no native Steam/gamescope/sysext | [`docs/design/gaming-variant.md`](design/gaming-variant.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
