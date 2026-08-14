@@ -45,6 +45,13 @@ sources:
   url: github:linux-credentials/oo7.git
   track: '[0-9]*'
   ref: 0.7.0.alpha-0-g94a8e42e2648d3385de287d8da31ec293ef5dd9e
+
+# Falls back to the CLI prompter when the daemon starts before the compositor
+# imports WAYLAND_DISPLAY -- which is always, since the unit is
+# WantedBy=default.target. Upstream oo7#530, downstream krytis#588.
+- kind: patch
+  path: patches/oo7/prompter-detect-session-type.patch
+
 - kind: cargo2
   url: crates:crates
   ref:

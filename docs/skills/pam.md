@@ -285,6 +285,41 @@ This matters when testing a prompter: **libsecret's `lookup` does request an unl
 locked items — so "lookup did not prompt" almost always means the collection was never locked,
 not that the prompter failed.
 
+## krytis patches oo7's prompter detection (`patches/oo7/`)
+
+`0.7.0.alpha` chooses between the GNOME prompter and a CLI prompter from
+`DISPLAY`/`WAYLAND_DISPLAY` **in the daemon's own process environment**. Those arrive when the
+compositor imports them into the systemd user manager, but `oo7-daemon.service` is
+`WantedBy=default.target`, so the manager starts it at session open — concurrently with the
+compositor. A service inherits the manager environment *at start*, so the daemon spends the
+whole session believing it is headless and every libsecret caller gets:
+
+```
+CLI prompter failed: NameHasNoOwner: Name "org.freedesktop.secrets.CliPrompter" does not exist
+```
+
+It cannot be fixed by starting the daemon later: `pam_oo7.so auto_start` runs in the PAM
+session phase and the daemon must already exist to take the login secret from the transient
+`oo7-daemon-login` helper, whose socket is gone by mid-session. Delaying the unit trades this
+bug for the loss of login auto-unlock.
+
+`patches/oo7/prompter-detect-session-type.patch` widens the predicate to accept
+`XDG_SESSION_TYPE` (`wayland`/`x11`), which logind sets at session open and which the daemon
+therefore *does* have. Verified A/B on the built artifact with both display variables unset:
+
+| daemon env | prompter chosen |
+|---|---|
+| `XDG_SESSION_TYPE=wayland` | `BeginPrompting` → `org.gnome.keyring.SystemPrompter` |
+| `XDG_SESSION_TYPE` unset | `CliPrompter` |
+
+Note the original check only tests these variables for non-emptiness and never connects to a
+display, so this widens the same predicate rather than changing its meaning.
+
+**Drop the patch when upstream fixes it** — oo7#530, stalled since 2026-07-28 with the
+maintainer unable to reproduce on Fedora (where oo7 is not the default provider and is D-Bus
+activated *after* the session is up, so the race never happens). Downstream tracking and the
+full analysis: krytis#588.
+
 ## A locked oo7 collection returns "no such secret", not a prompt
 
 `secret-tool lookup` against a locked oo7 collection returns **not found in 0s** — no prompt,

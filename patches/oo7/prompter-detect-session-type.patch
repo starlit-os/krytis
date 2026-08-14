@@ -1,0 +1,58 @@
+Also treat XDG_SESSION_TYPE as evidence of a graphical session.
+
+oo7-daemon picks between the GNOME prompter (org.gnome.keyring.SystemPrompter)
+and a CLI prompter based solely on DISPLAY/WAYLAND_DISPLAY in its own process
+environment. Those are exported by the compositor and imported into the systemd
+user manager during session startup, but oo7-daemon.service is WantedBy=
+default.target, so the manager starts it at session open -- concurrently with
+the compositor. A service inherits the manager's environment at start, so the
+daemon is permanently stuck with a pre-import copy and falls back to the CLI
+prompter for the whole session. Every libsecret caller then fails with:
+
+  CLI prompter failed: NameHasNoOwner: Name
+  "org.freedesktop.secrets.CliPrompter" does not exist
+
+It cannot simply be started later: pam_oo7.so auto_start runs in the PAM session
+phase and the daemon must already exist to collect the login secret from the
+transient oo7-daemon-login helper, so delaying it trades this bug for the loss of
+login auto-unlock.
+
+XDG_SESSION_TYPE is set by logind at session open, so it is present in the
+daemon's environment even when the display variables are not -- verified on a
+running system, where the daemon had XDG_SESSION_TYPE=wayland and
+XDG_CURRENT_DESKTOP=niri but neither DISPLAY nor WAYLAND_DISPLAY. Consulting it
+answers the same question ("am I in a graphical session?") without depending on
+startup ordering.
+
+Note the existing check only tests these variables for non-emptiness and never
+connects to a display, so this widens the same predicate rather than changing
+its meaning.
+
+Upstream: https://github.com/linux-credentials/oo7/issues/530 -- stalled since
+2026-07-28 with the maintainer unable to reproduce on Fedora, where oo7 is not
+the default provider and is D-Bus activated after the session is up rather than
+started at default.target. Tracked downstream as starlit-os/krytis#588. Drop this
+patch once upstream lands a fix; the maintainer may prefer checking whether a
+SystemPrompter name is owned on the bus, which is the question oo7 actually wants
+answered.
+diff --git a/server/src/service/mod.rs b/server/src/service/mod.rs
+index d43c109..8974a30 100644
+--- a/server/src/service/mod.rs
++++ b/server/src/service/mod.rs
+@@ -530,8 +530,15 @@ impl Service {
+             return *override_type;
+         }
+ 
++        // A graphical session may exist even when the compositor's display
++        // variables never reached this process: oo7-daemon starts at
++        // default.target, before the compositor imports them into the systemd
++        // user manager. XDG_SESSION_TYPE comes from logind at session open, so
++        // it is present either way. See krytis#588 / oo7#530.
+         let has_display = std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
+-            || std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
++            || std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
++            || std::env::var_os("XDG_SESSION_TYPE")
++                .is_some_and(|v| v == "wayland" || v == "x11");
+ 
+         if has_display {
+             #[cfg(any(feature = "plasma_native_crypto", feature = "plasma_openssl_crypto"))]
