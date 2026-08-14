@@ -17,6 +17,7 @@ route was dropped, and which of those facts still bind the Flatpak route.
 | **Path B** — systemd-sysext delta (`elements/sysext/gaming/*`) | abandoned |
 | **Path A** — full alternate bootable OCI variant (`elements/oci/gaming/*`) | abandoned (was already deferred) |
 | dakota's `-o gaming` build-option toggle | rejected |
+| **`gamescope-session`** as a greetd session entry (+ `gamescope-session-steam`) | rejected — no couch/handheld mode wanted, niri stays the only session |
 
 An implementation of Path B existed and is recoverable: PR
 [#522](https://github.com/starlit-os/krytis/pull/522) (closed unmerged), branch
@@ -64,12 +65,21 @@ re-porting from upstream.
 - **Kernel-side gaming support is already unconditional** — see "Krytis today"
   below. `sched_ext` + `ntsync` + `falcond` + `scx-loader` need no gaming
   variant, and Proton's WOW64/ntsync path works against them.
-- **The remaining genuine host-side gaps are small.** `scx_loader` has no
-  scheduler binaries to load (`scx-scheds`/`scx-tools` are absent — a
-  pre-existing gap, not gaming-specific). `gamescope-session` as a *greetd
-  session* is the one thing Flatpak cannot deliver, since it needs a
-  system-level session entry and a native `gamescope`; treat that as a separate
-  decision if a couch/handheld mode is ever wanted.
+- **`gamescope-session` is out of scope — decided, not deferred (2026-08-14).**
+  A gamescope session as a greetd entry is the one gaming capability Flatpak
+  genuinely cannot deliver (it needs a system-level session desktop entry and a
+  native `gamescope`), and krytis does not want it. There is no couch or
+  handheld mode on the roadmap; niri stays the only session. This also settles
+  `gamescope-session-steam` and, with it, the last argument for native Steam —
+  Flatpak Steam has no session to integrate with. Do not reopen this as a
+  side-effect of some other gaming change.
+- **`scx_loader` has no schedulers to load** — tracked separately, not
+  gaming-specific. Live on 2026-08-14: `scx_loader.service` is active and
+  advertises 13 `SupportedSchedulers` over `org.scx.Loader`, `/usr/bin` holds
+  no `scx_*` binary but the loader itself, and `/sys/kernel/sched_ext/state`
+  reads `disabled`. Nothing errors today only because every shipped falcond
+  profile sets `scx_sched = none` and `scx_loader`'s `default_sched` is
+  commented out. See issue #590.
 - **App pre-installs have a home already**: `elements/config/flatpak-preinstall.bst`
   (marker-file-gated oneshot, see `docs/skills/bst.md` § Flatpak Pre-install
   Service Pattern) and the Flathub remote via
@@ -163,9 +173,10 @@ Each of these was verified when this investigation ran; they still hold.
 - **Gaming-adjacent packages are already unconditional** in
   `stacks/desktop.bst`: `freedesktop-sdk.bst:components/steam-devices.bst`,
   `desktop/game-devices-udev.bst`, `desktop/falcond.bst`,
-  `desktop/scx-loader.bst`. Absent natively: Steam, gamescope, MangoHud,
-  InputPlumber, scopebuddy, umu-launcher, 32-bit compat — all of which Flathub
-  covers except `gamescope`-as-a-session.
+  `desktop/scx-loader.bst` — though the loader has no schedulers to load
+  (#590). Absent natively: Steam, gamescope, MangoHud, InputPlumber,
+  scopebuddy, umu-launcher, 32-bit compat — all covered by Flathub, and the one
+  thing Flathub cannot cover (`gamescope` as a session) is rejected outright.
 - **The sysext refresh mechanism is already wired** —
   `gnome-build-meta.bst:gnomeos/reload-sysext.bst` sits in
   `stacks/base-system.bst` today. It's plumbing with nothing plugged into it.
