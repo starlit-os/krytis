@@ -37,6 +37,35 @@ keyring, `CreateCollection`, `ChangePassword`) is an interactive, mid-session
 action — noctalia has been running the whole session by the time any of those
 fire.
 
+**`secret_prompter = true` in `/etc/skel` reaches new accounts only — every existing user
+silently keeps the prompter off.** `noctalia-skel.bst` says so in a comment ("one-shot copy,
+not a synced default: it only reaches newly-created accounts"), and this option is the first
+time that limitation has real consequences: an upgraded machine ships the prompter binary,
+ships the skel default, and still has nothing owning `org.gnome.keyring.SystemPrompter`.
+
+Observed on a live upgraded system: `~/.local/state/noctalia/settings.toml` carried
+`polkit_agent = true` from an older skel copy but no `secret_prompter`, `busctl --user list`
+showed no `org.gnome.keyring.*` owner at all, and noctalia was running the whole time. There
+is no warning; the feature is simply absent.
+
+Fix per existing account — noctalia's config watcher picks it up live, no restart needed
+(verified: the running process acquired the name within ~4s of the file changing, which also
+exercises the `syncSecretPrompter` reload path):
+
+```shell
+# under [shell] in ~/.local/state/noctalia/settings.toml
+secret_prompter = true
+```
+
+Confirm with `busctl --user list | grep SystemPrompter` — the owner should be noctalia's PID.
+
+**Verified end to end on a live niri session** (with oo7 as the backend, but the prompter path
+is backend-independent): store a secret, `secret-tool lock --collection=Login`, then store
+again. noctalia's panel appears, and the daemon log shows an 11-second gap between the client
+connecting and `Successfully created item` — the prompt being read and answered — after which
+a secret stored *before* the lock read back correctly. So the unlock genuinely restored access
+rather than just letting the new write through.
+
 ## systemd-homed users: FIDO2 login belongs to homed, not pam_u2f
 
 Two independent things broke FIDO2 login for `systemd-homed`-managed users. Both were fixed in #409; keep them straight, because fixing only the first looks plausible and achieves nothing.
