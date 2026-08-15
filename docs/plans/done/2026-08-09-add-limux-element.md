@@ -1,3 +1,15 @@
+> **ABANDONED — 2026-08-15.** krytis is not shipping limux. Issue #550 and PR #554
+> are closed unmerged; branch `550-add-limux-terminal-workspace-element` is deleted.
+> The WebKitGTK 6.0 cost this plan measured (1 h 30 m compile, 13 new elements,
+> +186.9 MiB image) was not judged worth a terminal-workspace app, and the browser
+> pane — the whole point of the webkit dependency — was never verified in a live
+> session. This file is kept for those measurements: they are the real price of
+> adding *any* WebKitGTK-linked app to the image, and the next such proposal should
+> start from them rather than re-estimating. The two transferable BST lessons the
+> work produced were extracted into `docs/skills/bst.md`
+> (§ Survey the reverse-dep set …, § A prebuilt binary's RUNPATH into `/usr/local` …).
+> No element from this plan exists in the tree.
+
 # Add limux terminal workspace element — Implementation Plan
 
 **Issue:** #550
@@ -49,7 +61,7 @@ Source-building was rejected: upstream publishes no vendored-deps tarball (so a 
 
 **Interfaces:** produces the two facts Task 2's `depends:` relies on — that `gnome-build-meta.bst:sdk/webkitgtk-6.0.bst` builds in this project's junction context, and that its sonames match what `limux-host` asks for.
 
-- [ ] **Step 1: Confirm the element resolves in krytis's junction context**
+- [x] **Step 1: Confirm the element resolves in krytis's junction context**
 
 ```bash
 mise run bst show gnome-build-meta.bst:sdk/webkitgtk-6.0.bst
@@ -57,13 +69,13 @@ mise run bst show gnome-build-meta.bst:sdk/webkitgtk-6.0.bst
 
 Watch for the "loaded in multiple contexts" plugin-junction failure mode documented in `docs/skills/bst.md` § Multiple Plugin Junction Contexts. krytis already consumes ~50 gnome-build-meta elements including `sdk/gtk.bst` and `sdk/libsoup.bst` (webkit's two extra `depends`), so this is expected to pass; if it does not, stop and report — nothing below works without it.
 
-- [ ] **Step 2: Build it (long — hours)**
+- [x] **Step 2: Build it (long — hours)**
 
 ```bash
 mise run bst build gnome-build-meta.bst:sdk/webkitgtk-6.0.bst
 ```
 
-- [ ] **Step 3: Verify the sonames match `limux-host`'s NEEDED entries**
+- [x] **Step 3: Verify the sonames match `limux-host`'s NEEDED entries**
 
 ```bash
 mise run bst artifact checkout --tar /tmp/webkit.tar gnome-build-meta.bst:sdk/webkitgtk-6.0.bst
@@ -83,7 +95,7 @@ Required: `libwebkitgtk-6.0.so.4` and `libjavascriptcoregtk-6.0.so.1` (major-son
 - Consumes: `gnome-build-meta.bst:sdk/webkitgtk-6.0.bst` (Task 1).
 - Produces: `/usr/bin/limux`, `/usr/libexec/limux/limux-host`, `/usr/lib/limux/libghostty.so`, `/usr/share/limux/**`, `/usr/share/icons/hicolor/**/limux*`, `/usr/share/applications/dev.limux.linux.desktop`, `/usr/share/metainfo/dev.limux.linux.metainfo.xml`. Task 3 depends on the `/usr/lib/limux` path; Task 4 wires the element in; Task 5's `sed` regexes target the `version:` variable and the `ref:` line.
 
-- [ ] **Step 1: Confirm `%{libexecdir}` expands to `/usr/libexec`**
+- [x] **Step 1: Confirm `%{libexecdir}` expands to `/usr/libexec`**
 
 ```bash
 mise run bst show --format '%{vars}' desktop/zed.bst | grep -E '^(libexecdir|indep-libdir|datadir|bindir):'
@@ -91,7 +103,7 @@ mise run bst show --format '%{vars}' desktop/zed.bst | grep -E '^(libexecdir|ind
 
 fdsdk's `include/install-dirs.yml` overrides `lib`, `indep-libdir`, `licensedir` and friends but **not** `libexecdir`, so BuildStream's built-in `%{prefix}/libexec` should apply. If it expands to anything else, use the literal expansion in Step 2 — `limux-cli` hardcodes the `libexec/limux/limux-host` suffix relative to the prefix and cannot be redirected without `LIMUX_HOST_BIN`.
 
-- [ ] **Step 2: Write the element**
+- [x] **Step 2: Write the element**
 
 ```yaml
 kind: manual
@@ -181,7 +193,7 @@ Notes for the implementer:
 - `strip-binaries: ''` **and** `strip-commands: [':']` — the payload is already stripped upstream and re-stripping a vendored `.so` risks breaking it. Same as `zed.bst`/`warp.bst`.
 - `fatal-warnings: overlaps` is on. `share/icons/hicolor/**` file names are all `limux*`, so no file collides with `hicolor-icon-theme`, `papirus-icon-theme`, or `adw-gtk3`; directories are not overlaps. If a collision does appear, do **not** reach for `overlap-whitelist` — report it, because it would mean upstream started shipping a generic filename.
 
-- [ ] **Step 3: Build it standalone**
+- [x] **Step 3: Build it standalone**
 
 ```bash
 mise run bst build desktop/limux.bst
@@ -202,7 +214,7 @@ Expect exactly the paths listed under **Produces** above, and no `install.sh`.
 - Consumes: the `/usr/lib/limux` path produced by Task 2 (path only; no BST dependency edge is needed — the file is a static config).
 - Produces: `/etc/ld.so.conf.d/limux.conf`, consumed by `image.bst`'s existing `ldconfig -r /layer -f /layer/etc/ld.so.conf` step.
 
-- [ ] **Step 1: Write the element** (mirror `elements/config/codecs-extra-ldconfig.bst` exactly — same `kind`, same `strip-binaries: ''`, same `install -Dm644 /dev/stdin` heredoc)
+- [x] **Step 1: Write the element** (mirror `elements/config/codecs-extra-ldconfig.bst` exactly — same `kind`, same `strip-binaries: ''`, same `install -Dm644 /dev/stdin` heredoc)
 
 ```yaml
 kind: manual
@@ -238,7 +250,7 @@ config:
   - "%{install-extra}"
 ```
 
-- [ ] **Step 2: Build and inspect**
+- [x] **Step 2: Build and inspect**
 
 ```bash
 mise run bst build config/limux-ldconfig.bst
@@ -257,7 +269,7 @@ Must print `/usr/lib/limux`. If it prints an unexpanded `%{indep-libdir}`, the v
 
 **Interfaces:** consumes Tasks 2 and 3; produces the graph edge every verification step in Task 7 relies on.
 
-- [ ] **Step 1: Append a section in the existing commented style**
+- [x] **Step 1: Append a section in the existing commented style**
 
 ```yaml
   # ── Terminal workspace manager ─────────────────────────────────────────────
@@ -272,7 +284,7 @@ Must print `/usr/lib/limux`. If it prints an unexpanded `%{indep-libdir}`, the v
 
 Place it after the existing `desktop/warp.bst` **Terminal** block. Do not reorder or reformat the existing entries.
 
-- [ ] **Step 2: Resolve the graph**
+- [x] **Step 2: Resolve the graph**
 
 ```bash
 mise run validate
@@ -290,7 +302,7 @@ Must exit 0 with `oci/krytis/image.bst` resolving. `unaliased-url` is a fatal wa
 
 **Interfaces:** consumes Task 2's `version:` variable and `ref:` line shape. Produces the automated bump PR path required by `AGENTS.md` § Update path gate option (b).
 
-- [ ] **Step 1: Write `mise/tasks/limux-update`**
+- [x] **Step 1: Write `mise/tasks/limux-update`**
 
 Model it on `mise/tasks/zed-update`, minus the arch loop (limux publishes x86_64 only). Required shape:
 
@@ -333,7 +345,7 @@ echo "==> Done: ${CURRENT_VER} → ${LATEST_VER}. Run 'mise run validate' to ver
 
 `chmod +x` it. Verify idempotence and correctness by running it twice: the first run should either bump or report up-to-date, the second must report up-to-date and leave `git diff` clean.
 
-- [ ] **Step 2: Add the `track-limux` CI job**
+- [x] **Step 2: Add the `track-limux` CI job**
 
 In `.github/workflows/track-bst-sources.yml`:
 1. Add `limux` to `workflow_dispatch.inputs.group.options` (the list around lines 13–43), alphabetically-adjacent placement is fine; the list is not sorted.
@@ -341,7 +353,7 @@ In `.github/workflows/track-bst-sources.yml`:
 
 Keep every `uses:` pinned to the same full commit SHAs the neighbouring jobs use (`AGENTS.md` § SHA pinning) — copy, never re-resolve to a tag.
 
-- [ ] **Step 3: Validate the workflow and trigger it on this branch**
+- [x] **Step 3: Validate the workflow and trigger it on this branch**
 
 ```bash
 mise run renovate-check   # only if renovate.json5 was touched — it should not be
@@ -360,14 +372,14 @@ Per `docs/skills/bst.md` § Verifying the CI job before merge, confirm end-to-en
 
 **Interfaces:** none. Required by `AGENTS.md` § Skill-improvement mandate.
 
-- [ ] **Step 1: Add a subsection under the prebuilt-binary material (near § Bundled-app tarballs with RPATH structure)**
+- [x] **Step 1: Add a subsection under the prebuilt-binary material (near § Bundled-app tarballs with RPATH structure)**
 
 Write these two lessons — both were discovered while scoping #550 and neither is currently in the tree:
 
 1. **A prebuilt binary's RUNPATH pointing into `/usr/local` is dead on bootc.** `/usr/local` → `/var/usrlocal` (bootc tmpfiles), which is empty runtime state on every boot — the same trap already documented for `/opt`, but reached through RUNPATH rather than through payload paths. The fix pattern: install the bundled library to `%{indep-libdir}/<app>/` and ship an `/etc/ld.so.conf.d/<app>.conf` entry, because `image.bst` already runs `ldconfig -r /layer` at assembly time. Cross-reference `config/codecs-extra-ldconfig.bst` and `config/limux-ldconfig.bst`. Always `readelf -d` a prebuilt payload before writing the element; a plausible-looking RUNPATH is not a working one.
 2. **Check the reverse-dependency set before assuming a junction library is "already there".** For #550: `grep -rn webkit elements/` is empty *and* none of the ~50 gnome-build-meta elements krytis consumes pulls `sdk/webkitgtk-6.0.bst` — so one prebuilt app added an hours-long WebKit build to the image. Recipe: `grep -rln '<element>.bst' <staged-junction>/elements` for reverse-deps, then intersect with `grep -rn '<junction>.bst:' elements/ | sed 's/.*://' | sort -u`. Note the AGENTS.md caveat that a static grep is not proof about a *live* system, only about the graph.
 
-- [ ] **Step 2: If the element's `docs/SKILL.md` router has no row that would lead an agent here, add one.** Likely unnecessary — § Adding a Package already routes there — so check before editing rather than adding a redundant row.
+- [x] **Step 2: If the element's `docs/SKILL.md` router has no row that would lead an agent here, add one.** Likely unnecessary — § Adding a Package already routes there — so check before editing rather than adding a redundant row.
 
 ---
 
@@ -375,7 +387,7 @@ Write these two lessons — both were discovered while scoping #550 and neither 
 
 **Files:** none.
 
-- [ ] **Step 1: Graph + build + lint**
+- [x] **Step 1: Graph + build + lint**
 
 ```bash
 mise run validate
@@ -384,7 +396,7 @@ mise run load-image
 mise run lint
 ```
 
-- [ ] **Step 2: SBOM / vuln surface**
+- [x] **Step 2: SBOM / vuln surface**
 
 ```bash
 mise run sbom
@@ -424,7 +436,107 @@ Record the results verbatim in the PR. If the browser pane fails, check whether 
 
 ### Task 8: Close out
 
-- [ ] **Step 1:** Confirm the AGENTS.md pre-PR checklist: skill file updated and in this PR's commits (Task 6), same commit as the change that produced the learning.
-- [ ] **Step 2:** `mise run docs-links` — fails on any `docs/…` reference that no longer resolves.
-- [ ] **Step 3:** `git mv docs/plans/2026-08-09-add-limux-element.md docs/plans/done/` in the merging PR, per `AGENTS.md` § Plan & Design Docs — not as a separate follow-up.
-- [ ] **Step 4:** Open the PR against `main` with `Closes #550`, the verification evidence from Task 7, and an explicit list of any gate that could not be run in-session. Merge is a human decision.
+- [x] **Step 1:** Confirm the AGENTS.md pre-PR checklist: skill file updated and in this PR's commits (Task 6), same commit as the change that produced the learning.
+- [x] **Step 2:** `mise run docs-links` — fails on any `docs/…` reference that no longer resolves.
+- [x] **Step 3:** `git mv docs/plans/2026-08-09-add-limux-element.md docs/plans/done/` in the merging PR, per `AGENTS.md` § Plan & Design Docs — not as a separate follow-up.
+- [x] **Step 4:** Open the PR against `main` with `Closes #550`, the verification evidence from Task 7, and an explicit list of any gate that could not be run in-session. Merge is a human decision.
+
+---
+
+## Verification record (2026-08-09, AMD Ryzen 7 5700X, 16 threads)
+
+### Build cost — the question the implementation was commissioned to answer
+
+| Measure | Value | How |
+|---|---|---|
+| `sdk/webkitgtk-6.0.bst` own compile | **1 h 29 m 56 s** | `[01:29:56] … SUCCESS Running commands` in `gnome/sdk-webkitgtk-6.0/e3c8dbe3-build.…log` |
+| Whole cold-cache run to get there | 2 h 50 m 44 s (`Finished in 10243.78s`) | included `components/llvm.bst` 47 m 03 s, `components/cmake.bst` 13 m 14 s, `cmake-stage1` 12 m 05 s — all pre-existing image deps, **not** attributable to limux |
+| Elements new to the image | **13** | `comm -23` of webkit's 496-element closure against `oci/krytis/image.bst`'s 859-element closure on `main` |
+| `desktop/limux.bst` + `config/limux-ldconfig.bst` | 48 s total | `Finished in 48.35s` |
+| Incremental `mise run build` with webkit cached | 7 m 18 s | `limux-image-build4` |
+| Image growth | **186.9 MiB** (6 937 291 654 → 7 133 238 661 B) | `podman image inspect --format '{{.Size}}'`, baseline tagged `localhost/krytis:pre-limux-baseline` |
+| webkit artifact payload | 147.7 MiB runtime + 789.5 MiB debug (debug not shipped) | summed from `bst artifact checkout --deps none --tar` |
+
+The 13 new elements: `hunspell`, `hyphen`, `libavif`, `xorg-lib-ice`, `xorg-lib-sm`,
+`xorg-lib-xt` (fdsdk); `unifdef`, `enchant-2`, `hidapi`, `libmanette-0.2`, `nuspell`,
+`webkitgtk-6.0`, `woff2` (gnome-build-meta). Everything else webkit pulls was already in
+the graph. So the honest recurring cost is **~1.5 h of webkit compile per rebuild that
+misses cache, and ~187 MiB of image**, not the 1.5–3 h + 150–250 MB *plus* a new toolchain
+that #550 estimated.
+
+### Soname match (Task 1 Step 3)
+
+```
+./usr/lib/x86_64-linux-gnu/libwebkitgtk-6.0.so.4 -> libwebkitgtk-6.0.so.4.16.9
+./usr/lib/x86_64-linux-gnu/libjavascriptcoregtk-6.0.so.1 -> libjavascriptcoregtk-6.0.so.1.7.13
+```
+
+Exactly the two `NEEDED` entries in `limux-host`. webkitgtk 2.52.5.
+
+### Hard prerequisite discovered here, split into its own PR
+
+Task 3 assumed `oci/krytis/image.bst`'s `ldconfig -r /layer -f /layer/etc/ld.so.conf`
+baked `ld.so.conf.d` entries into the cache. It did not — and had never done so for
+`00_mesa.conf` or `codecs-extra.conf` either. Under `-r`, glibc resolves `-f` *inside* the
+root (`/layer/layer/etc/ld.so.conf`), misses, and exits 0 silently; with `opt_chroot` set,
+`parse_conf_include()` also rejects fdsdk's relative `include ld.so.conf.d/*.conf`. Final
+form, verified in the real sandbox via `bst shell --build`:
+
+```bash
+printf 'include /etc/ld.so.conf.d/*.conf\n' > /layer/etc/ld.so.conf.build
+ldconfig -r /layer -f /etc/ld.so.conf.build
+rm /layer/etc/ld.so.conf.build
+```
+
+That fix and its `docs/skills/bst.md` § `ldconfig -r <root>` … entry ship separately, on
+branch `fix/ldconfig-ld-so-conf-d-cache`, because it repairs mesa and codecs-extra
+independently of limux. **`config/limux-ldconfig.bst` does nothing until that lands** —
+measured on the limux image built *with* the fix:
+
+```
+# without the fix: ldconfig -p | grep -cE 'GL/default|codecs-extra|/usr/lib/limux'  → 0
+#                  ldd /usr/libexec/limux/limux-host | grep 'not found'
+#                    libghostty.so => not found
+# with the fix:    same grep → 47
+#                  ldconfig -p | grep libghostty
+#                    libghostty.so (libc6,x86-64) => /usr/lib/limux/libghostty.so
+#                  ldd … | grep -c 'not found' → 0
+```
+
+### Gates run
+
+```
+mise run validate      PASS  (limux.bst fetch needed, limux-ldconfig.bst buildable)
+mise run build         PASS  (load-image + bootc container lint, 7 m 18 s)
+mise run docs-links    PASS
+mise run limux-update  PASS  (idempotent; bump path exercised by downgrading to 0.1.22 —
+                              output byte-identical to the committed element)
+mise run sbom          PASS
+mise run vuln-scan     PASS  64 matches, 0 attributable to webkitgtk
+```
+
+In-image smoke test (`podman run --entrypoint= localhost/krytis:latest`):
+
+```
+cat /etc/ld.so.conf.d/limux.conf        → /usr/lib/limux
+ldd /usr/libexec/limux/limux-host       → 146 entries, 0 "not found"
+                                          libwebkitgtk-6.0.so.4      => resolved
+                                          libjavascriptcoregtk-6.0.so.1 => resolved
+                                          libghostty.so              => /usr/lib/limux/libghostty.so
+limux --version                         → limux 0.1.23
+limux --help                            → limux CLI …
+```
+
+### Gates NOT run in this session
+
+- `mise run boot-test` — blocks on interactive `sudo` (FIDO2 PIN prompt); needs the operator.
+- Task 7 Step 4's GUI half (terminal pane, split shortcuts, **browser pane**, `limux notify`
+  toast, `limux identify --json`) — needs a live niri session. The browser pane is the part
+  the whole Design Gate was about; it is unproven beyond "both webkit sonames resolve".
+
+### Caveat on the vuln-scan result
+
+`webkitgtk 2.52.5` **is** in the SBOM but carries **no purl**, so Grype cannot match it.
+The unchanged 64-match count is therefore evidence about the scanner's coverage, not
+evidence that WebKit adds no CVE surface. Same for `limux 0.1.23` and the other 12 new
+elements — all purl-less.

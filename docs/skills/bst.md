@@ -521,6 +521,37 @@ If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is n
 
 Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
 
+### Survey the reverse-dep set before assuming a junction library is "already there"
+
+A junction element is only free if something krytis already ships pulls it in. Presence in
+`gnome-build-meta.bst` says nothing about presence in *our* graph. Check before you write
+the `depends:` line, because a single prebuilt app can drag a multi-hour build into the image.
+
+Worked example — `#550` (limux, closed unmerged): `grep -rn webkit elements/` was empty, and
+none of the ~50 gnome-build-meta elements krytis consumes pulls `sdk/webkitgtk-6.0.bst`
+transitively (its only reverse-deps there are `epiphany`, `gnome-builder`,
+`gnome-initial-setup`, `evolution-data-server`, `foundry`, `yelp`,
+`NetworkManager-openconnect`, `manuals`, `sdk-platform` — krytis depends on none of them).
+One 19 MB prebuilt tarball would therefore have added WebKitGTK 2.52 to the image. Measured
+on a 16-thread builder before the app was dropped: **1 h 30 m** of webkit compile, **13**
+elements new to the graph, **+186.9 MiB** installed. Those are the standing numbers for
+adding any WebKitGTK-linked app — reuse them instead of re-estimating
+(`docs/plans/done/2026-08-09-add-limux-element.md`).
+
+Recipe — set-difference the candidate's closure against the current image closure:
+
+```bash
+mise run bst show --deps all --format '%{name}' <junction>.bst:<path>.bst \
+  | grep '\.bst' | sort -u > /tmp/cand.txt
+mise run bst show --deps all --format '%{name}' oci/krytis/image.bst \
+  | grep '\.bst' | sort -u > /tmp/image.txt
+comm -23 /tmp/cand.txt /tmp/image.txt        # elements the image does not already have
+```
+
+Run the image side from a checkout that does **not** yet contain your new element, or the
+diff comes back empty. Per `AGENTS.md`, this measures the *graph*, not a live system — a
+static answer about what an installed image contains still needs `/usr/manifest.json`.
+
 ### Meson `find_program()` calling a tool by the wrong name
 
 Some upstream meson projects call `find_program('<tool>')` expecting a specific CLI (e.g. Dart Sass's `sass`), but freedesktop-sdk/gnome-build-meta only vendor a different implementation of that tool under a different binary name with an incompatible CLI (e.g. `sassc`, the libsass C implementation — same *purpose*, different flags and positional-arg conventions). There's no BST-level program-name remapping for this.
@@ -877,6 +908,41 @@ sources:
 - `cp -a share "%{install-root}/usr/"` installs icons/`.desktop` files to the standard XDG paths.
 - `strip-binaries: ''` and `strip-commands: [':']` required — pre-built ELFs must not be stripped.
 - Check RPATH with `readelf -d <binary> | grep RPATH` before deciding on the install layout.
+
+### A prebuilt binary's RUNPATH into `/usr/local` is dead on bootc
+
+Same trap as `/opt` below, reached through `RUNPATH` instead of through payload paths.
+bootc's `/usr/lib/tmpfiles.d/10-bootc.conf` makes `/usr/local` a symlink to `/var/usrlocal`
+— runtime state, empty on every fresh boot — so a baked `RUNPATH: /usr/local/lib/<app>`
+can never resolve in a krytis image. The binary builds, composes, and lints cleanly; it
+fails at exec time with a missing `.so`.
+
+Upstream installers that default to `--prefix=/usr/local` bake this in routinely. limux
+(`#550`, investigated then dropped) is the worked example: both `/usr/bin/limux` and
+`/usr/libexec/limux/limux-host` carried `RUNPATH: /usr/local/lib/limux` for their bundled
+`libghostty.so`, and `ldd` reported `libghostty.so => not found` in the built image.
+
+Fix pattern — private libdir plus an `ld.so.conf.d` entry, **not** a dump into the shared
+`%{libdir}` (a vendored 29 MB `.so` does not belong on every binary's default search path):
+
+```yaml
+# elements/desktop/<app>.bst
+- install -Dm755 lib/lib<x>.so "%{install-root}%{indep-libdir}/<app>/lib<x>.so"
+
+# elements/config/<app>-ldconfig.bst — mirrors config/codecs-extra-ldconfig.bst
+- |
+  install -Dm644 /dev/stdin \
+      "%{install-root}/etc/ld.so.conf.d/<app>.conf" <<'EOF'
+  %{indep-libdir}/<app>
+  EOF
+```
+
+`oci/krytis/image.bst` already runs `ldconfig -r /layer -f /layer/etc/ld.so.conf` at assembly
+time, so the cache is baked into the image and nothing runs at boot. Existing instance:
+`config/codecs-extra-ldconfig.bst`.
+
+Always `readelf -d <payload> | grep -E 'RPATH|RUNPATH|NEEDED'` before writing the element —
+a plausible-looking RUNPATH is not a working one.
 
 ### Never install payload content under `/opt` — it's silently discarded
 
