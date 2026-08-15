@@ -88,26 +88,53 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
 
 ## Decision
 
-**Hold the oo7 migration itself.** Leave gnome-keyring in place. Do not re-attempt #84 until
-both of the first two hold:
+**Superseded 2026-08-14: the migration ships, with the known bugs accepted.** The history
+below is kept because it is the reasoning the decision was taken against, not because it is
+still in force.
+
+### Current decision — ship oo7, accept the outstanding bugs
+
+Deliberate call, made with the failure modes measured rather than guessed. Krytis moves to
+oo7 + noctalia's native prompter now, carrying two known defects and two workarounds:
+
+| Accepted | Consequence | Workaround in tree | Exit condition |
+|---|---|---|---|
+| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked | upstream reports locked items from `SearchItems` |
+| **#588** — prompter detection picks the CLI prompter | every unlock prompt fails with `CliPrompter does not exist` | `patches/oo7/prompter-detect-session-type.patch` | oo7#530 lands |
+| **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
+| **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
+
+**The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
+*usual* way the collection ends up locked, not the only one. A mid-session
+`systemctl --user restart oo7-daemon`, an explicit `secret-tool lock`, or an oo7 crash all
+re-lock it, and from that point every read returns "no such secret" until the session is
+restarted. There is no warning and no prompt. If a user reports "my saved passwords vanished",
+check `Locked` on the collection before anything else.
+
+The fork pin is the other live risk: it is a moving target that `bst source track` will follow,
+so an unrelated commit on that branch can change what krytis ships. Pin discipline matters more
+than usual until the prompter is upstreamed.
+
+### History: the hold that preceded this (2026-06 → 2026-08-14)
+
+The migration was held from #178 until now. The bar was:
 
 1. oo7#506 lands a resolution (passwordless/FIDO2 unlock has a real path), **and**
 2. oo7 reports locked items from `SearchItems` so a locked collection can be discovered and
-   unlocked rather than reported as "no such secret" — see § *New blocker found while
-   testing* below. Unfixed on `main` as of 2026-08-12, and it is the stronger of the two:
-   without it, condition 3 does not help, because the user is never given the chance to
-   unlock, or
-3. We explicitly decide the FIDO2-keyring-stays-locked gap is acceptable to ship. **This is no
-   longer sufficient on its own.** It was reasonable while the gap looked like "the user
-   unlocks manually"; testing showed applications are instead told the secret does not exist.
+   unlocked rather than reported as "no such secret", or
+3. an explicit decision that the FIDO2-keyring-stays-locked gap is acceptable to ship.
 
-If reopening: reuse #178's BST/PAM mechanics (verified sound against current upstream —
-`auto_start` flag real, three-stack `optional` wiring matches krytis's existing convention
-line-for-line) but do **not** carry `use_authtok` onto the oo7 password-stack line without
-checking whether pam_oo7 needs it — upstream's own example omits it, and #178 blindly ported
-it from the gnome-keyring line. Also worth checking whether Fedora's Rawhide
-`oo7-daemon.spec` has landed by then (queued at the time of the F45 proposal) — it will be a
-more authoritative packaging reference than reverse-engineering upstream source.
+Neither (1) nor (2) has happened. The migration proceeds on (3) — taken knowingly, with the
+gap's real shape understood (applications are told the secret does not exist, rather than
+being offered a manual unlock) and with FIDO2 login disabled specifically so that shape never
+materialises in normal use.
+
+Mechanics carried over from #178, verified against current upstream: the `auto_start` flag is
+real and the three-stack `optional` wiring matches krytis's existing convention line-for-line.
+`use_authtok` was **not** carried onto the oo7 password line — upstream's own example omits it
+and #178 had copied it from the gnome-keyring line unchecked. Fedora's Rawhide
+`oo7-daemon.spec`, if it has landed, remains a more authoritative packaging reference than
+reverse-engineering upstream source.
 
 **But pursue a native prompter in noctalia independently — it isn't gated on the oo7
 decision.** The `gcr-3`/`gcr-prompter` fragility documented above (§ Manual unlock on niri)
@@ -463,6 +490,18 @@ opening anything against `linux-credentials/oo7`.
 
 ## Revisit trigger
 
-Re-read this doc and oo7#506 before starting any new #84 attempt. If oo7#506 is still open
-with no maintainer-endorsed direction, don't start — leave a comment on #84 instead noting
-the re-check and moving on.
+The migration has shipped, so this is no longer "should we start?" but "can we drop a
+workaround?". Re-read this doc when any of these move:
+
+- **oo7 reports locked items from `SearchItems`** (#585) → re-enable FIDO2 login in
+  `config/greetd-config.bst` and delete the mitigation comment there.
+- **oo7#530 lands** → drop `patches/oo7/prompter-detect-session-type.patch` and its wiring in
+  `elements/desktop/oo7.bst`.
+- **oo7#506 gains a maintainer-endorsed direction** → revisit FIDO2 login independently of
+  #585; the two reasons it is off are separable.
+- **The noctalia prompter is upstreamed** → repoint `elements/desktop/noctalia.bst` back to
+  `noctalia-dev/noctalia` with `track: v*`, and drop `sdk/gcr.bst` only if upstream stops
+  linking `GcrSecretExchange`.
+
+Until then the workarounds stay. Each is annotated at its call site with the issue number, so
+`git grep 585` and `git grep 588` find everything that has to change.

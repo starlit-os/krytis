@@ -343,7 +343,7 @@ Consequences when debugging:
 Full reproduction, source references and the effect on the #84 decision:
 `docs/design/secrets-service.md` § *New blocker found while testing*.
 
-See `docs/design/secrets-service.md` for the decision this feeds. As of 2026-08-12 the hold on #84 needs **two** things, not one: oo7#506 resolved *and* oo7 reporting locked items from `SearchItems`. Accepting the FIDO2 gap is no longer sufficient on its own — a locked collection is reported as "no such secret", so the user never gets the chance to unlock.
+**Shipped anyway, deliberately (2026-08-14).** krytis moved to oo7 with this bug accepted, on the basis that FIDO2 login is disabled so `pam_oo7 auto_start` unlocks at login and the collection is never locked in normal use. That removes the *usual* route to a locked collection, not the only one: a mid-session `systemctl --user restart oo7-daemon`, an explicit `secret-tool lock`, or an oo7 crash all re-lock it, and from that point every read is a silent "no such secret" until the session restarts. **When triaging "my saved passwords vanished", check `Locked` on the collection first.** See `docs/design/secrets-service.md` § Decision for the accepted-risk table and the exit conditions.
 
 ## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
 
