@@ -88,26 +88,53 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
 
 ## Decision
 
-**Hold the oo7 migration itself.** Leave gnome-keyring in place. Do not re-attempt #84 until
-both of the first two hold:
+**Superseded 2026-08-14: the migration ships, with the known bugs accepted.** The history
+below is kept because it is the reasoning the decision was taken against, not because it is
+still in force.
+
+### Current decision — ship oo7, accept the outstanding bugs
+
+Deliberate call, made with the failure modes measured rather than guessed. Krytis moves to
+oo7 + noctalia's native prompter now, carrying two known defects and two workarounds:
+
+| Accepted | Consequence | Workaround in tree | Exit condition |
+|---|---|---|---|
+| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked | upstream reports locked items from `SearchItems` |
+| **#588** — prompter detection picks the CLI prompter | every unlock prompt fails with `CliPrompter does not exist` | `patches/oo7/prompter-detect-session-type.patch` | oo7#530 lands |
+| **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
+| **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
+
+**The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
+*usual* way the collection ends up locked, not the only one. A mid-session
+`systemctl --user restart oo7-daemon`, an explicit `secret-tool lock`, or an oo7 crash all
+re-lock it, and from that point every read returns "no such secret" until the session is
+restarted. There is no warning and no prompt. If a user reports "my saved passwords vanished",
+check `Locked` on the collection before anything else.
+
+The fork pin is the other live risk: it is a moving target that `bst source track` will follow,
+so an unrelated commit on that branch can change what krytis ships. Pin discipline matters more
+than usual until the prompter is upstreamed.
+
+### History: the hold that preceded this (2026-06 → 2026-08-14)
+
+The migration was held from #178 until now. The bar was:
 
 1. oo7#506 lands a resolution (passwordless/FIDO2 unlock has a real path), **and**
 2. oo7 reports locked items from `SearchItems` so a locked collection can be discovered and
-   unlocked rather than reported as "no such secret" — see § *New blocker found while
-   testing* below. Unfixed on `main` as of 2026-08-12, and it is the stronger of the two:
-   without it, condition 3 does not help, because the user is never given the chance to
-   unlock, or
-3. We explicitly decide the FIDO2-keyring-stays-locked gap is acceptable to ship. **This is no
-   longer sufficient on its own.** It was reasonable while the gap looked like "the user
-   unlocks manually"; testing showed applications are instead told the secret does not exist.
+   unlocked rather than reported as "no such secret", or
+3. an explicit decision that the FIDO2-keyring-stays-locked gap is acceptable to ship.
 
-If reopening: reuse #178's BST/PAM mechanics (verified sound against current upstream —
-`auto_start` flag real, three-stack `optional` wiring matches krytis's existing convention
-line-for-line) but do **not** carry `use_authtok` onto the oo7 password-stack line without
-checking whether pam_oo7 needs it — upstream's own example omits it, and #178 blindly ported
-it from the gnome-keyring line. Also worth checking whether Fedora's Rawhide
-`oo7-daemon.spec` has landed by then (queued at the time of the F45 proposal) — it will be a
-more authoritative packaging reference than reverse-engineering upstream source.
+Neither (1) nor (2) has happened. The migration proceeds on (3) — taken knowingly, with the
+gap's real shape understood (applications are told the secret does not exist, rather than
+being offered a manual unlock) and with FIDO2 login disabled specifically so that shape never
+materialises in normal use.
+
+Mechanics carried over from #178, verified against current upstream: the `auto_start` flag is
+real and the three-stack `optional` wiring matches krytis's existing convention line-for-line.
+`use_authtok` was **not** carried onto the oo7 password line — upstream's own example omits it
+and #178 had copied it from the gnome-keyring line unchecked. Fedora's Rawhide
+`oo7-daemon.spec`, if it has landed, remains a more authoritative packaging reference than
+reverse-engineering upstream source.
 
 **But pursue a native prompter in noctalia independently — it isn't gated on the oo7
 decision.** The `gcr-3`/`gcr-prompter` fragility documented above (§ Manual unlock on niri)
@@ -349,8 +376,69 @@ was answered noctalia successfully stored a secret through the Secret Service �
 reachable with the collection unlocked. So the whole chain ran: oo7 → `BeginPrompting` →
 noctalia's panel → `sx-aes-1` exchange → unlock → store.
 
+### Re-verified on live hardware, not a VM (2026-08-14)
+
+The daily-driver machine now runs the oo7 image with a real 21-item keyring migrated from
+gnome-keyring. **All of this is oo7 `0.6.0`** (`ref: 0.6.0-0-g9070389…`, tagged 2026-02-21),
+which is 221 commits behind upstream `main` — see the staleness caveat at the end.
+
+- **The v0 → v1 migration was clean.** All 21 items present with intact labels and readable
+  secrets; the pre-existing `gh:github.com` token read back as a well-formed 40-character
+  `gho_` value. No data loss.
+- **Round trip works:** store → `lookup` returns the exact value, and `SearchItems` while
+  unlocked correctly reports `aoao 1 "…/collection/Login/23" 0`.
+- **`Lock` works here** (`Locked` flips to `b true`), unlike the earlier inconclusive attempt
+  against an already-locked collection.
+- **The prompter works end to end on a real niri session.** With the collection locked, a
+  `store` raised noctalia's panel; the daemon log shows an 11-second gap between client
+  connect and `Successfully created item` — the prompt being read and answered. A secret
+  stored *before* the lock then read back correctly, so the unlock restored access rather than
+  merely permitting the new write.
+- **#585 reproduces exactly, and is narrower than first written.** The locked item still
+  answers `Item.Locked = b true` by object path and appears in the collection's `Items`
+  property; only `SearchItems` drops it, because attribute matching needs the collection key.
+  oo7 could return locked items as unmatched candidates — all libsecret needs to trigger an
+  unlock — without decrypting anything.
+- **New, and the most serious operational finding: #586.** oo7 serves
+  `/org/freedesktop/secrets/aliases/default` for introspection and property reads, but
+  Service-level method calls against that path fail (`Object: … does not exist`). Go's
+  `go-keyring` resolves the default collection that way, so **`gh auth login` silently stored
+  its OAuth token in plaintext** at `~/.config/gh/hosts.yml` instead of the keyring. oo7's
+  warnings land within microseconds of the file write, and it reproduces on a fresh,
+  never-migrated keyring — so it is not a migration artifact.
+
 Still not exercised: `ChangePassword`, and the mid-session `systemctl --user restart
 oo7-daemon` re-lock scenario.
+
+**Staleness caveat — since resolved, see below.** #585's cause was source-verified on current
+`main` as well as on the pin. Everything else in this section was measured on `0.6.0` only.
+
+### Upgraded to 0.7.0.alpha: one blocker gone, one remains (2026-08-14)
+
+`elements/desktop/oo7.bst` was re-pinned `0.6.0` → `0.7.0.alpha` (`94a8e42`) and the machine
+now runs that image (`oo7-daemon 0.7.0-alpha`). The pin had been inherited verbatim from #178
+and never tracked, leaving it 221 commits behind.
+
+- **#586 is fixed.** `Unlock` against `/org/freedesktop/secrets/aliases/default` now returns
+  `aoo 1 "…/collection/login" "/"`, identical to the collection path, with **zero**
+  `Object: … does not exist` warnings. The practical consequence is gone too: `gh auth status`
+  reports `Logged in … (keyring)` and `~/.config/gh/hosts.yml` contains no `oauth_token`.
+  Issue closed; nothing to report upstream.
+- **#585 is not fixed.** Re-tested on `0.7.0.alpha`: store and lookup work unlocked,
+  `SearchItems` reports the item, the lock takes, and then `SearchItems` returns `aoao 0 0`
+  with `lookup` failing in 19ms and no prompt. Matches the source read of `main`.
+- **The collection path changed** from `…/collection/Login` to lowercase `…/collection/login`,
+  matching gnome-keyring. Anything that hardcoded the capitalised form during the `0.6.0`
+  period needs revisiting.
+- The 22-item keyring came through the upgrade intact.
+
+**Net effect on the decision.** The hold stands, but on narrower grounds: the plaintext-credential
+regression is gone, so what remains is **#585 plus oo7#506** rather than three blockers. #585 is
+the one that matters — while a locked collection reads back as "no such secret", a FIDO2 user is
+never offered the chance to unlock, and accepting the FIDO2 gap is not sufficient on its own.
+
+Meanwhile the *prompter*, the part krytis actually owns, is verified working against both
+gnome-keyring and oo7 and can proceed independently of any of this.
 
 ### New blocker found while testing: a locked oo7 collection is invisible, not prompt-worthy
 
@@ -402,6 +490,18 @@ opening anything against `linux-credentials/oo7`.
 
 ## Revisit trigger
 
-Re-read this doc and oo7#506 before starting any new #84 attempt. If oo7#506 is still open
-with no maintainer-endorsed direction, don't start — leave a comment on #84 instead noting
-the re-check and moving on.
+The migration has shipped, so this is no longer "should we start?" but "can we drop a
+workaround?". Re-read this doc when any of these move:
+
+- **oo7 reports locked items from `SearchItems`** (#585) → re-enable FIDO2 login in
+  `config/greetd-config.bst` and delete the mitigation comment there.
+- **oo7#530 lands** → drop `patches/oo7/prompter-detect-session-type.patch` and its wiring in
+  `elements/desktop/oo7.bst`.
+- **oo7#506 gains a maintainer-endorsed direction** → revisit FIDO2 login independently of
+  #585; the two reasons it is off are separable.
+- **The noctalia prompter is upstreamed** → repoint `elements/desktop/noctalia.bst` back to
+  `noctalia-dev/noctalia` with `track: v*`, and drop `sdk/gcr.bst` only if upstream stops
+  linking `GcrSecretExchange`.
+
+Until then the workarounds stay. Each is annotated at its call site with the issue number, so
+`git grep 585` and `git grep 588` find everything that has to change.

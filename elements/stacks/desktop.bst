@@ -1,7 +1,7 @@
 kind: stack
 
 # Desktop session stack.
-# Provides: niri compositor + greetd login manager + noctalia shell + XDG portals + gnome-keyring.
+# Provides: niri compositor + greetd login manager + noctalia shell + XDG portals + oo7 secrets.
 # Plug into oci/krytis/stack.bst alongside base-system and bootc.
 depends:
   # ── GPU / Mesa ─────────────────────────────────────────────────────────
@@ -49,7 +49,15 @@ depends:
   - config/xdg-portals.bst
 
   # ── Credentials ────────────────────────────────────────────────────────
-  - gnome-build-meta.bst:core/gnome-keyring.bst
+  # oo7: memory-safe Secret Service daemon (org.freedesktop.secrets) + pam_oo7.so.
+  # Replaces gnome-keyring. D-Bus session activation via a systemd symlink.
+  # pam_oo7.so is wired into greetd's PAM stack in config/greetd-config.bst.
+  #
+  # NOTE: sdk/gcr-3.bst is deliberately NOT pulled in. gnome-keyring depended on it
+  # transitively and that is how gcr-prompter reached the image; this testbed drops
+  # it on purpose so manual unlock exercises noctalia's own
+  # org.gnome.keyring.SystemPrompter instead. See docs/design/secrets-service.md.
+  - desktop/oo7.bst
 
   # ── User accounts ──────────────────────────────────────────────────────
   # accounts-daemon: AccountsService D-Bus daemon. noctalia-greeter queries

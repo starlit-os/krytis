@@ -1,5 +1,71 @@
 # PAM & Keyring Skills
 
+## noctalia native SystemPrompter: pinning a fork branch, not a tag, and keeping gcr-3 alongside gcr-4
+
+`elements/desktop/noctalia.bst` was pinned to `kitten-lily/noctalia`'s
+`feat/system-prompter` branch (not upstream `noctalia-dev/noctalia`) to test a
+native `org.gnome.keyring.SystemPrompter` provider (see PR #568) against the
+*currently shipping* gnome-keyring backend, ahead of any oo7 cutover decision
+(#84) and ahead of upstreaming. Two non-obvious mechanics from doing this:
+
+**`git_repo` sources can pin `track:` to a branch name, not just a tag glob.**
+BuildStream doesn't care whether the `track:` value resolves to a tag or a
+branch ref — `bst source track` follows whatever it names. Pinning
+`track: feat/system-prompter` means `bst source track` starts following that
+branch's head instead of `v*` release tags, so auto-track PRs land more often
+while the pin is in effect. There's history for this exact pattern in this
+element already (`fix/wifi-persist-polkit-async`, dropped once upstream
+shipped the equivalent fix independently) — same playbook: pin, test, drop
+once upstreamed or supersede.
+
+**gcr-3 and gcr-4 coexist without conflict.** `gnome-keyring.bst` still pulls
+`sdk/gcr-3.bst` transitively (for `gcr-base-3`, unrelated to the prompter
+binary — confirmed against gnome-keyring's own `meson.build`, it's a genuine
+build dependency, not a leftover). Adding `sdk/gcr.bst` (gcr-4) alongside it
+for noctalia's `GcrSecretExchange` link does not conflict: different sonames
+(`libgcr-base-3.so`/`libgcr-3.so` vs `libgcr-4.so`), different D-Bus surface.
+`gcr-prompter` (from gcr-3) stays installed and its
+`org.gnome.keyring.SystemPrompter.service` D-Bus activation file stays in the
+image too — noctalia's `SecretPrompter` constructor calls `requestName()` and
+throws if the name is already owned, so it's a graceful first-come-first-served
+handoff, not an exclusive takeover. That means no BST change is needed to keep
+`gcr-prompter` as an inert fallback: if noctalia's prompter is ever disabled,
+crashes, or loses a startup race, `gcr-prompter` activates exactly as before.
+In krytis specifically, the race is a non-issue: `files/niri/startup.kdl` only
+`spawn-at-startup`s `noctalia`, and every manual-unlock scenario (secondary
+keyring, `CreateCollection`, `ChangePassword`) is an interactive, mid-session
+action — noctalia has been running the whole session by the time any of those
+fire.
+
+**`secret_prompter = true` in `/etc/skel` reaches new accounts only — every existing user
+silently keeps the prompter off.** `noctalia-skel.bst` says so in a comment ("one-shot copy,
+not a synced default: it only reaches newly-created accounts"), and this option is the first
+time that limitation has real consequences: an upgraded machine ships the prompter binary,
+ships the skel default, and still has nothing owning `org.gnome.keyring.SystemPrompter`.
+
+Observed on a live upgraded system: `~/.local/state/noctalia/settings.toml` carried
+`polkit_agent = true` from an older skel copy but no `secret_prompter`, `busctl --user list`
+showed no `org.gnome.keyring.*` owner at all, and noctalia was running the whole time. There
+is no warning; the feature is simply absent.
+
+Fix per existing account — noctalia's config watcher picks it up live, no restart needed
+(verified: the running process acquired the name within ~4s of the file changing, which also
+exercises the `syncSecretPrompter` reload path):
+
+```shell
+# under [shell] in ~/.local/state/noctalia/settings.toml
+secret_prompter = true
+```
+
+Confirm with `busctl --user list | grep SystemPrompter` — the owner should be noctalia's PID.
+
+**Verified end to end on a live niri session** (with oo7 as the backend, but the prompter path
+is backend-independent): store a secret, `secret-tool lock --collection=Login`, then store
+again. noctalia's panel appears, and the daemon log shows an 11-second gap between the client
+connecting and `Successfully created item` — the prompt being read and answered — after which
+a secret stored *before* the lock read back correctly. So the unlock genuinely restored access
+rather than just letting the new write through.
+
 ## systemd-homed users: FIDO2 login belongs to homed, not pam_u2f
 
 Two independent things broke FIDO2 login for `systemd-homed`-managed users. Both were fixed in #409; keep them straight, because fixing only the first looks plausible and achieves nothing.
@@ -131,7 +197,13 @@ prompter is not a degraded mode — it is an indefinite hang in every caller, wi
 anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
 `busctl --user list | grep SystemPrompter` before anything else.
 
-## oo7's collection path is `…/collection/Login` — capital L, unlike gnome-keyring
+## oo7's collection path: `Login` on 0.6.0, `login` from 0.7.0.alpha
+
+**Version-specific — check before hardcoding either.** On **0.6.0** oo7 derived the collection
+object path from the keyring *label*, giving `/org/freedesktop/secrets/collection/Login` with a
+capital L. **0.7.0.alpha uses lowercase `login`**, matching gnome-keyring, and logs
+`Setting up collection 'login' (alias: default)` at startup. The rest of this section describes
+the 0.6.0 behaviour, which is what an image pinned to that tag still exhibits.
 
 gnome-keyring exposes the login keyring at `/org/freedesktop/secrets/collection/login`. oo7
 derives the path from the keyring *label*, so it is **`/org/freedesktop/secrets/collection/Login`**.
@@ -213,6 +285,41 @@ This matters when testing a prompter: **libsecret's `lookup` does request an unl
 locked items — so "lookup did not prompt" almost always means the collection was never locked,
 not that the prompter failed.
 
+## krytis patches oo7's prompter detection (`patches/oo7/`)
+
+`0.7.0.alpha` chooses between the GNOME prompter and a CLI prompter from
+`DISPLAY`/`WAYLAND_DISPLAY` **in the daemon's own process environment**. Those arrive when the
+compositor imports them into the systemd user manager, but `oo7-daemon.service` is
+`WantedBy=default.target`, so the manager starts it at session open — concurrently with the
+compositor. A service inherits the manager environment *at start*, so the daemon spends the
+whole session believing it is headless and every libsecret caller gets:
+
+```
+CLI prompter failed: NameHasNoOwner: Name "org.freedesktop.secrets.CliPrompter" does not exist
+```
+
+It cannot be fixed by starting the daemon later: `pam_oo7.so auto_start` runs in the PAM
+session phase and the daemon must already exist to take the login secret from the transient
+`oo7-daemon-login` helper, whose socket is gone by mid-session. Delaying the unit trades this
+bug for the loss of login auto-unlock.
+
+`patches/oo7/prompter-detect-session-type.patch` widens the predicate to accept
+`XDG_SESSION_TYPE` (`wayland`/`x11`), which logind sets at session open and which the daemon
+therefore *does* have. Verified A/B on the built artifact with both display variables unset:
+
+| daemon env | prompter chosen |
+|---|---|
+| `XDG_SESSION_TYPE=wayland` | `BeginPrompting` → `org.gnome.keyring.SystemPrompter` |
+| `XDG_SESSION_TYPE` unset | `CliPrompter` |
+
+Note the original check only tests these variables for non-emptiness and never connects to a
+display, so this widens the same predicate rather than changing its meaning.
+
+**Drop the patch when upstream fixes it** — oo7#530, stalled since 2026-07-28 with the
+maintainer unable to reproduce on Fedora (where oo7 is not the default provider and is D-Bus
+activated *after* the session is up, so the race never happens). Downstream tracking and the
+full analysis: krytis#588.
+
 ## A locked oo7 collection returns "no such secret", not a prompt
 
 `secret-tool lookup` against a locked oo7 collection returns **not found in 0s** — no prompt,
@@ -236,7 +343,7 @@ Consequences when debugging:
 Full reproduction, source references and the effect on the #84 decision:
 `docs/design/secrets-service.md` § *New blocker found while testing*.
 
-See `docs/design/secrets-service.md` for the decision this feeds. As of 2026-08-12 the hold on #84 needs **two** things, not one: oo7#506 resolved *and* oo7 reporting locked items from `SearchItems`. Accepting the FIDO2 gap is no longer sufficient on its own — a locked collection is reported as "no such secret", so the user never gets the chance to unlock.
+**Shipped anyway, deliberately (2026-08-14).** krytis moved to oo7 with this bug accepted, on the basis that FIDO2 login is disabled so `pam_oo7 auto_start` unlocks at login and the collection is never locked in normal use. That removes the *usual* route to a locked collection, not the only one: a mid-session `systemctl --user restart oo7-daemon`, an explicit `secret-tool lock`, or an oo7 crash all re-lock it, and from that point every read is a silent "no such secret" until the session restarts. **When triaging "my saved passwords vanished", check `Locked` on the collection first.** See `docs/design/secrets-service.md` § Decision for the accepted-risk table and the exit conditions.
 
 ## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
 

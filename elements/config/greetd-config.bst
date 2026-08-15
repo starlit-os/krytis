@@ -49,7 +49,7 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
     #%PAM-1.0
     # Self-contained: greetd has session-specific auth requirements that differ
-    # from system-auth (pam_nologin, gnome-keyring).
+    # from system-auth (pam_nologin, oo7).
     #
     # pam_systemd_home must come first and short-circuit on success. For a
     # systemd-homed user, homed owns the entire credential flow — FIDO2
@@ -74,14 +74,37 @@ config:
     # for classic /etc/passwd users, so `default=ignore` is what lets them
     # fall through, while real homed auth failures stay fatal.
     #
-    # pam_u2f then covers classic users, before pam_unix; absent authfile
-    # falls through.
+    # pam_u2f would cover classic users here, before pam_unix (absent authfile
+    # falls through) -- but it is DISABLED on this testbed branch as the
+    # workaround for krytis#585.
+    #
+    # Why: pam_u2f is `sufficient`, so a successful FIDO2 auth ends the auth
+    # stack before pam_unix runs. Nothing ever populates PAM_AUTHTOK, so
+    # pam_oo7 has no password to stash and the login collection stays locked
+    # for the whole session. That is survivable on its own -- except oo7 does
+    # not report items in a locked collection (#585), so libsecret callers are
+    # told the secret "does not exist" rather than being offered an unlock.
+    # Silent wrong answers, not an error, and the prompter cannot help because
+    # nothing ever asks for it.
+    #
+    # Forcing password login means pam_oo7 gets PAM_AUTHTOK, auto_start
+    # unlocks the collection at login, and the collection is simply never
+    # locked -- so #585 has nothing to bite on.
+    #
+    # This is a mitigation, not a fix. Anything that re-locks mid-session (a
+    # `systemctl --user restart oo7-daemon`, an explicit lock) puts #585 back
+    # in play. Restore this line once #585 is fixed upstream, or if this
+    # branch is ever reworked to keep gnome-keyring.
+    #
+    # Only the *greeter* path is affected. sudo and sshd get pam_u2f from
+    # config/u2f-config.bst (system-auth / password-auth), which is untouched,
+    # so a FIDO2 key still works for sudo.
 
     auth       required     pam_nologin.so
     -auth      [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
-    auth       sufficient   pam_u2f.so cue pinverification
+    # auth     sufficient   pam_u2f.so cue pinverification   # disabled: krytis#585
     auth       required     pam_unix.so
-    auth       optional     pam_gnome_keyring.so
+    auth       optional     pam_oo7.so
 
     account    required     pam_nologin.so
     -account   sufficient   pam_systemd_home.so
@@ -89,7 +112,11 @@ config:
 
     -password  sufficient   pam_systemd_home.so
     password   required     pam_unix.so sha512 shadow
-    -password  optional     pam_gnome_keyring.so use_authtok
+    # No use_authtok: upstream's own example (oo7 pam/README.md) omits it on the
+    # password line, and gh178 carried it over from the gnome-keyring line without
+    # checking. pam_oo7 reads both the old and new password itself to re-encrypt
+    # matching keyrings; use_authtok would only constrain where it may read from.
+    -password  optional     pam_oo7.so
 
     # pam_systemd_home takes a reference on the home area so homed does not
     # deactivate it for the lifetime of the session.
@@ -103,7 +130,7 @@ config:
     session    required     pam_env.so readenv=1
     session    required     pam_unix.so
     -session   optional     pam_systemd.so
-    session    optional     pam_gnome_keyring.so auto_start
+    session    optional     pam_oo7.so auto_start
     EOF
 
   - |
