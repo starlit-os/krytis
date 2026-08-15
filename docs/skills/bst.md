@@ -1601,6 +1601,72 @@ Key points:
 - **Bazaar is `io.github.kolunmi.Bazaar`**, a standalone flatpak app-store frontend — not GNOME Software. It is installed as a flatpak (via the preinstall service), not as a BST element.
 - Bazaar's curated-recommends config lives in `/etc/bazaar/bazaar.yaml` + `/etc/bazaar/curated.yaml`, not in `/usr/share/gnome-software/`. Accessing `/etc` from a flatpak requires a permission override delivered via a tmpfiles symlink (see issue #245 for full porting notes). This config belongs in a dedicated BST element, not in the preinstall service.
 
+## Flatpak sandboxing: Discord RPC and game detection
+
+*Source: live diagnosis 2026-08-14 — issues #591 (RPC socket path) and #595
+(game detection). Read those before touching either.*
+
+Two separate mechanisms, two separate verdicts. Do not conflate them.
+
+**`$XDG_RUNTIME_DIR/discord-ipc-N` is namespaced per app.** Inside any sandbox
+that path is backed by `$XDG_RUNTIME_DIR/.flatpak/<app-id>/xdg-run/discord-ipc-N`
+on the host — never by a shared location. A client's socket is host-visible, but
+only under **its own** app ID, so a consumer probing the canonical path finds its
+own empty slot. The `$TMPDIR`/`/tmp` fallbacks every RPC library also tries are
+private per sandbox and never bridge either.
+
+Consequences that cost real time to rediscover:
+
+- **`--filesystem=xdg-run/discord-ipc-0` is a no-op.** flatpak can only bind a
+  path that already exists on the host, and this one never does. Granting it —
+  globally or per app — changes nothing. `xdg-run/app/com.discordapp.Discord`
+  *does* work, because Discord's wrapper relays its socket there with `socat`.
+- **A host symlink at the canonical path breaks clients that claim it.** Discord
+  and Vesktop each create a real socket at `$XDG_RUNTIME_DIR/discord-ipc-0`
+  inside their sandbox; a host-side object bound over it makes launch fail with
+  `bwrap: Can't make symlink at …: destination exists and is not a symlink`.
+  Equibop does not claim the path and is unaffected. So the obvious
+  user-tmpfiles `L %t/discord-ipc-0 → …` fix is not safe by itself.
+- **flatpak persists whatever occupied a granted path** into
+  `.flatpak/<app-id>/xdg-run/`, and it outlives deletion of the host original.
+  Clear the stubs between experiments or results are stale:
+  `for f in $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0; do [ -L "$f" ] && rm -f "$f"; done`
+- **`rpc-bridge` already encodes the correct search order.** Wine/Proton games
+  under Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`,
+  which probes canonical → `app/com.discordapp.Discord/` →
+  `.flatpak/dev.vencord.Vesktop/xdg-run/` →
+  `.flatpak/com.discordapp.Discord/xdg-run/` → the two `snap.discord*` paths.
+  Copy that list rather than inventing one. It has **no Equibop entry**.
+
+**Game detection can never work in flatpak.** Discord matches running processes
+against a known-executable list, and a flatpak app is in its own PID namespace:
+`NSpid: 8712 7`, 18 visible PIDs against 485 on the host, the game's PID simply
+absent. There is no override — `--share` accepts only `network` and `ipc`,
+`--allow` only `devel`/`multiarch`/`bluetooth`/`canbus`/`per-app-dev-shm`.
+Binding host `/proc` does not help; the namespace hides the PIDs, not the mount.
+
+So a title with no RPC support of its own (World of Warcraft holds zero Discord
+sockets) shows **no presence at all** under a flatpak Discord, and the same
+combination works natively. That is expected behaviour, not a regression to
+chase — reach for #595's options list instead.
+
+### Debugging without false negatives
+
+Four traps, each of which produced a wrong conclusion during the original
+diagnosis:
+
+| Symptom | Reality |
+|---|---|
+| `strings … \| grep …` inside a sandbox returns nothing | `strings` is **not in the freedesktop runtime**; scan `/var/lib/flatpak/app/<id>/current/active/files/` from the host |
+| grep for `discord-ipc-0` in a consumer binary finds nothing | the digit is appended at runtime — search for `/discord-ipc-` |
+| `find $XDG_RUNTIME_DIR -name 'discord-ipc-*'` finds nothing | it silently misses these; `ls` the specific paths |
+| repeated handshakes to a live socket mostly time out | reproduces at ~1/8 on Discord's own socket *and* through its `socat` relay, so it is not the relay; may be an artifact of probing with an invalid `client_id` — do not conclude "relay is broken" |
+
+A handshake probe is the cheapest liveness test: connect, send op `0` with
+`{"v":1,"client_id":"…"}`, read one frame. `op=2 {"code":4000}` means a real
+Discord answered and rejected the ID — the transport is fine. arRPC answers
+`op=1 … READY` and accepts any ID.
+
 ## NetworkManager Is Present and Running, Despite the networkd-Only Stack
 
 krytis's own elements only ever configure `freedesktop-sdk.bst:vm/config/networkd.bst` + `vm/config/resolved.bst` — there is no `depends:` on `core-deps/NetworkManager.bst` anywhere in `elements/`. Despite that, `NetworkManager.service` is active and enabled on a real deployed image (confirmed via `systemctl is-active NetworkManager`, `busctl list` showing `org.freedesktop.NetworkManager`, and `/usr/manifest.json` listing `core-deps/NetworkManager.bst`). A plain `grep -rl NetworkManager elements/` (or even a manual BFS over the two staged-junction trees starting from the wrong set of seed files) will wrongly conclude it isn't there — do not trust that conclusion without checking a live system.

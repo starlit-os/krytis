@@ -87,6 +87,14 @@ gaming packages should start from that ref rather than re-porting from upstream.
   reads `disabled`. Nothing errors today only because every shipped falcond
   profile sets `scx_sched = none` and `scx_loader`'s `default_sched` is
   commented out. See issue #590.
+- **Discord presence is a known cost of this choice.** Sandboxing breaks it in
+  two independent ways: the RPC socket is namespaced per app so consumers never
+  find a client (#591), and Discord's process-scan game detection cannot see
+  host PIDs at all, with no flatpak option to change that (#595). RPC-capable
+  titles are recoverable — Proton's `rpc-bridge` already handles them once the
+  right override ships. Titles that rely on detection alone (World of Warcraft)
+  simply show nothing, and did work when Discord ran natively. See
+  `docs/skills/bst.md` § Flatpak sandboxing: Discord RPC and game detection.
 - **App pre-installs have a home already**: `elements/config/flatpak-preinstall.bst`
   (marker-file-gated oneshot, see `docs/skills/bst.md` § Flatpak Pre-install
   Service Pattern) and the Flathub remote via
