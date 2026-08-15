@@ -11,7 +11,7 @@ usage = "5.1.0"
 # ">=3.12" and BST 2.5.x is validated against it. Crossing to 3.13 is a
 # deliberate call, so Renovate is capped below it (allowedVersions in
 # .github/renovate.json5).
-python = "3.12.13"
+python = "3.12.14"
 uv = "0.12.5"
 gum = "0.17.0"
 bat = "0.26.1"
