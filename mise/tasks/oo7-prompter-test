@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#MISE description="Assert oo7-daemon picks the GNOME prompter, not the CLI one (krytis#588)"
+#USAGE flag "--artifact <dir>" help="Directory holding an already-checked-out desktop/oo7.bst artifact (default: check out a fresh one)"
+#USAGE flag "--keep" help="Keep the scratch directory and print its path"
+
+# Guards the one bug that makes every secret unusable: oo7-daemon deciding it is
+# headless and routing unlock prompts to org.freedesktop.secrets.CliPrompter,
+# which krytis does not ship (only oo7's server/ and pam/ sub-projects are
+# built, never cli/). See docs/skills/pam.md § krytis patches oo7's prompter
+# detection, and krytis#588.
+#
+# oo7 has picked the wrong prompter twice, by two different mechanisms — first
+# from its own DISPLAY/WAYLAND_DISPLAY, then from a logind GetSessionByPID
+# lookup that cannot resolve any client of a systemd-managed session. Both were
+# regressions delivered by an upstream re-pin, so this runs as a gate on the
+# artifact rather than as a one-off investigation.
+#
+# Isolation: the daemon under test runs on a private D-Bus session, with its own
+# XDG_DATA_HOME and XDG_RUNTIME_DIR. It never touches the caller's live keyring,
+# never takes org.freedesktop.secrets on the real session bus, and cannot lock
+# the running login collection — which matters, because a locked collection
+# reads back as "no such secret" for the rest of the session (krytis#585).
+#
+# A stub stands in for noctalia and owns org.gnome.keyring.SystemPrompter, so a
+# pass is a positive observation (BeginPrompting arrived) rather than the
+# absence of an error.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+ARTIFACT="${usage_artifact:-}"
+KEEP="${usage_keep:-false}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --artifact) ARTIFACT="$2"; shift 2 ;;
+        --keep) KEEP=true; shift ;;
+        *) shift ;;
+    esac
+done
+
+SCRATCH="$(mktemp -d /var/tmp/oo7-prompter-test.XXXXXX)"
+cleanup() {
+    if [ "$KEEP" = "true" ]; then
+        echo "==> scratch kept at $SCRATCH"
+    else
+        rm -rf "$SCRATCH"
+    fi
+}
+trap cleanup EXIT
+
+if [ -z "$ARTIFACT" ]; then
+    ARTIFACT="$SCRATCH/artifact"
+    echo "==> Checking out desktop/oo7.bst..."
+    mise run bst artifact checkout desktop/oo7.bst --directory "$ARTIFACT" >/dev/null || {
+        echo "==> FAILED to check out desktop/oo7.bst — build it first."
+        exit 1
+    }
+fi
+
+DAEMON="$ARTIFACT/usr/libexec/oo7-daemon"
+if [ ! -x "$DAEMON" ]; then
+    echo "==> FAILED: no oo7-daemon at $DAEMON"
+    exit 1
+fi
+
+# The stub answers as noctalia would: it owns the well-known name and records
+# the first BeginPrompting call. It never completes the exchange — reaching the
+# right service is the whole assertion.
+cat >"$SCRATCH/stub-prompter.py" <<'PYEOF'
+import sys
+from gi.repository import Gio, GLib
+
+NODE = Gio.DBusNodeInfo.new_for_xml("""
+<node>
+  <interface name='org.gnome.keyring.internal.Prompter'>
+    <method name='BeginPrompting'><arg type='o' name='callback' direction='in'/></method>
+    <method name='PerformPrompt'>
+      <arg type='o' name='callback' direction='in'/>
+      <arg type='s' name='type' direction='in'/>
+      <arg type='a{sv}' name='properties' direction='in'/>
+      <arg type='s' name='exchange' direction='in'/>
+    </method>
+    <method name='StopPrompting'><arg type='o' name='callback' direction='in'/></method>
+  </interface>
+</node>""")
+
+def on_call(_conn, _sender, _path, _iface, method, _params, invocation):
+    print(f"STUB-PROMPTER-CALLED {method}", flush=True)
+    invocation.return_value(None)
+
+def on_bus(conn, _name):
+    conn.register_object("/org/gnome/keyring/Prompter", NODE.interfaces[0], on_call)
+
+Gio.bus_own_name(Gio.BusType.SESSION, "org.gnome.keyring.SystemPrompter",
+                 Gio.BusNameOwnerFlags.NONE, on_bus,
+                 lambda *_: print("STUB-PROMPTER-READY", flush=True),
+                 lambda *_: sys.exit(1))
+GLib.MainLoop().run()
+PYEOF
+
+export XDG_DATA_HOME="$SCRATCH/data"
+export XDG_RUNTIME_DIR="$SCRATCH/run"
+mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+# XDG_SESSION_TYPE is what the patched fallback consults. It is inherited from
+# the caller's session; assert it rather than fabricate it, so a pass means the
+# real session shape was exercised.
+if [ -z "${XDG_SESSION_TYPE:-}" ]; then
+    echo "==> SKIPPED: no XDG_SESSION_TYPE — run this from inside a graphical session."
+    exit 0
+fi
+echo "==> Session: XDG_SESSION_TYPE=$XDG_SESSION_TYPE"
+
+export DAEMON SCRATCH
+dbus-run-session -- bash -e -c '
+    /usr/bin/python3 "$SCRATCH/stub-prompter.py" >"$SCRATCH/stub.log" 2>&1 &
+    for _ in $(seq 50); do
+        grep -q STUB-PROMPTER-READY "$SCRATCH/stub.log" 2>/dev/null && break
+        sleep 0.1
+    done
+
+    RUST_LOG=debug "$DAEMON" >"$SCRATCH/daemon.log" 2>&1 &
+    for _ in $(seq 100); do
+        busctl --user --no-pager status org.freedesktop.secrets >/dev/null 2>&1 && break
+        sleep 0.1
+    done
+
+    # No login keyring exists in this scratch home, so storing a secret has to
+    # create and unlock the default collection — which is exactly the path that
+    # raises a prompt.
+    printf topsecret | timeout 20 secret-tool store --label=krytis-prompter-test \
+        krytis prompter-test >"$SCRATCH/store.log" 2>&1
+    sleep 1
+'
+
+echo "==> Daemon log (prompter lines):"
+grep -iE 'prompter|prompt' "$SCRATCH/daemon.log" | sed 's/^/    /' | tail -10
+
+fail=0
+if grep -q 'STUB-PROMPTER-CALLED' "$SCRATCH/stub.log"; then
+    echo "==> PASS: oo7-daemon reached org.gnome.keyring.SystemPrompter"
+else
+    echo "==> FAIL: the GNOME prompter was never called"
+    fail=1
+fi
+
+if grep -qi 'CliPrompter' "$SCRATCH/daemon.log" "$SCRATCH/store.log"; then
+    echo "==> FAIL: daemon fell back to the CLI prompter (krytis#588)"
+    grep -i 'CliPrompter' "$SCRATCH/daemon.log" "$SCRATCH/store.log" | sed 's/^/    /' | head -5
+    fail=1
+fi
+
+[ "$fail" -eq 0 ] && echo "==> oo7-prompter-test passed."
+exit "$fail"

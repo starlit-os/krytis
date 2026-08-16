@@ -1,58 +1,89 @@
-Also treat XDG_SESSION_TYPE as evidence of a graphical session.
+Fall back to XDG_SESSION_TYPE when logind cannot attribute the peer.
 
 oo7-daemon picks between the GNOME prompter (org.gnome.keyring.SystemPrompter)
-and a CLI prompter based solely on DISPLAY/WAYLAND_DISPLAY in its own process
-environment. Those are exported by the compositor and imported into the systemd
-user manager during session startup, but oo7-daemon.service is WantedBy=
-default.target, so the manager starts it at session open -- concurrently with
-the compositor. A service inherits the manager's environment at start, so the
-daemon is permanently stuck with a pre-import copy and falls back to the CLI
-prompter for the whole session. Every libsecret caller then fails with:
+and a CLI prompter from the *calling client's* session type, which it resolves
+with logind's GetSessionByPID (upstream 9f4de634, fixing oo7#530 -- it replaced
+an earlier check of the daemon's own DISPLAY/WAYLAND_DISPLAY environment).
+
+That lookup answers "PID does not belong to any known session" for every
+graphical client on a systemd-managed session. The login session's cgroup
+(session-N.scope) holds only the session leader; the compositor and everything
+it launches are user units under user@<uid>.service:
+
+  $ loginctl show-session 8 -p Scope -p Type
+  Scope=session-8.scope
+  Type=wayland
+  $ cat /proc/$(pgrep -x niri)/cgroup
+  0::/user.slice/user-1000.slice/user@1000.service/session.slice/niri.service
+  $ busctl --system call org.freedesktop.login1 /org/freedesktop/login1 \
+      org.freedesktop.login1.Manager GetSessionByPID u $(pgrep -x niri)
+  Call failed: PID 39347 does not belong to any known session
+
+Verified on a booted krytis system: the lookup succeeds only for PIDs inside
+session-8.scope (greetd's session worker -> "wayland") and fails for niri,
+noctalia and oo7-daemon alike. SessionType then falls to Unspecified, which is
+not graphical, so every libsecret caller is routed to the CLI prompter and
+fails with:
 
   CLI prompter failed: NameHasNoOwner: Name
   "org.freedesktop.secrets.CliPrompter" does not exist
 
-It cannot simply be started later: pam_oo7.so auto_start runs in the PAM session
-phase and the daemon must already exist to collect the login secret from the
-transient oo7-daemon-login helper, so delaying it trades this bug for the loss of
-login auto-unlock.
+krytis ships no oo7-cli, so nothing ever owns that name. This is krytis#588
+surviving its own upstream fix by a different route.
 
-XDG_SESSION_TYPE is set by logind at session open, so it is present in the
-daemon's environment even when the display variables are not -- verified on a
-running system, where the daemon had XDG_SESSION_TYPE=wayland and
-XDG_CURRENT_DESKTOP=niri but neither DISPLAY nor WAYLAND_DISPLAY. Consulting it
-answers the same question ("am I in a graphical session?") without depending on
-startup ordering.
+XDG_SESSION_TYPE is set by pam_systemd at session open and inherited by the
+systemd user manager, so oo7-daemon carries it (=wayland, alongside
+XDG_CURRENT_DESKTOP=niri) even when no display variable and no resolvable peer
+session exists. Consulting it only when the logind lookup fails preserves the
+upstream behaviour wherever it works -- a peer in a real tty session scope
+still resolves to Tty and still gets the CLI prompter -- and answers the same
+question from the daemon's own session otherwise.
 
-Note the existing check only tests these variables for non-emptiness and never
-connects to a display, so this widens the same predicate rather than changing
-its meaning.
-
-Upstream: https://github.com/linux-credentials/oo7/issues/530 -- stalled since
-2026-07-28 with the maintainer unable to reproduce on Fedora, where oo7 is not
-the default provider and is D-Bus activated after the session is up rather than
-started at default.target. Tracked downstream as starlit-os/krytis#588. Drop this
-patch once upstream lands a fix; the maintainer may prefer checking whether a
-SystemPrompter name is owned on the bus, which is the question oo7 actually wants
-answered.
+Upstream: https://github.com/linux-credentials/oo7/issues/530 -- closed by
+9f4de634 on 2026-08-15. The fix is sound for D-Bus-activated daemons on
+sessions where clients sit in the session scope, but not for systemd-managed
+sessions; the original reporter's GNOME OS setup is likely also still affected.
+Tracked downstream as starlit-os/krytis#588. Drop this patch once upstream
+handles an unresolvable peer session; reporting it upstream needs an explicit
+go-ahead per AGENTS.md's Upstream Gate.
 diff --git a/server/src/service/mod.rs b/server/src/service/mod.rs
-index d43c109..8974a30 100644
+index 87407d2..ae38527 100644
 --- a/server/src/service/mod.rs
 +++ b/server/src/service/mod.rs
-@@ -530,8 +530,15 @@ impl Service {
-             return *override_type;
+@@ -136,7 +136,7 @@ impl Service {
+                 .to_owned();
+             let session_type = SessionType::from_logind(pid)
+                 .await
+-                .unwrap_or(SessionType::Unspecified);
++                .unwrap_or_else(SessionType::from_env);
+             Some(PeerInfo::new(pid, name, session_type))
          }
+         .await;
+diff --git a/server/src/session.rs b/server/src/session.rs
+index e7ec180..4744c22 100644
+--- a/server/src/session.rs
++++ b/server/src/session.rs
+@@ -49,6 +49,23 @@ impl SessionType {
+             _ => Self::Unspecified,
+         })
+     }
++
++    /// Fallback for peers that logind cannot attribute to a session.
++    ///
++    /// A systemd-managed desktop runs the compositor and its clients as user
++    /// units under `user@<uid>.service`, which is outside the login session's
++    /// own cgroup, so `GetSessionByPID` answers `NoSessionForPID` for every
++    /// graphical client. `XDG_SESSION_TYPE` is set by pam_systemd at session
++    /// open and is inherited by the user manager, so it still describes the
++    /// session this daemon belongs to.
++    pub fn from_env() -> Self {
++        match std::env::var("XDG_SESSION_TYPE").as_deref() {
++            Ok("x11") => Self::X11,
++            Ok("wayland") => Self::Wayland,
++            Ok("tty") => Self::Tty,
++            _ => Self::Unspecified,
++        }
++    }
+ }
  
-+        // A graphical session may exist even when the compositor's display
-+        // variables never reached this process: oo7-daemon starts at
-+        // default.target, before the compositor imports them into the systemd
-+        // user manager. XDG_SESSION_TYPE comes from logind at session open, so
-+        // it is present either way. See krytis#588 / oo7#530.
-         let has_display = std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
--            || std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
-+            || std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
-+            || std::env::var_os("XDG_SESSION_TYPE")
-+                .is_some_and(|v| v == "wayland" || v == "x11");
- 
-         if has_display {
-             #[cfg(any(feature = "plasma_native_crypto", feature = "plasma_openssl_crypto"))]
+ #[zbus::proxy(

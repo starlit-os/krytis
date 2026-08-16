@@ -287,38 +287,122 @@ not that the prompter failed.
 
 ## krytis patches oo7's prompter detection (`patches/oo7/`)
 
-`0.7.0.alpha` chooses between the GNOME prompter and a CLI prompter from
-`DISPLAY`/`WAYLAND_DISPLAY` **in the daemon's own process environment**. Those arrive when the
-compositor imports them into the systemd user manager, but `oo7-daemon.service` is
-`WantedBy=default.target`, so the manager starts it at session open — concurrently with the
-compositor. A service inherits the manager environment *at start*, so the daemon spends the
-whole session believing it is headless and every libsecret caller gets:
+oo7 chooses between the GNOME prompter (`org.gnome.keyring.SystemPrompter`) and a CLI
+prompter. When it guesses wrong, every libsecret caller gets:
 
 ```
 CLI prompter failed: NameHasNoOwner: Name "org.freedesktop.secrets.CliPrompter" does not exist
 ```
 
-It cannot be fixed by starting the daemon later: `pam_oo7.so auto_start` runs in the PAM
+krytis ships only oo7's `server/` and `pam/` sub-projects, not `cli/`, so nothing ever owns
+that name — picking `Cli` is always fatal here, never merely suboptimal.
+
+It cannot be dodged by starting the daemon later: `pam_oo7.so auto_start` runs in the PAM
 session phase and the daemon must already exist to take the login secret from the transient
-`oo7-daemon-login` helper, whose socket is gone by mid-session. Delaying the unit trades this
-bug for the loss of login auto-unlock.
+`oo7-daemon-login` helper, whose socket is gone by mid-session. Delaying the unit trades a
+prompter bug for the loss of login auto-unlock.
 
-`patches/oo7/prompter-detect-session-type.patch` widens the predicate to accept
-`XDG_SESSION_TYPE` (`wayland`/`x11`), which logind sets at session open and which the daemon
-therefore *does* have. Verified A/B on the built artifact with both display variables unset:
+**oo7 has now got this wrong twice, in two different ways, and krytis has to patch both.**
 
-| daemon env | prompter chosen |
-|---|---|
-| `XDG_SESSION_TYPE=wayland` | `BeginPrompting` → `org.gnome.keyring.SystemPrompter` |
-| `XDG_SESSION_TYPE` unset | `CliPrompter` |
+### Attempt 1 — the daemon's own environment (`0.7.0.alpha`)
 
-Note the original check only tests these variables for non-emptiness and never connects to a
-display, so this widens the same predicate rather than changing its meaning.
+Detection read `DISPLAY`/`WAYLAND_DISPLAY` from the daemon's own process environment. Those
+arrive only when the compositor imports them into the systemd user manager, but
+`oo7-daemon.service` is `WantedBy=default.target`, so the manager starts it at session open —
+concurrently with the compositor. A service inherits the manager environment *at start*, so
+the daemon spent the whole session believing it was headless.
 
-**Drop the patch when upstream fixes it** — oo7#530, stalled since 2026-07-28 with the
-maintainer unable to reproduce on Fedora (where oo7 is not the default provider and is D-Bus
-activated *after* the session is up, so the race never happens). Downstream tracking and the
-full analysis: krytis#588.
+### Attempt 2 — the peer's logind session (upstream `9f4de634`, closing oo7#530)
+
+Upstream replaced that with the *calling client's* session type, resolved via logind
+`GetSessionByPID` → `Session.Type`. Better in principle — it answers per-caller, so a real tty
+client correctly gets a CLI prompter — but **it resolves to nothing at all on a
+systemd-managed session**, which is exactly what krytis runs.
+
+A login session's cgroup (`session-N.scope`) holds only the session *leader*. The compositor
+and everything it launches are user units under `user@<uid>.service`, outside that scope, so
+logind cannot attribute them:
+
+```
+$ loginctl show-session 8 -p Scope -p Type
+Scope=session-8.scope
+Type=wayland
+$ cat /proc/$(pgrep -x niri)/cgroup
+0::/user.slice/user-1000.slice/user@1000.service/session.slice/niri.service
+$ busctl --system call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager GetSessionByPID u $(pgrep -x niri)
+Call failed: PID 39347 does not belong to any known session
+```
+
+Measured on a booted krytis system: the lookup succeeds **only** for PIDs inside
+`session-8.scope` (greetd's `--session-worker`, → `"wayland"`) and fails for `niri`,
+`noctalia` and `oo7-daemon` alike. `SessionType::from_logind` returns `None`,
+`.unwrap_or(SessionType::Unspecified)` makes it non-graphical, and the CLI prompter is chosen
+again. There is no environment fallback left in `server/src/` — the rework deleted every
+`DISPLAY`/`XDG_SESSION_TYPE` reference.
+
+**Generalise this beyond oo7:** `GetSessionByPID` is the wrong question to ask about a client
+of a systemd user session. Any daemon that branches on it will mis-classify every graphical
+app on a session where the compositor is a user unit (krytis, GNOME OS, uwsm-style setups).
+`loginctl show-session -p Scope` versus the client's cgroup is the two-command check that
+settles it.
+
+### What krytis carries
+
+`patches/oo7/prompter-detect-session-type.patch` adds `SessionType::from_env()` (reads
+`XDG_SESSION_TYPE`, set by pam_systemd at session open and inherited by the user manager) and
+uses it **only** as a fallback: `from_logind(pid).unwrap_or_else(SessionType::from_env)`.
+That keeps upstream's per-caller answer wherever logind can give one — a peer in a real tty
+scope still resolves to `Tty` and still gets the CLI prompter — and falls back to the
+daemon's own session otherwise.
+
+| peer resolution | session type | prompter chosen |
+|---|---|---|
+| logind resolves the peer (tty scope) | `Tty` | `CliPrompter` |
+| logind fails, `XDG_SESSION_TYPE=wayland` | `Wayland` | `BeginPrompting` → `org.gnome.keyring.SystemPrompter` |
+| logind fails, `XDG_SESSION_TYPE` unset | `Unspecified` | `CliPrompter` |
+
+Consequence worth knowing: an **ssh** client *does* land in a real session scope, so it now
+resolves to `Tty` and gets the `CliPrompter` error instead of raising noctalia's panel on the
+local desktop. That is upstream's intent and arguably correct; it is a behaviour change from
+the attempt-1 patch, and it only bites if a secret is requested over ssh.
+
+### `mise run oo7-prompter-test` gates it
+
+Because oo7 has now broken this twice via two unrelated mechanisms, the check is a task
+rather than an investigation. It runs the built `oo7-daemon` on a **private D-Bus session**
+with its own `XDG_DATA_HOME`/`XDG_RUNTIME_DIR`, stands a stub in noctalia's place as the owner
+of `org.gnome.keyring.SystemPrompter`, and stores a secret into the fresh (locked) `login`
+collection to force a prompt. A pass is the stub being called; a fail is `CliPrompter`
+appearing in the daemon or client log.
+
+The isolation matters: it never takes `org.freedesktop.secrets` on the real session bus and
+never locks the live login collection — which would make every read return "no such secret"
+for the rest of the session (#585).
+
+Measured A/B on the `c2aa2315` artifact, same session, only the patch differing:
+
+```
+# without patches/oo7/prompter-detect-session-type.patch
+==> FAIL: the GNOME prompter was never called
+==> FAIL: daemon fell back to the CLI prompter (krytis#588)
+    secret-tool: org.freedesktop.DBus.Error.Failed: CLI prompter failed:
+    org.freedesktop.DBus.Error.NameHasNoOwner: Name
+    "org.freedesktop.secrets.CliPrompter" does not exist
+
+# with it
+==> PASS: oo7-daemon reached org.gnome.keyring.SystemPrompter
+==> oo7-prompter-test passed.
+```
+
+That is the proof that upstream's oo7#530 fix does not cover krytis: the failing run *is*
+upstream `main`.
+
+**Drop the patch when upstream handles an unresolvable peer session** — oo7#530 is *closed*
+(9f4de634, 2026-08-15), so watch for a follow-up rather than that issue. The original
+reporter was on GNOME OS, which is also systemd-managed, so upstream has plausibly not fixed
+the case it closed. Reporting that needs an explicit go-ahead per AGENTS.md's Upstream Gate.
+Downstream tracking and full analysis: krytis#588.
 
 ## A locked oo7 collection returns "no such secret", not a prompt
 

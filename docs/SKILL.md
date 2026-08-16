@@ -15,6 +15,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
 | Decide whether to (re-)attempt the gnome-keyring → oo7 migration (#84) | [`docs/design/secrets-service.md`](design/secrets-service.md) |
+| Re-pin oo7, or check whether an upstream oo7 fix actually helps krytis (`mise run oo7-prompter-test`) | [`docs/skills/pam.md`](skills/pam.md) § krytis patches oo7's prompter detection |
 | Change SSH config, sshd auth policy, or make SSH work for some account type | [`docs/skills/pam.md`](skills/pam.md) § `UsePAM yes` — **read the priority note first: SSH is opt-in and not a release blocker** |
 | Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
 | Generate or debug the firmware key-enrollment `.auth` files, or refresh the dbx revocation list (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
