@@ -311,6 +311,38 @@ Report obsolete branches to the user rather than deleting them — they are the 
 Worktrees for fork work live beside the fork, not in krytis:
 `<parent>/<fork-name>.worktrees/<branch-leaf>`.
 
+### Rebasing a carried fork branch: verify the *introduced hunks*, not the tips
+
+After rebasing a carried branch onto a moved upstream, the useful question is "did my change
+survive intact?" — and a tip-to-tip diff cannot answer it, because it also contains every
+upstream commit you just absorbed. Comparing `old-tip` against `new-tip` for the 2026-08-17
+noctalia rebase reported 285 files and +14624/-3523, which says nothing at all.
+
+Compare each side's diff *against its own base* instead, normalised to just the changed lines:
+
+```shell
+OLD_BASE=8403cb987 OLD_TIP=fcaf05e84      # what the branch was rebased from
+NEW_BASE=87b203c68 NEW_TIP=47c1df893      # what it now sits on
+for f in <files the branch touches>; do
+  a=$(git diff $OLD_BASE $OLD_TIP -- "$f" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | md5sum)
+  b=$(git diff $NEW_BASE $NEW_TIP -- "$f" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | md5sum)
+  [ "$a" = "$b" ] && echo "$f IDENTICAL" || echo "$f DIFFERS"
+done
+```
+
+Stripping `+++`/`---` and `@@` context is what makes it work — line numbers move even when the
+change does not. Files the branch owns outright can be compared directly
+(`git diff $OLD_TIP $NEW_TIP -- <paths>`, expect empty).
+
+This turned a vague "it rebased cleanly and compiles" into: all 9 modified upstream files carry
+byte-identical hunks, and all 6 branch-owned files are byte-identical. That is what licenses
+reusing the *previous* runtime verification instead of re-doing it.
+
+Use full 40-char SHAs in scripted loops. Abbreviated revs failed to resolve inside a `$(…)`
+loop while `git rev-parse` resolved them fine a moment later, and the loop silently compared two
+empty strings — reporting `IDENTICAL` for everything. Any comparison loop that can pass by
+comparing nothing must print the hash it compared, so an empty compare is visible.
+
 ## Where Plan and Design Docs Go
 
 `docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.
