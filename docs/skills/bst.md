@@ -54,6 +54,90 @@ The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only 
 | `%{go-arch}` | `amd64`/`arm64` | Defined in project.conf per-arch |
 | `%{arch}` | `x86_64`/`aarch64` | Raw architecture name |
 
+### Per-kind defaults go in `elements:`, not `variables:` — project variables lose to plugin defaults
+
+To change a variable for *every* element of one kind, use project.conf's top-level `elements:`
+block, keyed by plugin kind:
+
+```yaml
+elements:
+  meson:
+    variables:
+      meson-global: >-
+        --buildtype=debugoptimized
+        -Db_ndebug=true
+```
+
+Putting the same key under the top-level `variables:` block **silently does nothing** when the
+plugin declares its own default. The meson plugin ships `meson-global: ''` in its
+`meson.yaml`, and that beats a project-level variable — so the value composes away with no
+error, no warning, and a `bst show --deps none --format '%{vars}'` that still prints the key
+empty. That empty print is the tell; check it after any project-wide variable change.
+
+freedesktop-sdk does exactly this in its own `project.conf`:
+
+```yaml
+elements:
+  autotools:
+    (@): include/_private/autotools-conf.yml
+  meson:
+    (@): include/_private/meson-conf.yml
+```
+
+### fdsdk's `include/_private/` config is not inherited across the junction
+
+krytis gets fdsdk's *elements* through the junction, but none of its `_private` build
+configuration. Concretely (#604): fdsdk sets `--buildtype=plain` for its own meson elements in
+`include/_private/meson-conf.yml`, krytis inherited nothing, and krytis's 13 meson elements
+therefore used **meson's own default buildtype — `debug`** (`-O0`, and `b_ndebug=false`, so
+`NDEBUG` never defined). The image shipped unoptimised, assert-enabled binaries for a year
+without anyone noticing, because nothing warns about it.
+
+It surfaced only because noctalia compiles a red `DEBUG` pill into its bar under
+`#ifndef NDEBUG`. Generalise the detection, not the fix: `strings <binary> | grep -c` for a
+symbol that upstream guards behind `NDEBUG` is a cheap way to prove which build type actually
+reached the image.
+
+**Do not fix this by copying fdsdk's line.** `--buildtype=plain` tells meson to emit no
+`-O`/`-g` of its own and defer to `CFLAGS`/`CXXFLAGS` — which fdsdk sets for its own builds and
+krytis does not (`bst show --format '%{environment}'` has neither). Copying it removes
+optimisation *and* debug info. krytis uses `--buildtype=debugoptimized -Db_ndebug=true`:
+
+- `debugoptimized` = `-O2 -g`. The `-g` keeps `%{strip-binaries}` splitting debug info into
+  `%{debugdir}` via `freedesktop-sdk-stripper`; `--buildtype=release` drops `-g` and quietly
+  empties that split. Scope it correctly, though: the **OCI image excludes the `debug` domain**
+  (`elements/oci/krytis/filesystem.bst` and `runtime.bst` both `exclude: - debug`), so the
+  shipped image carries no `.debug` files either way — one glibc `ld-linux` file aside. The `-g`
+  is for the *artifacts*, i.e. `bst artifact checkout` and any future debuginfo work, not for
+  image size. Don't verify it against the image and conclude it broke.
+- `b_ndebug=true`, not `if-release`: `if-release` only fires for `release`/`plain` buildtypes,
+  so it would do nothing under `debugoptimized`.
+
+`b_ndebug=true` is not redundant with upstream's own defaults, and this is the subtle part.
+noctalia's `meson.build` declares `default_options: ['b_ndebug=if-release', …]` — which reads
+like the project already handles it, but `if-release` never fires under meson's default `debug`
+buildtype, so asserts stayed on and its `#ifndef NDEBUG` bar pill kept shipping. A command-line
+`-Db_ndebug=true` beats `default_options`; matching upstream's *spelling* would have changed
+nothing.
+
+Measured on `overrides/systemd-base.bst`, same element, same `ninja -v` verbosity, before and
+after (the meson plugin runs `ninja -v`, so compile lines are in the build log):
+
+| | `-O0` lines | `-DNDEBUG` lines |
+|---|---|---|
+| before | 1752 | 0 |
+| after | 0 | 1752 |
+
+So systemd — PID 1, udev, journald, logind — was compiling 1752 translation units at `-O0`
+with asserts live. `desktop/mesa-all-codecs.bst` was already immune because it sets
+`-Db_ndebug=true` in its own `meson-local` (now redundant with the global, but left in place:
+removing it would change the resolved command line and force a mesa rebuild for no behavioural
+gain).
+
+Do not measure this from build logs alone across *different* elements — verbosity and vendored
+sub-builds make the counts incomparable. Compare one element against itself, or read the
+resolved command with `bst show --deps none --format '%{config}'`.
+
 ## Element Kinds
 
 | Kind | Use case |
