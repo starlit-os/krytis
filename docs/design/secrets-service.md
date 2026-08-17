@@ -100,7 +100,7 @@ oo7 + noctalia's native prompter now, carrying two known defects and two workaro
 | Accepted | Consequence | Workaround in tree | Exit condition |
 |---|---|---|---|
 | **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked | upstream reports locked items from `SearchItems` |
-| **#588** — prompter detection picks the CLI prompter | every unlock prompt fails with `CliPrompter does not exist` | `patches/oo7/prompter-detect-session-type.patch` | oo7#530 lands |
+| **#588** — prompter detection picks the CLI prompter | every unlock prompt fails with `CliPrompter does not exist` | `patches/oo7/prompter-detect-session-type.patch` (rewritten 2026-08-16 for upstream's new peer-session detection) | upstream handles a peer logind cannot attribute — *not* oo7#530, which is closed and insufficient |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
 | **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
 
@@ -488,6 +488,34 @@ because even a user who is willing to unlock manually gets no opportunity to.
 Not reported upstream: AGENTS.md's Upstream Gate requires an explicit instruction before
 opening anything against `linux-credentials/oo7`.
 
+## 2026-08-16 re-pin: `0.7.0.alpha` → `main` (`c2aa2315`)
+
+Re-pinned to check whether upstream had fixed anything since the migration shipped. Score:
+**one bug fixed, one fixed-then-reopened-by-another-route, two untouched.** The element now
+tracks `refs/heads/main` rather than a tag glob, because no tag carries any of it.
+
+| Tracked defect | Status on `c2aa2315` |
+|---|---|
+| **oo7#530 / #588** — CLI prompter chosen | **Reworked, still broken here.** `9f4de634` swapped env-sniffing for the peer's logind session type. The new lookup fails for every client of a systemd-managed session, so krytis still lands on `Cli`. Patch rewritten as a fallback rather than dropped. |
+| **#585** — locked collection invisible to `SearchItems` | **Unfixed.** `server/src/collection/mod.rs::search_inner_items` still opens with `if keyring.is_locked() { return Ok(Vec::new()); }`, byte-identical to the `0.6.0` and `0.7.0.alpha` readings. FIDO2 login therefore stays disabled. |
+| **oo7#506** — passwordless/FIDO2 unlock | **Unfixed, no movement.** Still open, last comment 2026-08-03. `git log 94a8e42e..c2aa2315 -- pam/` returns exactly one commit, and it is a linker fix. |
+| **oo7#546** — `pam_oo7.so` never linked `-lpam` | **Fixed** by `c2aa2315`, the pin's tip: `pam/build.rs` now emits `cargo::rustc-link-lib=pam`. Previously the module resolved `pam_get_item` and friends lazily against the host PAM process, which is why krytis never saw the undefined-symbol failure. |
+
+Also landed and worth knowing, though neither was a tracked krytis defect: `7b8edfb`
+(`server`: replace only items with identical attributes, oo7#549) and `709a551` (`cli`: allow
+changing a secret, the oo7#544 Seahorse/Key Rack complaint). Neither is exercised by krytis
+today — `ChangePassword` is still the untested path called out above.
+
+**The lesson worth carrying past oo7:** a *closed* upstream issue is not evidence the bug is
+gone downstream. oo7#530 was closed by a real fix that is correct for the maintainer's
+environment and inert in ours, because the two disagree about where a graphical client's
+process lives. Re-verify against the running system, not the issue tracker.
+See `docs/skills/pam.md` § *krytis patches oo7's prompter detection* for the measurements.
+
+`mise run oo7-prompter-test` now gates the prompter choice on the built artifact, so the next
+re-pin does not have to rediscover this by hand. It failed on unpatched `c2aa2315` and passes
+with the patch — the A/B is quoted in that skill section.
+
 ## Revisit trigger
 
 The migration has shipped, so this is no longer "should we start?" but "can we drop a
@@ -495,8 +523,11 @@ workaround?". Re-read this doc when any of these move:
 
 - **oo7 reports locked items from `SearchItems`** (#585) → re-enable FIDO2 login in
   `config/greetd-config.bst` and delete the mitigation comment there.
-- **oo7#530 lands** → drop `patches/oo7/prompter-detect-session-type.patch` and its wiring in
-  `elements/desktop/oo7.bst`.
+- **oo7 handles a peer logind cannot attribute** → drop
+  `patches/oo7/prompter-detect-session-type.patch` and its wiring in
+  `elements/desktop/oo7.bst`. Note oo7#530 itself is already **closed** (9f4de634) without
+  this being true — see § *2026-08-16 re-pin* — so the trigger is a follow-up fix, not that
+  issue.
 - **oo7#506 gains a maintainer-endorsed direction** → revisit FIDO2 login independently of
   #585; the two reasons it is off are separable.
 - **The noctalia prompter is upstreamed** → repoint `elements/desktop/noctalia.bst` back to
