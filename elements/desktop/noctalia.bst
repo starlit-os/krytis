@@ -31,21 +31,20 @@ depends:
 # src/dbus/secrets/secret_prompter.cpp, which links GcrSecretExchange for the
 # "sx-aes-1" handshake that keeps prompted secrets off the bus in plaintext.
 # NOTE: this is gcr-4 (gnome-build-meta.bst:sdk/gcr.bst), NOT the legacy
-# sdk/gcr-3.bst. On main, gnome-keyring pulls gcr-3 in transitively for its
-# own gcr-base-3 linkage (unrelated to the prompter binary), so gcr-prompter
-# stays in the image as an inert fallback. Verified gcr-4 does not pull in
-# GTK, and krytis ships GTK4 unconditionally anyway (niri.bst, ghostty.bst,
-# nautilus) -- see PR #568.
+# sdk/gcr-3.bst. Verified gcr-4 does not pull in GTK, and krytis ships GTK4
+# unconditionally anyway (niri.bst, ghostty.bst, nautilus) -- see PR #568.
 #
-# THIS BRANCH DIVERGES: stacks/desktop.bst swaps gnome-keyring for oo7, which
-# takes gcr-3 -- and with it gcr-prompter -- out of the image entirely. That
-# absence is the whole point: manual unlock has no legacy prompter to fall
-# back on, so if it still works, noctalia answered. See stacks/desktop.bst
-# and docs/skills/pam.md.
+# This prompter is load-bearing, not a nicety. Since #594 swapped
+# gnome-keyring for oo7 (stacks/desktop.bst), gcr-3 -- and with it the legacy
+# gcr-prompter binary -- is out of the image entirely, so nothing else on the
+# session bus can answer org.gnome.keyring.SystemPrompter. Without noctalia
+# every libsecret caller that needs an unlock hangs rather than failing, and
+# oo7 has no other way to ask for a password. See docs/skills/pam.md and
+# docs/design/secrets-service.md.
 - gnome-build-meta.bst:sdk/gcr.bst
 
-# Upstream noctalia-dev/noctalia. Releases tagged v* (v5.0.0-beta2 latest
-# as of this pin). git_repo + track: v* lets bst source track follow tags.
+# Upstream is noctalia-dev/noctalia, releases tagged v*. krytis does not track
+# those tags today -- see the fork pin below.
 #
 # History: repo was renamed from noctalia-shell to noctalia as of 2026.
 # We previously pinned a kitten-lily fork commit for
@@ -53,27 +52,34 @@ depends:
 # so a slow polkit prompt doesn't freeze the UI and drop the memory-only
 # connection before persistConnectionToDisk()). Upstream commit 18e36ede3
 # ("separate VPN from physical link state, async NM calls, safe proxy
-# rebinds") independently made this same call async, so the fork pin was
+# rebinds") independently made this same call async, so that fork pin was
 # dropped. Upstream's async dispatch falls back to sdbus-c++'s default
 # timeout; manually verified this is not an issue in practice.
 #
-# INTERIM PIN (2026-08-13): kitten-lily/noctalia branch feat/system-prompter,
-# not yet upstreamed. Adds a native org.gnome.keyring.SystemPrompter provider
-# so niri/noctalia sessions get keyring manual-unlock prompts without
-# depending on gcr-3's legacy gcr-prompter binary. gnome-keyring stays the
-# Secret Service provider here -- this is decoupled from the oo7 migration
-# (#84), which is on hold pending upstream oo7 fixes; see PR #568. Revert to
+# FORK PIN: kitten-lily/noctalia branch feat/system-prompter, not yet
+# upstreamed (no PR opened against noctalia-dev/noctalia -- that needs an
+# explicit instruction per AGENTS.md's Upstream Gate). It adds the native
+# org.gnome.keyring.SystemPrompter provider that oo7 depends on for every
+# unlock prompt, per the note above.
+#
+# Rebased onto upstream main 87b203c68 (v5.0.0-beta.8-135) on 2026-08-17: the
+# 1722-line feature commit applied across 98 upstream commits with no source
+# conflict. The only conflict was documentation -- upstream moved the
+# dependency lists out of README.md into BUILDING.md, so the gcr-4 package
+# names were ported there instead, including the newly added AerynOS entry.
+#
+# Revert to
 #   url: github:noctalia-dev/noctalia.git
 #   track: v*
-# once the feature lands upstream (or is dropped). Tracking the branch
-# instead of the v* tag glob means `bst source track` follows the branch
-# head here, not releases -- expect more frequent auto-track PRs than usual
-# until this is reverted.
+# once the feature lands upstream (or is dropped). Tracking a branch instead
+# of the v* tag glob means `bst source track` follows the branch head, not
+# releases -- expect more frequent auto-track PRs than usual until then, and
+# note that an unrelated commit on that branch changes what krytis ships.
 sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.0.0-beta.8-38-gfcaf05e8496a8f26beb4eda441efc3a6eff171b8
+  ref: v5.0.0-beta.8-137-g47c1df893246f0c6b736e11ca595daf39d04628d
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test

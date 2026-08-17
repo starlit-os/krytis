@@ -1221,6 +1221,53 @@ This is the same pattern used by `freedesktop-sdk.bst:components/openssh.bst` (l
 | Adding `ostree-minimal.bst` when `ostree.bst` is already in the image | Causes non-whitelisted overlaps at `oci/krytis/runtime.bst` — `ostree.bst` (pulled in by `core/bootc.bst`) is a superset; omit `ostree-minimal.bst` entirely |
 | `touch /etc/machine-id` doesn't trigger first boot | `ConditionFirstBoot=yes` (used by `systemd-firstboot.service`) requires `/etc/machine-id` to contain the literal string `uninitialized\n`, not an empty file. Use `printf 'uninitialized\n' > /etc/machine-id` in the OCI stack integration-commands. |
 
+## Unit tests needing a D-Bus session cannot run in a BST sandbox
+
+`dbus-daemon` refuses to start in any BST sandbox, so upstream test suites that spawn a private
+session bus (`dbus-run-session`) cannot be run there — not in `bst shell --build`, and not from
+an element's `build-commands`. Confirmed 2026-08-17 while trying to run noctalia's
+`secret_prompter` test after a fork rebase.
+
+The error is actively misleading:
+
+```
+dbus[2389]: Could not get password database information for UID of current process:
+            Looking up user ID 0: No such file or directory
+dbus[2389]: Failed to start message bus: Memory allocation failure in message bus
+dbus-run-session: EOF reading address from bus daemon
+```
+
+It is not memory. **The sandbox has no passwd database at all**, and `dbus-daemon` resolves its
+own uid at startup before anything else. Note it fails for *root* too: `id -u` in a build sandbox
+returns `0`, and even uid 0 has no `/etc/passwd` entry to find.
+
+Routes that do not work, so nobody spends another four build cycles on them:
+
+| Attempt | Result |
+|---|---|
+| Append an entry to `/etc/passwd` in `bst shell --build` | `/etc/passwd: Read-only file system` |
+| Same from an element's `build-commands` | Also read-only — a build sandbox root is *not* writable, only the build dir and `/tmp` are |
+| Add `components/dbus-base.bst` + `dbus-tools.bst` to get a daemon | Non-whitelisted overlaps against `libdbus.bst`/`dbus.bst`, which are already in any closure pulling `sdbus-cpp`. `dbus-run-session` is already present; the daemon was never the missing piece |
+| Run as root instead of the build user | Already root; changes nothing |
+
+`dbus-run-session` and `meson` *are* available in the sandbox, so the test **builds and starts** —
+which makes this look like a real test failure in CI-style output. Read the stderr before
+believing it.
+
+**What to do instead.** Verify the parts the sandbox can prove — that it compiles, and that the
+D-Bus surface is in the binary:
+
+```shell
+strings usr/bin/noctalia | grep -c org.gnome.keyring.SystemPrompter   # 1
+strings usr/bin/noctalia | grep -oE 'libgcr-4\.so[0-9.]*' | sort -u   # libgcr-4.so.4
+```
+
+…then get behavioural coverage from a booted image or the live session, and for a rebase, prove
+the code did not change (`docs/skills/workflow.md` § *Rebasing a carried fork branch*). A literal
+string absent from the binary is not automatically a regression: `sx-aes-1` lives in
+`libgcr-4.so.4`, not in noctalia, because `GcrSecretExchange` builds that header — check which
+library owns a string before treating `grep -c` → `0` as a finding.
+
 ## Job Parallelism in `kind: manual`
 
 `kind: manual` build sandboxes do NOT have the `JOBS` environment variable set. Only BST's meson/cmake buildsystem plugins inject `JOBS`. Use `$(nproc)` instead.

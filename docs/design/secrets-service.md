@@ -299,10 +299,28 @@ available.
 
 ## Status: implemented on a fork (2026-08-12)
 
-Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`, commit
-`ba821c7da`, based on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`). **No PR or issue
+Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`. Originally commit
+`ba821c7da` on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`); **rebased 2026-08-17 onto
+upstream `main` `87b203c68` (`v5.0.0-beta.8-135`), now at `47c1df893`.** **No PR or issue
 has been opened against `noctalia-dev/noctalia`** — per AGENTS.md's Upstream Gate that needs
 an explicit instruction naming that action. The branch loses nothing by waiting.
+
+The rebase absorbed 98 upstream commits with **no source conflict** — the 1722-line feature
+commit applied untouched. The only conflict was documentation: upstream moved its dependency
+lists out of `README.md` into a new `BUILDING.md`, so the `gcr-4` package names moved there,
+including for the AerynOS entry upstream added in the meantime (`gcr-devel`, verified against
+the `g/gcr` recipe in `AerynOS/recipes`, which provides `pkgconfig(gcr-4)` at 4.4.0.1 — the
+same version krytis pins).
+
+Every hunk the branch introduces is byte-identical before and after the rebase, across all 9
+modified upstream files, and all 6 branch-owned files are byte-identical too. That is why the
+2026-08-12 runtime verification below still stands rather than needing to be redone: the
+prompter code did not change, only the code around it moved forward. Method in
+`docs/skills/workflow.md` § *Rebasing a carried fork branch*.
+
+noctalia's own `secret_prompter` unit test could not be re-run as part of this: `dbus-daemon`
+cannot start in a BST sandbox at all (no passwd database), so the test builds and then fails on
+bus startup. See `docs/skills/bst.md` § *Unit tests needing a D-Bus session*.
 
 What landed:
 
