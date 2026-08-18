@@ -19,3 +19,10 @@ depends:
   # ── Terminal ───────────────────────────────────────────────────────────────
   # Warp: agentic terminal, prebuilt .deb, x86_64 + aarch64. Closes #315.
   - desktop/warp.bst
+
+  # ── Chat ───────────────────────────────────────────────────────────────────
+  # Equibop: Discord client (Vesktop/Equicord fork), portable tarball,
+  # x86_64 + aarch64. Native rather than flatpak so RPC sockets land in the
+  # real $XDG_RUNTIME_DIR and game detection sees host PIDs (#591, #595).
+  # Closes #609.
+  - desktop/equibop.bst

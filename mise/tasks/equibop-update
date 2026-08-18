@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#MISE description="Update equibop element to the latest release"
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/equibop.bst"
+
+# build/icon.svg is pinned at a commit, not at the release tag, so it survives
+# version bumps untouched. That only stays correct while upstream leaves the
+# icon alone — this check is what notices when they do not.
+check_icon_drift() {
+  local tag="$1" pinned upstream
+  pinned=$(grep -A1 'github_raw:' "${ELEMENT}" | grep -oP 'ref: \K\S+')
+  upstream=$(curl -sSL "https://raw.githubusercontent.com/Equicord/Equibop/${tag}/build/icon.svg" | sha256sum | awk '{print $1}')
+
+  if [ "${pinned}" != "${upstream}" ]; then
+    echo "==> WARNING: upstream build/icon.svg changed at ${tag}"
+    echo "    pinned:   ${pinned}"
+    echo "    upstream: ${upstream}"
+    echo "    Re-pin the github_raw source in ${ELEMENT} to the commit that changed it:"
+    echo "      gh api 'repos/Equicord/Equibop/commits?path=build/icon.svg&per_page=1' --jq '.[0].sha'"
+  else
+    echo "==> Icon pin still matches upstream build/icon.svg"
+  fi
+}
+
+echo "==> Fetching latest Equicord/Equibop release..."
+LATEST_TAG=$(gh api repos/Equicord/Equibop/releases/latest --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+echo "==> Latest: ${LATEST_VER} (${LATEST_TAG})"
+
+CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+check_icon_drift "${LATEST_TAG}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# Upstream names the x86_64 tarball without an arch suffix and the aarch64 one
+# with -arm64, so the two are matched by their full asset filename rather than
+# by a shared arch token.
+declare -A ASSET=(
+  [x86_64]="equibop-${CURRENT_VER}.tar.gz"
+  [aarch64]="equibop-${CURRENT_VER}-arm64.tar.gz"
+)
+
+for ARCH in x86_64 aarch64; do
+  OLD_NAME="${ASSET[$ARCH]}"
+  NEW_NAME="${OLD_NAME/${CURRENT_VER}/${LATEST_VER}}"
+  URL="https://github.com/Equicord/Equibop/releases/download/${LATEST_TAG}/${NEW_NAME}"
+  FILE="${TMPDIR}/${NEW_NAME}"
+
+  echo "==> Downloading ${URL}..."
+  curl -fsSL "$URL" -o "$FILE"
+  SHA256=$(sha256sum "$FILE" | awk '{print $1}')
+  echo "    ${ARCH} sha256=${SHA256}"
+
+  # Replace the ref on the line following this arch's url:
+  sed -i "\|${OLD_NAME}|{n;s|ref: .*|ref: ${SHA256}|}" "${ELEMENT}"
+  sed -i "s|${OLD_NAME}|${NEW_NAME}|" "${ELEMENT}"
+done
+
+sed -i "s|version: \"${CURRENT_VER}\"|version: \"${LATEST_VER}\"|" "${ELEMENT}"
+# Rewrite the tag path segment by position, not by expecting the old tag to be
+# "v${CURRENT_VER}" — upstream is free to change tag shape between releases.
+sed -i "s|releases/download/[^/]*/|releases/download/${LATEST_TAG}/|g" "${ELEMENT}"
+
+echo "==> Done: ${CURRENT_VER} → ${LATEST_VER}. Run 'mise run validate' to verify."

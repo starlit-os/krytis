@@ -30,14 +30,20 @@ The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only 
 | Goal | Command |
 |------|---------|
 | Validate full element graph (no build) | `mise validate [--container]` |
-| Inspect element deps | `mise bst [--container] show elements/krytis/<name>.bst` |
-| Build one element | `mise bst [--container] build elements/krytis/<name>.bst` |
-| Enter build sandbox | `mise bst [--container] shell --build elements/krytis/<name>.bst` |
-| Track a git/tarball ref | `mise bst [--container] source track elements/krytis/<name>.bst` |
-| List built element contents | `mise bst [--container] artifact list-contents elements/krytis/<name>.bst` |
-| View build log | `mise bst [--container] artifact log elements/krytis/<name>.bst` |
-| Delete cached build | `mise bst [--container] artifact delete elements/krytis/<name>.bst` |
+| Inspect element deps | `mise bst [--container] show desktop/<name>.bst` |
+| Build one element | `mise bst [--container] build desktop/<name>.bst` |
+| Enter build sandbox | `mise bst [--container] shell --build desktop/<name>.bst` |
+| Track a git/tarball ref | `mise bst [--container] source track desktop/<name>.bst` |
+| List built element contents | `mise bst [--container] artifact list-contents desktop/<name>.bst` |
+| View build log | `mise bst [--container] artifact log desktop/<name>.bst` |
+| Delete cached build | `mise bst [--container] artifact delete desktop/<name>.bst` |
 | Full image build | `mise build` |
+
+**Element names are relative to `element-path: elements` (project.conf), not to the repo
+root.** `mise bst build elements/desktop/equibop.bst` fails with `Could not find element
+… Did you mean 'desktop/equibop.bst'?` — pass `desktop/equibop.bst`. There is no
+`elements/krytis/` directory; elements live in `core/`, `desktop/`, `config/`, `stacks/`,
+`oci/`, `overrides/`, `deps/`, `dev/`, `plugins/`.
 
 ## Variables
 
@@ -993,6 +999,111 @@ sources:
 - `strip-binaries: ''` and `strip-commands: [':']` required — pre-built ELFs must not be stripped.
 - Check RPATH with `readelf -d <binary> | grep RPATH` before deciding on the install layout.
 
+### Electron self-updaters on a read-only image — pick the artifact, not a patch
+
+*Source: `elements/desktop/equibop.bst` (#609).*
+
+Every `electron-builder` app that depends on `electron-updater` ships a live self-updater,
+and on a bootc image every install path it knows is wrong. **Which** updater it instantiates
+is decided by one file in the payload, so the artifact you choose settles the problem before
+it exists. From `electron-updater/out/main.js`:
+
+```js
+_autoUpdater = new AppImageUpdater()
+const identity = path.join(process.resourcesPath, "package-type")
+if (!existsSync(identity)) return _autoUpdater      // ← nothing else runs
+switch (readFileSync(identity).toString().trim()) {
+  case "deb": _autoUpdater = new DebUpdater(); break
+  case "rpm": _autoUpdater = new RpmUpdater(); break
+  case "pacman": _autoUpdater = new PacmanUpdater(); break
+}
+```
+
+- The **`.deb`/`.rpm` artifacts write `resources/package-type`**, selecting `DebUpdater` /
+  `RpmUpdater`. Those are fully active: they poll GitHub on launch, prompt, download the
+  package (~190 MB for Equibop), then fail in `doInstall` on `hasCommand("dpkg")` /
+  `hasCommand("apt")` — neither exists here. The user sees this on every upstream release.
+- The **portable `tar.gz` ships no `package-type`**, so it falls through to
+  `AppImageUpdater`, whose `isUpdaterActive()` returns `false` when `$APPIMAGE` is unset.
+  `AppUpdater.checkForUpdates()` short-circuits to `null`: no request, no prompt, nothing to
+  fail. This is the Electron equivalent of `zen-browser.bst`'s `DisableAppUpdate` policy.
+- **Verify at runtime, one command, no display needed:**
+  `env -u WAYLAND_DISPLAY -u DISPLAY HOME=$(mktemp -d) ./equibop` prints
+  `APPIMAGE env is not defined, current application is not an AppImage` — that is
+  electron-updater's own `isUpdaterActive()` log, and its presence *is* the proof the
+  updater is off. Reading the source is not enough; check for this line. If it is missing
+  and the app instead fetches `latest-linux.yml`, the updater is armed.
+
+So **prefer the portable tarball over the `.deb` for any `electron-updater` app**, and check
+`resources/package-type` in the payload before assuming otherwise. Don't reach for the
+`.deb` because it looks better integrated — see the cost table below. Deleting
+`resources/package-type` in `install-commands` reaches the same end state, but it is a
+hand-maintained deletion that fails *silently* if a version bump drops it.
+
+Do not assume the app guards the updater behind a setting or an env var: Equibop's
+`src/main/startup.ts` begins `import "./updater"`, and `updater.ts` calls
+`autoUpdater.checkForUpdates()` at module load. There is nothing to switch off.
+
+**What the `.deb` actually buys you, for an app whose two artifacts are byte-identical**
+(verify: compare `app.asar`, the main binary and any sidecars by size/md5 across both):
+
+| | `.deb` | portable `tar.gz` |
+|---|---|---|
+| updater | armed and broken | inert by construction |
+| build-deps | `binutils` (`ar`) + `tar` | none beyond `runtime-minimal` |
+| relocation | payload under `/opt/<App>/`, dead on bootc — must move | strips to staging root |
+| `/usr/bin` entry | `postinst` only, never in `data.tar.xz` — recreate by hand | hand-written either way |
+| `.desktop` | shipped, but `Exec=/opt/…` — **unusable as-is** | absent |
+| icon | shipped | absent |
+
+The `.desktop` line is the one that decides it: rewriting `Exec=` needs `sed`, which
+`runtime-minimal` does not have (§ Prebuilt Binary Elements), so you hand-author the entry
+under either artifact and the `.deb`'s only remaining gift is the icon file.
+
+**Getting the icon without the `.deb`:** take upstream's own source icon as a second
+`kind: remote` source, pinned at a **commit**, not at the release tag — then version bumps
+leave it alone:
+
+```yaml
+sources:
+# directory: bundle keeps the app tree out of the staging root so the icon can
+# sit beside it and `cp -a bundle/.` stays version-proof.
+- kind: tar
+  directory: bundle
+  url: github_files:Equicord/Equibop/releases/download/vVER/equibop-VER.tar.gz
+  ref: <sha256>
+- kind: remote
+  filename: equibop.svg
+  url: github_raw:Equicord/Equibop/<commit-sha>/build/icon.svg
+  ref: <sha256>
+```
+
+- `github_raw` (`https://raw.githubusercontent.com/`) exists in `include/aliases.yml` for
+  exactly this. `github_files` reaches raw blobs only via a redirect — pin the real host.
+- Equibop's `build/icon.svg` is byte-identical to the SVG `electron-builder` generates into
+  the `.deb`, so nothing is lost. Check this before assuming the source icon is equivalent.
+- A commit pin can silently go stale when upstream redraws the icon. Have the update task
+  compare the tag's `build/icon.svg` hash against the pinned `ref` and warn — see
+  `mise/tasks/equibop-update`.
+- Upstream's `linux.desktop.entry` block in `package.json` is the authoritative source for
+  the hand-written `.desktop` (it is richer than the generated one — Equibop's `.deb` entry
+  loses `Categories=…;InstantMessaging;Chat;`).
+
+**`chrome-sandbox` needs no setuid here.** It ships `0755`; upstream's `postinst` chmods it
+`4755` *only* when user namespaces are unavailable. krytis re-enables
+`kernel.unprivileged_userns_clone` (`files/desktop-tweaks/sysctl.d/99-userns.conf`), so
+Chromium takes the namespace sandbox. Do not add setuid handling for an Electron app.
+
+**Runtime deps: read the ELF, then add back the dlopens.** `readelf -d <app-binary>` gives
+the direct set (for Equibop: gtk3, nss, at-spi2-core, libxkbcommon, alsa-lib, cups, dbus,
+systemd/libudev — plus `RPATH: $ORIGIN`, which is what forces the private-directory layout
+above). It will *not* show `libsecret` (`safeStorage`), `libnotify`, `pipewire`
+(screen share, `@vencord/venmic`), `libXtst`/`libXss`. Cross-check against the `.deb`'s
+`control` `Depends:` line even when shipping the tarball — that list is free metadata and
+catches the dlopened libraries. `libgbm.so.1` is the exception: leave it undeclared, since
+`freedesktop-sdk.bst:vm/mesa-default.bst` in `stacks/desktop.bst` installs the
+`ld.so.conf.d` entry that resolves mesa image-wide.
+
 ### A prebuilt binary's RUNPATH into `/usr/local` is dead on bootc
 
 Same trap as `/opt` below, reached through `RUNPATH` instead of through payload paths.
@@ -1805,6 +1916,13 @@ Key points:
 
 Two separate mechanisms, two separate verdicts. Do not conflate them.
 
+**Resolved for Equibop by leaving the sandbox.** `elements/desktop/equibop.bst`
+(#609) installs Equibop natively, so it holds `discord-ipc-0` in the real
+`$XDG_RUNTIME_DIR` and shares the host PID namespace — both mechanisms below
+work with no bridging and no overrides. Everything that follows still applies to
+every Discord client that stays a flatpak, and to any future consumer probing
+for a socket. Prefer a native element over bridging when the choice is open.
+
 **`$XDG_RUNTIME_DIR/discord-ipc-N` is namespaced per app.** Inside any sandbox
 that path is backed by `$XDG_RUNTIME_DIR/.flatpak/<app-id>/xdg-run/discord-ipc-N`
 on the host — never by a shared location. A client's socket is host-visible, but
@@ -1833,7 +1951,9 @@ Consequences that cost real time to rediscover:
   which probes canonical → `app/com.discordapp.Discord/` →
   `.flatpak/dev.vencord.Vesktop/xdg-run/` →
   `.flatpak/com.discordapp.Discord/xdg-run/` → the two `snap.discord*` paths.
-  Copy that list rather than inventing one. It has **no Equibop entry**.
+  Copy that list rather than inventing one. It has **no Equibop entry** and does
+  not need one: the native element puts Equibop's socket at the canonical path,
+  which is the first entry `rpc-bridge` probes.
 
 **Game detection can never work in flatpak.** Discord matches running processes
 against a known-executable list, and a flatpak app is in its own PID namespace:

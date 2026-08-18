@@ -11,6 +11,9 @@ aliases:
   ftp_gnu_org: https://ftp.gnu.org/gnu/
   codeberg_files: https://codeberg.org/
   github_files: https://github.com/
+  # raw file blobs pinned at a commit (github_files serves these only via a
+  # redirect to this host) — see elements/desktop/equibop.bst.
+  github_raw: https://raw.githubusercontent.com/
   gitlab_files: https://gitlab.com/
   gnome_downloads: https://download.gnome.org/sources/
   proton_me: https://proton.me/
