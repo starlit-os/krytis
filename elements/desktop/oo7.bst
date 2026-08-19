@@ -50,7 +50,7 @@ sources:
   # 0.7.0.alpha is a lightweight tag and git-describe ignores it; the trailing
   # sha is the real pin.
   track: refs/heads/main
-  ref: v0.6.0-alpha-234-gc2aa2315f99d47aaf8f59d1e9ad831276777cad1
+  ref: v0.6.0-alpha-235-gefaddec99ec68703f4a4df08d646d268eb902843
 
 # oo7 resolves the caller's session type through logind, which cannot attribute
 # any client of a systemd-managed session -- so the CLI prompter is still
@@ -991,18 +991,26 @@ sources:
     version: 1.5.0
     sha: 3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328
   - kind: registry
+    name: zgvariant
+    version: 1.0.0
+    sha: 60f1fd025a5215c4071378b7660d019b5588210c8645fb01f99fe30ecb382923
+  - kind: registry
+    name: zgvariant_derive
+    version: 1.0.0
+    sha: 9e85114cc9a835a222b21d5be18e488d7eb3c41a66c9be4ec9b9b58b94b9e5b8
+  - kind: registry
     name: zmij
     version: 1.0.23
     sha: 29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b
   - kind: registry
     name: zvariant
-    version: 5.14.0
-    sha: b5e28c25bd8bb8da5a1f3e7065d0c156b9ee9a7973adf78b0e35eaefdf3b1b5c
+    version: 5.15.0
+    sha: c1d34c27cc6cdd1f458427519dd6b8612f7b7e3f7b9a0b2355d041dda9869147
   - kind: registry
     name: zvariant_derive
-    version: 5.14.0
-    sha: d496a145685283b67e232bd9e47377f6b60ad9d51e3601b23867f77c42477f96
+    version: 5.15.0
+    sha: 864155e69b4352db0c7f374917bf45d1e0c8d17659c8b3dbf9795f3673f8c497
   - kind: registry
     name: zvariant_utils
-    version: 4.0.0
-    sha: 629d80ece222cad20fe0e8741be493c4ab166acf3b85341bdc2cdbcfd8f3c2d6
+    version: 4.2.0
+    sha: bad0294361a320b694a328460dc73add56c306150f5cb6bfafc44446120008a3
