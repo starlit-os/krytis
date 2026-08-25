@@ -15,7 +15,7 @@ kind: manual
 # quickcheck -> rand 0.8.5 (GHSA-cq8v-f236-94qc, Low, fixed at 0.9.3) ends up
 # vendored into the image's SBOM despite never being compiled. rand's own
 # semver range (0.8.x -> 0.9.x) can't be crossed by a plain `cargo update`,
-# and no freedesktop-sdk release as of 26.08beta.3 bumps the rust-bindgen ref
+# and no freedesktop-sdk release as of 26.08rc.1 bumps the rust-bindgen ref
 # past v0.72.1 to pick up an upstream fix either. See #498.
 #
 # Everything except the extra sources mirrors freedesktop-sdk exactly, so BST
@@ -32,14 +32,12 @@ kind: manual
 # pin) upstream.
 
 build-depends:
-# fdsdk 26.08 split public-stacks/runtime-minimal.bst: the shell and coreutils
-# it used to imply now have to be named. Upstream's own element added these two
-# in the same bump — mirror them or `mise run rust-bindgen-check` fails.
-- freedesktop-sdk.bst:bootstrap/bash.bst
-- freedesktop-sdk.bst:bootstrap/coreutils.bst
-- freedesktop-sdk.bst:components/gcc.bst
-- freedesktop-sdk.bst:components/rust.bst
-- freedesktop-sdk.bst:components/stripper.bst
+# Upstream churned this list twice inside the 26.08 cycle: beta.3 spelled out
+# bash/coreutils/gcc/rust/stripper (the shell and coreutils that used to be
+# implicit in runtime-minimal, before 26.08 split it), then rc.1 collapsed the
+# lot into one buildsystem stack. Mirror whatever they have; `mise run
+# rust-bindgen-check` is what catches the next move.
+- freedesktop-sdk.bst:public-stacks/buildsystem-rust.bst
 
 depends:
 - freedesktop-sdk.bst:components/llvm.bst

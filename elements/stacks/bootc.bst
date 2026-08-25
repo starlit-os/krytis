@@ -7,7 +7,10 @@ depends:
   - freedesktop-sdk.bst:components/skopeo.bst
   - freedesktop-sdk.bst:components/systemd-ukify.bst
   - freedesktop-sdk.bst:components/sbsigntools-maybe.bst
-  - freedesktop-sdk.bst:components/efitools.bst
+  # efitools' sign-efi-sig-list, for the Containerfile's SEAL_SECURE_BOOT
+  # stage. Vendored: fdsdk deleted its EFI element family in 26.08. See
+  # elements/core/efitools.bst.
+  - core/efitools.bst
   - core/bootc.bst
   - core/efibootmgr.bst
   - config/bootc.bst

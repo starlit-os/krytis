@@ -919,6 +919,10 @@ jobs:
             element: desktop/nlohmann-json.bst
             branch: auto/track-nlohmann-json
             title: "chore(deps): update nlohmann-json"
+          - group: efitools
+            element: core/efitools.bst
+            branch: auto/track-efitools
+            title: "chore(deps): update efitools"
           - group: kmscon
             element: desktop/kmscon.bst
             branch: auto/track-kmscon
