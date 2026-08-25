@@ -50,7 +50,7 @@ sources:
   # 0.7.0.alpha is a lightweight tag and git-describe ignores it; the trailing
   # sha is the real pin.
   track: refs/heads/main
-  ref: v0.6.0-alpha-239-g439bee24357a5f30e1fd77cf44b5e76be4d08758
+  ref: v0.6.0-alpha-240-g6fef31c30ad200c35c507794caa4306501b0c79d
 
 # oo7 resolves the caller's session type through logind, which cannot attribute
 # any client of a systemd-managed session -- so the CLI prompter is still
