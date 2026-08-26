@@ -50,5 +50,8 @@ config:
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
     components/rust-bindgen.bst: overrides/rust-bindgen.bst
+    # abseil 20260526.0 includes <bmi2intrin.h> directly, which GCC rejects.
+    # Only reachable with __BMI2__, i.e. only on krytis's x86_64_v3 build.
+    components/abseil-cpp.bst: overrides/abseil-cpp.bst
     components/openssh.bst: core/openssh.bst
     extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst
