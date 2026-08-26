@@ -22,6 +22,15 @@ sources:
     url: ghostty_releases:1.3.1/ghostty-1.3.1.tar.gz
     ref: 3349d25600ffbda281197a18314f7d18791969cffe9474f0ff16a45a9ebfccdb
 
+  # Zig 0.15.2 knows glibc up to 2.42; fdsdk 26.08 ships 2.44, so zig's stub
+  # libc lacks the @GLIBC_2.43 symbols fdsdk's libgraphene-1.0.so references
+  # and ld.lld refuses the link. Sets exe.allow_shlib_undefined, since the
+  # real glibc resolves those at load time. Drop once ghostty tags a release
+  # built on a Zig whose abilists cover 2.44 (v1.3.1 pins 0.15.2 as its
+  # minimum, and no newer ghostty tag exists). See krytis#305.
+  - kind: patch
+    path: patches/ghostty/allow-shlib-undefined.patch
+
   # Top-level Zig dependencies
   - kind: remote
     url: ghostty_deps:libxev-34fa50878aec6e5fa8f532867001ab3c36fae23e.tar.gz

@@ -53,5 +53,8 @@ config:
     # abseil 20260526.0 includes <bmi2intrin.h> directly, which GCC rejects.
     # Only reachable with __BMI2__, i.e. only on krytis's x86_64_v3 build.
     components/abseil-cpp.bst: overrides/abseil-cpp.bst
+    # Held at 0.3.0: niri's vendored libdisplay-info-sys caps at < 0.4.0 and
+    # has no v0_4 bindings. Only niri and wlroots consume it.
+    components/libdisplay-info.bst: overrides/libdisplay-info.bst
     components/openssh.bst: core/openssh.bst
     extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst
