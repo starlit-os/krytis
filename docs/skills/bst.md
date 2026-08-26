@@ -1733,6 +1733,17 @@ BST validates `kind: local` paths at resolution time (before any build), so the 
    - **glibc outran a bundled toolchain's ABI knowledge.** fdsdk ships glibc 2.44; Zig 0.15.2's abilists stop at 2.42, so Zig's synthesised stub libc lacks the `@GLIBC_2.43` symbols that GCC-built system libraries reference, and `ld.lld` rejects the link with `--no-allow-shlib-undefined`. This is specific to toolchains that synthesise their own libc (Zig, and anything cross-compiling) — the symbols do exist in the real glibc at load time, so `linker_allow_shlib_undefined` is a legitimate answer rather than a suppression. Field name gotcha: it is `linker_allow_shlib_undefined` on `std.Build.Step.Compile` in Zig 0.15.2, not `allow_shlib_undefined`.
 
    The common lesson: **before reaching for a version bump as the fix, check that a newer version exists and would actually help.** All three had a tempting "just update it" that was wrong — libqalculate's `configure.ac` sets no C++ standard on any version including master, niri v26.04 *is* the newest release and the crate has no 0.4-capable version at all, and ghostty v1.3.1 is the newest tag with a Zig floor of exactly the version that fails. Confirming that took minutes each and saved three pointless bumps.
+8. **An upstream element grew a file yours already owned, and nothing notices until compose (Phase 3 of #305, 2026-08-26).** The last failure of the bump, and the only one where every element *built* successfully. fdsdk 26.08's ncurses added a `ghostty` entry to its own terminfo database, so `/usr/share/terminfo/g/ghostty` was suddenly installed by two elements and `oci/krytis/runtime.bst` refused to stage:
+
+   ```
+   /usr/share/terminfo/g/ghostty: desktop/ghostty.bst is not permitted to overlap
+   other elements, order desktop/ghostty.bst above freedesktop-sdk.bst:bootstrap/ncurses.bst
+   [overlaps]: Non-whitelisted overlaps detected
+   ```
+
+   `mise run validate` cannot see this — it resolves the graph, it never composes it. Neither can any drift or reference check. **It arrives last, after everything compiles**, which means a bump is not clear of this class until the image itself assembles, and fixing an earlier element can be what exposes it.
+
+   Resolve with a one-entry `overlap-whitelist` on the element that should win (see § Additive Rust replacements). Decide *which* should win on provenance: ghostty's terminfo is compiled from the source shipped with that exact release, ncurses carries a database snapshot that lags whatever the terminal implements, so ghostty's copy is the correct one. **Scope the whitelist from evidence, not from the error message** — `bst artifact list-contents` on both artifacts showed exactly one colliding path, since ghostty's `/usr/share/terminfo/x/xterm-ghostty` is unique to it. One line, not a glob over the terminfo tree. A glob here would silently absorb the *next* collision too, which is precisely the warning you want to keep.
 
 ## System Tool Requirements for `bst source track`
 

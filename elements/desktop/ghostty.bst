@@ -3,6 +3,23 @@ kind: manual
 variables:
   strip-binaries: ""
 
+# fdsdk 26.08's ncurses added a `ghostty` entry to its own terminfo database,
+# so /usr/share/terminfo/g/ghostty is now installed by two elements and
+# oci/krytis/runtime.bst fails to stage with `[overlaps]: Non-whitelisted
+# overlaps detected` (project.conf makes overlaps fatal). ghostty's copy wins:
+# it is compiled from the terminfo source shipped with this exact ghostty
+# release, whereas ncurses carries a snapshot of the upstream terminfo
+# database that lags whatever the terminal actually implements.
+#
+# Only this one path collides. ghostty also installs
+# /usr/share/terminfo/x/xterm-ghostty, which ncurses does not ship —
+# verified with `bst artifact list-contents` on both artifacts, so the
+# whitelist is one entry rather than a glob over the terminfo tree.
+public:
+  bst:
+    overlap-whitelist:
+    - /usr/share/terminfo/g/ghostty
+
 build-depends:
   - desktop/zig.bst
   - freedesktop-sdk.bst:components/tar.bst
