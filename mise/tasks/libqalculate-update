@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#MISE description="Update libqalculate element to the latest GitHub release"
+
+# elements/desktop/libqalculate.bst is `kind: tar`, and `bst source track` is a
+# no-op on that source kind — so without this task the element silently falls
+# out of the automated update loop. It did: it sat on v5.10.0 while upstream
+# shipped v5.11.0 and v5.12.0, and nothing in the repo could say so (#640).
+#
+# Per AGENTS.md's update path gate, this task is paired with a
+# `track-libqalculate` job in .github/workflows/track-bst-sources.yml.
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/libqalculate.bst"
+REPO="Qalculate/libqalculate"
+
+echo "==> Fetching latest ${REPO} release..."
+LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+LATEST_VER="${LATEST_TAG#v}"
+
+echo "==> Latest: ${LATEST_TAG}"
+
+CURRENT_VER=$(grep -oP 'libqalculate-\K[0-9.]+(?=\.tar\.gz)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
+  echo "==> Already up to date (${CURRENT_VER})"
+  exit 0
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ARCHIVE="libqalculate-${LATEST_VER}.tar.gz"
+BASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}"
+
+echo "==> Downloading ${ARCHIVE}..."
+curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
+echo "    sha256=${SHA}"
+
+CURRENT_SHA=$(grep -A1 "libqalculate-${CURRENT_VER}.tar.gz" "${ELEMENT}" | grep 'ref:' | awk '{print $2}')
+
+echo "==> Updating ${ELEMENT}: ${CURRENT_VER} → ${LATEST_VER}"
+sed -i "s|libqalculate-${CURRENT_VER}.tar.gz|libqalculate-${LATEST_VER}.tar.gz|g" "${ELEMENT}"
+sed -i "s|download/[^/]*/libqalculate|download/${LATEST_TAG}/libqalculate|" "${ELEMENT}"
+sed -i "s|ref: ${CURRENT_SHA}|ref: ${SHA}|" "${ELEMENT}"
+
+# The element forces C++17 via `CXX="g++ -std=gnu++17"` because libqalculate's
+# configure.ac sets no C++ standard at all, while ICU >= 78 headers require one
+# (an `auto` non-type template parameter in unicode/localpointer.h). See #305.
+#
+# Check each new release whether upstream has taken that on, so the override
+# does not outlive its reason. Advisory only — never fail the update over it.
+echo "==> Checking whether upstream now sets a C++ standard..."
+tar xzf "${TMPDIR}/${ARCHIVE}" -C "${TMPDIR}" 2>/dev/null || true
+SRCDIR="${TMPDIR}/libqalculate-${LATEST_VER}"
+if [ -d "${SRCDIR}" ] && grep -rqE 'AX_CXX_COMPILE_STDCXX|ax_cv_cxx_compile_cxx1[7-9]|std=(gnu|c)\+\+1[7-9]' \
+        "${SRCDIR}/configure.ac" "${SRCDIR}/configure" 2>/dev/null; then
+    echo "    NOTE: ${LATEST_TAG} appears to select a C++ standard itself."
+    echo "    Try dropping the CXX=\"g++ -std=gnu++17\" override from ${ELEMENT}"
+    echo "    (variables.conf-local) and rebuilding — if it still compiles against"
+    echo "    ICU, the workaround and its comment can go. See #305."
+else
+    echo "    Still sets no C++ standard — keep the CXX override."
+fi
+
+echo "==> Done. Run 'mise run validate' to verify."

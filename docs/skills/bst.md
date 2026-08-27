@@ -686,6 +686,32 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
 
+### Auditing the whole tree for elements with no update path (#640)
+
+The gate is per-PR, so it only catches elements as they are *added*. Nothing re-checks the
+existing tree, and a `kind: tar` element with no task fails silently and permanently — the
+symptom is not an error, it is the absence of update PRs, which nobody notices.
+`desktop/libqalculate.bst` sat two releases stale that way and was only spotted because it
+failed to build for an unrelated reason during the fdsdk 26.08 bump (#305).
+
+Audit the whole tree instead of trusting the gate. The check is: an element is covered iff
+some `mise/tasks/*` file references its path **and** the workflow runs that task.
+
+```bash
+# untrackable elements: a tar/remote source and no `track:` anywhere in the file
+for f in $(grep -rlE '^\s*-?\s*kind:\s*(tar|remote)' elements/); do
+    grep -qE '^\s*track:' "$f" || echo "$f"
+done
+```
+
+Then, for each hit, grep `mise/tasks/` for the element path and
+`.github/workflows/track-bst-sources.yml` for the task name.
+
+**Match on the element path, not the task name.** Several updaters are not named after their
+element and a name-based check reports them as false gaps: `core/linux-cachyos.bst` is updated
+by `kernel-update`, and `desktop/zig.bst` by `ghostty-update` (which bumps Zig when ghostty's
+`minimum_zig_version` moves). A naive name match over-reported 12 gaps where there were 9.
+
 ### An auto-track `ref:` bump never builds the element — upstream dep additions land broken
 
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new

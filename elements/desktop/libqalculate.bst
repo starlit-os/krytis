@@ -14,8 +14,8 @@ depends:
 
 sources:
 - kind: tar
-  url: github_files:Qalculate/libqalculate/releases/download/v5.10.0/libqalculate-5.10.0.tar.gz
-  ref: 904592d33a98ed4a26a59fa34c855578e096144fb91965b8afc90e06797dba8e
+  url: github_files:Qalculate/libqalculate/releases/download/v5.12.0/libqalculate-5.12.0.tar.gz
+  ref: f3dfdcf97d5a9e3a5bc0ebe66afd184721b606276eee3ba0ada8c92a5e71d44c
 
 variables:
   # CXX carries the standard, rather than CXXFLAGS, on purpose. The release
