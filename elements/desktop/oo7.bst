@@ -43,21 +43,23 @@ config:
 sources:
 - kind: git_repo
   url: github:linux-credentials/oo7.git
-  # Tracking main, not tags: 0.7.0.alpha predates both the peer-session
-  # prompter rework (oo7#530) and the explicit libpam link in pam/build.rs
-  # (oo7#546), and no tag carries either. Switch back to a tag glob once one
-  # exists past c2aa2315. The describe prefix reads v0.6.0-alpha-234 because
-  # 0.7.0.alpha is a lightweight tag and git-describe ignores it; the trailing
-  # sha is the real pin.
+  # Tracking main, not tags: no tag yet carries the explicit libpam link in
+  # pam/build.rs (oo7#546) or the session-detection cascade below. Switch back
+  # to a tag glob once one exists past f6a8624a. The describe prefix reads
+  # v0.6.0-alpha-* because 0.7.0.alpha is a lightweight tag and git-describe
+  # ignores it; the trailing sha is the real pin.
+  #
+  # krytis carried patches/oo7/prompter-detect-session-type.patch here until
+  # 2026-08-27. It is gone because upstream solved the same problem better in
+  # f6a8624a ("server: detect graphical sessions under systemd --user
+  # compositors", oo7#558): SessionType::detect() now cascades from_logind ->
+  # from_environ(pid) -> from_systemd_user_environment(), where the last step
+  # reads the systemd --user manager's exported environment over D-Bus. That
+  # is precisely the case krytis hit -- logind cannot attribute any client of
+  # a systemd-managed session, because the login scope holds only the session
+  # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-240-g6fef31c30ad200c35c507794caa4306501b0c79d
-
-# oo7 resolves the caller's session type through logind, which cannot attribute
-# any client of a systemd-managed session -- so the CLI prompter is still
-# chosen and every unlock fails. Upstream oo7#530 (closed, insufficient here),
-# downstream krytis#588.
-- kind: patch
-  path: patches/oo7/prompter-detect-session-type.patch
+  ref: v0.6.0-alpha-244-ge830f53dd84aefaec72e6971596062b395673ba0
 
 - kind: cargo2
   url: crates:crates
@@ -272,8 +274,8 @@ sources:
     sha: f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2
   - kind: registry
     name: ecb
-    version: 0.2.0
-    sha: fbfbf3db731928d6912bc3beda911d55b834cee3df6131ba79b337a1298a3fa9
+    version: 0.2.1
+    sha: 26f2a8b3e564eba0877223dc343703ad0385794e882e6d13f3a4dd5c6b1f41ac
   - kind: registry
     name: endi
     version: 1.1.1
@@ -992,12 +994,12 @@ sources:
     sha: 3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328
   - kind: registry
     name: zgvariant
-    version: 1.0.0
-    sha: 60f1fd025a5215c4071378b7660d019b5588210c8645fb01f99fe30ecb382923
+    version: 1.1.0
+    sha: 63e0c3a9bc69ca818b5281575046ec75ff9a0f66fdfe35f4b94abbdc85968e83
   - kind: registry
     name: zgvariant_derive
-    version: 1.0.0
-    sha: 9e85114cc9a835a222b21d5be18e488d7eb3c41a66c9be4ec9b9b58b94b9e5b8
+    version: 1.1.0
+    sha: a67e56f4a51d6e02ab7faa5237abbaaa1fa4358af8d0cadfede6663e59211d1f
   - kind: registry
     name: zmij
     version: 1.0.23

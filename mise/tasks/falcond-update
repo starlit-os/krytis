@@ -7,8 +7,28 @@ ELEMENT="elements/desktop/falcond.bst"
 API="https://git.pika-os.com/api/v1/repos/general-packages/falcond/releases/latest"
 BASE_URL="https://git.pika-os.com/general-packages/falcond/archive"
 
+# git.pika-os.com sits behind Cloudflare, which blocks well-known CLI user
+# agents outright: curl/*, Wget/* and Python-urllib/* all get 403 plus a
+# "Just a moment..." HTML interstitial. It is a denylist rather than an
+# allowlist, so any honest identifying string gets through — including
+# BuildStream's own "BuildStream/2", which is why `bst source fetch` and
+# therefore the actual builds never broke, only this task.
+#
+# Do not "fix" this by pretending to be a browser. Identify as krytis and
+# link back, so the operator on the other side can see who is calling.
+UA="krytis/1.0 (+https://github.com/starlit-os/krytis)"
+
 echo "==> Fetching latest falcond release..."
-LATEST_TAG=$(curl -sf "$API" | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
+# -f alone made curl exit quietly and hand python an empty stdin, which then
+# died with "JSONDecodeError: Expecting value: line 1 column 1 (char 0)" --
+# a traceback that says nothing about the 403 that caused it. -S restores the
+# error message, and the explicit empty check names the failure outright.
+RELEASE_JSON=$(curl -fsS -A "$UA" "$API") || {
+  echo "ERROR: could not reach ${API} — if this is an HTTP 403, git.pika-os.com's bot filter has changed and the User-Agent above needs revisiting." >&2
+  exit 1
+}
+[ -n "$RELEASE_JSON" ] || { echo "ERROR: ${API} returned an empty body." >&2; exit 1; }
+LATEST_TAG=$(printf '%s' "$RELEASE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
 LATEST_VER="${LATEST_TAG#v}"
 
 echo "==> Latest: ${LATEST_TAG}"
@@ -27,7 +47,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 ARCHIVE="${LATEST_TAG}.tar.gz"
 echo "==> Downloading ${ARCHIVE}..."
-curl -sSL "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+curl -fsSL -A "$UA" "${BASE_URL}/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
 SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
 echo "    sha256=${SHA}"
 

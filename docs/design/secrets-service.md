@@ -100,7 +100,7 @@ oo7 + noctalia's native prompter now, carrying two known defects and two workaro
 | Accepted | Consequence | Workaround in tree | Exit condition |
 |---|---|---|---|
 | **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked | upstream reports locked items from `SearchItems` |
-| **#588** — prompter detection picks the CLI prompter | every unlock prompt fails with `CliPrompter does not exist` | `patches/oo7/prompter-detect-session-type.patch` (rewritten 2026-08-16 for upstream's new peer-session detection) | upstream handles a peer logind cannot attribute — *not* oo7#530, which is closed and insufficient |
+| ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
 | **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
 
@@ -541,11 +541,12 @@ workaround?". Re-read this doc when any of these move:
 
 - **oo7 reports locked items from `SearchItems`** (#585) → re-enable FIDO2 login in
   `config/greetd-config.bst` and delete the mitigation comment there.
-- **oo7 handles a peer logind cannot attribute** → drop
+- ~~**oo7 handles a peer logind cannot attribute**~~ → **fired 2026-08-27.**
   `patches/oo7/prompter-detect-session-type.patch` and its wiring in
-  `elements/desktop/oo7.bst`. Note oo7#530 itself is already **closed** (9f4de634) without
-  this being true — see § *2026-08-16 re-pin* — so the trigger is a follow-up fix, not that
-  issue.
+  `elements/desktop/oo7.bst` are deleted. The trigger was correctly written as "a follow-up
+  fix, not oo7#530" — the follow-up turned out to be `f6a8624a` / oo7#558, which upstream
+  found independently. It surfaced downstream as the `track-oo7` CI job going red, because
+  the patch stopped applying to the reworked code.
 - **oo7#506 gains a maintainer-endorsed direction** → revisit FIDO2 login independently of
   #585; the two reasons it is off are separable.
 - **The noctalia prompter is upstreamed** → repoint `elements/desktop/noctalia.bst` back to
