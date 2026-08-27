@@ -285,7 +285,7 @@ This matters when testing a prompter: **libsecret's `lookup` does request an unl
 locked items — so "lookup did not prompt" almost always means the collection was never locked,
 not that the prompter failed.
 
-## krytis patches oo7's prompter detection (`patches/oo7/`)
+## oo7's prompter detection, and the patch krytis no longer needs
 
 oo7 chooses between the GNOME prompter (`org.gnome.keyring.SystemPrompter`) and a CLI
 prompter. When it guesses wrong, every libsecret caller gets:
@@ -347,14 +347,40 @@ app on a session where the compositor is a user unit (krytis, GNOME OS, uwsm-sty
 `loginctl show-session -p Scope` versus the client's cgroup is the two-command check that
 settles it.
 
-### What krytis carries
+### Attempt 3 — upstream fixed it, and krytis's patch is gone (2026-08-27)
 
-`patches/oo7/prompter-detect-session-type.patch` adds `SessionType::from_env()` (reads
-`XDG_SESSION_TYPE`, set by pam_systemd at session open and inherited by the user manager) and
-uses it **only** as a fallback: `from_logind(pid).unwrap_or_else(SessionType::from_env)`.
-That keeps upstream's per-caller answer wherever logind can give one — a peer in a real tty
-scope still resolves to `Tty` and still gets the CLI prompter — and falls back to the
-daemon's own session otherwise.
+krytis carried `patches/oo7/prompter-detect-session-type.patch` from 2026-08-16 until
+2026-08-27, adding a `SessionType::from_env()` fallback that read `XDG_SESSION_TYPE`.
+**It has been dropped.** Upstream solved the same problem, better, in `f6a8624a`
+("server: detect graphical sessions under systemd --user compositors", oo7#558).
+
+`SessionType::detect()` now cascades, stopping at the first check that places the peer in a
+session at all:
+
+| step | source | why it exists |
+|---|---|---|
+| `from_logind(pid)` | `GetSessionByPID` | correct when the peer really is in a session scope |
+| `from_environ(pid)` | `/proc/<pid>/environ` | per-peer `WAYLAND_DISPLAY`/`DISPLAY`, no logind needed |
+| `from_systemd_user_environment()` | systemd `--user` manager's exported environment over D-Bus | session-wide last resort — exactly krytis's case |
+
+Upstream's is strictly better than what krytis carried: it asks the *peer* first
+(`/proc/<pid>/environ`) and only falls back to a session-wide answer, where krytis's patch
+jumped straight to the daemon's own `XDG_SESSION_TYPE`. Their third step's doc comment
+describes krytis's setup almost verbatim — "systemd-integrated compositors import
+`WAYLAND_DISPLAY`/`DISPLAY` into it on startup … only consulted once `logind` can't place the
+peer anywhere".
+
+**How the patch's removal was noticed:** it stopped applying, and the `track-oo7` CI job went
+red. A patch that suddenly refuses to apply is worth reading as a signal that upstream
+reworked the same code, not just as a rebase chore — here the right move was to delete it,
+not rebase it for a third time.
+
+### What krytis used to carry
+
+The patch added `SessionType::from_env()` (reading `XDG_SESSION_TYPE`, set by pam_systemd at
+session open and inherited by the user manager) and used it **only** as a fallback:
+`from_logind(pid).unwrap_or_else(SessionType::from_env)`. Kept here because the reasoning
+still explains why the naive fix is wrong, and because the tty case below still applies.
 
 | peer resolution | session type | prompter chosen |
 |---|---|---|
@@ -369,8 +395,8 @@ the attempt-1 patch, and it only bites if a secret is requested over ssh.
 
 ### `mise run oo7-prompter-test` gates it
 
-Because oo7 has now broken this twice via two unrelated mechanisms, the check is a task
-rather than an investigation. It runs the built `oo7-daemon` on a **private D-Bus session**
+Because oo7 has now broken this twice and then fixed it once, all via unrelated mechanisms,
+the check is a task rather than an investigation. It runs the built `oo7-daemon` on a
 with its own `XDG_DATA_HOME`/`XDG_RUNTIME_DIR`, stands a stub in noctalia's place as the owner
 of `org.gnome.keyring.SystemPrompter`, and stores a secret into the fresh (locked) `login`
 collection to force a prompt. A pass is the stub being called; a fail is `CliPrompter`
@@ -380,7 +406,8 @@ The isolation matters: it never takes `org.freedesktop.secrets` on the real sess
 never locks the live login collection — which would make every read return "no such secret"
 for the rest of the session (#585).
 
-Measured A/B on the `c2aa2315` artifact, same session, only the patch differing:
+Measured A/B on the `c2aa2315` artifact, same session, only the patch differing — this is the
+historical record from when the patch was still needed:
 
 ```
 # without patches/oo7/prompter-detect-session-type.patch
@@ -392,17 +419,24 @@ Measured A/B on the `c2aa2315` artifact, same session, only the patch differing:
 
 # with it
 ==> PASS: oo7-daemon reached org.gnome.keyring.SystemPrompter
+```
+
+**Current state, 2026-08-27, at ref `e830f53d` with no patch at all:**
+
+```
+==> Session: XDG_SESSION_TYPE=wayland
+==> PASS: oo7-daemon reached org.gnome.keyring.SystemPrompter
 ==> oo7-prompter-test passed.
 ```
 
-That is the proof that upstream's oo7#530 fix does not cover krytis: the failing run *is*
-upstream `main`.
+That is what made dropping the patch safe rather than hopeful: the same task that proved the
+patch was *needed* now passes without it. Keep the task — it is the regression gate for a
+behaviour upstream has already broken twice, and its value does not depend on krytis carrying
+a patch.
 
-**Drop the patch when upstream handles an unresolvable peer session** — oo7#530 is *closed*
-(9f4de634, 2026-08-15), so watch for a follow-up rather than that issue. The original
-reporter was on GNOME OS, which is also systemd-managed, so upstream has plausibly not fixed
-the case it closed. Reporting that needs an explicit go-ahead per AGENTS.md's Upstream Gate.
-Downstream tracking and full analysis: krytis#588.
+krytis#588 can be closed on this. The Upstream Gate note that used to sit here — reporting
+the gap to oo7 needing an explicit go-ahead — is moot: upstream found and fixed it
+independently in oo7#558.
 
 ## A locked oo7 collection returns "no such secret", not a prompt
 
