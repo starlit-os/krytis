@@ -87,5 +87,5 @@ variables:
 
 sources:
 - kind: tar
-  url: freedesktop_files:wlroots/wlroots/-/archive/0.20.1/wlroots-0.20.1.tar.gz
-  ref: e9e699a06492121153ce3a3448b0aa610f3285130754b85fbb58736c931fffec
+  url: freedesktop_files:wlroots/wlroots/-/archive/0.20.2/wlroots-0.20.2.tar.gz
+  ref: 972c7ac44b17828f4702bfae7cd8347346a3fb5b2c1076cfa2c3fcedac5ec343
