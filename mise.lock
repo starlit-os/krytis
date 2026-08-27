@@ -5,9 +5,9 @@ version = "0.26.1"
 backend = "aqua:sharkdp/bat"
 
 [tools.bat."platforms.linux-x64"]
-checksum = "sha256:0dcd8ac79732c0d5b136f11f4ee00e581440e16a44eab5b3105b611bbf2cf191"
-url = "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/sharkdp/bat/releases/assets/323549429"
+checksum = "sha256:726f04c8f576a7fd18b7634f1bbf2f915c43494c1c0f013baa3287edb0d5a2a3"
+url = "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/sharkdp/bat/releases/assets/323549181"
 
 [[tools.cosign]]
 version = "3.1.3"
@@ -77,13 +77,13 @@ url = "https://github.com/oras-project/oras/releases/download/v1.3.3/oras_1.3.3_
 url_api = "https://api.github.com/repos/oras-project/oras/releases/assets/472780866"
 
 [[tools.pass-cli]]
-version = "2.3.2"
+version = "2.3.3"
 backend = "github:protonpass/pass-cli"
 
 [tools.pass-cli."platforms.linux-x64"]
-checksum = "sha256:f95c6b39b45d96b670f249ccbb56b06b3a17d4579357d2d04c4ac64e4ffbeff7"
-url = "https://github.com/protonpass/pass-cli/releases/download/2.3.2/pass-cli-linux-x86_64"
-url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/514427517"
+checksum = "sha256:b5b49a8b3fd0af8830c0c1979f28ea0c90ccece73f59023a8bca8245d4b68da9"
+url = "https://github.com/protonpass/pass-cli/releases/download/2.3.3/pass-cli-linux-x86_64"
+url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/529321902"
 
 [[tools.python]]
 version = "3.12.14"
