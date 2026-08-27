@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+#MISE description="Update a tarball-pinned element to its latest upstream release"
+#USAGE arg "<name>" required=#false help="Entry from the table below, or 'all' to walk every entry"
+#USAGE flag "--list" help="Print the table and exit"
+
+# `bst source track` is a no-op on `kind: tar` and `kind: remote`, so every
+# element pinned that way needs an explicit update path or it silently stops
+# receiving updates (AGENTS.md § Update path gate). Nine elements had none;
+# #648 collected them.
+#
+# They are near-identical apart from where the version comes from and how the
+# URL is spelled, so this is one parameterised task plus a table rather than
+# nine copies of the same script. `.github/workflows/track-bst-sources.yml`
+# drives it from a matrix, the same shape the `track` job already uses.
+#
+# Adding an entry: append a row to TARGETS and add the name to the workflow
+# matrix. Nothing else.
+#
+# Row format:  name|element|provider|locator|extra
+#
+#   github-release   locator=<owner/repo>   extra=<tarball basename prefix>
+#       Latest GitHub *release*, asset published on the release itself:
+#       .../releases/download/<tag>/<prefix>-<version>.tar.gz
+#
+#   github-tag       locator=<owner/repo>   extra=<tag prefix, "" or "v">
+#       Latest GitHub release, but consuming the auto-generated tag archive:
+#       .../archive/refs/tags/<tag>.tar.gz
+#
+#   gitlab-fdo-tag   locator=<group/project> extra=<archive basename prefix>
+#       gitlab.freedesktop.org tag archive:
+#       .../-/archive/<tag>/<prefix>-<tag>.tar.gz
+#
+#   pypi             locator=<pypi name>    extra=<unused>
+#       Latest sdist. The URL contains a content hash directory, so it is read
+#       from the JSON API rather than constructed.
+#
+#   zig-series       locator=<series>       extra=<unused>
+#       ziglang.org download index, constrained to a release series. zig-0.16
+#       is deliberately held on 0.16.x because falcond declares
+#       minimum_zig_version 0.16.0 and ghostty is still on 0.15.2 — so this
+#       must never wander to 0.17.
+TARGETS=(
+    "cage|elements/desktop/cage.bst|github-release|cage-kiosk/cage|cage"
+    "greetd|elements/desktop/greetd.bst|github-tag|kennylevinsen/greetd|"
+    "gtk4-layer-shell|elements/desktop/gtk4-layer-shell.bst|github-tag|wmww/gtk4-layer-shell|v"
+    "sdbus-cpp|elements/desktop/sdbus-cpp.bst|github-tag|Kistler-Group/sdbus-cpp|v"
+    "wlr-randr|elements/desktop/wlr-randr.bst|gitlab-fdo-tag|emersion/wlr-randr|wlr-randr"
+    "wlroots|elements/desktop/wlroots.bst|gitlab-fdo-tag|wlroots/wlroots|wlroots"
+    "buildstream-plugins|elements/plugins/buildstream-plugins.bst|pypi|buildstream-plugins|"
+    "buildstream-plugins-community|elements/plugins/buildstream-plugins-community.bst|pypi|buildstream-plugins-community|"
+    "zig-0.16|elements/desktop/zig-0.16.bst|zig-series|0.16|"
+)
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+UA="krytis/1.0 (+https://github.com/starlit-os/krytis)"
+
+if [ "${usage_list:-}" = "true" ] || [ "${1:-}" = "--list" ]; then
+    printf '%-30s %s\n' "NAME" "ELEMENT"
+    for row in "${TARGETS[@]}"; do
+        IFS='|' read -r n e _ _ _ <<<"$row"
+        printf '%-30s %s\n' "$n" "$e"
+    done
+    exit 0
+fi
+
+WANT="${1:-}"
+[ -n "$WANT" ] || { echo "ERROR: name required (or 'all'). Try --list." >&2; exit 1; }
+
+fetch_sha() {
+    local url="$1" out
+    out="$(mktemp)"
+    curl -fsSL -A "$UA" "$url" -o "$out" || { rm -f "$out"; return 1; }
+    sha256sum "$out" | awk '{print $1}'
+    rm -f "$out"
+}
+
+# Rewrite the `url:` line matching $2 and the `ref:` that follows it.
+#
+# Deliberately not `sed s|$cur|$new|g`. A blanket version substitution assumes
+# the filename only changes by its version, and PyPI breaks that: under PEP 625
+# buildstream-plugins' sdist became buildstream_plugins-2.8.0.tar.gz, so
+# substituting 2.5.0 -> 2.8.0 produced a 404 URL carrying a *correct* sha256 —
+# a dead link that only surfaces on a cold fetch. A blanket substitution also
+# rewrites any other occurrence of the version string in the element.
+set_url_and_ref() {
+    local file="$1" urlmatch="$2" newurl="$3" newref="$4"
+    python3 - "$file" "$urlmatch" "$newurl" "$newref" <<'PY'
+import re, sys
+path, urlmatch, newurl, newref = sys.argv[1:5]
+lines = open(path).read().splitlines(keepends=True)
+for i, l in enumerate(lines):
+    if re.match(r'^\s*url:', l) and urlmatch in l:
+        indent = re.match(r'^(\s*)', l).group(1)
+        lines[i] = f"{indent}url: {newurl}\n"
+        for j in range(i + 1, min(i + 4, len(lines))):
+            if re.match(r'^\s*ref:', lines[j]):
+                rindent = re.match(r'^(\s*)', lines[j]).group(1)
+                lines[j] = f"{rindent}ref: {newref}\n"
+                break
+        break
+else:
+    sys.exit(f"no url line matching {urlmatch!r} in {path}")
+open(path, "w").writelines(lines)
+PY
+}
+
+update_one() {
+    local name="$1" row element provider locator extra
+    row=""
+    for r in "${TARGETS[@]}"; do
+        [ "${r%%|*}" = "$name" ] && row="$r" && break
+    done
+    [ -n "$row" ] || { echo "ERROR: unknown name '$name'. Try --list." >&2; return 1; }
+    IFS='|' read -r _ element provider locator extra <<<"$row"
+
+    echo "==> ${name} (${provider}, ${locator})"
+    # url    = where to download from, to compute the sha256
+    # elem   = what to write into the element, using the project's alias
+    local cur new url elem
+
+    case "$provider" in
+      github-release)
+        cur=$(grep -oP "${extra}-\K[0-9][0-9.]*(?=\.tar\.gz)" "$element" | head -1)
+        local tag; tag=$(gh api "repos/${locator}/releases/latest" --jq '.tag_name')
+        new="${tag#v}"
+        url="https://github.com/${locator}/releases/download/${tag}/${extra}-${new}.tar.gz"
+        elem="github_files:${locator}/releases/download/${tag}/${extra}-${new}.tar.gz"
+        ;;
+      github-tag)
+        cur=$(grep -oP "archive/refs/tags/${extra}\K[0-9][0-9.]*(?=\.tar\.gz)" "$element" | head -1)
+        # Tags, not releases. greetd is a sourcehut project whose GitHub mirror
+        # carries tags but publishes no Releases, so releases/latest 404s there.
+        # Reading tags works for every repo in this table and needs no
+        # per-entry special-casing.
+        new=$(gh api --paginate "repos/${locator}/tags" --jq '.[].name' \
+              | grep -E '^v?[0-9]+(\.[0-9]+)*$' | sed 's/^v//' | sort -V | tail -1)
+        url="https://github.com/${locator}/archive/refs/tags/${extra}${new}.tar.gz"
+        elem="github_files:${locator}/archive/refs/tags/${extra}${new}.tar.gz"
+        ;;
+      gitlab-fdo-tag)
+        cur=$(grep -oP "/-/archive/v?\K[0-9][0-9.]*(?=/)" "$element" | head -1)
+        local proj; proj=$(printf '%s' "$locator" | jq -sRr @uri)
+        # Tag list is ordered newest-first by the API's default (updated desc);
+        # sort explicitly so a re-tagged old release cannot win.
+        local tag
+        tag=$(curl -fsS -A "$UA" "https://gitlab.freedesktop.org/api/v4/projects/${proj}/repository/tags?per_page=50" \
+              | jq -r '.[].name' | grep -E '^v?[0-9]+(\.[0-9]+)*$' | sed 's/^v//' \
+              | sort -V | tail -1)
+        new="$tag"
+        # Preserve whichever tag spelling the element already uses.
+        local tagpfx=""; grep -q "/-/archive/v" "$element" && tagpfx="v"
+        url="https://gitlab.freedesktop.org/${locator}/-/archive/${tagpfx}${new}/${extra}-${tagpfx}${new}.tar.gz"
+        elem="freedesktop_files:${locator}/-/archive/${tagpfx}${new}/${extra}-${tagpfx}${new}.tar.gz"
+        ;;
+      pypi)
+        cur=$(grep -oP "${locator//-/[-_]}-\K[0-9][0-9.]*(?=\.tar\.gz)" "$element" | head -1)
+        local meta; meta=$(curl -fsS -A "$UA" "https://pypi.org/pypi/${locator}/json")
+        new=$(printf '%s' "$meta" | jq -r '.info.version')
+        url=$(printf '%s' "$meta" | jq -r --arg v "$new" '.releases[$v][] | select(.packagetype=="sdist") | .url')
+        # Take the API's own path rather than rebuilding one: PEP 625 changed
+        # sdist filenames from hyphens to underscores, and the hashed directory
+        # cannot be derived at all.
+        elem="pypi:${url#https://files.pythonhosted.org/packages/}"
+        ;;
+      zig-series)
+        cur=$(grep -oP "download/\K[0-9][0-9.]*(?=/zig-x86_64)" "$element" | head -1)
+        new=$(curl -fsS -A "$UA" https://ziglang.org/download/index.json \
+              | jq -r 'keys[]' | grep -E "^${locator}\." | sort -V | tail -1 || true)
+        [ -n "$new" ] || { echo "    no ${locator}.x release published yet — nothing to do"; return 0; }
+        url="https://ziglang.org/download/${new}/zig-x86_64-linux-${new}.tar.xz"
+        elem=""   # handled per-arch below
+        ;;
+      *) echo "ERROR: unknown provider '$provider'" >&2; return 1 ;;
+    esac
+
+    echo "    current: ${cur:-?}   latest: ${new}"
+    if [ "$cur" = "$new" ]; then
+        echo "    already up to date"
+        return 0
+    fi
+
+    local sha; sha=$(fetch_sha "$url") || { echo "ERROR: download failed: $url" >&2; return 1; }
+    echo "    ${url}"
+    echo "    sha256=${sha}"
+
+    if [ "$provider" = "zig-series" ]; then
+        # Two architectures, two url/ref pairs.
+        local aarch_url="https://ziglang.org/download/${new}/zig-aarch64-linux-${new}.tar.xz"
+        local aarch_sha; aarch_sha=$(fetch_sha "$aarch_url") || { echo "ERROR: download failed: $aarch_url" >&2; return 1; }
+        set_url_and_ref "$element" "zig-x86_64-linux-${cur}.tar.xz" \
+            "ziglang:download/${new}/zig-x86_64-linux-${new}.tar.xz" "$sha"
+        set_url_and_ref "$element" "zig-aarch64-linux-${cur}.tar.xz" \
+            "ziglang:download/${new}/zig-aarch64-linux-${new}.tar.xz" "$aarch_sha"
+    else
+        set_url_and_ref "$element" "$cur" "$elem" "$sha"
+    fi
+
+    echo "    updated ${element}: ${cur} -> ${new}"
+}
+
+if [ "$WANT" = "all" ]; then
+    # Keep going past a failure and report at the end. `all` is the audit run —
+    # stopping at the first broken upstream would hide the state of everything
+    # after it, which is exactly the blind spot #648 was about.
+    FAILED=()
+    for row in "${TARGETS[@]}"; do
+        update_one "${row%%|*}" || FAILED+=("${row%%|*}")
+    done
+    if [ ${#FAILED[@]} -gt 0 ]; then
+        echo
+        echo "==> FAILED: ${FAILED[*]}"
+        exit 1
+    fi
+else
+    update_one "$WANT"
+fi
+
+echo "==> Done. Run 'mise run validate' to verify."
