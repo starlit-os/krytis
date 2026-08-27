@@ -8,13 +8,17 @@
 #
 # A mirrored element silently rots: bumping the gnome-build-meta junction moves
 # the upstream systemd ref and build config, while the copy keeps building the
-# old one. This task diffs the two, ignoring comments, blank lines and the
-# `kind: patch` source the override adds, and fails on any other difference.
+# old one. This task diffs the two, ignoring comments, blank lines, the lines
+# the mirror deliberately adds, and the upstream constructs it deliberately
+# replaces — and fails on anything else.
 #
-# When it fails, either resync the copy against upstream, or — if the junction
-# now carries systemd v261 or newer, which contains b8968c49 — delete the
-# override element, its patch, this task and the overrides entry in
-# elements/freedesktop-sdk.bst.
+# When it fails, resync the copy against upstream. Do NOT delete the override
+# just because the junction's systemd version looks new enough: no released
+# systemd carries b8968c49 yet (it landed on main after the v261 series was
+# cut), so the real exit condition is v262. This task reports the junction's
+# version but cannot tell whether the fix is in it — grep the tag's own
+# src/update-utmp/update-utmp.c for the short "update-utmp" literal. See #642
+# and the header of the override element.
 
 set -euo pipefail
 
@@ -25,11 +29,67 @@ UPSTREAM_PATH="elements/core-deps/systemd-base.bst"
 PATCH="patches/systemd/update-utmp-shorten-comm.patch"
 
 # Lines the mirror adds on purpose; everything else must match upstream.
+# The track/exclude trio is the stable arm of upstream's `channel` conditional,
+# flattened — see CHANNEL_BLOCK_RE below.
 LOCAL_ADDITIONS=(
     "- kind: patch"
     "  path: $PATCH"
     '  project_licensedir: "%{licensedir}/gnome"'
+    "- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst"
+    "- freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst"
+    "  track: v*"
+    "  exclude:"
+    "  - '*-rc*'"
 )
+
+# Lines upstream has that the mirror deliberately does NOT, because they cannot
+# resolve inside krytis's project. Each is replaced by an entry above. Keeping
+# them listed here — rather than loosening the diff — means a genuine upstream
+# change to any *other* line still fails the check.
+#
+#   *-for-recc.yml:     gnome-build-meta's remote-execution plumbing; expands
+#                       to gcc / llvm+zlib with a RECC digest-environment.
+#                       krytis does not use recc and already depends on llvm.
+#   buildsystems/meson: a gnome-build-meta-internal element.
+#   runtime-minimal:    replaced by runtime-gnu — after fdsdk 26.08 the minimal
+#                       stack no longer carries a shell.
+#
+# These are whole-line exact matches on strings that appear exactly once. Do not
+# add short or repeated lines here: `grep -vxF` drops *every* occurrence, and an
+# entry like "  (?):" would also delete the unrelated `arch in [...]` conditional
+# further down the file. That is why the channel block is handled as a range
+# below instead.
+UPSTREAM_IGNORES=(
+    "- (@): include/gcc-for-recc.yml"
+    "- (@): include/clang-for-recc.yml"
+    "- buildsystems/meson.bst"
+    "- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst"
+)
+
+# Upstream's source-level `channel` conditional, which krytis flattens to the
+# stable arm because it defines no `channel` project option:
+#
+#   (?):
+#   - channel == "nightly":
+#       track: main
+#   - channel == "stable":
+#       track: v*
+#       exclude:
+#       - '*-rc*'
+#
+# Deleted as a one-shot block, NOT a sed range. `sed '/start/,/end/d'` restarts:
+# once the first range closes it keeps scanning, hits the *second* `  (?):`
+# (the `arch in [...]` conditional under `variables:`), finds no further end
+# anchor and deletes to EOF — 90 lines instead of 7, which silently truncates
+# the upstream side and makes the whole tail look like local drift.
+drop_channel_block() {
+    awk -v start='  (?):' -v end="      - '*-rc*'" '
+        !done && !blk && $0 == start { blk = 1; next }
+        blk && $0 == end             { blk = 0; done = 1; next }
+        blk                          { next }
+        { print }
+    '
+}
 
 if [ ! -f "$OVERRIDE" ]; then
     echo "==> $OVERRIDE is gone — nothing to check."
@@ -54,22 +114,25 @@ if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
     exit 1
 fi
 
-# Strip comments and blank lines from both, and the deliberate additions from ours.
+# Strip comments and blank lines from both, the deliberate additions from ours,
+# and the deliberately-unmirrored constructs from theirs.
 normalise() {
     grep -vE '^\s*#|^\s*$' "$1"
 }
 
-drop_local_additions() {
+drop_lines() {
+    local -n _patterns=$1
     local args=()
     local line
-    for line in "${LOCAL_ADDITIONS[@]}"; do
+    for line in "${_patterns[@]}"; do
         args+=(-e "$line")
     done
     grep -vxF "${args[@]}"
 }
 
-normalise "$TMP/upstream.bst" >"$TMP/upstream.norm"
-normalise "$OVERRIDE" | drop_local_additions >"$TMP/override.norm"
+drop_channel_block <"$TMP/upstream.bst" | grep -vE '^\s*#|^\s*$' \
+    | drop_lines UPSTREAM_IGNORES >"$TMP/upstream.norm"
+normalise "$OVERRIDE" | drop_lines LOCAL_ADDITIONS >"$TMP/override.norm"
 
 if ! diff -u --label "gnome-build-meta/$UPSTREAM_PATH" "$TMP/upstream.norm" \
         --label "$OVERRIDE" "$TMP/override.norm"; then

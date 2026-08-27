@@ -5,23 +5,47 @@ kind: meson
 # freedesktop-sdk junction (see elements/freedesktop-sdk.bst overrides).
 #
 # The patch backports systemd b8968c49 ("update-utmp: shorten comm on
-# boot/shutdown"), which landed after v260 was cut. Without it,
-# systemd-update-utmp.service fails on every boot with "Failed to send audit
-# message: Invalid argument" and the system reports `degraded` (#417): libaudit
-# rejects any comm argument of 16 bytes or more, and v260 passes the 19-byte
-# "systemd-update-utmp".
+# boot/shutdown"). Without it, systemd-update-utmp.service fails on every boot
+# with "Failed to send audit message: Invalid argument" and the system reports
+# `degraded` (#417): libaudit rejects any comm argument of 16 bytes or more,
+# and systemd passes the 19-byte "systemd-update-utmp".
 #
-# Everything except the extra source mirrors gnome-build-meta exactly, so BST
-# reuses the remote-cached artifacts of the shared dependency graph; only
-# systemd itself rebuilds.
+# THE EXIT CONDITION IS v262, NOT v261. This comment used to say "delete once
+# the junction carries systemd v261 or newer, which contains b8968c49
+# upstream". That was wrong, and acting on it would have silently reinstated
+# #417 — a degraded boot, every boot, with no build error. No released systemd
+# carries the fix: b8968c49 landed on `main` on 2026-07-29, after the whole
+# v261 series was cut, and has not been backported to the v261 stable branch.
+# Checked by reading src/update-utmp/update-utmp.c at every tag from v260 to
+# v261.2 — all of them still pass the long string (#642).
+#
+# So: delete this element, its patch and the override entry once the junction
+# carries systemd **v262** or newer. Verify the same way rather than trusting
+# this comment — grep the tag's own update-utmp.c for the short "update-utmp"
+# literal. `mise run systemd-base-check` reports the junction's version but
+# cannot tell whether the fix is in it.
 #
 # Update path: tied to the gnome-build-meta.bst junction ref — no separate
 # tracking. When the junction bumps, resync this file against
 # elements/core-deps/systemd-base.bst in gnome-build-meta; `mise run
 # systemd-base-check` diffs the two and fails on drift.
 #
-# Delete this element, its patch and the override entry once the junction
-# carries systemd v261 or newer, which contains b8968c49 upstream.
+# This is NOT a byte-faithful mirror, and cannot be. Three upstream constructs
+# do not resolve in krytis's project and are deliberately replaced; the check
+# carries the same list in UPSTREAM_IGNORES with matching reasons:
+#
+#   - the `(?) channel == nightly/stable` conditional on the source, because
+#     krytis defines no `channel` project option. Flattened to the stable arm,
+#     which is what krytis wants regardless.
+#   - `(@): include/{gcc,clang}-for-recc.yml`, gnome-build-meta's remote-
+#     execution plumbing. They expand to gcc / llvm+zlib carrying
+#     `digest-environment: RECC_REMOTE_PLATFORM_chrootRootDigest`. krytis does
+#     not use recc, and llvm is already in the dependency list below.
+#   - `buildsystems/meson.bst`, a gnome-build-meta-internal element. Replaced
+#     by freedesktop-sdk's buildsystem-meson plus runtime-gnu (upstream relies
+#     on runtime-minimal, which no longer carries a shell after fdsdk 26.08).
+
+
 
 sources:
 - kind: git_repo
@@ -29,7 +53,8 @@ sources:
   track: v*
   exclude:
   - '*-rc*'
-  ref: v260.2-0-gf1d0952a125b96b7ab2f1ff29a87448ade8ac29b
+  version-guess-pattern: '(\d+)(?:\.(\d+))?'
+  ref: v261.2-0-g4925d9f07fc697efccd98a93046ff535b8832445
 - kind: patch
   path: patches/systemd/update-utmp-shorten-comm.patch
 
@@ -87,16 +112,6 @@ config:
       shopt -u nullglob
 
 variables:
-  # Local addition, not upstream. `project_licensedir` is
-  # `%{licensedir}/%{project-name}`, so building this element in krytis rather
-  # than in gnome-build-meta moves the harvested licence tree from
-  # /usr/share/licenses/gnome/systemd to /usr/share/licenses/krytis/systemd.
-  # gnome-build-meta's core-deps/systemd.bst and systemd-libs.bst are filters
-  # over this element and both carry those files; their overlap-whitelist
-  # expands in the *gnome* project's scope, so at the moved path it no longer
-  # matches and every consumer fails to stage with `[overlaps]: Non-whitelisted
-  # overlaps detected`. Pin the path so the artifact stays byte-identical in
-  # layout to the element being mirrored.
   project_licensedir: "%{licensedir}/gnome"
   efi: 'false'
   bpf-framework: 'disabled'
