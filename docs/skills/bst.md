@@ -684,7 +684,35 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | Source kind | Update mechanism |
 |---|---|
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
-| `kind: tar` / `kind: remote` (tarball-pinned) | Add a `<name>-update` mise task **and** a dedicated CI job in `track-bst-sources.yml` following the `track-mise` pattern |
+| `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps) and `falcond-update` are the standing examples |
+
+### One shared updater, not one script per element (#648)
+
+`mise/tasks/tarball-update` covers nine elements through four providers, because they differ
+only in where the version comes from and how the URL is spelled. `--list` prints the table;
+`tarball-update all` walks every entry and is the audit run — it keeps going past a failing
+upstream and reports at the end, since stopping at the first would hide the state of
+everything after it.
+
+Two things that bit while writing it, both worth knowing before adding a provider:
+
+- **Use tags, not releases, for GitHub tag archives.** `repos/<repo>/releases/latest` 404s on
+  projects that tag but never publish a Release. `greetd` is the case here — a sourcehut
+  project whose GitHub side is a mirror.
+- **Never bump a version with a blanket `sed s|$old|$new|g`.** PyPI renamed sdists from
+  hyphens to underscores under PEP 625, so substituting `2.5.0` → `2.8.0` in
+  `buildstream-plugins-2.5.0.tar.gz` produced a **404 URL carrying a correct sha256** — a
+  dead link that no checksum check catches and that only surfaces on a cold fetch. Rewrite
+  the whole `url:` line from what the upstream API actually returned, and take PyPI's hashed
+  path verbatim rather than reconstructing one. A blanket substitution also rewrites any
+  other occurrence of the version string in the element.
+
+**Series-pinned elements need a constrained tracker, not the latest release.**
+`desktop/zig-0.16.bst` exists because falcond declares `minimum_zig_version = "0.16.0"` while
+ghostty is still on 0.15.2. Tracking "latest Zig" would silently move it to 0.17 and break
+falcond, so its provider is `zig-series` with the series as the locator. Any element that is
+pinned to a major/minor on purpose wants the same treatment — check *why* a version is pinned
+before writing its updater.
 
 ### Auditing the whole tree for elements with no update path (#640)
 
