@@ -8,7 +8,7 @@ build-depends:
 
 depends:
 - freedesktop-sdk.bst:bootstrap/libxcrypt.bst
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/systemd-libs.bst # libfido2 depends on udev
 
 runtime-depends:

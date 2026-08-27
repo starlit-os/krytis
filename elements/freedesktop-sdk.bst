@@ -3,8 +3,8 @@ kind: junction
 sources:
 - kind: git_repo
   url: gitlab:freedesktop-sdk/freedesktop-sdk.git
-  track: freedesktop-sdk-25.08*
-  ref: freedesktop-sdk-25.08.16-0-gc4f8b7234c787e8282fb9d4f208b08f9f677eba9
+  track: freedesktop-sdk-26.08*
+  ref: freedesktop-sdk-26.08rc.1-0-ge076d4978ee6945763486f6ebd755d189460e4e7
 
 config:
   options:
@@ -29,7 +29,6 @@ config:
     components/python3-gi-docgen.bst: gnome-build-meta.bst:sdk/gi-docgen.bst
     components/graphene.bst: gnome-build-meta.bst:sdk/graphene.bst
     components/gsettings-desktop-schemas.bst: gnome-build-meta.bst:sdk/gsettings-desktop-schemas.bst
-    components/gtk-doc.bst: gnome-build-meta.bst:sdk/gtk-doc.bst
     components/gtk3.bst: gnome-build-meta.bst:sdk/gtk+-3.bst
     components/libibus.bst: gnome-build-meta.bst:sdk/libibus.bst
     components/json-glib.bst: gnome-build-meta.bst:sdk/json-glib.bst
@@ -43,14 +42,19 @@ config:
     components/zenity.bst: gnome-build-meta.bst:void/zenity.bst
     components/linux-module-cert.bst: gnome-build-meta.bst:gnomeos/linux-module-cert.bst
     # gnome-build-meta's systemd-base + backported update-utmp comm fix (#417)
-    components/systemd-base.bst: overrides/systemd-base.bst
+    components/_private/systemd-base.bst: overrides/systemd-base.bst
     components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst
     components/systemd-ukify.bst: gnome-build-meta.bst:core-deps/systemd-ukify.bst
     components/systemd-libs.bst: gnome-build-meta.bst:core-deps/systemd-libs.bst
-    components/geoclue-base.bst: gnome-build-meta.bst:gnomeos-deps/geoclue-base.bst
     components/frei0r.bst: overrides/frei0r.bst
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
     components/rust-bindgen.bst: overrides/rust-bindgen.bst
+    # abseil 20260526.0 includes <bmi2intrin.h> directly, which GCC rejects.
+    # Only reachable with __BMI2__, i.e. only on krytis's x86_64_v3 build.
+    components/abseil-cpp.bst: overrides/abseil-cpp.bst
+    # Held at 0.3.0: niri's vendored libdisplay-info-sys caps at < 0.4.0 and
+    # has no v0_4 bindings. Only niri and wlroots consume it.
+    components/libdisplay-info.bst: overrides/libdisplay-info.bst
     components/openssh.bst: core/openssh.bst
     extensions/mesa/mesa.bst: desktop/mesa-all-codecs.bst

@@ -34,7 +34,7 @@ sources:
   path: patches/systemd/update-utmp-shorten-comm.patch
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
 - freedesktop-sdk.bst:bootstrap/sed.bst
 - freedesktop-sdk.bst:bootstrap/gawk.bst
@@ -54,10 +54,10 @@ build-depends:
 - freedesktop-sdk.bst:components/libarchive.bst
 - freedesktop-sdk.bst:components/linux-pam.bst
 - freedesktop-sdk.bst:components/kmod.bst
-- freedesktop-sdk.bst:components/pyelftools.bst
+- freedesktop-sdk.bst:components/python3-pyelftools.bst
 - freedesktop-sdk.bst:components/libxslt.bst
 - freedesktop-sdk.bst:components/docbook-xsl.bst
-- freedesktop-sdk.bst:components/cryptsetup-lvm2-stage1.bst
+- freedesktop-sdk.bst:components/_private/cryptsetup-lvm2-stage1.bst
 - freedesktop-sdk.bst:components/p11-kit.bst
 - freedesktop-sdk.bst:components/libfido2.bst
 - freedesktop-sdk.bst:components/libidn2.bst

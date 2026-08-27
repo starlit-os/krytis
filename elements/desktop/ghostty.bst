@@ -3,6 +3,23 @@ kind: manual
 variables:
   strip-binaries: ""
 
+# fdsdk 26.08's ncurses added a `ghostty` entry to its own terminfo database,
+# so /usr/share/terminfo/g/ghostty is now installed by two elements and
+# oci/krytis/runtime.bst fails to stage with `[overlaps]: Non-whitelisted
+# overlaps detected` (project.conf makes overlaps fatal). ghostty's copy wins:
+# it is compiled from the terminfo source shipped with this exact ghostty
+# release, whereas ncurses carries a snapshot of the upstream terminfo
+# database that lags whatever the terminal actually implements.
+#
+# Only this one path collides. ghostty also installs
+# /usr/share/terminfo/x/xterm-ghostty, which ncurses does not ship —
+# verified with `bst artifact list-contents` on both artifacts, so the
+# whitelist is one entry rather than a glob over the terminfo tree.
+public:
+  bst:
+    overlap-whitelist:
+    - /usr/share/terminfo/g/ghostty
+
 build-depends:
   - desktop/zig.bst
   - freedesktop-sdk.bst:components/tar.bst
@@ -14,13 +31,22 @@ depends:
   - gnome-build-meta.bst:sdk/gtk.bst
   - gnome-build-meta.bst:sdk/libadwaita.bst
   - desktop/gtk4-layer-shell.bst
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 sources:
   # Ghostty source tarball
   - kind: tar
     url: ghostty_releases:1.3.1/ghostty-1.3.1.tar.gz
     ref: 3349d25600ffbda281197a18314f7d18791969cffe9474f0ff16a45a9ebfccdb
+
+  # Zig 0.15.2 knows glibc up to 2.42; fdsdk 26.08 ships 2.44, so zig's stub
+  # libc lacks the @GLIBC_2.43 symbols fdsdk's libgraphene-1.0.so references
+  # and ld.lld refuses the link. Sets exe.allow_shlib_undefined, since the
+  # real glibc resolves those at load time. Drop once ghostty tags a release
+  # built on a Zig whose abilists cover 2.44 (v1.3.1 pins 0.15.2 as its
+  # minimum, and no newer ghostty tag exists). See krytis#305.
+  - kind: patch
+    path: patches/ghostty/allow-shlib-undefined.patch
 
   # Top-level Zig dependencies
   - kind: remote

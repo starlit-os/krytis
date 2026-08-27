@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#MISE description="Verify overrides/abseil-cpp.bst still matches freedesktop-sdk's pinned abseil-cpp"
+
+# elements/overrides/abseil-cpp.bst mirrors freedesktop-sdk's
+# elements/components/abseil-cpp.bst so one patch can be applied on top of it
+# (#305 — abseil 20260526.0 includes <bmi2intrin.h> directly, which GCC rejects
+# outright; only reachable because krytis builds x86_64_v3, which defines
+# __BMI2__).
+#
+# A mirrored element silently rots: bumping the freedesktop-sdk junction moves
+# the upstream abseil ref and build config, while the copy keeps building the
+# old one. This task diffs the two and separately confirms the patch still
+# applies to the pinned abseil ref.
+#
+# The exit condition is a version, not a fix: abseil commit 09a054bc6 removed
+# the offending include upstream, and 20260817.0 is the first release without
+# it. When the junction's ref reaches that, this check fails on the ref
+# mismatch — delete the override element, its patch, this task and the
+# overrides entry in elements/freedesktop-sdk.bst rather than resyncing.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+OVERRIDE="elements/overrides/abseil-cpp.bst"
+UPSTREAM_PATH="elements/components/abseil-cpp.bst"
+PATCH="patches/abseil-cpp/bmi2intrin-via-immintrin.patch"
+
+if [ ! -f "$OVERRIDE" ]; then
+    echo "==> $OVERRIDE is gone — nothing to check."
+    exit 0
+fi
+
+REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/freedesktop-sdk.bst | head -1)"
+SHA="${REF##*-g}"
+if [ -z "$SHA" ] || [ "$SHA" = "$REF" ]; then
+    echo "==> Could not read a git-describe ref from elements/freedesktop-sdk.bst" >&2
+    exit 1
+fi
+
+URL="https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SHA}/${UPSTREAM_PATH}"
+echo "==> Comparing $OVERRIDE against freedesktop-sdk ${SHA:0:12}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
+    echo "==> Could not fetch $URL" >&2
+    exit 1
+fi
+
+# Lines the mirror adds on purpose; everything else must match upstream.
+LOCAL_ADDITIONS=(
+    "- kind: patch"
+    "  path: $PATCH"
+)
+
+normalise() {
+    grep -vE '^\s*#|^\s*$'
+}
+
+# The mirror prefixes every sibling dependency with `freedesktop-sdk.bst:` —
+# a bare `public-stacks/foo.bst` only resolves inside freedesktop-sdk's own
+# project namespace, not krytis's. Strip the junction prefix before diffing.
+drop_local_additions() {
+    local args=()
+    local line
+    for line in "${LOCAL_ADDITIONS[@]}"; do
+        args+=(-e "$line")
+    done
+    grep -vxF "${args[@]}" | sed 's/^- freedesktop-sdk\.bst:/- /'
+}
+
+normalise <"$TMP/upstream.bst" >"$TMP/upstream.norm"
+normalise <"$OVERRIDE" | drop_local_additions >"$TMP/override.norm"
+
+FAILED=0
+
+if ! diff -u --label "freedesktop-sdk/$UPSTREAM_PATH" "$TMP/upstream.norm" \
+        --label "$OVERRIDE" "$TMP/override.norm"; then
+    echo
+    echo "==> abseil-cpp-check FAILED — the override has drifted from the junction."
+    FAILED=1
+fi
+
+if ! grep -q "path: $PATCH" "$OVERRIDE"; then
+    echo "==> $OVERRIDE no longer applies $PATCH" >&2
+    FAILED=1
+fi
+
+# Confirm the patch still applies cleanly to the pinned abseil ref.
+ABSEIL_REF="$(grep -A3 '^- kind: git_repo$' "$OVERRIDE" | grep -oP '^\s*ref:\s*\K\S+')"
+ABSEIL_TAG="${ABSEIL_REF%%-*}"
+echo "==> Checking the patch applies to abseil-cpp ${ABSEIL_TAG}"
+
+CLONE="$TMP/abseil-cpp"
+if ! git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ABSEIL_TAG" \
+        https://github.com/abseil/abseil-cpp.git "$CLONE"; then
+    echo "==> Could not clone abseil-cpp at $ABSEIL_TAG" >&2
+    FAILED=1
+else
+    CLONED_SHA="$(git -C "$CLONE" rev-parse HEAD)"
+    if [ "${ABSEIL_REF##*-g}" != "$CLONED_SHA" ]; then
+        echo "==> $ABSEIL_TAG resolved to $CLONED_SHA, expected ${ABSEIL_REF##*-g}" >&2
+        FAILED=1
+    fi
+    if ! git -C "$CLONE" apply --check "$ROOT/$PATCH"; then
+        echo "==> $PATCH no longer applies cleanly to abseil-cpp $ABSEIL_TAG" >&2
+        FAILED=1
+    fi
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    echo
+    echo "    Resync $OVERRIDE, or — if the junction now pins abseil 20260817.0 or newer —"
+    echo "    delete the override, its patch, this task and the overrides entry instead."
+    exit 1
+fi
+
+echo "==> abseil-cpp-check passed."

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#MISE description="Check whether the libdisplay-info 0.3.0 hold can be dropped yet"
+
+# elements/overrides/libdisplay-info.bst holds libdisplay-info at 0.3.0 because
+# niri vendors libdisplay-info-sys 0.3.0, whose system-deps metadata declares
+# `>= 0.1.0, < 0.4.0` and which ships hand-written per-version bindings with no
+# v0_4 module (#305).
+#
+# This is NOT a drift check. The override is a deliberate divergence from the
+# junction, so diffing it against upstream would be red forever and tell nobody
+# anything. What actually matters is the exit condition: the moment the Rust
+# side grows v0.4 support, the hold becomes dead weight that silently keeps the
+# image a release behind.
+#
+# So this fails when the block is LIFTED, not when it is present. A failure
+# here is good news and means: delete elements/overrides/libdisplay-info.bst,
+# this task, and the overrides entry in elements/freedesktop-sdk.bst, then let
+# the junction's own libdisplay-info through.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+OVERRIDE="elements/overrides/libdisplay-info.bst"
+
+if [ ! -f "$OVERRIDE" ]; then
+    echo "==> $OVERRIDE is gone — hold already dropped, nothing to check."
+    exit 0
+fi
+
+HELD_REF="$(grep -oP '^\s*ref:\s*\K\S+' "$OVERRIDE")"
+HELD="${HELD_REF%%-*}"
+echo "==> Override holds libdisplay-info at ${HELD}"
+
+# What the junction would otherwise give us.
+SDK_REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/freedesktop-sdk.bst | head -1)"
+SDK_SHA="${SDK_REF##*-g}"
+UPSTREAM_BST="$(curl -fsSL "https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SDK_SHA}/elements/components/libdisplay-info.bst")" || {
+    echo "==> Could not fetch freedesktop-sdk's libdisplay-info.bst" >&2
+    exit 1
+}
+JUNCTION_REF="$(printf '%s' "$UPSTREAM_BST" | grep -oP '^\s*ref:\s*\K\S+')"
+JUNCTION="${JUNCTION_REF%%-*}"
+echo "==> freedesktop-sdk ${SDK_SHA:0:12} would supply ${JUNCTION}"
+
+if [ "$HELD" = "$JUNCTION" ]; then
+    echo
+    echo "==> The junction is back on ${HELD} — the override is now a no-op."
+    echo "    Delete $OVERRIDE, this task, and the overrides entry in"
+    echo "    elements/freedesktop-sdk.bst."
+    exit 1
+fi
+
+# The real gate: has libdisplay-info-sys grown support for the junction's version?
+LATEST_CRATE="$(curl -fsSL -H 'User-Agent: krytis-libdisplay-info-check' \
+    https://crates.io/api/v1/crates/libdisplay-info-sys \
+    | grep -oP '"max_stable_version":"\K[^"]+')" || {
+    echo "==> Could not query crates.io for libdisplay-info-sys" >&2
+    exit 1
+}
+echo "==> libdisplay-info-sys newest release: ${LATEST_CRATE}"
+
+CRATE_MINOR="${LATEST_CRATE#*.}"; CRATE_MINOR="${CRATE_MINOR%%.*}"
+JUNCTION_MINOR="${JUNCTION#*.}"; JUNCTION_MINOR="${JUNCTION_MINOR%%.*}"
+
+if [ "$CRATE_MINOR" -ge "$JUNCTION_MINOR" ]; then
+    echo
+    echo "==> libdisplay-info-sys ${LATEST_CRATE} can handle libdisplay-info ${JUNCTION}."
+    echo "    The hold is probably droppable. Confirm niri has vendored a crate"
+    echo "    version >= ${LATEST_CRATE}, then delete $OVERRIDE, this task, and"
+    echo "    the overrides entry in elements/freedesktop-sdk.bst."
+    exit 1
+fi
+
+echo "==> Hold still required: crate ${LATEST_CRATE} cannot consume libdisplay-info ${JUNCTION}."
+echo "==> libdisplay-info-check passed."

@@ -1,7 +1,7 @@
 kind: manual
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 # dconf binary needed at image assembly time for `dconf update` in
 # oci/krytis/stack.bst integration-commands.
 - gnome-build-meta.bst:core-deps/dconf.bst

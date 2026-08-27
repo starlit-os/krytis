@@ -1,0 +1,18 @@
+diff --git a/src/build/GhosttyExe.zig b/src/build/GhosttyExe.zig
+--- a/src/build/GhosttyExe.zig
++++ b/src/build/GhosttyExe.zig
+@@ -28,6 +28,14 @@
+ 
+     // Set PIE if requested
+     if (cfg.pie) exe.pie = true;
+ 
++    // krytis: freedesktop-sdk 26.08 ships glibc 2.44, but Zig 0.15.2's
++    // bundled glibc ABI list stops at 2.42, so it synthesises stub libc
++    // without the @GLIBC_2.43 symbol versions that fdsdk's GCC-built
++    // libgraphene-1.0.so references. ld.lld then rejects the link. Those
++    // symbols do exist in the real glibc 2.44 that resolves at load time,
++    // so allow the shared libraries' own undefined symbols. See krytis#305.
++    exe.linker_allow_shlib_undefined = true;
++
+     // Add the shared dependencies
+     _ = try deps.add(exe);

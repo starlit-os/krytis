@@ -37,7 +37,7 @@ kind: manual
 # Closes #609.
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 # DT_NEEDED of the `equibop` binary, grouped by provider. gtk3 covers gtk/cairo/
 # pango/atk/gdk-pixbuf/glib and the X11 client libs it links (libX11,
 # libXcomposite, libXdamage, libXext, libXfixes, libXrandr, libxcb, expat).

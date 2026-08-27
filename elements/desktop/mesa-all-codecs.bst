@@ -22,7 +22,8 @@ sources:
   exclude:
   - '*rc*'
   - '*branchpoint*'
-  ref: mesa-26.0.8-0-g60e95b787857afbc9a00b693b91c0d9c8923a430
+  - mesa-*.*.[01]
+  ref: mesa-26.1.6-0-gffa422e53d59a4938b38abd5c3fc319555da31dd
 # Rust dependencies (must match fdsdk mesa-sources.yml exactly for cache reuse):
 - kind: tar
   directory: subprojects/packagecache/syn-2.0.87
@@ -110,7 +111,7 @@ build-depends:
   - freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst
 
 depends:
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
   - freedesktop-sdk.bst:components/libdrm.bst
   - freedesktop-sdk.bst:components/libva.bst
   - freedesktop-sdk.bst:components/opencl.bst
@@ -147,6 +148,7 @@ variables:
   vulkan_drivers: "amd,intel,intel_hasvk,swrast,virtio,nouveau"
   libunwind: "enabled"
   rusticl_enabled: "radeonsi"
+  amdgpu-virtio: "true"
   optimize-debug: "false"
   meson-lto-flags: ''
 
@@ -187,6 +189,7 @@ variables:
     -Dintel-rt=%{intel-rt}
     -Dteflon=true
     -Ddisplay-info=disabled
+    -Damdgpu-virtio=%{amdgpu-virtio}
 
 config:
   install-commands:

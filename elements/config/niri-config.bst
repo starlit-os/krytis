@@ -8,7 +8,7 @@ kind: manual
 # binds/*.kdl includes in binds.kdl still resolve once staged under /etc/niri/binds/.
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   strip-binaries: ''

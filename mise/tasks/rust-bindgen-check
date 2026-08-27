@@ -71,8 +71,8 @@ normalise() {
     grep -vE '^\s*#|^\s*$'
 }
 
-# The mirror also prefixes every sibling-component dependency with
-# `freedesktop-sdk.bst:` — bare `components/foo.bst` only resolves inside
+# The mirror also prefixes every sibling dependency with `freedesktop-sdk.bst:`
+# — a bare `components/foo.bst` or `bootstrap/foo.bst` only resolves inside
 # freedesktop-sdk's own project namespace, not krytis's. Strip it back off
 # before diffing.
 drop_local_additions() {
@@ -81,7 +81,7 @@ drop_local_additions() {
     for line in "${LOCAL_ADDITIONS[@]}"; do
         args+=(-e "$line")
     done
-    grep -vxF "${args[@]}" | sed 's/freedesktop-sdk\.bst:components\//components\//'
+    grep -vxF "${args[@]}" | sed 's/^- freedesktop-sdk\.bst:/- /'
 }
 
 head_before_cargo2_refs "$TMP/upstream.bst" | normalise >"$TMP/upstream.norm"

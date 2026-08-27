@@ -4,7 +4,7 @@ kind: stack
 # Desktop stack is layered on top (stacks/desktop.bst, added in B4/B5).
 depends:
   # ── Runtime base ────────────────────────────────────────────────────
-  - freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+  - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
   - freedesktop-sdk.bst:vm/base-filesystem.bst
   - freedesktop-sdk.bst:components/util-linux-full.bst
   - config/locale-data.bst
@@ -87,7 +87,14 @@ depends:
   - freedesktop-sdk.bst:components/sed.bst
   - freedesktop-sdk.bst:components/less.bst
   - freedesktop-sdk.bst:components/which.bst
-  - freedesktop-sdk.bst:components/unzip.bst
+  # unzip dropped upstream in fdsdk 26.08 ("Drop info-zip's unzip") — not
+  # renamed, genuinely removed (info-zip unzip 6.0/2009 carried 10
+  # accumulated CVE patches in fdsdk's own tree; upstream declined to keep
+  # maintaining it). Not re-vendored here for the same reason. Substitutes
+  # if a user needs zip extraction: `bsdtar -xf <file>.zip` (libarchive,
+  # already a transitive runtime-dep) or `python3 -m zipfile -e <file>.zip
+  # <dir>` (stdlib, no extra dep). Revisit if a concrete `unzip`-CLI need
+  # surfaces (issue #305).
   - freedesktop-sdk.bst:components/rsync.bst
   - freedesktop-sdk.bst:components/jq.bst
   - freedesktop-sdk.bst:components/wget2.bst
@@ -118,7 +125,14 @@ depends:
   - gnome-build-meta.bst:gnomeos-deps/android-udev-rules.bst
   - gnome-build-meta.bst:gnomeos-deps/hidraw-udev.bst
   - gnome-build-meta.bst:gnomeos-deps/udev-hide-usr.bst
-  - gnome-build-meta.bst:gnomeos/reload-sysext.bst
+  # gnomeos/reload-sysext.bst (systemd unit auto-reloading sysext
+  # extensions on boot) was removed from gnome-build-meta's tree at some
+  # point between gnome-50 and master — no rename/replacement found;
+  # krytis doesn't yet ship its own sysext extensions to reload (only
+  # base-system.bst referenced this, wholesale from gnome-build-meta's own
+  # boilerplate). Dropped rather than re-vendored. Revisit if krytis's own
+  # sysext work (see feat/gamerslop-sysext) needs this reload trigger —
+  # check whether systemd v261 (fdsdk 26.08) handles it natively first.
 
   # ── Memory / OOM protection ────────────────────────────────────────
   # zram-generator is already included above (gnomeos-deps).

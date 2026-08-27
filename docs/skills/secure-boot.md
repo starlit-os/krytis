@@ -80,9 +80,11 @@ nested container's overlay upper dir apparently doesn't support `O_TMPFILE` in t
 though the host ext4 filesystem does. Not reproduced on bare-metal Linux CI runners.
 
 **Workaround for verifying `.auth`/signing logic changes without a working `ukify` step:** the
-`.auth` generation commands (`cert-to-efi-sig-list`/`sign-efi-sig-list`) don't depend on `ukify`
-at all — test them directly against a built `localhost/krytis:latest` (which already has
-`efitools` from `elements/stacks/bootc.bst`) with real test keys:
+`.auth` generation commands don't depend on `ukify` at all — test them directly against a built
+`localhost/krytis:latest` (which has `sbsiglist` from `sbsigntools-maybe.bst` and
+`sign-efi-sig-list` from `core/efitools.bst`, both via `elements/stacks/bootc.bst`) with real
+test keys. This mirrors the Containerfile exactly, which is the point — a recipe that uses
+different tools than the build is not a test of the build:
 
 ```bash
 podman run --rm -i \
@@ -95,20 +97,26 @@ GUID=$(cat /proc/sys/kernel/random/uuid)
 openssl x509 -in /keys/PK.crt -outform DER -out PK.der
 openssl x509 -in /keys/KEK.crt -outform DER -out KEK.der
 openssl x509 -in /keys/db.crt -outform DER -out db.der
-cert-to-efi-sig-list PK.der PK.esl
-cert-to-efi-sig-list KEK.der KEK.esl
-cert-to-efi-sig-list db.der db.esl
-for ms in /ms-certs/*.der; do cert-to-efi-sig-list "$ms" ms.esl && cat ms.esl >> db.esl && rm ms.esl; done
+sbsiglist --owner "$GUID" --type x509 --output PK.esl PK.der
+sbsiglist --owner "$GUID" --type x509 --output KEK.esl KEK.der
+sbsiglist --owner "$GUID" --type x509 --output db.esl db.der
+for ms in /ms-certs/*.der; do
+    sbsiglist --owner "$GUID" --type x509 --output ms.esl "$ms" && cat ms.esl >> db.esl && rm ms.esl
+done
 sign-efi-sig-list -g "$GUID" -k /keys/PK.key -c /keys/PK.crt PK PK.esl auto/PK.auth
 sign-efi-sig-list -g "$GUID" -k /keys/PK.key -c /keys/PK.crt KEK KEK.esl auto/KEK.auth
 sign-efi-sig-list -g "$GUID" -k /keys/KEK.key -c /keys/KEK.crt db db.esl auto/db.auth
-sig-list-to-certs db.esl db-check   # sanity: should print one "X509 Header" block per bundled cert
 SCRIPT
 ```
 
-Verified this way: `PK.auth`/`KEK.auth`/`db.auth` all generate without error, and
-`sig-list-to-certs` against `db.esl` (before signing) printed exactly 3 `X509 Header` blocks —
-krytis's own db cert plus the 2 bundled Microsoft CAs — confirming the Microsoft-cert-bundling
+Sanity-check the result from the host with `scripts/parse-efi-auth.py auto/db.auth`, which walks
+the file and reports every entry's certificate subject, exiting non-zero on an empty list. Do
+**not** reach for `sig-list-to-certs`: it was never reliable here (see the correction below) and
+`core/efitools.bst` does not ship it.
+
+Verified this way when the recipe was written: `PK.auth`/`KEK.auth`/`db.auth` all generate
+without error, and the pre-signing `db.esl` carried exactly 3 X509 entries — krytis's own db
+cert plus the 2 bundled Microsoft CAs — confirming the Microsoft-cert-bundling
 loop concatenates into the same `db.esl` correctly. This does **not** substitute for a full
 `mise run seal-uki` + `sbverify` + firmware-enrollment run (still required before considering
 the Containerfile change fully verified), but it does isolate "is my new shell logic correct"
@@ -638,6 +646,46 @@ sbsigntools (the obvious "use one toolkit" cleanup) reintroduces this. Don't.
 Feeding PEM to efitools also produces a correct list (verified — identical
 4353-byte ESL), but it inverts every conversion in that `RUN` block and keeps a tool
 that silently no-ops on wrong-format input.
+
+### efitools is krytis-vendored since fdsdk 26.08 (#305)
+
+The paragraph above says `sign-efi-sig-list` "must stay". freedesktop-sdk disagreed:
+commit `b39e7194` ("Remove EFI elements", 2026-08-17, first shipped in
+`freedesktop-sdk-26.08rc.1`) deleted `components/efitools.bst`, `efitools-bin.bst`,
+`efitools-bin-maybe.bst`, `efitools-efi.bst` and `include/efitools.yml` outright — no
+rename, no replacement, they just dropped it from their own
+`vm/boot/efi-secure/deps.bst`. `components/perl-slurp.bst` went with it.
+
+krytis carries it now: **`elements/core/efitools.bst`**, pinned to the same
+`v1.9.2-4-gb988d20a` ref fdsdk used, wired into `stacks/bootc.bst` where the junction
+element used to be. Nothing about the Containerfile changed.
+
+Two things to know if you touch it:
+
+- **Only `sign-efi-sig-list` is built and shipped.** fdsdk's element built the whole
+  `all` target — nine signed EFI images, PK/KEK/DB key material, man pages — then
+  deleted the EFI half again on install. That is what dragged in `gnu-efi`,
+  `help2man`, generated boot keys and perl `File::Slurp`. krytis builds the single
+  binary it calls. `cert-to-efi-sig-list` and friends are deliberately absent; the
+  empty-signature-list footgun documented above cannot be re-introduced by someone
+  reaching for a tool that happens to be on the image.
+- **`gnu-efi` is still a build-dep**, which is not obvious: `sign-efi-sig-list.c`
+  includes `<efi.h>` for the `EFI_SIGNATURE_LIST` and `EFI_TIME` layouts it writes.
+  Without it the compile dies at `fatal error: efi.h: No such file or directory`,
+  even though nothing here produces an EFI image.
+
+Verified after vendoring, on the built artifact — the month is the whole point:
+
+```
+$ sign-efi-sig-list -c t.crt -k t.key PK empty.esl out.auth   # 2026-08-25 14:57:44
+$ od -An -tu1 -N16 out.auth
+ 234   7   8  25  14  57  44   0   0   0   0   0   0   0   0   0
+   └─year 2026─┘  └8┘ └25┘                                        # month 8, not 7
+```
+
+If upstream efitools ever goes away too, the exit is not `sbvarsign` — it is patching
+`sbvarsign`'s `tm_mon` off-by-one, or moving `.auth` generation to `virt-fw-vars`,
+which krytis already trusts for OVMF varstores but does not ship in the image.
 
 Two gates now stand behind this, because a silent empty list is exactly the kind of
 thing that ships:

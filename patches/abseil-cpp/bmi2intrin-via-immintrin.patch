@@ -1,0 +1,12 @@
+diff --git a/absl/container/internal/raw_hash_set.h b/absl/container/internal/raw_hash_set.h
+--- a/absl/container/internal/raw_hash_set.h
++++ b/absl/container/internal/raw_hash_set.h
+@@ -226,7 +226,7 @@
+ #endif
+ 
+ #ifdef __BMI2__
+-#include <bmi2intrin.h>
++#include <immintrin.h>
+ #endif  // __BMI2__
+ 
+ namespace absl {
