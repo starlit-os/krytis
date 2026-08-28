@@ -3,10 +3,10 @@ kind: manual
 sources:
 - kind: remote
   url: cachyos:repo/x86_64_v3/cachyos-v3/linux-cachyos-%{version}-%{pkgrel}-x86_64_v3.pkg.tar.zst
-  ref: b59893c32dcb8c1a76b9ef183006c5d59024a9cccff227cd517e253f917540d8
+  ref: dd0df09a2b639059257b2868446772e07cdd8ec5b9c20584ba4f4f9f6ebf17a0
 
 variables:
-  version: "7.2.0"
+  version: "7.2.2"
   pkgrel: "1"
   strip-binaries: ""
 
