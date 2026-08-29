@@ -154,7 +154,10 @@ jobs:
       - name: Build image
         run: |
           set +e
-          uv run bst -o x86_64_v3 true --no-interactive build oci/krytis/image.bst
+          # --retry-failed matches mise/tasks/load-image: a cached failed
+          # artifact is pulled and re-reported in 0s otherwise, so cache-warm
+          # would keep re-publishing yesterday's failure instead of rebuilding.
+          uv run bst -o x86_64_v3 true --no-interactive build --retry-failed oci/krytis/image.bst
           rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::warning::Cache warm build failed (rc=${rc}) — non-blocking"

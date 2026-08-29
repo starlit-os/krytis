@@ -1698,6 +1698,61 @@ junctions:
 
 This tells BST these junctions are intentionally shared/internal so the multiple-context check is suppressed. Every project that layers on top of fdsdk + gnome-build-meta needs this block.
 
+## gnome-build-meta's `recc` option — krytis pins it to `passthrough`
+
+gnome-build-meta routes every compile through [recc](https://gitlab.com/BuildGrid/buildbox/recc): its `include/gcc-for-recc.yml` puts `/usr/recc/bin` first on `PATH`, and `files/recc-wrapper/recc-wrapper` re-execs `recc /usr/bin/<cc>`. The `recc` project option picks the mode, and it defaults to **`remote-execution`** — each compile becomes a REAPI action submitted to buildbox-casd over the sandbox's `/tmp/casd.sock` (`sandbox: remote-apis-socket` in `include/recc.yml`).
+
+**krytis has no remote execution service** (`project.conf` declares artifact/source caches only; bow is CAS+AC), so casd executes each action itself and forks a FUSE stager per compile. With `scheduler.builders: 4` × `build.max-jobs: 4` on an 8-vCPU Blacksmith runner that exhausts the runner's process/thread budget partway through a big element:
+
+```
+FAILED: [code=102] .../Source/MediaInfo/Audio/File_Dat.cpp.o
+[ERROR] Error while calling `Execute()` on "unix:/tmp/casd.sock": Execution failed:
+  execute() threw: … "Error staging "9562…ec6a/387" into "":
+  "… [buildboxcommon_fusestager.cpp:116] [system:11],
+  errMsg = "error in fork()", errno : Resource temporarily unavailable""
+```
+
+That killed `gnome-build-meta.bst:core-deps/libmediainfo.bst` (526 ninja edges, a `build-depends` of `core-deps/localsearch.bst`) in both the 2026-08-28 cache-warm and the 2026-08-29 publish run. It is **not** a compiler error — `File_Dat.cpp` compiles fine, and ninja kept the surrounding edges going, which is why the ninja progress lines around it look innocent.
+
+`remote-execution` can never pay off here anyway: recc's action digest covers the compiler binary and `RECC_REMOTE_PLATFORM_chrootRootDigest` (the whole staged dependency tree), and krytis's `x86_64_v3: true` gives it a different gcc and a different sandbox digest than upstream — so gnome-build-meta's action cache cannot hit, and nothing writes results back (`action-cache-enable-update` is set only for `recc == "upload-local-build"`). So `elements/gnome-build-meta.bst` sets:
+
+```yaml
+config:
+  options:
+    recc: passthrough
+```
+
+**Switching modes does not move any artifact cache key.** Every `RECC_*` variable is listed in gnome-build-meta's `environment-nocache`, so the option only changes how the compiler is invoked. Verified on `core-deps/libmediainfo.bst`: full key `ec8bd61b3823…` with and without the option, and the element rebuilt from that same key under `passthrough` in 2m51s versus 3m45s under `remote-execution`.
+
+Keep `recc: cache-only` in reserve rather than as the default — it still does an action-cache round trip per compile, which for krytis is a guaranteed miss.
+
+## Recovering the real build log of a FAILED element from CI
+
+GitHub's job log only carries what BuildStream prints on failure: the **last 20 lines** of the build log. Ninja finishes its already-started edges after an edge fails, so those 20 lines are usually unrelated progress and the actual error has scrolled away. Do not try to infer the failure from them.
+
+BuildStream caches failed builds as artifacts *and* pushes them, so the full log is retrievable. Take the element's 64-hex key from the `fetch needed <key> <element>` line near the top of the run log, then pull and read that artifact ref directly:
+
+```shell
+REF=gnome/core-deps-libmediainfo/c709b90abdc7a465ac4a938876be178c1220553cfdd28cb83debdbf80fa7dcff
+mise run bst --pull artifact pull "$REF"     # needs BUILDBARN_PULL_TOKEN via fnox/pass-cli
+mise run bst artifact log "$REF" > /tmp/build.log
+```
+
+The artifact-ref form is `<project-name>/<element-path-with-slashes-as-dashes>/<full-key>` — `gnome` for gnome-build-meta, `freedesktop-sdk` for fdsdk, `krytis` for our own. Passing the element name instead (`bst artifact log gnome-build-meta.bst:core-deps/libmediainfo.bst`) only works when the *current* checkout resolves to the same key; a junction bump or a stale `elements/freedesktop-sdk.bst` ref will silently compute a different key and report "is not cached".
+
+## A cached failed artifact is replayed, not rebuilt — build with `--retry-failed`
+
+A failed build is a normal artifact: BuildStream caches it under the element's ordinary cache key and pushes it to bow like a successful one. Every later run then *pulls the failure and re-reports it*, with no build attempt at all:
+
+```
+[--:--:--][c709b90a][   build:gnome-build-meta.bst:core-deps/libmediainfo.bst] START   …
+[00:00:00][c709b90a][   build:gnome-build-meta.bst:core-deps/libmediainfo.bst] FAILURE Command failed
+```
+
+**`[00:00:00]` is the tell.** The printed "last 20 lines" and the timings inside them belong to the *original* build, which can be days old — the 2026-08-29 publish failure replayed a log dated `21:58:19` on 2026-08-28. Two ways to be misled: believing the failure was freshly reproduced, and concluding that a fix "did not work" when in fact it was never exercised.
+
+Consequence: **any fix that does not move the element's cache key cannot prove itself while the poisoned entry is in the shared cache**, and single Buildbarn action-cache entries are not conveniently deletable. So `mise/tasks/load-image` and `cache-warm.yml` both pass `bst build --retry-failed`, which rebuilds elements whose cached artifact is a failed build. `bst artifact delete <ref>` only clears the *local* CAS; it does not help CI.
+
 ## BST inside a composefs root
 
 bubblewrap + user namespaces work inside a bootc composefs-mounted root without any sysctl override. Verified by running `mise load-image --container` inside a booted Krytis VM. No `kernel.unprivileged_userns_clone` drop-in is needed.
