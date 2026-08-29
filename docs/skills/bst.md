@@ -1740,6 +1740,19 @@ mise run bst artifact log "$REF" > /tmp/build.log
 
 The artifact-ref form is `<project-name>/<element-path-with-slashes-as-dashes>/<full-key>` — `gnome` for gnome-build-meta, `freedesktop-sdk` for fdsdk, `krytis` for our own. Passing the element name instead (`bst artifact log gnome-build-meta.bst:core-deps/libmediainfo.bst`) only works when the *current* checkout resolves to the same key; a junction bump or a stale `elements/freedesktop-sdk.bst` ref will silently compute a different key and report "is not cached".
 
+## A cached failed artifact is replayed, not rebuilt — build with `--retry-failed`
+
+A failed build is a normal artifact: BuildStream caches it under the element's ordinary cache key and pushes it to bow like a successful one. Every later run then *pulls the failure and re-reports it*, with no build attempt at all:
+
+```
+[--:--:--][c709b90a][   build:gnome-build-meta.bst:core-deps/libmediainfo.bst] START   …
+[00:00:00][c709b90a][   build:gnome-build-meta.bst:core-deps/libmediainfo.bst] FAILURE Command failed
+```
+
+**`[00:00:00]` is the tell.** The printed "last 20 lines" and the timings inside them belong to the *original* build, which can be days old — the 2026-08-29 publish failure replayed a log dated `21:58:19` on 2026-08-28. Two ways to be misled: believing the failure was freshly reproduced, and concluding that a fix "did not work" when in fact it was never exercised.
+
+Consequence: **any fix that does not move the element's cache key cannot prove itself while the poisoned entry is in the shared cache**, and single Buildbarn action-cache entries are not conveniently deletable. So `mise/tasks/load-image` and `cache-warm.yml` both pass `bst build --retry-failed`, which rebuilds elements whose cached artifact is a failed build. `bst artifact delete <ref>` only clears the *local* CAS; it does not help CI.
+
 ## BST inside a composefs root
 
 bubblewrap + user namespaces work inside a bootc composefs-mounted root without any sysctl override. Verified by running `mise load-image --container` inside a booted Krytis VM. No `kernel.unprivileged_userns_clone` drop-in is needed.

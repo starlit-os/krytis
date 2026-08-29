@@ -37,7 +37,14 @@ fi
 ./mise/tasks/generate-image-version
 
 echo "==> Building oci/krytis/image.bst..."
-./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build oci/krytis/image.bst
+# --retry-failed: BuildStream caches a failed build as an artifact under the
+# element's normal cache key and pushes it like any other. Without the flag,
+# every later run pulls that failure and re-reports it in 0s instead of
+# building — so an infra-caused failure (see docs/skills/bst.md § gnome-build-
+# meta's recc option) pins the whole graph as broken until someone evicts the
+# entry from bow by hand, and a fix that does not move the cache key can never
+# prove itself. A cached failure is not authoritative; rebuild it.
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build --retry-failed oci/krytis/image.bst
 
 STATE_FILE=.load-image-state
 TARGET_TAG=localhost/krytis-input:latest
