@@ -894,6 +894,70 @@ fix is to **verify the baked digest** rather than to guess at version numbers.
 
 Setting `max-jobs` high (e.g. 12–32) on a local GitHub Actions runner **without** remote CAS causes problems — the runner doesn't have the CPU/RAM to actually parallelize that many local builds, and they contend for resources. Only raise `max-jobs` when remote-execution is enabled (the actual builds happen on the CAS server cluster). Gate the `max-jobs` setting on the remote-execution flag rather than setting it unconditionally.
 
+## `concurrency:` without `queue: max` silently drops queued runs, not just cancels in-progress ones
+
+*Source: dakota `0aa3804` — "ci(build): queue runs FIFO with stale-run gate, detach source tracker"*
+
+`cancel-in-progress: false` only protects a run that has already **started**. GitHub
+Actions' default `queue:` behavior (`single`, undocumented as a default) still keeps only
+**one pending** run per concurrency group — a new run entering the group cancels whatever
+was queued behind the running one, with no error surfaced anywhere. Dakota lost a real
+multi-hour build this way: a `testing`-branch push queued behind an in-progress build, then
+a `next`-branch sync push landed ~40s later in the *same* concurrency group and silently
+discarded the queued `testing` run.
+
+Fix: set `queue: max` (holds every pending run FIFO instead of superseding) paired with a
+cheap `stale-check` job that skips the expensive build step if a *newer* run for the same
+branch is already queued behind it — this is what actually collapses a burst of pushes to
+one real build, since `queue: max` alone would otherwise build every single push in order:
+
+```yaml
+concurrency:
+  group: dakota-bst-build-global
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  stale-check:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    outputs:
+      stale: ${{ steps.check.outputs.stale }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          newer=0
+          for status in queued pending; do
+            n=$(gh run list --repo "${{ github.repository }}" --workflow build.yml \
+              --branch "${{ github.ref_name }}" --event push --status "$status" \
+              --json databaseId \
+              --jq "[.[] | select(.databaseId > ${{ github.run_id }})] | length")
+            newer=$((newer + n))
+          done
+          [ "$newer" -gt 0 ] && echo "stale=true" >> "$GITHUB_OUTPUT" || echo "stale=false" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [stale-check]
+    if: needs.stale-check.outputs.stale != 'true'
+    # ...
+```
+
+`actionlint` versions ≤1.7.12 don't know the `queue:` key and need a `# actionlint-ignore`
+comment (or an upgrade) on the `concurrency:` block.
+
+**Krytis exposure:** `publish.yml` (`group: krytis-publish`), `cache-warm.yml`
+(`group: krytis-cache-warm`), and `verify-sealed.yml` (`group: verify-sealed`) all use
+`cancel-in-progress: false` with no `queue: max` — the identical landmine. `publish.yml` is
+`workflow_dispatch`-only today, so the exposure is currently "two manual dispatches close
+together, or a scheduled `cache-warm` racing a manual one, silently drops the earlier run
+with zero error surfaced." Add `queue: max` (+ a stale-check gate if/when these workflows
+trigger on `push` rather than only `workflow_dispatch`/`schedule`) before that becomes a
+real incident instead of a documented risk.
+
 ## Use smaller/less-privileged CAS config for no-push phase
 
 *Source: zirconium-hawaii `4a9b19c` — `chore: Use smaller config for no-push phase`*

@@ -319,13 +319,53 @@ config:
   strip-commands:
   - ":"
   install-commands:
-  - install -Dm644 /dev/stdin "%{install-root}%{sysconfdir}/example/config.toml" <<'EOF'
+  - |
+    install -Dm644 /dev/null "%{install-root}%{sysconfdir}/example/config.toml"
+    cat > "%{install-root}%{sysconfdir}/example/config.toml" <<'EOF'
     ...
     EOF
   - "%{install-extra}"
 ```
 
 The `strip-commands: [":"]` is required — the default strip invokes `freedesktop-sdk-stripper` which is not present in `runtime-minimal`.
+
+**Use `install -Dm644 /dev/null "<target>"` + `cat > "<target>" <<'EOF'`, never `install
+-Dm644 /dev/stdin "<target>" <<'EOF'`.** *Source: dakota `5e30bde` — "fix(elements): stop
+using /dev/stdin for inline file writes".* Under BuildBarn/BuildBox **remote execution**
+the build sandbox chroots into the input root, which has no `/dev/stdin` node — the
+`install` invocation fails outright with `cannot stat '/dev/stdin': No such file or
+directory`. Dakota hit this for real (blocked a distributed build) once remote execution
+went live; the two-step form preserves the exact same parent-dir-creation and mode
+behavior (`install -D`) and has no such dependency, so it costs nothing even where
+remote execution isn't in play. Krytis has no `remote-execution:` block in `project.conf`
+today (CAS-only — source/artifact caching, not sandbox execution) so this isn't live yet,
+but the single-step form is used at 20+ sites across `elements/config/*.bst`,
+`core/mise.bst`, and `core/pangolin-cli.bst` — all latent failures for the day remote
+execution is turned on. New elements should use the two-step form from here on; a
+separate pass backports the existing sites (see the tracking issue linked from
+`docs/skills/dakota.md`).
+
+## Multi-line YAML Plain Scalars Do Not Shell-Continue
+
+*Source: dakota `b32e6fe` — "fix(audio): unfold pcsp install command; YAML folding emptied
+artifact".*
+
+An `install-commands` list item written as a bare (non-block) YAML scalar spanning two
+lines via a trailing `\` —
+
+```yaml
+install-commands:
+- install -Dm644 x \
+    "%{install-root}%{sysconfdir}/thing.conf"
+```
+
+— does **not** concatenate the way a shell reads a backslash line-continuation. YAML has
+no line-continuation escape in a plain scalar: the literal `\` character survives and the
+newline folds to a space, so the command BuildStream actually runs contains a stray `\`
+token. `install`'s argument parser then silently produces an empty or missing artifact —
+**no build error, nothing to grep for in the log.** Always wrap a multi-line
+`install-commands`/`build-commands` entry in a `- |` block literal; never rely on a bare
+backslash continuation in a plain YAML scalar.
 
 ## PAM file routing in fdsdk
 
@@ -685,6 +725,47 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 |---|---|
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps) and `falcond-update` are the standing examples |
+
+### `git_repo` tracking: excluding a bad tag, and patching ahead of a vendored ref
+
+**A `ref:` downgrade alone doesn't stick — add the bad tag to `exclude:` too.** *Source:
+zirconium-hawaii `7b4bf41` — "chore: pin bootc by excluding 1.16.7".* When a `track: v*`
+element's upstream ships a broken release, rolling `ref:` back to the last-good tag is not
+enough: the next `bst source track` run will happily re-resolve to the excluded tag again,
+since nothing told it not to. Add the bad tag to the source's `exclude:` list alongside the
+downgraded `ref:`:
+
+```yaml
+- kind: git_repo
+  url: github:bootc-dev/bootc.git
+  track: v*
+  ref: v1.16.6-0-gcf828dc1ec9eb4cac647992a2b09b3a67e5b8868
+  exclude:
+  - v1.16.7
+```
+
+Krytis's own `elements/core/bootc.bst` tracks `v*` on the same upstream project with no
+`exclude:` today — if a future bootc point release ships broken, this is the fix, not just
+a `ref:` rollback.
+
+**Patching a junction's own vendored source pin lands a point-fix immediately, without
+waiting for the next full junction bump.** *Source: zirconium-hawaii `30febd5`, `5cb27df`.*
+A junction like `freedesktop-sdk.bst` vendors its own internal source pins (e.g.
+`elements/extensions/mesa/mesa-sources.yml`, `elements/include/ostree-source.yml`). If one
+of those pinned versions has a known-bad regression, you don't have to wait for krytis's
+own `freedesktop-sdk.bst` ref to advance past it (which drags in every other unrelated
+change from the intervening period, and can be weeks out) — add a `patch_queue` entry
+against the junction itself that bumps just that one internal YAML file's `ref:`, sourced
+from the upstream project's own follow-up fix commit. Same `patch_queue`-on-a-junction
+mechanism as § Overriding a Single freedesktop-sdk Component Element / § Junction Override
+Pattern below — this is the narrower use: bumping one vendored ref inside the junction's
+own source list, not swapping an entire component element. Note dakota's separate lesson
+above (Patch queues on junctions destroy upstream cache reuse, in `docs/skills/dakota.md`)
+about the cache-key cost of any junction-level patch — weigh that against the wait either
+way. (The two specific bugs that motivated this in zirconium-hawaii — mesa 26.1.6 and
+ostree v2026.3 — are both already fixed in krytis's current fdsdk pin (26.08rc.2 carries
+mesa-26.1.8 and ostree v2026.4), so there's nothing to backport today; record the
+technique for the next time this happens.)
 
 ### One shared updater, not one script per element (#648)
 
@@ -1626,6 +1707,21 @@ config:
     export LD_LIBRARY_PATH="%{mesa-gl-dir}:${LD_LIBRARY_PATH:-}"
     cargo build ...
 ```
+
+**Audit candidate, not a blind swap: `components/mesa-headers.bst` instead of the full
+`extensions/mesa/mesa.bst` in `build-depends`.** *Source: zirconium-hawaii `3b5af5d` —
+"mesa-headers is good enough for the build, we don't need full fat mesa".* zirconium
+dropped the full mesa extension from `build-depends` (keeping it only in `depends` for
+runtime linking) across 7 elements that already also had `mesa-headers.bst`, cutting build
+sandbox size/time with no behavior change. Krytis's `desktop/niri.bst`, `desktop/cage.bst`,
+`desktop/wlroots.bst`, and `desktop/noctalia-greeter.bst` all follow the "always both"
+rule above and build-depend on the full extension. **Do not apply this as a blanket
+change** — the rule above exists precisely because a header-only assumption already broke
+once in this file (`wlroots.bst`'s own `libdrm.pc`/`dependency('libdrm')` comment, and the
+`buildsystem-make.bst` linker case just above): some configure/build steps genuinely need
+real `.so`/`.pc` presence that headers alone don't provide. Worth a per-element spot-check
+swapping to `mesa-headers.bst` in `build-depends` and confirming the build still passes,
+not a mechanical find-and-replace.
 
 **Runtime: mesa libs are not findable by default.** Mesa installs under `%{libdir}/GL/default/lib/` — a path the dynamic linker does not search. Two things are required in the image:
 
