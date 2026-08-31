@@ -188,6 +188,41 @@ resolved command with `bst show --deps none --format '%{config}'`.
 
 Always end `install-commands` with `- "%{install-extra}"`.
 
+
+## `kind: manual` sandbox commands need `runtime-gnu.bst`, not bare `runtime-minimal.bst`
+
+*Discovered via #674's investigation, 2026-08-31 — the fdsdk-26.08 `gcc-libs`
+precondition check flagged in the `upstream-lessons` pass.*
+
+freedesktop-sdk 26.08 slimmed `public-stacks/runtime-minimal.bst` down to
+**libraries only** — `glibc`, `symlinks`, `gcc-libs`, `utf-locale`. No shell, no
+coreutils. `bash`/`coreutils` moved into `public-stacks/runtime-gnu.bst`
+(`runtime-minimal.bst` + `bash` + `coreutils`). On the previous fdsdk cycle
+(25.08), `runtime-minimal.bst` carried a shell itself — several examples in this
+file (and in shipped elements, before they were fixed) predate the split and
+still show the old, now-broken shape.
+
+**A `kind: manual` element has no other source of a shell.** Its `install-commands`
+run directly against whatever `build-depends:`/`depends:` staged — if that's bare
+`runtime-minimal.bst`, there is no `bash`, no `install`, nothing. Every `kind: manual`
+element in this repo depends on `public-stacks/runtime-gnu.bst` (build-depends or
+depends, both stage into the sandbox) for exactly this reason; verified
+exhaustively across all `kind: manual` elements in #674.
+
+**This does not apply to `kind: make`/`kind: cmake`/`kind: meson` elements** —
+their `build-depends:` buildsystem stack (`buildsystem-make.bst`,
+`buildsystem-cmake.bst`, `buildsystem-meson.bst`) already depends on
+`runtime-gnu.bst` itself to supply its own build tooling, so `depends:
+runtime-minimal.bst` alone is fine there — see `overrides/abseil-cpp.bst`'s own
+comment ("A cmake build needs no shell") and the Rust/Cargo and SVG-icon-theme
+patterns later in this file, all of which correctly use `runtime-minimal.bst` in
+`depends:` under a buildsystem `build-depends:`.
+
+If you're writing a new `kind: manual` element: use `runtime-gnu.bst`. If you're
+reading an older example anywhere (including elsewhere in this file) that shows
+bare `runtime-minimal.bst` on a `kind: manual` element, it predates the fdsdk
+26.08 split — fix it in place rather than copying it forward.
+
 ## System-wide mise tasks via BST element
 
 **File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly in `/etc/mise/config.toml` using `[tasks.*]` TOML blocks pointing to the script files. Ship both: the scripts (for execution) and `config.toml` (for discovery).
@@ -201,7 +236,7 @@ Pattern (`elements/config/fido2-tasks.bst` + `files/fido2-tasks/config.toml`):
 kind: manual
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - core/mise.bst  # runtime dep — mise must be on the image
 
 variables:
@@ -242,7 +277,12 @@ Key points:
 
 ## Prebuilt Binary Elements — Sandbox Tool Availability
 
-`runtime-minimal.bst` provides a shell and `install`, but **not** `find`, `grep`, `sed`, or other GNU coreutils/findutils. Prebuilt binary elements that use these tools in `install-commands` will fail with `command not found` (exitcode 127).
+`runtime-gnu.bst` provides a shell and `install` (via `bash`+`coreutils` — see §
+`kind: manual` sandbox commands need `runtime-gnu.bst` above), but **not** `find`,
+`grep`, `sed`, or other GNU coreutils/findutils packages — those are separate fdsdk
+components (`components/grep.bst`, `components/sed.bst`, `components/findutils.bst`,
+etc.), not part of `coreutils` itself. Prebuilt binary elements that use these tools
+in `install-commands` will fail with `command not found` (exitcode 127).
 
 Fix: use direct paths. BST's `kind: tar` source **strips the single top-level directory by default** (same as `tar --strip-components=1`). Files from `name_ver_arch/{binary,completions/}` land directly at the staging root. So `binary` is at `./binary`, not `./name_ver_arch/binary`.
 
@@ -268,7 +308,7 @@ gum releases multi-file tarballs (`gum_VER_Linux_ARCH.tar.gz`) that contain the 
 ```yaml
 kind: manual
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 variables:
   strip-binaries: ''
 sources:
@@ -313,7 +353,7 @@ Elements that only drop config files (no binaries to build) should use `kind: ma
 kind: manual
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 config:
   strip-commands:
@@ -1108,10 +1148,10 @@ Some apps ship a self-contained tarball (`app.tar.gz → app.app/`) with an inte
 kind: manual
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   strip-binaries: ''
@@ -1419,7 +1459,7 @@ Install udev rules via a `kind: manual` element with a `local` source pointing t
 kind: manual
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 variables:
   strip-binaries: ""
