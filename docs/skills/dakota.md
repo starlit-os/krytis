@@ -106,6 +106,72 @@ Ported as `mise/tasks/convert-to-qcow2`, keeping dakota's native-`qemu-img`-with
 3. **`-p` only on a TTY.** Unconditional `-p` emits one progress line per percent, which is noise in any captured log.
 4. **`qemu-img info` filtered with a line-anchored match.** qemu 10 reports a child node with its own indented `disk size:`, so an unanchored `grep`/`sed` prints it twice.
 
+### `/dev/stdin` inline-file-write fails under remote execution
+
+*Source: dakota `5e30bde` — `fix(elements): stop using /dev/stdin for inline file writes`*
+
+Under BuildBarn/BuildBox remote execution the build sandbox chroots into the input root,
+which has no `/dev/stdin` — every `install -Dm644 /dev/stdin "target" <<'EOF'` element
+fails outright. Full writeup and the fix (`/dev/null` + `cat >`) is in
+`docs/skills/bst.md` § Config-only Elements — krytis's own `bst.md` taught the broken
+form as canonical until this pass. 26+ existing element sites still use the fragile
+single-step form; backporting them is tracked separately (see the linked issue).
+
+### GHA `concurrency:` drops queued runs without `queue: max`
+
+*Source: dakota `0aa3804` — `ci(build): queue runs FIFO with stale-run gate, detach source tracker`*
+
+`cancel-in-progress: false` only protects a run once started — the undocumented default
+`queue: single` still silently cancels a *pending* run when a new one enters the same
+group. Full writeup and the `queue: max` + stale-check fix is in
+`docs/skills/ci-runner.md` § `concurrency:` without `queue: max`. Krytis's
+`publish.yml`/`cache-warm.yml`/`verify-sealed.yml` all have the same exposure today.
+
+### YAML plain-scalar backslash continuation doesn't shell-continue
+
+*Source: dakota `b32e6fe` — `fix(audio): unfold pcsp install command; YAML folding emptied artifact`*
+
+A multi-line `install-commands` entry written as a bare scalar with a trailing `\` does
+not concatenate like a shell line continuation — the literal backslash survives, silently
+breaking the command with no build error. Full writeup in `docs/skills/bst.md` §
+Multi-line YAML Plain Scalars Do Not Shell-Continue. Always use `- |` block literals for
+multi-line commands.
+
+### PC-speaker can silently become the default WirePlumber sink after resume
+
+*Source: dakota `a5e9152` — `fix(audio): disable PC-speaker WirePlumber sink`*
+
+Real hardware behavior, not bluefin-specific — krytis ships the same wireplumber+pipewire
+stack. Full writeup and the fix config in `docs/skills/desktop.md` § WirePlumber:
+PC-speaker can silently become the default audio sink after resume. Not yet ported as a
+krytis element (documented, not applied) — port if the glitch is actually observed.
+
+### Verify udev `GROUP=` references exist before shipping a rule
+
+*Source: dakota `02bb985` — `fix(image): create plugdev and nintendo_switch groups for udev rules`*
+
+A udev rule's `GROUP="foo"` for a nonexistent group silently falls back to `root:root`
+ownership — no error anywhere. Full writeup in `docs/skills/desktop.md` (appended to the
+Kernel Tuning / `config/desktop-udev.bst` section). Krytis's current udev rules only
+reference groups fdsdk already creates, so this is a checklist item for future additions,
+not a live break.
+
+### Automating the nested-junction ref-consistency check (follow-up to the entry above)
+
+*Source: dakota `57a70d3` — `ci(next): derive fdsdk pin and patches from tracked gnome-build-meta`*
+
+The "Verify nested-junction ref consistency before merging a bump" entry above records a
+*manual* check (hand-run `curl` comparing krytis's `freedesktop-sdk.bst` ref against what
+the pinned `gnome-build-meta` commit expects). Dakota automated the equivalent check into
+CI: track `gnome-build-meta` via its own `track:` branch, extract the pinned commit's sha,
+fetch that commit's own `elements/freedesktop-sdk.bst` from the GitLab API, and rewrite the
+local `freedesktop-sdk.bst` ref to match — failing loudly if the pin can't be resolved,
+rather than silently drifting. This is a genuine next step for krytis's
+`track-bst-sources.yml` (which currently tracks `freedesktop-sdk.bst` independently,
+racing ahead of `gnome-build-meta` whenever fdsdk tags a release — the same failure mode
+dakota hit on 2026-08-17). Not implemented in this pass — recorded as a candidate
+improvement to the existing manual-check workflow, not yet built.
+
 ## Referencing This Project
 
 Copy patterns from `../dakota/` and adapt — don't symlink or junction into dakota from krytis. Independent BST artifact caches and element trees, same as the `zirconium-hawaii.md` convention.

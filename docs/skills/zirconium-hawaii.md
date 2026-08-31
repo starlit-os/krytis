@@ -215,3 +215,60 @@ libxkbcommon, vulkan-icd-loader, xorg-lib-xinerama, libdrm and mesa against
 `lib32-filter.bst` (`kind: filter`) splits out only the arch-specific paths.
 krytis has **no i686 cross-compiler junction override** in
 `elements/freedesktop-sdk.bst`, so this is a prerequisite, not a copy.
+
+## `git_repo` `exclude:` for a broken upstream tag
+
+*Source: zirconium-hawaii `7b4bf41` — "chore: pin bootc by excluding 1.16.7"*
+
+A `ref:` downgrade alone doesn't stick on a `track: v*` source — the next
+`bst source track` run will happily re-resolve to a known-bad tag unless it's also listed
+in `exclude:`. zirconium hit a broken bootc v1.16.7 and pinned around it with:
+
+```yaml
+- kind: git_repo
+  url: github:bootc-dev/bootc.git
+  track: v*
+  ref: v1.16.6-0-gcf828dc1ec9eb4cac647992a2b09b3a67e5b8868
+  exclude:
+  - v1.16.7
+```
+
+Full writeup in `docs/skills/bst.md` § `git_repo` tracking: excluding a bad tag, and
+patching ahead of a vendored ref. Krytis's own `elements/core/bootc.bst` tracks `v*` on
+the same upstream project with no `exclude:` today — same exposure if a future point
+release ships broken.
+
+## Patching a junction's own vendored source pin
+
+*Source: zirconium-hawaii `30febd5`, `5cb27df`*
+
+A `patch_queue` entry against a junction (e.g. `freedesktop-sdk.bst`) can bump one of the
+junction's own internal vendored source pins (`elements/extensions/mesa/mesa-sources.yml`,
+`elements/include/ostree-source.yml`) directly, landing a point-fix immediately instead of
+waiting for krytis's own junction ref to advance past a known-bad upstream version — which
+can drag in weeks of unrelated changes. Full writeup and the cache-key tradeoff (see the
+"Patch queues on junctions destroy upstream cache reuse" entry in `docs/skills/dakota.md`)
+in `docs/skills/bst.md` § `git_repo` tracking. The two specific bugs that motivated this
+upstream (mesa 26.1.6, ostree v2026.3) are already fixed in krytis's current fdsdk pin
+(26.08rc.2) — recorded as a technique for the next time this happens, not an action item
+today.
+
+Also new upstream: a second junction, `elements/freedesktop-sdk-extra.bst`
+(`kind: junction`, tracks `freedesktop-sdk-extra.git`), added purely to reuse a
+pre-packaged component (smartmontools) instead of writing a new element from scratch — uses
+the same `config.overrides:` mechanism this file already documents for `gnome-build-meta`
+(§ GNOME Build Meta Junction), applied to a second junction. Not adopted — krytis has no
+current need for smartmontools — but worth knowing the pattern exists if a future package
+is already packaged there.
+
+## Audit: full `mesa.bst` vs `mesa-headers.bst` in `build-depends`
+
+*Source: zirconium-hawaii `3b5af5d` — "mesa-headers is good enough for the build, we don't need full fat mesa"*
+
+zirconium dropped `freedesktop-sdk.bst:extensions/mesa/mesa.bst` from `build-depends`
+(kept only in `depends` for runtime linking) across 7 elements that already also had
+`components/mesa-headers.bst`, cutting build-sandbox size with no behavior change. Full
+writeup and the explicit caveat against a blind swap in `docs/skills/bst.md` § C library
+deps and Mesa. Krytis's `desktop/niri.bst`, `desktop/cage.bst`, `desktop/wlroots.bst`, and
+`desktop/noctalia-greeter.bst` all build-depend on full `mesa.bst` per this file's own
+documented "always both" rule — worth a per-element spot-check, not a mechanical change.

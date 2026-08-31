@@ -1283,6 +1283,55 @@ Install targets from the upstream source tree:
 
 Reference: `elements/config/desktop-udev.bst`. Closes #224.
 
+**Verify a udev rule's `GROUP=` reference before shipping it.** *Source: dakota `02bb985`
+— "fix(image): create plugdev and nintendo_switch groups for udev rules".* A udev rule
+containing `GROUP="somegroup"` for a group that doesn't exist on the image does **not**
+error at rule-load time or device-plug time — the device node silently falls back to
+`root:root` ownership, with no log message anywhere. fdsdk/gnome-build-meta only create
+the groups their own components need; a third-party udev rule set (vendor hardware rules —
+security keys, game controllers, flashing tools) referencing an app-specific group needs
+that group created explicitly (a `g <name> -` line in a `sysusers.d` drop-in) alongside the
+rule. Krytis's own udev rules today (`config/desktop-udev.bst`'s audio-pm rule, plus any
+future addition) only reference groups fdsdk already creates, so this isn't broken now —
+but check this proactively for any new vendor rule set rather than discovering it via
+silent root-ownership.
+
+## WirePlumber: PC-speaker can silently become the default audio sink after resume
+
+*Source: dakota `a5e9152` — "fix(audio): disable PC-speaker WirePlumber sink".*
+
+The kernel's `snd_pcsp` (PC-speaker ALSA) driver stays loaded for console beeps.
+WirePlumber's default ALSA-card enumeration exposes it as a real audio sink, and after
+suspend/resume it can silently become the *default* sink — producing a 37 kHz mono
+fallback that sounds exactly like broken/no audio, with no error anywhere in the stack.
+This is real desktop hardware behavior, not distro-specific — krytis ships
+wireplumber+pipewire in `stacks/desktop.bst` the same way dakota does, so any krytis
+machine with an active PC-speaker driver can hit the same post-resume glitch.
+
+Fix is a WirePlumber ALSA monitor rule that disables the device from desktop audio policy
+without unloading the kernel driver (console beeps still work):
+
+```
+# /etc/wireplumber/wireplumber.conf.d/51-disable-pcsp.conf (or main.lua.d/ depending on
+# WirePlumber version — check which config format fdsdk's wireplumber.bst ships)
+monitor.alsa.rules = [
+  {
+    matches = [
+      { device.name = "alsa_card.platform-pcspkr" }
+    ]
+    actions = {
+      update-props = {
+        device.disabled = true
+      }
+    }
+  }
+]
+```
+
+Not yet ported as a krytis element — this section records the fix and the trigger
+condition; port it as a small `kind: manual` config element (same shape as
+`config/gtk-settings.bst`) if/when the glitch is actually observed on krytis hardware.
+
 ## noctalia config paths — no /etc fallback, unlike niri
 
 Unlike niri (`$XDG_CONFIG_HOME/niri/config.kdl` → `/etc/niri/config.kdl` fallback, see

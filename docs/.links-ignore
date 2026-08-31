@@ -19,4 +19,5 @@ docs/skills/dakota-iso.md                 # output of docs/plans/2026-08-06-hard
 docs/skills/patch-junctions.md            # dakota's skill tree, quoted in docs/skills/dakota.md
 docs/skills/ci-reference.md               # dakota's skill tree, quoted in docs/skills/sbom.md
 docs/src/man/bootc-container-ukify.8.md   # bootc upstream, quoted in docs/design/secure-boot-uki.md
+docs/skills/ci.md                         # dakota's (pre-restructure) skill tree, quoted in AGENTS.md § Skill files rot too
 docs/skills/krytis-live-config.md         # kitten-lily/dakota-iso's skill tree, quoted in docs/plans/2026-08-05-seed-niri-config-via-skel.md

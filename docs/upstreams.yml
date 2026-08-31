@@ -16,18 +16,28 @@ repos:
   - name: dakota
     fork: starlit-os/dakota
     upstream: projectbluefin/dakota
-    # main hasn't moved since 2026-07-11; testing is the active branch
+    # Re-verified 2026-08-31: main last moved 2026-08-09 (22 days stale at
+    # check time); the promotion automation itself (auto/promote-testing-to-main)
+    # hasn't run since 2026-06-24. testing moves daily and remains the
+    # active branch to track. Also checked: 'next' branch is testing + 1
+    # commit with no independent history — not a viable alternative.
     branch: testing
     local_path: dakota
     skill_file: docs/skills/dakota.md
-    last_checked_sha: e0510098bce3472fe9bbfbc9e152861873440427
-    last_checked_date: "2026-08-04"
+    last_checked_sha: 9578027793d35920cb3ef17905185d26c68e32ba
+    last_checked_date: "2026-08-31"
 
   - name: zirconium-hawaii
     fork: starlit-os/zirconium-hawaii
     upstream: zirconium-dev/zirconium-hawaii
+    # Re-verified 2026-08-31: stable is the upstream repo's actual GitHub
+    # default branch, current (stable and testing point at the identical
+    # commit as of this check). An 'edge' branch exists with more recent
+    # activity but shares no git history with stable (git merge-base finds
+    # nothing) — an orphan branch, not a viable alternative under this
+    # tracking design.
     branch: stable
     local_path: zirconium-hawaii
     skill_file: docs/skills/zirconium-hawaii.md
-    last_checked_sha: abe1ad1d693239db929cead95421676688e1e2d4
-    last_checked_date: "2026-08-04"
+    last_checked_sha: abb496944443a41d5000f7753cebe3484b62f7df
+    last_checked_date: "2026-08-31"

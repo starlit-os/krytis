@@ -102,6 +102,23 @@ Don't write it:
 - Obvious things any developer would know
 - Ephemeral state ("currently broken, fix pending")
 
+### Skill files rot too — prune, don't just append
+
+The loop above describes writing lessons *in*. It does not stop growth from becoming its
+own problem. Sibling fork `dakota` hit this directly: its CI documentation grew to 5385
+lines across three files (`docs/skills/ci.md`, `ci-reference.md`, `ci-tooling.md`) before
+it became unmaintainable — stale in places, contradicted by the workflow YAML it was
+describing in others — and its own agents did an emergency prune down to ~450 lines total,
+restructured around "executable config is the source of truth; prose that disagrees with
+it is stale" (see `docs/skills/dakota.md` mining pass, 2026-08-31).
+
+Krytis is heading the same direction: `docs/skills/bst.md` is already 2800+ lines,
+`desktop.md` 1400+. Growth alone isn't the problem — an accurate 3000-line reference beats
+a vague 300-line one — but an agent adding an entry should periodically check whether the
+section it's touching, or a neighboring one, has drifted from what the code/workflow
+actually does today, and fix or cut it in the same pass rather than only ever appending.
+A skill file that only grows is heading toward the same rewrite dakota needed.
+
 ---
 
 ## Mandatory Gates
