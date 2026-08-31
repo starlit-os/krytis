@@ -1,6 +1,6 @@
 # FIDO2 Skills
 
-## One key, three enrollments — know which consumer you are talking to
+## One key, four enrollments — know which consumer you are talking to
 
 A single security key has to be enrolled separately for each consumer, because each uses its own relying-party ID and its own credential store. Enrolling one does nothing for the others:
 
@@ -9,8 +9,9 @@ A single security key has to be enrolled separately for each consumer, because e
 | LUKS boot unlock | `mise fido2:enroll-luks` → `systemd-cryptenroll --fido2-device=auto` | `io.systemd.cryptsetup` | LUKS2 header token slot |
 | systemd-homed login | `mise fido2:enroll` → `homectl update <user> --fido2-device=auto` | `io.systemd.home` | user record: public `fido2HmacCredential`, privileged `fido2HmacSalt[]` |
 | sudo / polkit / non-homed login | `mise fido2:enroll` → `pamu2fcfg` | `pam://$(hostname)` | `~/.config/Yubico/u2f_keys` |
+| git commit / tag signing | `ssh-keygen -t ed25519-sk -O resident` (no mise task yet) | `ssh:Signing` | token resident slot + `~/.ssh/id_ed25519_sk_rk_Signing{,.pub}` |
 
-`mise fido2:enroll` detects a homed user and does both of the last two rows in one run; a classic `/etc/passwd` user only gets the last row. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
+`mise fido2:enroll` detects a homed user and does both the homed and pam_u2f rows in one run; a classic `/etc/passwd` user only gets the pam_u2f row. The signing row is not covered by any task — see below. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
 
 ```bash
 homectl list --json=short 2>/dev/null | jq -e --arg u "$1" 'any(.[]; .name == $u)' >/dev/null
@@ -25,6 +26,62 @@ Why the split is architectural, not a packaging accident: homed derives the home
 Mirror the detected key capabilities into homed's flags (`--fido2-with-client-pin=`, `--fido2-with-user-presence=`, `--fido2-with-user-verification=`) so both enrollments demand the same factors; homed's own defaults are `PIN|UP` only, which silently diverges from a pam_u2f credential enrolled with `-V` on a biometric key.
 
 **Do not tell users to run `ykman` — it is not in the image.** Set a PIN with `fido2-token -S <device>` (libfido2, which is present).
+
+## Signing git commits with the same key — a fourth consumer
+
+Git's SSH signing backend (`gpg.format = ssh`) drives an `ed25519-sk` key directly, so every commit carries a hardware-backed signature gated on a physical touch. Enroll it as its own credential — the pam_u2f and homed credentials answer to different rp_ids and are not reachable from `ssh-keygen`.
+
+```bash
+ssh-keygen -t ed25519-sk -O resident -O application=ssh:Signing \
+  -C ssh:Signing -N "" -f ~/.ssh/id_ed25519_sk_rk_Signing
+```
+
+Workstation naming convention: the file `id_ed25519_sk_rk_<Name>` pairs with `-O application=ssh:<Name>`. `-O resident` stores the credential in a token slot, so `ssh-keygen -K` re-derives the pair on any other machine — check free slots with `fido2-token -I <dev> | grep 'remaining rk'`. `-N ""` is correct rather than lazy: the `_sk_` private file holds only a credential handle, no secret material.
+
+Omit `-O verify-required` unless you want a PIN prompt on *every* signature. Touch-only still means one tap per commit, and `git rebase -i` re-signs every rewritten commit — an 8-commit rebase is 8 taps.
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519_sk_rk_Signing   # handle file, NOT .pub
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
+```
+
+`~/.ssh/allowed_signers` takes comma-separated principals on a single key line:
+
+```
+me@example.com,20535390+kitten-lily@users.noreply.github.com namespaces="git" sk-ssh-ed25519@openssh.com AAAA…
+```
+
+`git verify-commit` only exercises whichever email you happened to commit with, so prove the rest resolve against the same signature instead of assuming:
+
+```bash
+ssh-keygen -Y find-principals -f ~/.ssh/allowed_signers -s <sigfile>
+```
+
+### An agent cannot type the FIDO2 PIN for you
+
+`ssh-keygen -O resident` prompts for the token PIN, and on krytis that prompt cannot be delegated: `SSH_ASKPASS` is `/usr/bin/false` and **no askpass binary is installed anywhere on the image**. There is no GUI dialog to pop, so an agent driving the command over a PTY just holds the prompt open until it times out. Enrollment is a human-at-the-terminal step — script around it, not through it. This is the same constraint that makes `mise fido2:enroll` and `fido2:enroll-luks` interactive by design.
+
+### Point `user.signingkey` at the handle file, not the `.pub` — gcr's agent cannot sign
+
+The desktop session's agent is gnome-keyring's, at `/run/user/1000/gcr/ssh`, and it auto-loads new `~/.ssh` sk keys with no `ssh-add` — a freshly generated `ssh:Signing` shows up in `ssh-add -l` straight away. **Do not trust that listing.** gcr advertises `sk-ssh-ed25519` keys it cannot actually use: signing through it succeeds sometimes and then fails, instantly and without touching the token, with
+
+```
+Couldn't sign message (signer): agent refused operation?
+fatal: failed to write commit object
+```
+
+Tell them apart by timing. A genuine hardware signature takes seconds of wall time because it is waiting for your finger; a refusal returns in ~0.2s and the key never blinks.
+
+The fix is to name the private handle file, dropping the `.pub`. `ssh-keygen -Y sign` then performs the FIDO2 assertion itself via libfido2 and never consults the agent. Nothing is lost by doing so: the `_sk_` file holds only a credential handle, so it is not a secret, and this is the configuration to use from the start rather than after the first mysterious failure. Confirm the direct path independently of git with:
+
+```bash
+env -u SSH_AUTH_SOCK ssh-keygen -Y sign -n git -f ~/.ssh/id_ed25519_sk_rk_Signing <file>
+```
+
+For getting GitHub to render such a commit as **Verified**, see `docs/skills/workflow.md` § Getting a Commit Signature to Show "Verified" on GitHub.
 
 ## enroll-luks task: fresh bootc installs have no /etc/crypttab
 
