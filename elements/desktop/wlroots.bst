@@ -1,4 +1,4 @@
-# wlroots 0.20.1 — Wayland compositor library.
+# wlroots 0.20.2 — Wayland compositor library.
 # Pinned to 0.20.x: noctalia-greeter's meson.build uses
 # dependency('wlroots-0.20'), an exact-match pcname, not >=0.20.
 # wlroots 0.21+ would require a source edit in noctalia-greeter.
@@ -6,7 +6,7 @@
 # All transitive C sub-deps are in fdsdk — libseat, libinput, libdrm,
 # pixman, libdisplay-info, wayland, wayland-protocols, xcb-util-*.
 # hwdata: build-depends only (needed for DRM backend configure; overlaps pciutils at runtime).
-# Source: https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/0.20.1/wlroots-0.20.1.tar.gz
+# Source: https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/0.20.2/wlroots-0.20.2.tar.gz
 kind: meson
 
 build-depends:

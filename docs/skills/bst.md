@@ -694,7 +694,7 @@ only in where the version comes from and how the URL is spelled. `--list` prints
 upstream and reports at the end, since stopping at the first would hide the state of
 everything after it.
 
-Two things that bit while writing it, both worth knowing before adding a provider:
+Three things that bit while writing it, both worth knowing before adding a provider:
 
 - **Use tags, not releases, for GitHub tag archives.** `repos/<repo>/releases/latest` 404s on
   projects that tag but never publish a Release. `greetd` is the case here — a sourcehut
@@ -706,6 +706,17 @@ Two things that bit while writing it, both worth knowing before adding a provide
   the whole `url:` line from what the upstream API actually returned, and take PyPI's hashed
   path verbatim rather than reconstructing one. A blanket substitution also rewrites any
   other occurrence of the version string in the element.
+- **Scope the "current version" `grep` to the `url:` line, never the whole element.** A
+  version number in a header comment (e.g. `# wlroots 0.20.1 — ...`) matches the same regex
+  as the real `url:` line, and `head -1` silently prefers whichever comes first in the file.
+  When #652 hand-bumped wlroots' `url:`/`ref:` pair to 0.20.2 but left the header comment
+  saying 0.20.1, the tracker read `cur=0.20.1` from the comment, decided an update was due,
+  downloaded 0.20.2 again, and then failed to find a `url:` line containing "0.20.1" to
+  rewrite — a hard failure, not a silent no-op, but only because the stale text happened to
+  still parse as a valid version. `url_lines()` isolates `^\s*url:\s*` lines before any
+  per-provider regex runs, so a stale comment can't be picked up as `cur`. Applies to any
+  hand-written `<x>-update` task too, not just `tarball-update` — `falcond-update`'s
+  `CURRENT_TAG` extraction does the same.
 
 **Series-pinned elements need a constrained tracker, not the latest release.**
 `desktop/zig-0.16.bst` exists because falcond declares `minimum_zig_version = "0.16.0"` while

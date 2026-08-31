@@ -7,7 +7,16 @@ kind: manual
 # are calls to org.scx.Loader), AMD 3D VCache management, DMEM cgroup GPU protection, and
 # Proton/Wine support.
 # Do NOT run alongside gamemode (conflicts). Requires power-profiles-daemon at runtime.
-# Source: https://git.pika-os.com/general-packages/falcond
+# Source: https://git.pika-os.com/general-packages/falcond — pulled via the
+# GitHub mirror https://github.com/PikaOS-Linux/falcond (verified in sync:
+# same annotated tag object id on both hosts for v2.0.14,
+# 7185cc754064ca255be98f665496fc4d884984f6). git.pika-os.com sits behind
+# Cloudflare, which 403s GitHub Actions' own hosted-runner IP range
+# regardless of User-Agent — `bst source track`/fetch from Blacksmith and
+# self-hosted runners is unaffected, only the ubuntu-24.04-hosted tracking
+# workflow was failing. Routing through the mirror sidesteps the block
+# entirely instead of runner-hopping. See mise/tasks/falcond-update and
+# docs/skills/bst.md § Element update path.
 
 variables:
   strip-binaries: ""
@@ -20,10 +29,12 @@ depends:
   - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 sources:
-  # falcond source archive (strips outer falcond/ dir; build root is then falcond/)
+  # falcond source archive, from the GitHub mirror (see "Source" comment
+  # above) — strips outer falcond-<version>/ dir; build root is then
+  # falcond/ (a nested subdir of the repo, not the strip target).
   - kind: tar
-    url: pikaos_files:general-packages/falcond/archive/v2.0.14.tar.gz
-    ref: 7cef1d6256820e1b99a0258f6d081b1e95a88842a0e519f99dcb1898160b46b3
+    url: github_files:PikaOS-Linux/falcond/archive/v2.0.14.tar.gz
+    ref: ddd7d0e213f0b1c8f23c0ac0087998f3b1a2ee1d5836395b6f7393f89ccc9d75
 
   # Zig git deps — staged as Gitea commit archives; populated into the Zig cache via
   # `zig fetch <local-tarball>` (see build-commands). zig fetch handles the 0.16.0 cache
