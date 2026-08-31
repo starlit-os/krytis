@@ -76,6 +76,15 @@ fetch_sha() {
     rm -f "$out"
 }
 
+# Isolate the `url:` line(s) so a version-number regex can't match a stale
+# comment elsewhere in the element (#652 — wlroots' header comment still said
+# 0.20.1 after the `url:`/`ref:` pair had been hand-bumped to 0.20.2; `cur`
+# picked up the comment's 0.20.1 via `head -1` over the whole file, and the
+# later rewrite then found no `url:` line containing "0.20.1" to replace).
+url_lines() {
+    grep -oP '^\s*url:\s*\K.*' "$1"
+}
+
 # Rewrite the `url:` line matching $2 and the `ref:` that follows it.
 #
 # Deliberately not `sed s|$cur|$new|g`. A blanket version substitution assumes
@@ -122,14 +131,14 @@ update_one() {
 
     case "$provider" in
       github-release)
-        cur=$(grep -oP "${extra}-\K[0-9][0-9.]*(?=\.tar\.gz)" "$element" | head -1)
+        cur=$(url_lines "$element" | grep -oP "${extra}-\K[0-9][0-9.]*(?=\.tar\.gz)" | head -1)
         local tag; tag=$(gh api "repos/${locator}/releases/latest" --jq '.tag_name')
         new="${tag#v}"
         url="https://github.com/${locator}/releases/download/${tag}/${extra}-${new}.tar.gz"
         elem="github_files:${locator}/releases/download/${tag}/${extra}-${new}.tar.gz"
         ;;
       github-tag)
-        cur=$(grep -oP "archive/refs/tags/${extra}\K[0-9][0-9.]*(?=\.tar\.gz)" "$element" | head -1)
+        cur=$(url_lines "$element" | grep -oP "archive/refs/tags/${extra}\K[0-9][0-9.]*(?=\.tar\.gz)" | head -1)
         # Tags, not releases. greetd is a sourcehut project whose GitHub mirror
         # carries tags but publishes no Releases, so releases/latest 404s there.
         # Reading tags works for every repo in this table and needs no
@@ -140,7 +149,7 @@ update_one() {
         elem="github_files:${locator}/archive/refs/tags/${extra}${new}.tar.gz"
         ;;
       gitlab-fdo-tag)
-        cur=$(grep -oP "/-/archive/v?\K[0-9][0-9.]*(?=/)" "$element" | head -1)
+        cur=$(url_lines "$element" | grep -oP "/-/archive/v?\K[0-9][0-9.]*(?=/)" | head -1)
         local proj; proj=$(printf '%s' "$locator" | jq -sRr @uri)
         # Tag list is ordered newest-first by the API's default (updated desc);
         # sort explicitly so a re-tagged old release cannot win.
@@ -150,12 +159,12 @@ update_one() {
               | sort -V | tail -1)
         new="$tag"
         # Preserve whichever tag spelling the element already uses.
-        local tagpfx=""; grep -q "/-/archive/v" "$element" && tagpfx="v"
+        local tagpfx=""; url_lines "$element" | grep -q "/-/archive/v" && tagpfx="v"
         url="https://gitlab.freedesktop.org/${locator}/-/archive/${tagpfx}${new}/${extra}-${tagpfx}${new}.tar.gz"
         elem="freedesktop_files:${locator}/-/archive/${tagpfx}${new}/${extra}-${tagpfx}${new}.tar.gz"
         ;;
       pypi)
-        cur=$(grep -oP "${locator//-/[-_]}-\K[0-9][0-9.]*(?=\.tar\.gz)" "$element" | head -1)
+        cur=$(url_lines "$element" | grep -oP "${locator//-/[-_]}-\K[0-9][0-9.]*(?=\.tar\.gz)" | head -1)
         local meta; meta=$(curl -fsS -A "$UA" "https://pypi.org/pypi/${locator}/json")
         new=$(printf '%s' "$meta" | jq -r '.info.version')
         url=$(printf '%s' "$meta" | jq -r --arg v "$new" '.releases[$v][] | select(.packagetype=="sdist") | .url')
@@ -165,7 +174,7 @@ update_one() {
         elem="pypi:${url#https://files.pythonhosted.org/packages/}"
         ;;
       zig-series)
-        cur=$(grep -oP "download/\K[0-9][0-9.]*(?=/zig-x86_64)" "$element" | head -1)
+        cur=$(url_lines "$element" | grep -oP "download/\K[0-9][0-9.]*(?=/zig-x86_64)" | head -1)
         new=$(curl -fsS -A "$UA" https://ziglang.org/download/index.json \
               | jq -r 'keys[]' | grep -E "^${locator}\." | sort -V | tail -1 || true)
         [ -n "$new" ] || { echo "    no ${locator}.x release published yet — nothing to do"; return 0; }

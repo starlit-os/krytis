@@ -1041,7 +1041,10 @@ Add as `files/desktop-tweaks/tmpfiles.d/amd-pstate-epp.conf`. systemd-tmpfiles e
 
 ## falcond (PikaOS gaming performance daemon)
 
-`elements/desktop/falcond.bst`. Source: https://git.pika-os.com/general-packages/falcond
+`elements/desktop/falcond.bst`. Upstream: https://git.pika-os.com/general-packages/falcond,
+pulled through its GitHub mirror https://github.com/PikaOS-Linux/falcond — git.pika-os.com's
+Cloudflare 403s GitHub Actions' own hosted-runner IP range, see `docs/skills/ci-runner.md` §
+`track-bst-sources.yml` per-job gotchas.
 
 Requires Zig 0.16.0+ (`minimum_zig_version = "0.16.0"` in build.zig.zon). All three deps
 (`otter_conf`, `otter_desktop`, `otter_utils`) are `git+https://git.pika-os.com/...` — all go in
