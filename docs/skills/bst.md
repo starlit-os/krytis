@@ -2082,6 +2082,43 @@ grep -E '^ *sha:' elements/desktop/greetd.bst | awk '{print length($2)}' | sort 
 
 Bumping a direct dependency does **not** bump its own dependencies unless the new version strictly requires a newer one. Confirmed while fixing greetd's `tokio`/`bytes` CVEs (#496): `cargo update -p tokio` alone moved `tokio` 1.37.0→1.42.1 but left `bytes` at 1.6.0 — tokio's manifest only declares `bytes = "1"`, and 1.6.0 still satisfies that caret range, so cargo's conservative resolver had no reason to touch it. `bytes`' own CVE (GHSA-434x-w66g-qw3r, fixed at 1.11.1) needed its own explicit `cargo update -p bytes`. **Don't assume a vulnerable transitive dependency "comes along for the ride"** when bumping the crate that pulls it in — check the resulting `Cargo.lock` for the actual version and `-p` it directly if it didn't move.
 
+### Never hand-write a `Cargo.lock` bump patch — resolve it with a real cargo
+
+A `kind: patch` source that edits `Cargo.lock` by hand is a resolver decision made
+without the resolver, and cargo's own constraint data is not visible in the lock
+file being edited. #682 bumped greetd's `tokio` 1.42.1→1.43.1 (+ `tokio-macros`
+2.4.0→2.5.0, which *is* visible — tokio's lock entry lists it) and the build broke:
+tokio 1.43 also raised its unix `libc` floor to `^0.2.168`, and nothing in the old
+lock says so, so the vendored 0.2.153 no longer satisfied it (#692):
+
+```
+error: failed to select a version for the requirement `libc = "^0.2.168"`
+candidate versions found which didn't match: 0.2.153
+location searched: directory source `.vendored-crates` (which is replacing registry `crates-io`)
+required by package `tokio v1.43.1`
+```
+
+**Only a real build catches this.** `bst show` resolves the element fine (the
+cargo2 refs are internally consistent), and `bst source track` regenerates the
+ref list *from that same wrong `Cargo.lock`*, so it reports success too. The
+failure surfaces only inside the sandbox at `cargo build --locked`.
+
+Do the resolution with an actual cargo instead — `mise run greetd-relock --crate
+tokio --version 1.43.1` (see `mise/tasks/greetd-relock`). It extracts the pinned
+tarball, applies every *other* patch the element lists, runs
+`cargo update -p <crate> --precise <version>` in `docker.io/library/rust:1-slim`,
+writes the resulting diff as `patches/greetd/bump-<crate>-<version>.patch`, and
+regenerates the cargo2 `ref:` list from the new lock. The container is not
+incidental: the bst sandbox has no DNS for `index.crates.io`, and no host cargo is
+declared in `mise.toml` `[tools]` (a full Rust toolchain for one maintenance task
+is not worth forcing on every `mise install`).
+
+Re-running the task with an existing `--patch` name regenerates it in place, so it
+also serves as a re-verification of a carried patch against the current index. It
+refuses to write if cargo resolved no change, if the tarball sha doesn't match the
+element's `ref:`, or if the cargo2 `ref:` list is no longer the tail of the element
+(it appends rather than splices).
+
 ### Dropping an unused workspace member to eliminate an unpatchable-semver-range CVE
 
 When a vulnerable crate's fix is a major-version bump outside the range the workspace's `Cargo.toml` declares (`cargo update -p <crate>` can't cross it) and that crate turns out to be needed by only one, genuinely-unused workspace member — dropping the member is often cleaner and lower-risk than bumping the constraint and hoping nothing broke. Done for `rpassword` (5.0.1→7.5.0 needed, a two-major jump) via dropping `agreety` — greetd's own unused reference text-greeter binary (krytis ships `noctalia-greeter-session`, confirmed via `greetd-config.bst`'s `[default_session]`, not `agreety`) — from `[workspace] members` in a `kind: patch` source (`patches/greetd/drop-agreety-workspace-member.patch`), then regenerating `Cargo.lock`/the `cargo2` block from the now-narrower dependency graph.

@@ -125,8 +125,8 @@ sources:
     sha: 49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b
   - kind: registry
     name: libc
-    version: 0.2.153
-    sha: 9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd
+    version: 0.2.189
+    sha: 3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2
   - kind: registry
     name: memchr
     version: 2.7.2

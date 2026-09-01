@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate greetd's Cargo.lock bump patch + cargo2 ref list from a real cargo resolution"
+#USAGE flag "--crate <crate>" help="Crate to bump (cargo update -p <crate>)"
+#USAGE flag "--version <version>" help="Exact version to pin (cargo update --precise <version>)"
+#USAGE flag "--patch <patch>" help="Output patch filename under patches/greetd/ (default: bump-<crate>-<version>.patch)"
+#USAGE flag "--image <image>" default="docker.io/library/rust:1-slim" help="Container image providing cargo"
+
+# greetd has no upstream vendored-dependencies tarball, so its crate graph lives
+# in two places that must agree exactly: the `Cargo.lock` produced by applying
+# patches/greetd/*.patch to the pinned tarball, and the `kind: cargo2` ref: list
+# in elements/desktop/greetd.bst (which is what actually gets vendored into the
+# sandbox).
+#
+# Hand-editing a Cargo.lock bump patch does not work. #682 bumped tokio
+# 1.42.1 -> 1.43.1 by hand and the build broke: tokio 1.43 raised its unix libc
+# floor to ^0.2.168, which a hand-written lock has no way to know, so cargo
+# rejected the vendor directory with "failed to select a version for the
+# requirement libc = ^0.2.168" (#692). `bst show` and `bst source track` both
+# pass on such a lock — only a real build catches it.
+#
+# This task does the resolution with a real cargo instead: extract the pinned
+# tarball, apply every *other* patch the element lists, run
+# `cargo update -p <crate> --precise <version>` in a container (the bst sandbox
+# has no DNS, so it cannot reach index.crates.io itself), then emit the diff as
+# the patch and regenerate the cargo2 ref: list from the resulting lock.
+#
+# Re-running with an existing --patch name regenerates it in place, so this
+# doubles as a way to re-verify a carried patch against the current index.
+
+set -euo pipefail
+
+ELEMENT="elements/desktop/greetd.bst"
+PATCH_DIR="patches/greetd"
+
+CRATE="${usage_crate:-}"
+VERSION="${usage_version:-}"
+IMAGE="${usage_image:-docker.io/library/rust:1-slim}"
+
+if [ -z "${CRATE}" ] || [ -z "${VERSION}" ]; then
+    echo "ERROR: --crate and --version are both required." >&2
+    echo "  e.g. mise run greetd-relock --crate tokio --version 1.43.1" >&2
+    exit 1
+fi
+
+PATCH_NAME="${usage_patch:-bump-${CRATE}-${VERSION}.patch}"
+PATCH_PATH="${PATCH_DIR}/${PATCH_NAME}"
+
+command -v podman >/dev/null || {
+    echo "ERROR: podman is required (cargo runs in a container: no host toolchain)." >&2
+    exit 1
+}
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# --- 1. pinned tarball -------------------------------------------------------
+
+URL_PATH=$(grep -oP '^\s+url: github_files:\K.*' "${ELEMENT}" | head -1)
+TAR_REF=$(grep -A1 "url: github_files:${URL_PATH}" "${ELEMENT}" | grep -oP 'ref: \K\S+')
+
+echo "==> Downloading https://github.com/${URL_PATH}"
+curl -sSfL "https://github.com/${URL_PATH}" -o "${TMPDIR}/src.tar.gz"
+GOT_SHA=$(sha256sum "${TMPDIR}/src.tar.gz" | awk '{print $1}')
+if [ "${GOT_SHA}" != "${TAR_REF}" ]; then
+    echo "ERROR: tarball sha256 mismatch — element says ${TAR_REF}, got ${GOT_SHA}" >&2
+    exit 1
+fi
+
+mkdir -p "${TMPDIR}/src"
+tar -xzf "${TMPDIR}/src.tar.gz" -C "${TMPDIR}/src" --strip-components=1
+
+# --- 2. apply every patch except the one being regenerated -------------------
+
+# Element order is authoritative: `kind: patch` sources apply in listed order.
+mapfile -t PATCHES < <(grep -oP "^\s+path: \K${PATCH_DIR}/.*" "${ELEMENT}")
+for p in "${PATCHES[@]}"; do
+    [ "${p}" = "${PATCH_PATH}" ] && continue
+    echo "==> Applying ${p}"
+    patch -p1 -d "${TMPDIR}/src" -i "${PWD}/${p}" >/dev/null
+done
+
+cp "${TMPDIR}/src/Cargo.lock" "${TMPDIR}/Cargo.lock.base"
+
+# --- 3. real resolution ------------------------------------------------------
+
+echo "==> cargo update -p ${CRATE} --precise ${VERSION} (in ${IMAGE})"
+podman run --rm \
+    --pull=newer \
+    -v "${TMPDIR}/src:/w:z" \
+    -w /w \
+    "${IMAGE}" \
+    cargo update -p "${CRATE}" --precise "${VERSION}"
+
+if cmp -s "${TMPDIR}/Cargo.lock.base" "${TMPDIR}/src/Cargo.lock"; then
+    echo "ERROR: cargo resolved no change — ${CRATE} ${VERSION} is already the locked version." >&2
+    exit 1
+fi
+
+# --- 4. emit the patch -------------------------------------------------------
+
+# git diff exits 1 when files differ; that is the expected path here.
+git diff --no-index --src-prefix=a/ --dst-prefix=b/ \
+    "${TMPDIR}/Cargo.lock.base" "${TMPDIR}/src/Cargo.lock" \
+    | sed -e "s|a${TMPDIR}/Cargo.lock.base|a/Cargo.lock|" \
+          -e "s|b${TMPDIR}/src/Cargo.lock|b/Cargo.lock|" \
+          -e "s|${TMPDIR}/Cargo.lock.base|Cargo.lock|" \
+          -e "s|${TMPDIR}/src/Cargo.lock|Cargo.lock|" \
+    >"${TMPDIR}/out.patch" || true
+
+grep -q '^--- a/Cargo.lock$' "${TMPDIR}/out.patch" || {
+    echo "ERROR: generated patch has unexpected headers:" >&2
+    head -5 "${TMPDIR}/out.patch" >&2
+    exit 1
+}
+
+mv "${TMPDIR}/out.patch" "${PATCH_PATH}"
+echo "==> Wrote ${PATCH_PATH}"
+if ! grep -q "path: ${PATCH_PATH}" "${ELEMENT}"; then
+    echo "    NOTE: ${ELEMENT} does not list this patch yet — add a"
+    echo "          '- kind: patch / path: ${PATCH_PATH}' source before the"
+    echo "          cargo2 block, after the patches it applies on top of."
+fi
+
+# --- 5. regenerate the cargo2 ref: list -------------------------------------
+
+# The ref: list must be the tail of the element — this task rewrites everything
+# after it. greetd.bst has always been shaped that way; fail loudly if that ever
+# changes rather than silently truncating a source block.
+REF_LINE=$(awk '/^- kind: cargo2$/ { found=1 } found && /^  ref:$/ { print NR; exit }' "${ELEMENT}")
+[ -n "${REF_LINE}" ] || { echo "ERROR: no cargo2 ref: list in ${ELEMENT}" >&2; exit 1; }
+
+if tail -n "+$((REF_LINE + 1))" "${ELEMENT}" \
+    | grep -vqE '^  - kind: registry$|^    (name|version|sha): \S+$|^$'; then
+    echo "ERROR: ${ELEMENT} has content after the cargo2 ref: list." >&2
+    echo "       Teach this task to splice instead of appending." >&2
+    exit 1
+fi
+
+head -n "${REF_LINE}" "${ELEMENT}" >"${TMPDIR}/element.new"
+python3 files/scripts/generate_cargo_sources.py "${TMPDIR}/src/Cargo.lock" \
+    >>"${TMPDIR}/element.new"
+mv "${TMPDIR}/element.new" "${ELEMENT}"
+
+BAD_SHA=$(grep -E '^ *sha:' "${ELEMENT}" | awk 'length($2) != 64' | wc -l)
+[ "${BAD_SHA}" -eq 0 ] || { echo "ERROR: ${BAD_SHA} cargo2 sha(s) are not 64 chars" >&2; exit 1; }
+
+echo "==> Regenerated cargo2 ref: list in ${ELEMENT}"
+git --no-pager diff --stat -- "${ELEMENT}" "${PATCH_PATH}"
+echo
+echo "==> Verify with a real build (bst show / source track will NOT catch a"
+echo "    lock/vendor mismatch):"
+echo "      mise run bst build desktop/greetd.bst"
