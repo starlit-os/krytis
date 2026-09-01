@@ -20,11 +20,17 @@ ignore:
     package:
       name: libidn2
       version: "2.3.8"
+  # libnotify: GNOME libnotify (C, gnome-build-meta.bst:sdk/libnotify.bst) —
+  # matched against npm's unrelated "libnotify" desktop-notification wrapper.
+  - vulnerability: GHSA-6898-wx94-8jq8
+    package:
+      name: libnotify
+      version: "0.8.8"
   # markdown: Python-Markdown (components/python3-markdown.bst)
   - vulnerability: GHSA-wx77-rp39-c6vg
     package:
       name: markdown
-      version: "3.10.2"
+      version: "3.10.3"
   # networkx: NetworkX (components/python3-networkx.bst)
   - vulnerability: GHSA-m4cf-q2p6-q6pv
     package:
@@ -39,11 +45,37 @@ ignore:
     package:
       name: paste
       version: "1.0.14"
+  # Pillow: python3-pillow (components/python3-pillow.bst) — Grype's "bitnami"
+  # namespace stock-matcher (no purl) matches CVEs whose cited fixed version
+  # is far below the actually-installed version (12.3.0 is newer than every
+  # fixed-in version below; the CVE was already fixed before this pin).
+  - vulnerability: BIT-pillow-2024-28219
+    package:
+      name: Pillow
+      version: "12.3.0"
+  - vulnerability: BIT-pillow-2025-48379
+    package:
+      name: Pillow
+      version: "12.3.0"
   # shaderc: Google shaderc (C++, components/shaderc.bst)
   - vulnerability: GHSA-3h68-ppv2-8p9v
     package:
       name: shaderc
-      version: "2025.3"
+      version: "2026.3"
+  # sqlite: components/sqlite.bst — same "bitnami" stock-matcher issue as
+  # Pillow above: installed 3.53.4 postdates every fixed-in version cited.
+  - vulnerability: BIT-sqlite-2025-6965
+    package:
+      name: sqlite
+      version: "3.53.4"
+  - vulnerability: BIT-sqlite-2024-0232
+    package:
+      name: sqlite
+      version: "3.53.4"
+  - vulnerability: BIT-sqlite-2025-29088
+    package:
+      name: sqlite
+      version: "3.53.4"
   # tar: GNU tar (C, bootstrap/base-sdk/tar.bst + components/tar.bst)
   - vulnerability: GHSA-23hp-3jrh-7fpw
     package:
