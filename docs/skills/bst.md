@@ -686,7 +686,7 @@ If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is n
 **Namespace layout in gnome-build-meta:**
 - `core/` — end-user GNOME apps (nautilus, gnome-text-editor, etc.)
 - `core-deps/` — libraries and runtime deps (xdg-desktop-portal-gtk, libportal, etc.)
-- `sdk/` — developer/toolchain elements (xwayland-satellite, blueprint-compiler, etc.)
+- `sdk/` — developer/toolchain elements (adwaita-fonts, blueprint-compiler, etc.)
 - `gnomeos-deps/` — OS-level config (flathub-config, etc.)
 
 Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
@@ -2130,6 +2130,65 @@ Two things this doesn't automatically clean up:
 **Same technique also applies to a mirrored (not krytis-owned) element.** `elements/overrides/rust-bindgen.bst` (#498) drops freedesktop-sdk's `bindgen-tests/tests/quickchecking` workspace member the identical way — the difference is *where* the patch lives: since `components/rust-bindgen.bst` belongs to the freedesktop-sdk junction, the fix goes through "Mirroring a junction element to patch its source" (above) rather than patching a krytis-owned element directly. `quickchecking` was never in the workspace's `default-members`, so — like `agreety` — it was already dead weight in the built binary; only `Cargo.lock`'s full-workspace resolution (which ignores `default-members`) pulled its `quickcheck -> rand` 0.8.5 pin into the SBOM.
 
 greetd links libpam via `pam-sys`. Add `linux-pam.bst` to **both** `build-depends` AND `depends` — it transitively provides `linux-pam-base.bst` which supplies `libpam.so` + `libpam_misc.so`.
+
+## `build.rs` calling `git describe` (vergen / vergen-gitcl) — `git_repo` sources DO stage a real `.git`
+
+Don't assume a BST `git_repo`/`git_tag` source exports a bare tree with no
+git metadata. It doesn't: `stage()` runs `git clone --no-checkout
+--no-hardlinks <mirror> <dir>` then `git checkout --force <ref>` (see
+`buildstream_plugins_community/sources/git_tag.py`), so the sandbox's source
+directory is a real `.git` checkout. A `build.rs` that shells out to `git`
+(e.g. `vergen-gitcl`'s `GitclBuilder::describe()`, used by
+`desktop/xwayland-satellite.bst`, #499) *can* work here — but only if `git`
+itself is on `PATH` inside the sandbox, which most Rust `build-depends`
+lists (`components/rust.bst`, `components/pkg-config.bst`,
+`public-stacks/buildsystem-make.bst`) do not provide. Add
+`freedesktop-sdk.bst:components/git.bst` to `build-depends` if the crate
+graph needs it.
+
+**`VERGEN_IDEMPOTENT=1` does not suppress the describe — don't reach for it.**
+That was this section's original advice and a real sandbox build disproved it:
+`xwayland-satellite -version` printed `v0.8.2-dirty`, i.e. a live
+`git describe`, not the `VERGEN_IDEMPOTENT_OUTPUT` placeholder. Read from
+source (vergen-gitcl 1.0.8 / vergen-lib 0.1.6), the flag does exactly three
+things: sets `Emitter.idempotent` (`vergen-lib/src/emitter.rs:65`), skips
+`cargo:rerun-if-changed=.git/…` (`vergen-gitcl/src/gitcl/mod.rs:574`), and
+defaults **only** `VERGEN_GIT_COMMIT_DATE`/`_TIMESTAMP` (`mod.rs:840`). The
+describe block (`mod.rs:676-701`) never reads it. The crate's own rustdoc
+(`mod.rs:209-232`) claims otherwise and is stale — its integration test
+`git_all_idempotent_output()` asserts a real describe value.
+
+**Set `VERGEN_GIT_DESCRIBE` instead.** Any pre-set `VERGEN_*` value
+short-circuits the corresponding git call (`mod.rs:681` →
+`vergen-lib/src/utils.rs:29`, emitting `cargo:warning=… overidden`, sic).
+Two useful values:
+
+- `VERGEN_GIT_DESCRIBE=VERGEN_IDEMPOTENT_OUTPUT` — the sentinel a crate's own
+  fallback may already special-case. `xwayland-satellite`'s
+  `src/lib.rs::version()` does (`if version == "VERGEN_IDEMPOTENT_OUTPUT" {
+  version = env!("CARGO_PKG_VERSION") }`), so `-version` prints `0.8.2` with
+  the element hardcoding no version string of its own. This is what
+  `desktop/xwayland-satellite.bst` uses.
+- `VERGEN_GIT_DESCRIBE=v1.2.3` — a literal, when the crate has no fallback.
+  Duplicates the version into the element; only do it if there is no sentinel
+  path.
+
+Either way `git` is still required in `build-depends`: `add_map_entries`
+(`mod.rs:911-931`) runs `check_git` + `check_inside_git_worktree` *before* the
+per-key short-circuits. Those failing isn't fatal — `Emitter`'s
+`fail_on_error` is false by default, so the error path defaults every
+requested key to the placeholder — but relying on that means relying on a
+build error, so keep `components/git.bst` listed.
+
+**Why the `-dirty` even appeared:** `describe(tags, dirty, …)` implements the
+dirty check as a separate `git status --porcelain --untracked-files=no`
+(`mod.rs:900`), not `git describe --dirty`. Every `kind: patch` source in the
+element modifies the staged worktree, so a patched element is *always* dirty
+and the suffix is unavoidable as long as the describe runs at all.
+
+Verified in the real sandbox, not just on the host: with the sentinel set,
+`mise run bst build desktop/xwayland-satellite.bst` succeeds and
+`bst shell … -- xwayland-satellite -version` prints `0.8.2`.
 
 ## Greeter Stack: greetd display-manager Alias
 
