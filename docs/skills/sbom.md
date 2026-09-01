@@ -253,3 +253,19 @@ further checkout) — the pattern to watch for if either workflow grows a step
 that switches git refs again: any Grype/SBOM output living *inside* the repo
 tree does not survive a subsequent `actions/checkout` with its default
 `clean: true`.
+
+**This bit for real, and not just for output.** `vuln-diff.yml`'s first CI
+run (PR #689) failed with `python3: can't open file '.../scripts/
+vuln-diff.py': No such file or directory` — not the JSON outputs, the
+*diffing tool itself*. The base checkout's `ref` is `main`, which (before
+this PR merges) has no `scripts/vuln-diff.py` at all; `clean: true` removed
+it along with everything else not in that commit's tree, and the later
+`Diff vulnerability reports` step had nothing left to run. Fixed by copying
+`scripts/vuln-diff.py` to `$RUNNER_TEMP` right after the head scan, then
+invoking that copy — the workflow's own tooling must always run HEAD's
+version, never whatever (or nothing) the base commit happens to carry, the
+same way the base scan itself must always use *base's own* `.grype.yaml`.
+**Lesson: when a workflow step is going to `git checkout`/`actions/checkout`
+to a different ref mid-job, everything the *rest of the job* still needs —
+scripts, generated data, anything — must already be outside the repo tree
+before that step runs, not just the final report output.**

@@ -72,6 +72,16 @@ jobs:
         # `git clean` below cannot touch it.
         run: mise run vuln-scan --output "${{ runner.temp }}/head-grype.json"
 
+      - name: Preserve diff script for the base checkout
+        # The base commit may not have scripts/vuln-diff.py at all — it is
+        # new in whichever PR first adds this workflow, and even after that
+        # PR merges, an older base commit (stacked PR, pre-rebase) still
+        # might not carry the current version. The diff step below must
+        # always run HEAD's copy of the tool, not whatever (or nothing) the
+        # base commit happens to have — copy it out before the base checkout
+        # (`clean: true`, below) can remove or shadow it.
+        run: cp scripts/vuln-diff.py "${{ runner.temp }}/vuln-diff.py"
+
       - name: Checkout PR base
         # actions/checkout can fetch an arbitrary commit SHA directly, and
         # defaults to `clean: true` — wipes head's .venv/generated files so
@@ -91,7 +101,7 @@ jobs:
 
       - name: Diff vulnerability reports
         run: |
-          uv run python3 scripts/vuln-diff.py \
+          uv run python3 "${{ runner.temp }}/vuln-diff.py" \
             "${{ runner.temp }}/base-grype.json" \
             "${{ runner.temp }}/head-grype.json" \
             --fail-on "${NEW_VULN_FAIL_ON}" \
