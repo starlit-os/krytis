@@ -6,7 +6,7 @@ pass-cli = "github:protonpass/pass-cli"
 # something to bump (#24/#25) — "latest" is invisible to it. Bump by editing
 # here, then `mise run mise-lock` to refresh mise.lock.
 [tools]
-usage = "6.6.0"
+usage = "6.6.1"
 # 3.12 is a floor, not a preference: pyproject.toml's requires-python is
 # ">=3.12" and BST 2.5.x is validated against it. Crossing to 3.13 is a
 # deliberate call, so Renovate is capped below it (allowedVersions in
