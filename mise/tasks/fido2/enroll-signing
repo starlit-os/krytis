@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#MISE description="Enroll a FIDO2 resident key for git commit/tag signing (docs/skills/fido2.md)"
+#USAGE flag "--name <name>" default="Signing" help="Credential/application name — produces ssh:<name> and ~/.ssh/id_ed25519_sk_rk_<name>"
+
+# Dev-host tooling, not image content (#678, sub-task of #154). Wires up the
+# fourth FIDO2 consumer documented in docs/skills/fido2.md: git commit/tag
+# signing, alongside the image-shipped `mise fido2:enroll`/`enroll-luks`
+# (login/sudo/LUKS — those run on a booted krytis system, this runs on a
+# contributor's dev machine against *their own* global git config, which is
+# why it lives in mise/tasks/ rather than files/fido2-tasks/).
+set -euo pipefail
+
+NAME="${usage_name:-Signing}"
+HANDLE="${HOME}/.ssh/id_ed25519_sk_rk_${NAME}"
+PUBKEY="${HANDLE}.pub"
+ALLOWED_SIGNERS="${HOME}/.ssh/allowed_signers"
+APPLICATION="ssh:${NAME}"
+
+mkdir -p "${HOME}/.ssh"
+chmod 700 "${HOME}/.ssh"
+
+# ── 1. Key generation — skip if this credential's handle already exists ─────
+# Local-file-driven idempotency, same precedent as fido2:enroll-luks/enroll:
+# re-running must not burn a second resident slot on the token.
+if [[ -f "$HANDLE" ]]; then
+  echo "==> ${HANDLE} already exists — skipping generation."
+  echo "    Delete it (and the matching resident credential on the token, via"
+  echo "    'fido2-token -D -i <cred-id> -r <device>') to re-enroll from scratch."
+else
+  # Capability detection precedent from fido2:enroll: confirm a device is
+  # actually present, and that it has a free resident-key slot, before
+  # attempting generation rather than letting ssh-keygen fail opaquely.
+  DEVICE=$(fido2-token -L 2>/dev/null | awk '{print $1}' | tr -d ':' | head -1)
+  if [[ -z "$DEVICE" ]]; then
+    echo "ERROR: no FIDO2 device detected (fido2-token -L found nothing)." >&2
+    echo "       Plug in your security key and try again." >&2
+    exit 1
+  fi
+  REMAINING=$(fido2-token -I "$DEVICE" 2>/dev/null | awk -F': ' '/^remaining rk/{print $2}')
+  if [[ -n "$REMAINING" && "$REMAINING" -eq 0 ]]; then
+    echo "ERROR: ${DEVICE} reports 0 remaining resident-key slots." >&2
+    exit 1
+  fi
+
+  echo "==> No PIN set yet? Set one first: fido2-token -S ${DEVICE}"
+  echo "==> Generating resident ed25519-sk credential (application=${APPLICATION})..."
+  echo "    You'll be asked for the key's PIN, then to touch it when it blinks."
+  echo ""
+  # -O resident: stored in a token slot, so `ssh-keygen -K` re-derives the
+  #   pair on any other machine.
+  # No -O verify-required: touch-only. A required PIN on every signature
+  #   turns an interactive rebase into one PIN entry per rewritten commit.
+  # -N "": correct, not lazy — the _sk_ handle file holds only a credential
+  #   reference, no secret key material, so there's nothing to passphrase.
+  ssh-keygen -t ed25519-sk -O resident -O "application=${APPLICATION}" \
+    -C "${APPLICATION}" -N "" -f "$HANDLE"
+  echo ""
+  echo "==> Generated ${HANDLE}"
+fi
+
+# ── 2. Git config — global, since signing applies to every repo, not just
+#    the one this task happens to be invoked from. ──────────────────────────
+git config --global gpg.format ssh
+# The handle file, NOT the .pub: gcr's ssh-agent auto-advertises sk keys it
+# then refuses to sign with ("agent refused operation?", returning in ~0.2s
+# with no touch prompt). Naming the handle file makes ssh-keygen drive the
+# token via libfido2 directly and skip the agent entirely.
+git config --global user.signingkey "$HANDLE"
+git config --global gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS"
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
+echo "==> git config --global: gpg.format=ssh, user.signingkey=${HANDLE}, commit.gpgsign=tag.gpgsign=true"
+
+# ── 3. allowed_signers — idempotent append, comma-separated principals ──────
+# Every configured user.email is a valid principal for this key: a commit
+# authored under any of them should still verify locally.
+mapfile -t EMAILS < <(git config --get-all user.email 2>/dev/null | sort -u)
+if [[ ${#EMAILS[@]} -eq 0 ]]; then
+  echo "ERROR: no git user.email configured." >&2
+  echo "       Run: git config --global user.email you@example.com" >&2
+  exit 1
+fi
+PRINCIPALS=$(IFS=,; echo "${EMAILS[*]}")
+
+KEY_LINE=$(cat "$PUBKEY")
+KEY_TYPE=$(awk '{print $1}' <<< "$KEY_LINE")
+KEY_BLOB=$(awk '{print $2}' <<< "$KEY_LINE")
+
+touch "$ALLOWED_SIGNERS"
+chmod 644 "$ALLOWED_SIGNERS"
+if grep -qF "$KEY_BLOB" "$ALLOWED_SIGNERS" 2>/dev/null; then
+  echo "==> Key already present in ${ALLOWED_SIGNERS} — skipping (no duplicate line)."
+else
+  # namespaces="git" scopes this key to git's signature namespace only —
+  # it's already a distinct resident credential from any auth key, but this
+  # keeps the allowed_signers entry itself from being reusable for anything
+  # ssh-keygen -Y verify might be pointed at outside git.
+  echo "${PRINCIPALS} namespaces=\"git\" ${KEY_TYPE} ${KEY_BLOB}" >> "$ALLOWED_SIGNERS"
+  echo "==> Appended to ${ALLOWED_SIGNERS} (principals: ${PRINCIPALS})"
+fi
+
+echo ""
+echo "==> Public key (${PUBKEY}):"
+cat "$PUBKEY"
+echo ""
+echo "==> Register it on GitHub — https://github.com/settings/ssh/new"
+echo "    The 'Key type' dropdown defaults to Authentication Key: change it to Signing Key."
+echo "    Verify with: git commit -S -m test && git log --show-signature -1"

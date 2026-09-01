@@ -9,9 +9,9 @@ A single security key has to be enrolled separately for each consumer, because e
 | LUKS boot unlock | `mise fido2:enroll-luks` → `systemd-cryptenroll --fido2-device=auto` | `io.systemd.cryptsetup` | LUKS2 header token slot |
 | systemd-homed login | `mise fido2:enroll` → `homectl update <user> --fido2-device=auto` | `io.systemd.home` | user record: public `fido2HmacCredential`, privileged `fido2HmacSalt[]` |
 | sudo / polkit / non-homed login | `mise fido2:enroll` → `pamu2fcfg` | `pam://$(hostname)` | `~/.config/Yubico/u2f_keys` |
-| git commit / tag signing | `ssh-keygen -t ed25519-sk -O resident` (no mise task yet) | `ssh:Signing` | token resident slot + `~/.ssh/id_ed25519_sk_rk_Signing{,.pub}` |
+| git commit / tag signing | `mise fido2:enroll-signing` → `ssh-keygen -t ed25519-sk -O resident` | `ssh:Signing` | token resident slot + `~/.ssh/id_ed25519_sk_rk_Signing{,.pub}` |
 
-`mise fido2:enroll` detects a homed user and does both the homed and pam_u2f rows in one run; a classic `/etc/passwd` user only gets the pam_u2f row. The signing row is not covered by any task — see below. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
+`mise fido2:enroll` detects a homed user and does both the homed and pam_u2f rows in one run; a classic `/etc/passwd` user only gets the pam_u2f row. `mise fido2:enroll-signing` (#678) covers the signing row — see below. Unlike the other three, it is a **repo dev task** (`mise/tasks/fido2/enroll-signing`, run from a krytis checkout on a contributor's own machine), not image content: it writes to the invoking user's own global git config, which has no meaning on a deployed OS image the way LUKS/homed/pam_u2f enrollment does. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
 
 ```bash
 homectl list --json=short 2>/dev/null | jq -e --arg u "$1" 'any(.[]; .name == $u)' >/dev/null
@@ -28,6 +28,8 @@ Mirror the detected key capabilities into homed's flags (`--fido2-with-client-pi
 **Do not tell users to run `ykman` — it is not in the image.** Set a PIN with `fido2-token -S <device>` (libfido2, which is present).
 
 ## Signing git commits with the same key — a fourth consumer
+
+`mise fido2:enroll-signing` (#678, `mise/tasks/fido2/enroll-signing`) does everything below in one idempotent run: generates the credential if it doesn't already exist locally, points global git config at it, and appends it to `~/.ssh/allowed_signers`. It's a repo dev task, not image content — see the table note above. Read on for what it does and why, needed when troubleshooting the task itself or setting this up somewhere the task doesn't reach.
 
 Git's SSH signing backend (`gpg.format = ssh`) drives an `ed25519-sk` key directly, so every commit carries a hardware-backed signature gated on a physical touch. Enroll it as its own credential — the pam_u2f and homed credentials answer to different rp_ids and are not reachable from `ssh-keygen`.
 
@@ -82,6 +84,10 @@ env -u SSH_AUTH_SOCK ssh-keygen -Y sign -n git -f ~/.ssh/id_ed25519_sk_rk_Signin
 ```
 
 For getting GitHub to render such a commit as **Verified**, see `docs/skills/workflow.md` § Getting a Commit Signature to Show "Verified" on GitHub.
+
+### A dead `hidraw` node produces the same symptoms as the gcr-agent problem — check device ACL first
+
+Found while building `fido2:enroll-signing` (#678): the same `Couldn't sign message (signer): agent refused operation?` above, and a bare `ssh-keygen -Y sign` hitting `device not found`, can also come from the token's `/dev/hidraw*` node losing its session ACL — seen after a replug, where the new node briefly enumerates as `crw-------  root root` (no `+`, no per-user ACL) instead of the expected `crw-rw----+`. `fido2-token -L` goes silent (no devices listed) in this state, which is the tell — a real agent-refusal failure still lists the device fine, since that failure happens after device discovery. Check `fido2-token -L` and `ls -la /dev/hidraw*` *before* concluding it's the agent: a confounded diagnosis here wastes real touches chasing the wrong fix. Once the ACL is back (replug is usually enough), re-test with the handle file before touching this doc's guidance — a `.pub`-vs-handle comparison run *during* the ACL-less window is not evidence about the agent at all.
 
 ## enroll-luks task: fresh bootc installs have no /etc/crypttab
 
