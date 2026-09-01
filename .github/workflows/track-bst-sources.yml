@@ -874,6 +874,10 @@ jobs:
             branch: auto/track-oo7
             title: "chore(deps): update oo7"
           - group: manual-merge
+            element: desktop/xwayland-satellite.bst
+            branch: auto/track-xwayland-satellite
+            title: "chore(deps): update xwayland-satellite"
+          - group: manual-merge
             element: desktop/vainfo.bst
             branch: auto/track-vainfo
             title: "chore(deps): update vainfo"

@@ -686,7 +686,7 @@ If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is n
 **Namespace layout in gnome-build-meta:**
 - `core/` — end-user GNOME apps (nautilus, gnome-text-editor, etc.)
 - `core-deps/` — libraries and runtime deps (xdg-desktop-portal-gtk, libportal, etc.)
-- `sdk/` — developer/toolchain elements (xwayland-satellite, blueprint-compiler, etc.)
+- `sdk/` — developer/toolchain elements (adwaita-fonts, blueprint-compiler, etc.)
 - `gnomeos-deps/` — OS-level config (flathub-config, etc.)
 
 Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
@@ -2130,6 +2130,35 @@ Two things this doesn't automatically clean up:
 **Same technique also applies to a mirrored (not krytis-owned) element.** `elements/overrides/rust-bindgen.bst` (#498) drops freedesktop-sdk's `bindgen-tests/tests/quickchecking` workspace member the identical way — the difference is *where* the patch lives: since `components/rust-bindgen.bst` belongs to the freedesktop-sdk junction, the fix goes through "Mirroring a junction element to patch its source" (above) rather than patching a krytis-owned element directly. `quickchecking` was never in the workspace's `default-members`, so — like `agreety` — it was already dead weight in the built binary; only `Cargo.lock`'s full-workspace resolution (which ignores `default-members`) pulled its `quickcheck -> rand` 0.8.5 pin into the SBOM.
 
 greetd links libpam via `pam-sys`. Add `linux-pam.bst` to **both** `build-depends` AND `depends` — it transitively provides `linux-pam-base.bst` which supplies `libpam.so` + `libpam_misc.so`.
+
+## `build.rs` calling `git describe` (vergen / vergen-gitcl) — `git_repo` sources DO stage a real `.git`
+
+Don't assume a BST `git_repo`/`git_tag` source exports a bare tree with no
+git metadata. It doesn't: `stage()` runs `git clone --no-checkout
+--no-hardlinks <mirror> <dir>` then `git checkout --force <ref>` (see
+`buildstream_plugins_community/sources/git_tag.py`), so the sandbox's source
+directory is a real `.git` checkout. A `build.rs` that shells out to `git`
+(e.g. `vergen-gitcl`'s `GitclBuilder::describe()`, used by
+`desktop/xwayland-satellite.bst`, #499) *can* work here — but only if `git`
+itself is on `PATH` inside the sandbox, which most Rust `build-depends`
+lists (`components/rust.bst`, `components/pkg-config.bst`,
+`public-stacks/buildsystem-make.bst`) do not provide. Add
+`freedesktop-sdk.bst:components/git.bst` to `build-depends` if the crate
+graph needs it.
+
+Simpler and more deterministic when the crate supports it: set
+`VERGEN_IDEMPOTENT=1` in `build-commands`. vergen then skips the git
+shell-out entirely and emits a placeholder (`VERGEN_GIT_DESCRIBE=
+VERGEN_IDEMPOTENT_OUTPUT`) instead of erroring or depending on tag
+reachability inside a possibly-shallow mirror clone. Check whether the
+crate's own code already special-cases that placeholder before assuming
+this degrades user-visible output — `xwayland-satellite`'s
+`src/lib.rs::version()` does exactly that, falling back to
+`CARGO_PKG_VERSION`, so `-version` keeps printing a real (if less precise)
+version string either way. Verified locally (outside the BST sandbox, with
+a matching rustc 1.98.0 toolchain): `cargo build --release --locked` with
+`VERGEN_IDEMPOTENT=1` compiles `vergen-gitcl` + `time` +
+`xwayland-satellite` itself cleanly and produces the expected fallback.
 
 ## Greeter Stack: greetd display-manager Alias
 
