@@ -23,8 +23,10 @@ name: Vulnerability Diff
 # matches; the job only fails when NEW_VULN_FAIL_ON below is set to a Grype
 # severity, matching `mise run vuln-scan --fail-on`'s own opt-in philosophy
 # (docs/skills/sbom.md § --fail-on / severity gating). Flipping this into a
-# blocking PR gate is a one-line change, deliberately not made here — that is
-# a Design Gate call (AGENTS.md), not an engineering default.
+# blocking PR gate is a one-line change, deliberately not made here — that
+# is a Design Gate call (AGENTS.md), not an engineering default. Tracked in
+# #690: severity floor, burn-in period, and override path all need a
+# decision before flipping NEW_VULN_FAIL_ON below.
 
 on:
   pull_request:
