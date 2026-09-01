@@ -371,3 +371,38 @@ The skill file update must be in the same commit as the change that produced the
 **Standalone skill updates** (not tied to any element change) still require a branch and PR — never commit directly to `main`. Create a no-issue worktree (`<base>/docs/<slug>`) and open a PR the same as any other change.
 
 See `AGENTS.md` § Self-improvement loop for the full mandate and `/skills-check` for a compliance self-diagnosis.
+
+## Getting a Commit Signature to Show "Verified" on GitHub
+
+Three things must line up, and a valid local signature proves only the first:
+
+1. The signature verifies locally — `git verify-commit HEAD` prints `Good "git" signature`.
+2. The public key is registered on the account **as a Signing Key**, not an Authentication Key (the dropdown at `github.com/settings/ssh/new` defaults to the wrong one).
+3. The **committer** email is an address GitHub can map to that account.
+
+### Check registration without the `admin:ssh_signing_key` scope
+
+`gh api user/ssh_signing_keys` needs a scope the default `gh` token does not carry, and `gh auth refresh` drags in a device-code flow to get it. Skip both — the per-user list is public and unauthenticated:
+
+```bash
+curl -sS https://api.github.com/users/<login>/ssh_signing_keys
+```
+
+`[]` means the key is not on that account, whatever the browser appeared to say. Compare the returned `key` field against `cut -d' ' -f1,2 <keyfile>.pub` — GitHub stores type + blob and drops the comment, so a whole-line comparison always reports a spurious mismatch.
+
+If you genuinely need the scope, the device code expires after 15 minutes: do not start `gh auth refresh` until you are ready to authorize immediately, and close any stale `github.com/login/device` tab first. A second run will happily land on the old tab, and authorizing an expired code reports nothing to the waiting terminal — `gh` just keeps polling until the code times out.
+
+### A repo-local `user.email` silently kills the badge
+
+GitHub awards the badge on the committer email. Verify an address is attached to the account rather than assuming:
+
+```bash
+gh api repos/<owner>/<repo>/commits/<sha> \
+  --jq '"\(.commit.author.email) → \(.author.login // "UNMATCHED")"'
+```
+
+`UNMATCHED` means GitHub cannot map that address to any account, so a cryptographically perfect signature still renders **Unverified**. The `<id>+<login>@users.noreply.github.com` form always maps.
+
+Linked worktrees share one `.git/config`, so a single `git config --local --unset user.email` fixes every worktree of the repo at once — confirm `git config --get extensions.worktreeConfig` is unset first, otherwise per-worktree overrides survive it.
+
+The hardware-key enrollment side lives in `docs/skills/fido2.md` § Signing git commits with the same key.

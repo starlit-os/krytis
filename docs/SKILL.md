@@ -31,6 +31,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Re-check Grype vuln-scan false positives, or update `.grype.yaml`'s ignore list | [`docs/skills/sbom.md`](skills/sbom.md) § Mitigated: Grype `stock-matcher`..., skill: `.claude/skills/vuln-scan-triage/` |
 | Change `.github/renovate.json5`, enable a manager, or decide what auto-merges (`mise run renovate-check`) | [`docs/skills/renovate.md`](skills/renovate.md) |
 | Sign the published image/SBOM/vuln report with cosign, or work on the publish workflow (`mise run sign`, `.github/workflows/publish.yml`) | [`docs/skills/signing.md`](skills/signing.md) |
+| Set up FIDO2-backed **git commit** signing, or fix a commit showing Unverified on GitHub | [`docs/skills/fido2.md`](skills/fido2.md) § Signing git commits with the same key, [`docs/skills/workflow.md`](skills/workflow.md) § Getting a Commit Signature to Show "Verified" |
 | Write a design doc or an implementation plan | [`AGENTS.md`](../AGENTS.md) § Plan & Design Docs — `docs/design/` vs `docs/plans/` |
 
 ## Reference Docs
