@@ -251,3 +251,71 @@ Both `mise run vuln-scan --fail-on <severity>` and `mise run push --fail-on <sev
 ### Known bug found and fixed while wiring this: `mise/tasks/sbom` leaked `--output` through env inheritance
 
 `mise/tasks/bst` already documents this pattern (`docs/skills/mise.md` § Propagating flags through tasks that call other tasks) but `mise/tasks/sbom` (#40) missed it: when a *calling* task also declares its own `--output`/`--container` `#USAGE` flag with a different default, mise sets `usage_output`/`usage_container` in the **caller's** environment — and a plain `./mise/tasks/sbom --output foo` subprocess call inherits that env var, since mise only parses `#USAGE` headers for `mise run <task>` invocations, not direct script calls. Without an explicit argv-parsing fallback, the inherited (wrong) value silently wins over the literal flag. Hit for real: `mise run vuln-scan` (its own `--output` default is `krytis.grype.json`) called `./mise/tasks/sbom --output krytis.spdx.json`, and the SBOM silently got written to `krytis.grype.json` instead. Fixed by giving `mise/tasks/sbom` the same literal-argv-consuming loop `mise/tasks/bst` already has for `--container`/`--push`/`--pull`. **Any task that calls another task's script directly and both declare an overlapping flag name is at risk of this** — check for it when adding a new `#USAGE` flag to a task with callers.
+
+## CI: standalone vulnerability-report/diff workflows
+
+Two workflows layer on top of `mise run vuln-scan` without going anywhere near
+`publish.yml`'s 420-minute build pipeline, because `bst show` (what
+`buildstream-sbom` actually shells out to) reads static element/source
+metadata only — confirmed by timing a real run in this repo (2026-09-01,
+clean worktree, no artifact cache primed): `mise run vuln-scan` end-to-end
+(SBOM generation + enrichment + Grype scan over the full ~7,600-package
+graph) took **70.6s**. That number is what makes both of these viable as
+fast, isolated jobs on a plain `ubuntu-24.04` runner instead of piggybacking
+on a real publish run.
+
+- **`.github/workflows/vuln-scan.yml`** — periodic report. `schedule` (weekly)
+  + `workflow_dispatch` only, deliberately not `pull_request`: `checks.yml`
+  keeps every-PR gates BST-free by design (see its own header comment), and
+  this is a *reporting* workflow, not a gate. Writes two things: an inline
+  GitHub Actions job summary (`scripts/vuln-summary.py` renders the Grype
+  JSON report as Markdown to `$GITHUB_STEP_SUMMARY` — readable in the Actions
+  UI with no download) and the raw SBOM/Grype JSON as a workflow artifact
+  (`actions/upload-artifact`, 90-day retention) for anything that wants the
+  machine-readable form.
+
+- **`.github/workflows/vuln-diff.yml`** — PR gate answering "does this PR
+  introduce a *new* vulnerability match versus its base commit?"
+  `scripts/vuln-diff.py` diffs two Grype JSON reports on `(vulnerability.id,
+  artifact.name, artifact.version)` — the same identity `.grype.yaml`'s own
+  ignore rules use, so a PR that adds/removes an ignore rule (like #500/#688)
+  shows up as fixed/new exactly like a real dependency change would; each
+  report reflects its own commit's own `.grype.yaml`, not a shared baseline.
+  Deliberately scans **both** commits fresh in the same job (checkout head,
+  scan, checkout base via a second `actions/checkout` step — its default
+  `clean: true` wipes head's `.venv`/generated files first — re-sync, scan
+  again) instead of comparing against a stored baseline from the periodic
+  report: a PR's base is often not tip-of-main (stacked PRs, older base
+  commits, rebases), and a stale stored baseline would misreport. Doubling
+  the `bst show` cost is cheap given the 70.6s figure above.
+
+  **Default posture is report-only**, matching `mise run vuln-scan
+  --fail-on`'s own "no flag = warn-only" philosophy (§ `--fail-on` / severity
+  gating above): the job summary always lists new/fixed matches, but the job
+  only fails when the workflow's `NEW_VULN_FAIL_ON` env var is set to a Grype
+  severity. Left empty deliberately — turning this into a blocking PR gate
+  is a Design Gate call (AGENTS.md), not something to default to
+  unilaterally when wiring the check.
+
+Both scan-output JSON files are written outside the repo tree (`$RUNNER_TEMP`
+/ the default `krytis.grype.json` in the job workspace, uploaded before any
+further checkout) — the pattern to watch for if either workflow grows a step
+that switches git refs again: any Grype/SBOM output living *inside* the repo
+tree does not survive a subsequent `actions/checkout` with its default
+`clean: true`.
+
+**This bit for real, and not just for output.** `vuln-diff.yml`'s first CI
+run (PR #689) failed with `python3: can't open file '.../scripts/
+vuln-diff.py': No such file or directory` — not the JSON outputs, the
+*diffing tool itself*. The base checkout's `ref` is `main`, which (before
+this PR merges) has no `scripts/vuln-diff.py` at all; `clean: true` removed
+it along with everything else not in that commit's tree, and the later
+`Diff vulnerability reports` step had nothing left to run. Fixed by copying
+`scripts/vuln-diff.py` to `$RUNNER_TEMP` right after the head scan, then
+invoking that copy — the workflow's own tooling must always run HEAD's
+version, never whatever (or nothing) the base commit happens to carry, the
+same way the base scan itself must always use *base's own* `.grype.yaml`.
+**Lesson: when a workflow step is going to `git checkout`/`actions/checkout`
+to a different ref mid-job, everything the *rest of the job* still needs —
+scripts, generated data, anything — must already be outside the repo tree
+before that step runs, not just the final report output.**
