@@ -19,6 +19,9 @@ gh auth refresh -s project
 Without this, all `createProjectV2` / `addProjectV2ItemById` / `addSubIssue`
 mutations fail with `INSUFFICIENT_SCOPES`.
 
+**Sub-issue linking is the exception** — the REST endpoint needs only `repo`.
+See § Link native sub-issues. Do not burn a scope refresh on parenting alone.
+
 ---
 
 ## Milestones
@@ -82,6 +85,21 @@ gh api graphql -f query='
 ---
 
 ## Link native sub-issues
+
+**Prefer REST — it works with the default `repo` scope**, so no `gh auth refresh`
+and no device-code round trip:
+
+```bash
+child=$(gh api repos/starlit-os/krytis/issues/<child> --jq .id)   # numeric id, NOT the node id
+gh api -X POST repos/starlit-os/krytis/issues/<parent>/sub_issues -F sub_issue_id="$child"
+```
+
+`sub_issue_id` takes the REST **numeric** `id` (a 10-digit integer such as
+`5304894712`), not the `number` and not the GraphQL node id. `-F` rather than
+`-f`, or it is sent as a string and rejected.
+
+The GraphQL mutation below does the same thing but drags in the `project` scope,
+so reach for it only when already authenticated for board work:
 
 ```graphql
 mutation {
