@@ -65,6 +65,9 @@ sources:
 - kind: patch
   path: patches/greetd/bump-tokio-bytes-drop-agreety-deps.patch
 
+- kind: patch
+  path: patches/greetd/bump-tokio-1.43.1.patch
+
 - kind: cargo2
   url: crates:crates
   ref:
@@ -202,12 +205,12 @@ sources:
     sha: c61f3ba182994efc43764a46c018c347bc492c79f024e705f46567b418f6d4f7
   - kind: registry
     name: tokio
-    version: 1.42.1
-    sha: 2209a14885b74764cce87ffa777ffa1b8ce81a3f3166c6f886b83337fe7e077f
+    version: 1.43.1
+    sha: 492a604e2fd7f814268a378409e6c92b5525d747d10db9a229723f55a417958c
   - kind: registry
     name: tokio-macros
-    version: 2.4.0
-    sha: 693d596312e88961bc67d7f1f97af8a70227d9f90c31bba5806eec004978d752
+    version: 2.5.0
+    sha: 6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8
   - kind: registry
     name: unicode-ident
     version: 1.0.12

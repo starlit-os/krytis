@@ -150,6 +150,50 @@ way — `.grype.yaml` only suppresses instances already found and verified. Trea
 and .artifact.purl==null)'` on the Grype JSON report) as needing the same manual
 ecosystem cross-check before trusting it or adding it to the ignore list.
 
+### A second `stock-matcher` namespace: `bitnami`, and a "fixed-in is stale" variant
+
+Re-verified 2026-09-01 (Grype 0.118.0) after the freedesktop-sdk 26.08rc merge. Two
+*new* purl-less false-positive instances surfaced that don't fit the "wrong ecosystem
+entirely" shape above — Grype's `bitnami` namespace (a separate stock-matcher source
+from the `github:language:*` ones already documented) matched `sqlite`/`Pillow` against
+real CVEs for those *exact* projects, but whose cited fix version is far *below* the
+actually-installed version (e.g. `BIT-sqlite-2025-6965` cites a fix at 3.50.2; krytis
+ships 3.53.4). Same root cause as the `github:language:*` case — no purl/CPE to bound
+the match by version range, so Grype's fallback flags the bare name regardless — just a
+different Grype data source. Check `matchDetails[0].searchedBy.namespace == "bitnami"`
+the same way as the GHSA-language case; the same manual "is the cited fixed-in version
+actually below what's installed" verification applies before ignoring.
+
+### Version-pinned ignore rules silently stop suppressing on every element bump
+
+Confirmed for real, same 2026-09-01 re-scan: two entries already in `.grype.yaml`
+(`markdown` pinned to `3.10.2`, `shaderc` pinned to `2025.3`) had gone stale — routine
+`chore(deps)` bumps moved the installed versions to `3.10.3`/`2026.3` between when the
+rules were written and this scan, so Grype re-flagged both as if unignored (exactly the
+documented, intended behavior of pinning by version — this is not a bug in the
+ignore-list design, just a reminder that it needs upkeep). There's no automated drift
+check for this the way `mise run systemd-base-check`/`rust-bindgen-check` cover the
+patch-based overrides — a version-pinned `.grype.yaml` entry silently re-flagging on the
+next routine dependency bump is the expected failure mode, not a regression to chase.
+Treat every `mise run vuln-scan` finding with a `namespace` matching one already in
+`.grype.yaml`'s comments as "stale pin, re-verify and bump the version", not "new bug".
+
+### A `cargo update -p X` "fix" is only real if it clears the advisory's actual range
+
+Caught by this same 2026-09-01 re-scan: `elements/desktop/greetd.bst`'s
+`bump-tokio-bytes-drop-agreety-deps.patch` (#501/#496) bumped `tokio` 1.37.0->1.42.1
+believing that closed GHSA-rr8g-9fpq-6wmg — it didn't. The advisory's patched ranges are
+`>=1.44.0,<1.44.2`, `>=0.2.5,<1.38.2`, and `>=1.39.0,<1.43.1`; 1.42.1 falls inside the
+third range, so the crate was still vulnerable for four weeks of `main` history despite
+the commit message and #483's inventory both stating the CVE was fixed. Root cause: the
+original fix reasoned from "bumped past the version the CVE was reported against" rather
+than checking the advisory's actual patched-version ranges (GitHub Advisory Database
+entries list them explicitly — grep the `Patched versions` field, don't eyeball the
+version delta). Fixed by `patches/greetd/bump-tokio-1.43.1.patch` (tokio -> 1.43.1,
+tokio-macros -> 2.5.0 for tokio's own `~2.5.0` requirement). **Lesson: after any
+`cargo update -p <crate>` vuln fix, re-run `mise run vuln-scan` against the result before
+trusting it closed — don't infer closure from the version bump alone.**
+
 ### `--fail-on` / severity gating
 
 Both `mise run vuln-scan --fail-on <severity>` and `mise run push --fail-on <severity>` pass straight through to Grype's own `-f/--fail-on` flag (`negligible|low|medium|high|critical`) — Grype exits 2 when a match at or above that severity exists; the wrapping task turns that into a normal non-zero exit. **No flag = warn-only** (report generated and attached either way, never blocks). **`mise run push`'s ordering (#392):** SBOM generation and the vuln scan run *before* login/tag/push — a `--fail-on` breach aborts there, before anything reaches the registry. This is possible because `buildstream-sbom` reads static element/source metadata via `bst show`, which does not require the image to be built (verified: `bst show` reports `oci/krytis/image.bst waiting` — not cached — in a checkout that still produces a complete, accurate SBOM). `.github/workflows/publish.yml` additionally runs `mise run vuln-scan --fail-on <severity>` as its own standalone step *before* `mise run build`, so a blocking finding skips the ~20-25 minute BST build entirely, not just the push — `mise run push`'s own scan-before-push is the defense-in-depth guarantee for the case where that earlier gate is skipped or `mise run push` is run standalone. Before #392, the image was already pushed by the time the scan ran, so `--fail-on` only failed the job after the fact (the same non-blocking shape as dakota's `publish-sbom` job, `continue-on-error: true`) — that ordering is no longer how this works.
