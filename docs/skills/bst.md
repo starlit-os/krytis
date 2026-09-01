@@ -2146,19 +2146,49 @@ lists (`components/rust.bst`, `components/pkg-config.bst`,
 `freedesktop-sdk.bst:components/git.bst` to `build-depends` if the crate
 graph needs it.
 
-Simpler and more deterministic when the crate supports it: set
-`VERGEN_IDEMPOTENT=1` in `build-commands`. vergen then skips the git
-shell-out entirely and emits a placeholder (`VERGEN_GIT_DESCRIBE=
-VERGEN_IDEMPOTENT_OUTPUT`) instead of erroring or depending on tag
-reachability inside a possibly-shallow mirror clone. Check whether the
-crate's own code already special-cases that placeholder before assuming
-this degrades user-visible output — `xwayland-satellite`'s
-`src/lib.rs::version()` does exactly that, falling back to
-`CARGO_PKG_VERSION`, so `-version` keeps printing a real (if less precise)
-version string either way. Verified locally (outside the BST sandbox, with
-a matching rustc 1.98.0 toolchain): `cargo build --release --locked` with
-`VERGEN_IDEMPOTENT=1` compiles `vergen-gitcl` + `time` +
-`xwayland-satellite` itself cleanly and produces the expected fallback.
+**`VERGEN_IDEMPOTENT=1` does not suppress the describe — don't reach for it.**
+That was this section's original advice and a real sandbox build disproved it:
+`xwayland-satellite -version` printed `v0.8.2-dirty`, i.e. a live
+`git describe`, not the `VERGEN_IDEMPOTENT_OUTPUT` placeholder. Read from
+source (vergen-gitcl 1.0.8 / vergen-lib 0.1.6), the flag does exactly three
+things: sets `Emitter.idempotent` (`vergen-lib/src/emitter.rs:65`), skips
+`cargo:rerun-if-changed=.git/…` (`vergen-gitcl/src/gitcl/mod.rs:574`), and
+defaults **only** `VERGEN_GIT_COMMIT_DATE`/`_TIMESTAMP` (`mod.rs:840`). The
+describe block (`mod.rs:676-701`) never reads it. The crate's own rustdoc
+(`mod.rs:209-232`) claims otherwise and is stale — its integration test
+`git_all_idempotent_output()` asserts a real describe value.
+
+**Set `VERGEN_GIT_DESCRIBE` instead.** Any pre-set `VERGEN_*` value
+short-circuits the corresponding git call (`mod.rs:681` →
+`vergen-lib/src/utils.rs:29`, emitting `cargo:warning=… overidden`, sic).
+Two useful values:
+
+- `VERGEN_GIT_DESCRIBE=VERGEN_IDEMPOTENT_OUTPUT` — the sentinel a crate's own
+  fallback may already special-case. `xwayland-satellite`'s
+  `src/lib.rs::version()` does (`if version == "VERGEN_IDEMPOTENT_OUTPUT" {
+  version = env!("CARGO_PKG_VERSION") }`), so `-version` prints `0.8.2` with
+  the element hardcoding no version string of its own. This is what
+  `desktop/xwayland-satellite.bst` uses.
+- `VERGEN_GIT_DESCRIBE=v1.2.3` — a literal, when the crate has no fallback.
+  Duplicates the version into the element; only do it if there is no sentinel
+  path.
+
+Either way `git` is still required in `build-depends`: `add_map_entries`
+(`mod.rs:911-931`) runs `check_git` + `check_inside_git_worktree` *before* the
+per-key short-circuits. Those failing isn't fatal — `Emitter`'s
+`fail_on_error` is false by default, so the error path defaults every
+requested key to the placeholder — but relying on that means relying on a
+build error, so keep `components/git.bst` listed.
+
+**Why the `-dirty` even appeared:** `describe(tags, dirty, …)` implements the
+dirty check as a separate `git status --porcelain --untracked-files=no`
+(`mod.rs:900`), not `git describe --dirty`. Every `kind: patch` source in the
+element modifies the staged worktree, so a patched element is *always* dirty
+and the suffix is unavoidable as long as the describe runs at all.
+
+Verified in the real sandbox, not just on the host: with the sentinel set,
+`mise run bst build desktop/xwayland-satellite.bst` succeeds and
+`bst shell … -- xwayland-satellite -version` prints `0.8.2`.
 
 ## Greeter Stack: greetd display-manager Alias
 

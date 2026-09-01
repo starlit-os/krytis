@@ -18,12 +18,22 @@
 # Same upstream ref gnome-build-meta currently pins (v0.8.2 — confirmed no
 # newer tag exists as of 2026-09-01).
 #
-# build.rs uses vergen-gitcl's GitclBuilder::describe() to embed `git
-# describe` output into `xwayland-satellite -version`. VERGEN_IDEMPOTENT=1
-# skips the git shell-out entirely; upstream's own src/lib.rs::version()
-# already falls back to CARGO_PKG_VERSION ("0.8.2") when it sees the
-# resulting placeholder, so `-version` keeps working deterministically with
-# no live git-describe dependency. See docs/skills/bst.md § vergen-gitcl.
+# build.rs uses vergen-gitcl's GitclBuilder::describe(true, true, None),
+# which shells out to `git describe --always --tags` plus a separate
+# `git status --porcelain` dirty probe. `kind: git_repo` stages a real
+# `.git`, so that succeeds here (hence components/git.bst in
+# build-depends) — but the `kind: patch` source below dirties the
+# worktree, so the embedded version lands on "v0.8.2-dirty".
+#
+# VERGEN_IDEMPOTENT does not suppress that: in vergen-gitcl 1.0.8 the
+# describe path never reads the idempotent flag (only the commit
+# date/timestamp keys do). Setting VERGEN_GIT_DESCRIBE is what
+# short-circuits the shell-out, and the literal VERGEN_IDEMPOTENT_OUTPUT
+# sentinel is the value upstream's own src/lib.rs::version() special-cases,
+# falling back to CARGO_PKG_VERSION. So `xwayland-satellite -version`
+# prints "0.8.2" deterministically, independent of tag reachability in the
+# mirror clone and of how many patches this element carries. See
+# docs/skills/bst.md § vergen-gitcl.
 #
 # Do not build with --workspace (unlike desktop/greetd.bst): the repo's
 # root Cargo.toml has both [package] and [workspace] (members macros,
@@ -53,7 +63,7 @@ config:
   build-commands:
   - |
     export CARGO_HOME="%{cargo-home}"
-    export VERGEN_IDEMPOTENT=1
+    export VERGEN_GIT_DESCRIBE=VERGEN_IDEMPOTENT_OUTPUT
     cargo build --release --locked
 
   install-commands:
