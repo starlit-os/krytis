@@ -2,13 +2,22 @@
 
 Load when changing `.github/renovate.json5`, enabling a manager, or deciding whether a dependency should auto-merge. Expansion plan and per-source rationale: [`docs/design/renovate-expansion.md`](../design/renovate-expansion.md).
 
+## `platformCommit`
+
+Every manager commits via the GitHub API (Contents/GraphQL) rather than a raw
+git push — `"platformCommit": "enabled"` at the top level. API-authored
+commits are auto-signed by GitHub regardless of caller credential, which is
+what lets these PRs merge once `main` requires signed commits (#154, #698).
+No other behavior changes; this is purely how the commit object gets
+created.
+
 ## Current coverage
 
 | Manager | Files | Auto-merge |
 |---|---|---|
 | `github-actions` | `.github/workflows/*.yml` | digest/pin/patch/minor |
 | `pep621` | `pyproject.toml` (+ `uv.lock`) | patch/minor, except the packages listed below |
-| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | never — the lockfile needs a manual refresh |
+| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | digest/pin/patch/minor — except `pass-cli` (see below), which is never |
 | `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `pass-cli` pin | patch/minor; `pass-cli` never |
 
 Everything else is tracked by the `track-bst-sources.yml` CI matrix, not Renovate — see [`bst.md`](bst.md) § Element update path.
