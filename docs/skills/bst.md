@@ -2475,7 +2475,7 @@ Some VT console emulators (kmscon's `kmsconvt@.service`, similarly `agetty@.serv
 
 **Do not do that with `enable kmsconvt@tty2.service` lines in a system-preset file.** `systemctl preset-all` iterates unit *files*, and a template instance is not a file, so it never acts on an instance named only in a preset file — the lines are silently inert. And once no rule matches the *bare* template, preset-all falls through to its default `enable` policy and enables `DefaultInstance=tty1`, which is precisely the VT1 preemption you were avoiding. This shipped in krytis and started kmscon on greetd's VT on every boot (#503).
 
-Instead, enable the instances with static `.wants` symlinks in the vendor unit path, and add a `disable` rule for the bare template to close the fall-through:
+Instead, enable the instances with static `.wants` symlinks in the vendor unit path, and add `disable` rules for **every** unit the package ships that carries an `[Install]` section — the bare template *and* its non-template siblings (see below):
 
 ```yaml
   install-commands:
@@ -2489,6 +2489,7 @@ Instead, enable the instances with static `.wants` symlinks in the vendor unit p
     install -Dm644 /dev/stdin \
       "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset" <<'EOF'
     disable kmsconvt@.service
+    disable kmscon.service
     EOF
 ```
 
@@ -2496,6 +2497,24 @@ Instead, enable the instances with static `.wants` symlinks in the vendor unit p
 
 - `systemctl is-enabled kmsconvt@tty2.service` reports **`static`**, not `enabled` — that is the expected label for a unit enabled from the vendor unit path. The dependency is still real; systemd ships `sysinit.target.wants/systemd-firstboot.service` the same way. Assert `systemctl show -p Wants --value getty.target` instead.
 - Never `systemctl enable` the instances, in an image or by hand: that materialises the `Alias=autovt@.service` symlink, after which `autovt@ttyN.service` resolves to kmscon rather than `getty@.service` and logind spawns kmscon on any VT switch.
+
+### The fall-through applies to the package's other units too, not just the template
+
+Closing the hole for the bare template is not enough. `preset-all`'s default `enable` policy catches **every** unit file with an `[Install]` section that no rule matches, so a package shipping more than one installable unit needs a rule for each.
+
+kmscon ships two: `kmsconvt@.service` (the per-VT template) and a bare `kmscon.service` — a seat daemon with `WantedBy=multi-user.target` that runs `kmscon` with no `--vt` and with upstream's `--switchvt [on]` default. #503 added a rule for the template only, so the seat daemon kept falling through and shipped enabled. It picked a VT for itself (`/dev/tty2`, colliding with `kmsconvt@tty2.service`), switched the foreground VT off tty1 at `multi-user.target`, and modeset the primary output:
+
+```console
+$ ps -eo pid,args | grep '[k]mscon'
+1077 kmscon                          # kmscon.service — no --vt, switchvt on
+1078 kmscon --vt=tty2 --no-switchvt  # kmsconvt@tty2
+$ journalctl -b -u kmscon.service | grep Display
+kmscon[1077]: NOTICE: terminal: Display [DP] with backend [drm2d] ...
+```
+
+Two symptoms, one cause: a `login:` prompt on screen between the Plymouth splash and the greeter, and — because the greeter's tty1 logind session never went **active** — `noctalia-greeter-compositor` dying on wlroots' hard-coded `WAIT_SESSION_TIMEOUT` (`10000 // ms`, `backend/backend.c:35`, no retry) on every single boot, masked only by greetd's `Restart=always` (#711, #712).
+
+**Audit rule when vendoring any element that ships systemd units:** list every unit with an `[Install]` section, and confirm each is either named by a preset rule or genuinely wanted enabled. `grep -l '^\[Install\]' /usr/lib/systemd/system/*` against a staged tree, cross-checked with `find /etc/systemd/system -name '*<pkg>*'` after `systemctl --root=<tree> preset-all`, catches this before it boots.
 
 ### Keep `NAutoVTs` aligned with the VT layout — but never set `ReserveVT=0`
 
