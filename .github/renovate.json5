@@ -10,6 +10,11 @@
   // as needing migration.
   "baseBranchPatterns": ["main"],
   "pinDigests": true,
+  // Commits via the GitHub API (Contents/GraphQL) instead of a raw git push.
+  // API-authored commits are auto-signed by GitHub regardless of caller
+  // credential, which is what will let these PRs merge once #154's
+  // required_signatures ruleset rule lands — see #698, #154.
+  "platformCommit": "enabled",
   "customManagers": [
     {
       // The GitHub Actions runner version is pinned in two places that must
