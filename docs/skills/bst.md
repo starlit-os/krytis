@@ -1060,16 +1060,27 @@ Add the element name to `workflow_dispatch.inputs.group.options` and add a new j
 
 ### Verifying the CI job before merge
 
-After adding the mise task and CI job on a feature branch, trigger the workflow on that branch to confirm end-to-end behaviour before the PR merges:
+After adding the mise task and CI job on a feature branch, trigger the workflow on that branch to confirm the update-detection steps behave correctly before the PR merges:
 
 ```shell
 gh workflow run track-bst-sources.yml --ref <branch> --field group=<name>
 gh run watch <run-id> --exit-status
 ```
 
+**This does not exercise the "Create or update PR" step.** That step's `if:` guard is `steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'` — deliberately, so a feature-branch dispatch can never open a stray PR or push a stray commit. Dispatching on `--ref <branch>` will only prove the task is idempotent and that `has_changes` resolves correctly; the job shows those steps `skipped`, not failed. To verify the commit/PR mechanism itself, either invoke `scripts/commit-tracking-update.sh` directly against a real `auto/track-<name>` branch (safe — it's exactly what the scheduled job would do, and idempotent against a branch that already has an open PR for the same content) or wait for the first real scheduled/merged run.
+
 The job should either create/update a PR (if a new release exists) or print "Already up to date" and exit 0. Offer this verification step to the user when opening a PR that adds a new tracking task.
 
 **ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
+
+### Signed commits via `scripts/commit-tracking-update.sh`
+
+Every "Create or update PR" step commits via `createCommitOnBranch` (GraphQL) through this shared script, not `git commit && git push` — `github-actions[bot]` has no settings page, so there is no way to attach a signing key to it, and GitHub auto-signs commits it creates itself via the API regardless of caller credential. See #154, #699.
+
+Two non-obvious things found building it:
+
+- **`gh api graphql -f`/`-F` cannot pass JSON-typed (array/object) GraphQL variables.** Both flags always coerce to a string (or, for `-F`, a small set of scalar literals) — there is no way to hand `[FileAddition!]!` a real JSON array through them. Build the whole request body (`{query, variables: {...}}`) as JSON with `jq -n --argjson ...` and pipe it to `gh api graphql --input -` instead.
+- **Force-pushing a branch to be identical to its base — even for a moment — auto-closes any open PR for it.** The script's reset step (`git checkout -B` equivalent: move the branch ref to `main`'s current tip) briefly leaves the branch 0 commits ahead before the commit step adds one back; GitHub reacts to that intermediate state by closing the PR (observed directly building this: PR #705, closed and force-pushed in the same timeline event, by the API caller, not a person). The original `git commit && git push --force-with-lease` flow never hit this because reset-then-commit was one local operation force-pushed atomically in a single push; two separate API calls are two separate events GitHub can react to in between. The script defends against it: after committing, it checks for a `CLOSED` (not merged) PR on the branch and reopens it — without that, a caller's default `gh pr list --head <branch>` (open-only) would find nothing and create a duplicate PR instead of updating the real one.
 
 ### Temporary fork pins for tarball-pinned elements
 

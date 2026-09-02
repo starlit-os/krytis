@@ -110,3 +110,20 @@ jq -n \
       "Committed: " + .data.createCommitOnBranch.commit.oid + " " + .data.createCommitOnBranch.commit.url
     end
   '
+
+# The ref-reset above briefly makes $BRANCH identical to main (0 commits
+# ahead) before the commit above adds one back — GitHub reacts to that
+# intermediate "nothing to merge" state by auto-closing any open PR for
+# this branch (observed directly: #699 testing, PR #705). Reopen it if so
+# — the alternative is a caller's `gh pr list --head "$BRANCH"` (open-only
+# by default) finding nothing and creating a duplicate PR instead of
+# updating the real one.
+EXISTING_STATE=$(gh pr list --head "$BRANCH" --state all --json number,state,isDraft --jq '.[0]' 2>/dev/null || true)
+if [ -n "$EXISTING_STATE" ]; then
+  PR_NUMBER=$(jq -r '.number' <<<"$EXISTING_STATE")
+  PR_STATE=$(jq -r '.state' <<<"$EXISTING_STATE")
+  if [ "$PR_STATE" = "CLOSED" ]; then
+    echo "commit-tracking-update: reopening PR #$PR_NUMBER (auto-closed by the ref reset above)"
+    gh pr reopen "$PR_NUMBER" >/dev/null
+  fi
+fi
