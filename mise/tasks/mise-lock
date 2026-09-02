@@ -8,13 +8,13 @@
 # stale mise.lock heals locally the moment someone runs a task; what does *not*
 # heal is the copy committed to git.
 #
-# That is the failure mode this guards. Renovate bumps mise.toml but cannot
-# refresh the lockfile on the hosted app — mise lockfile updates are an "unsafe
-# execution" only a self-hosted admin can allow
-# (docs.renovatebot.com/modules/manager/mise/#trust-model-for-lock-file-updates)
-# — so a tool-bump PR arrives with mise.toml updated and mise.lock stale, and
-# the reviewer runs this task before merging. Hence mise deps are held back from
-# auto-merge in .github/renovate.json5.
+# That is the failure mode this guards. Renovate's native `mise` manager
+# refreshes mise.lock itself and reliably enough to auto-merge on (see
+# .github/renovate.json5, docs/skills/renovate.md § the mise manager) — but
+# the `pass-cli` custom.regex pin does not get that treatment, human edits to
+# mise.toml can still forget the lockfile, and a bad merge can still land a
+# stale mise.lock on main. `checks.yml` runs this task with --check on every
+# PR as the general-purpose guard for all of those cases, not just Renovate.
 #
 # --check therefore compares against **git**, not against a pre-run copy: mise
 # may already have synced the working tree before this script got a chance to

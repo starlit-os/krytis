@@ -93,21 +93,14 @@
       "enabled": false,
     },
     {
-      // Renovate cannot refresh mise.lock on the hosted app — mise lockfile
-      // updates are an unsafe execution only a self-hosted admin can allow — so
-      // every [tools] bump lands with mise.toml updated and mise.lock behind.
-      "matchManagers": ["mise"],
-      "automerge": false,
-      "prBodyNotes": [
-        ":warning: Run `mise run mise-lock` on this branch and commit the refreshed `mise.lock` before merging — Renovate cannot update it. `mise run mise-lock --check` verifies it.",
-      ],
-    },
-    {
-      // pass-cli comes from the custom manager above rather than the mise
-      // manager, but it is a [tools] pin with a mise.lock entry all the same, so
-      // it needs the same lockfile refresh. Scoped by dep name, not by manager
-      // or file: the RUNNER_VERSION custom manager also reads mise.toml and its
-      // [env] pin has nothing to do with the lockfile.
+      // pass-cli comes from the custom manager above (not the native mise
+      // manager), and its mise.lock refresh has proven unreliable there:
+      // two Renovate-authored bumps (2026-08-25, 2026-08-27) landed with a
+      // stale lockfile entry, failing CI's `mise install --locked` step
+      // (`pass-cli@X.Y.Z is not in the lockfile`) and needing a manual
+      // force-push fix before merge. The native mise manager has had zero
+      // such failures over the same period — see `renovate.md` § The mise
+      // manager — so this rule stays manual while that one does not.
       "matchDepNames": ["protonpass/pass-cli"],
       "automerge": false,
       "prBodyNotes": [
