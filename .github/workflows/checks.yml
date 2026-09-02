@@ -47,6 +47,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
+      - name: Check mise.lock is in sync
+        run: mise run mise-lock --check
+
       - name: Check docs references
         run: mise run docs-links
 

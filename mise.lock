@@ -5,9 +5,9 @@ version = "0.26.1"
 backend = "aqua:sharkdp/bat"
 
 [tools.bat."platforms.linux-x64"]
-checksum = "sha256:726f04c8f576a7fd18b7634f1bbf2f915c43494c1c0f013baa3287edb0d5a2a3"
-url = "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/sharkdp/bat/releases/assets/323549181"
+checksum = "sha256:0dcd8ac79732c0d5b136f11f4ee00e581440e16a44eab5b3105b611bbf2cf191"
+url = "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/sharkdp/bat/releases/assets/323549429"
 
 [[tools.cosign]]
 version = "3.1.3"
@@ -90,8 +90,8 @@ version = "3.12.14"
 backend = "core:python"
 
 [tools.python."platforms.linux-x64"]
-checksum = "sha256:5acfa3e9ba26b51ae161c83aff278da915b590d22373a424b2ba55b8afe91fcc"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.12.14+20260814-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+checksum = "sha256:72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 provenance = "github-attestations"
 
 [[tools.usage]]
