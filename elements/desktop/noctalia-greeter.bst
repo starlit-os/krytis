@@ -57,4 +57,4 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/noctalia-greeter.git
   track: v*
-  ref: v1.3.0-0-gb4e668d4f8aada549d5c990c3a18458fae8be6b9
+  ref: v1.3.1-0-g6379fe287bb02b0bb538ad155fe18b1bf8615daf
