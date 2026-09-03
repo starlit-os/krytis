@@ -43,7 +43,7 @@ jobs:
         # Renovate a real minor bump to open and auto-merge as proof the
         # github-tags lookup that broke on the old action now actually
         # works end-to-end.
-        uses: hastd/free-disk-space@78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1
+        uses: hastd/free-disk-space@68572aeaadb7f76bd408246328e95926323402b5 # v0.1.2
 
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0

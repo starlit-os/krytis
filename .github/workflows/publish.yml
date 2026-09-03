@@ -82,7 +82,7 @@ jobs:
         # unwanted-software migration. Same step as cache-warm.yml verbatim,
         # including the deliberate v0.1.1 (not newest v0.1.2) pin — see that
         # workflow's comment for why.
-        uses: hastd/free-disk-space@78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1
+        uses: hastd/free-disk-space@68572aeaadb7f76bd408246328e95926323402b5 # v0.1.2
 
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
