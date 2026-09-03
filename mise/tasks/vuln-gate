@@ -20,8 +20,11 @@
 #     the job summary; the fix would be `pull_request_target`, which runs
 #     fork code with the base repo's token, and is not worth it for this.
 #
-# Whether to block at all, and at which floor, is #690's Design Gate call —
-# this task only makes acting on that decision (and reverting it) cheap.
+# The decision this task exists to serve was made in #690 on 2026-09-03:
+# armed at `critical`, matching publish.yml's own pre-build bar. Lowering
+# the floor or disarming is a Design Gate call too — a blocked PR that must
+# land normally takes a .grype.yaml ignore rule (reviewed, in-tree), not a
+# --clear that silently disarms the gate for every other PR as well.
 
 set -euo pipefail
 
