@@ -289,11 +289,24 @@ on a real publish run.
   commits, rebases), and a stale stored baseline would misreport. Doubling
   the `bst show` cost is cheap given the 70.6s figure above.
 
-  **Default posture is report-only**, matching `mise run vuln-scan
-  --fail-on`'s own "no flag = warn-only" philosophy (§ `--fail-on` / severity
-  gating above): the job summary always lists new/fixed matches, but the job
-  only fails when the severity floor is set. Whether to block at all, and at
-  which floor, is a Design Gate call (AGENTS.md) tracked in #690.
+  **The gate is ARMED at `critical` (since 2026-09-03, #690).** A PR that
+  introduces a new match at Critical severity fails the `Diff
+  vulnerabilities vs base` check and cannot merge. The floor matches
+  `publish.yml`'s own pre-build `mise run vuln-scan --fail-on critical`
+  gate, which was the one existing blocking precedent in this repo — one
+  bar, not two. Below Critical stays report-only, matching `mise run
+  vuln-scan --fail-on`'s "no flag = warn-only" philosophy (§ `--fail-on` /
+  severity gating above): the job summary lists every new/fixed match at any
+  severity, and only the Critical ones block.
+
+  **When a PR is blocked and has to land anyway,** the first move is a
+  `.grype.yaml` ignore rule via the triage flow in § Mitigated: Grype
+  `stock-matcher`… — it leaves an auditable, reviewed record in the tree,
+  and `vuln-diff.yml` scans each commit with its own `.grype.yaml`, so the
+  rule takes effect on the same PR that adds it. `mise run vuln-gate
+  --clear` is the emergency escape hatch, not the routine path: it disarms
+  the gate repo-wide for every PR, invisibly, until someone re-arms it. If
+  you use it, re-arm in the same session.
 
   **The floor is the repository variable `NEW_VULN_FAIL_ON`, not a value in
   the workflow file** (#730) — flipping the gate, raising the floor, or

@@ -19,24 +19,26 @@ name: Vulnerability Diff
 # like a real dependency change would — this is real Grype output, not a
 # bypass of the ignore mechanism.
 #
-# Default posture: REPORT ONLY. The job summary always lists new/fixed
-# matches; the job only fails when NEW_VULN_FAIL_ON is set to a Grype
-# severity, matching `mise run vuln-scan --fail-on`'s own opt-in philosophy
-# (docs/skills/sbom.md § --fail-on / severity gating). Flipping this into a
-# blocking PR gate is a Design Gate call (AGENTS.md), not an engineering
-# default; #690 owns the severity-floor and burn-in decision.
+# Posture: BLOCKING at `critical` since 2026-09-03 (#690), matching
+# publish.yml's own pre-build `vuln-scan --fail-on critical` bar. A new
+# match below Critical is reported in the job summary and does not fail the
+# job, per `mise run vuln-scan --fail-on`'s opt-in philosophy
+# (docs/skills/sbom.md § --fail-on / severity gating).
 #
-# The floor lives in the *repository variable* NEW_VULN_FAIL_ON, not in this
-# file (#730), so changing the posture takes no workflow edit and no merge:
+# The floor is the *repository variable* NEW_VULN_FAIL_ON, not a value in
+# this file (#730), so changing the posture takes no workflow edit and no
+# merge — read it here at runtime, never hardcode it back:
 #
 #   mise run vuln-gate                  # show current posture
-#   mise run vuln-gate --set critical   # start blocking
+#   mise run vuln-gate --set critical   # arm at a floor
 #   mise run vuln-gate --clear          # back to report-only
 #
-# Unset variable = empty string = report-only, which is the default state.
-# scripts/vuln-diff.py rejects an unrecognized value outright rather than
-# treating it as "no floor" — a typo in a variable nobody code-reviews would
-# otherwise silently disable the gate.
+# Unset/empty variable = report-only. scripts/vuln-diff.py rejects an
+# unrecognized value outright (exit 2) rather than treating it as "no
+# floor" — a typo in a variable nobody code-reviews would otherwise
+# silently disable the gate. A blocked PR that must land takes a
+# .grype.yaml ignore rule (reviewed, in-tree, effective on the same PR),
+# not `--clear`; see docs/skills/sbom.md for that call.
 
 on:
   pull_request:
