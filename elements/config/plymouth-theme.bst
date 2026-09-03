@@ -70,6 +70,41 @@ config:
     [Daemon]
     Theme=spinner
     EOF
+
+  # Hold the last splash frame on the scanout until the greeter's compositor
+  # modesets. Upstream's plymouth-quit.service runs a plain `plymouth quit`,
+  # which tears the splash down and hands the display back to the text console
+  # — and greetd is ordered `After=plymouth-quit-wait.service`, so it is
+  # *guaranteed* not to have started yet. The display is unowned for ~0.55s
+  # (measured: quit finished 18:00:37.0107, compositor DRM init 18:00:37.5633),
+  # and whatever sits in the framebuffer underneath shows through: an empty
+  # tty1 plus blinking cursor on the desktop (greetd's
+  # Conflicts=getty@tty1.service means no getty is there), the firmware BGRT
+  # logo and systemd-boot/systemd-stub version lines on the laptop, where the
+  # EFI framebuffer was never overwritten. --retain-splash leaves the frame in
+  # place instead, so there is nothing to reveal. See #727.
+  #
+  # Deliberately a drop-in and NOT an ordering change. Adding
+  # `After=display-manager.service` here is the obvious fix and it deadlocks:
+  # plymouth-quit-wait runs `plymouth --wait` with TimeoutSec=0 and blocks
+  # until plymouthd exits, plymouthd exits only when plymouth-quit runs, and
+  # plymouth-quit would then be waiting on greetd. systemd sees no cycle — that
+  # link is a runtime dependency through plymouthd, not a declared edge — so it
+  # breaks nothing and the boot hangs forever.
+  #
+  # config/greetd-config.bst carries the other half: retaining the splash also
+  # removes the only feedback a wedged greeter gives, so greetd gets an
+  # OnFailure unit that switches to the rescue VT.
+  - |
+    dropin="%{install-root}%{indep-libdir}/systemd/system/plymouth-quit.service.d/10-retain-splash.conf"
+    install -Dm644 /dev/null "${dropin}"
+    cat > "${dropin}" <<'EOF'
+    [Service]
+    # ExecStart= clears upstream's plain `plymouth quit` before appending ours;
+    # without the reset systemd would run both.
+    ExecStart=
+    ExecStart=-/usr/bin/plymouth quit --retain-splash
+    EOF
   - install -Dm644 krytis-watermark.png "%{install-root}%{datadir}/plymouth/themes/spinner/watermark.png"
   - |
     # Stock spinner.plymouth (from fdsdk plymouth-logo.bst), trimmed of

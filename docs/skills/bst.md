@@ -381,9 +381,10 @@ remote execution isn't in play. Krytis has no `remote-execution:` block in `proj
 today (CAS-only — source/artifact caching, not sandbox execution) so this isn't live yet,
 but the single-step form is used at 20+ sites across `elements/config/*.bst`,
 `core/mise.bst`, and `core/pangolin-cli.bst` — all latent failures for the day remote
-execution is turned on. New elements should use the two-step form from here on; a
-separate pass backports the existing sites (see the tracking issue linked from
-`docs/skills/dakota.md`).
+execution is turned on. New elements should use the two-step form from here on — every
+example in this file does — and #673 tracks backporting the existing sites. Expect to see
+the single-step form when reading `elements/`; that is the un-migrated tail, not a
+counter-example to follow.
 
 ## Multi-line YAML Plain Scalars Do Not Shell-Continue
 
@@ -1323,8 +1324,9 @@ Fix pattern — private libdir plus an `ld.so.conf.d` entry, **not** a dump into
 
 # elements/config/<app>-ldconfig.bst — mirrors config/codecs-extra-ldconfig.bst
 - |
-  install -Dm644 /dev/stdin \
-      "%{install-root}/etc/ld.so.conf.d/<app>.conf" <<'EOF'
+  conf="%{install-root}/etc/ld.so.conf.d/<app>.conf"
+  install -Dm644 /dev/null "$conf"
+  cat > "$conf" <<'EOF'
   %{indep-libdir}/<app>
   EOF
 ```
@@ -2486,8 +2488,9 @@ Instead, enable the instances with static `.wants` symlinks in the vendor unit p
         ln -s "../kmsconvt@.service" "${wants_dir}/kmsconvt@${vt}.service"
     done
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset" <<'EOF'
+    preset="%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset"
+    install -Dm644 /dev/null "${preset}"
+    cat > "${preset}" <<'EOF'
     disable kmsconvt@.service
     disable kmscon.service
     EOF
@@ -2597,8 +2600,9 @@ Hard resets (power cut, test failure) lose journald's in-memory write buffer whe
 
 ```yaml
 - |
-  install -Dm644 /dev/stdin \
-    "%{install-root}%{sysconfdir}/systemd/journald.conf.d/10-persist.conf" <<'EOF'
+  conf="%{install-root}%{sysconfdir}/systemd/journald.conf.d/10-persist.conf"
+  install -Dm644 /dev/null "$conf"
+  cat > "$conf" <<'EOF'
   [Journal]
   Storage=persistent
   SyncIntervalSec=5s
@@ -2831,8 +2835,9 @@ kind: manual
 config:
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-        "%{install-root}/etc/ld.so.conf.d/codecs-extra.conf" <<'EOF'
+    conf="%{install-root}/etc/ld.so.conf.d/codecs-extra.conf"
+    install -Dm644 /dev/null "${conf}"
+    cat > "${conf}" <<'EOF'
     /usr/lib/%{gcc_triplet}/codecs-extra/lib
     EOF
   - "%{install-extra}"

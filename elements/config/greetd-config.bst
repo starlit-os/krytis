@@ -35,6 +35,11 @@ depends:
 - desktop/cage.bst
 - desktop/wlr-randr.bst
 - core/pam-u2f.bst
+# krytis-greeter-fallback.service (below) execs /usr/bin/chvt, which comes from
+# kbd. It is already in the image, but only transitively — nothing in krytis
+# named it, so an fdsdk re-pin dropping it would silently leave the greeter's
+# only escape hatch pointing at a missing binary. Name it here.
+- freedesktop-sdk.bst:components/kbd.bst
 
 variables:
   strip-binaries: ''
@@ -212,6 +217,43 @@ config:
     [Journal]
     Storage=persistent
     SyncIntervalSec=5s
+    EOF
+
+  # Escape hatch for a wedged greeter, required by config/plymouth-theme.bst's
+  # `plymouth quit --retain-splash` (#727). Retaining the splash means a dead
+  # greeter no longer shows anything: the frame stays on the scanout with
+  # plymouthd already exited, so there is no console, no cursor, and no error.
+  #
+  # greetd is Restart=always with StartLimitBurst=5 over
+  # StartLimitIntervalUSec=30s, so after five failures in 30s it enters `failed`
+  # and stops retrying — which is exactly when OnFailure= fires. chvt 6 forces
+  # fbcon to repaint over the retained splash and lands on the rescue getty
+  # logind keeps on the reserved VT (config/kmscon.bst documents why ReserveVT
+  # is deliberately left at its default). Without this the box is unreachable:
+  # root is locked (root:!unprovisioned) and sshd ships disabled by preset.
+  - |
+    dropin="%{install-root}%{indep-libdir}/systemd/system/greetd.service.d/10-splash-fallback.conf"
+    install -Dm644 /dev/null "${dropin}"
+    cat > "${dropin}" <<'EOF'
+    [Unit]
+    OnFailure=krytis-greeter-fallback.service
+    EOF
+
+    unit="%{install-root}%{indep-libdir}/systemd/system/krytis-greeter-fallback.service"
+    install -Dm644 /dev/null "${unit}"
+    cat > "${unit}" <<'EOF'
+    [Unit]
+    Description=Reveal a console after the greeter has given up
+    # Not WantedBy anything: greetd's OnFailure= is the only trigger. No
+    # [Install] section either, so `systemctl preset-all` has nothing to act on
+    # and cannot enable it by fall-through (see docs/skills/bst.md and #711).
+    DefaultDependencies=no
+    
+    [Service]
+    Type=oneshot
+    # chvt writes the VT_ACTIVATE ioctl to /dev/tty0; as root that needs no
+    # controlling terminal of its own.
+    ExecStart=/usr/bin/chvt 6
     EOF
 
   - "%{install-extra}"
