@@ -686,7 +686,7 @@ If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is n
 **Namespace layout in gnome-build-meta:**
 - `core/` — end-user GNOME apps (nautilus, gnome-text-editor, etc.)
 - `core-deps/` — libraries and runtime deps (xdg-desktop-portal-gtk, libportal, etc.)
-- `sdk/` — developer/toolchain elements (xwayland-satellite, blueprint-compiler, etc.)
+- `sdk/` — developer/toolchain elements (adwaita-fonts, blueprint-compiler, etc.)
 - `gnomeos-deps/` — OS-level config (flathub-config, etc.)
 
 Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
@@ -1060,16 +1060,27 @@ Add the element name to `workflow_dispatch.inputs.group.options` and add a new j
 
 ### Verifying the CI job before merge
 
-After adding the mise task and CI job on a feature branch, trigger the workflow on that branch to confirm end-to-end behaviour before the PR merges:
+After adding the mise task and CI job on a feature branch, trigger the workflow on that branch to confirm the update-detection steps behave correctly before the PR merges:
 
 ```shell
 gh workflow run track-bst-sources.yml --ref <branch> --field group=<name>
 gh run watch <run-id> --exit-status
 ```
 
+**This does not exercise the "Create or update PR" step.** That step's `if:` guard is `steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'` — deliberately, so a feature-branch dispatch can never open a stray PR or push a stray commit. Dispatching on `--ref <branch>` will only prove the task is idempotent and that `has_changes` resolves correctly; the job shows those steps `skipped`, not failed. To verify the commit/PR mechanism itself, either invoke `scripts/commit-tracking-update.sh` directly against a real `auto/track-<name>` branch (safe — it's exactly what the scheduled job would do, and idempotent against a branch that already has an open PR for the same content) or wait for the first real scheduled/merged run.
+
 The job should either create/update a PR (if a new release exists) or print "Already up to date" and exit 0. Offer this verification step to the user when opening a PR that adds a new tracking task.
 
 **ghostty-specific:** `ghostty-org/ghostty` does not publish GitHub releases — `releases/latest` returns 404. Use `repos/ghostty-org/ghostty/tags` (paginated) and filter for semver tags in Python rather than jq, which avoids jq version incompatibilities in the CI runner.
+
+### Signed commits via `scripts/commit-tracking-update.sh`
+
+Every "Create or update PR" step commits via `createCommitOnBranch` (GraphQL) through this shared script, not `git commit && git push` — `github-actions[bot]` has no settings page, so there is no way to attach a signing key to it, and GitHub auto-signs commits it creates itself via the API regardless of caller credential. See #154, #699.
+
+Two non-obvious things found building it:
+
+- **`gh api graphql -f`/`-F` cannot pass JSON-typed (array/object) GraphQL variables.** Both flags always coerce to a string (or, for `-F`, a small set of scalar literals) — there is no way to hand `[FileAddition!]!` a real JSON array through them. Build the whole request body (`{query, variables: {...}}`) as JSON with `jq -n --argjson ...` and pipe it to `gh api graphql --input -` instead.
+- **Force-pushing a branch to be identical to its base — even for a moment — auto-closes any open PR for it.** The script's reset step (`git checkout -B` equivalent: move the branch ref to `main`'s current tip) briefly leaves the branch 0 commits ahead before the commit step adds one back; GitHub reacts to that intermediate state by closing the PR (observed directly building this: PR #705, closed and force-pushed in the same timeline event, by the API caller, not a person). The original `git commit && git push --force-with-lease` flow never hit this because reset-then-commit was one local operation force-pushed atomically in a single push; two separate API calls are two separate events GitHub can react to in between. The script defends against it: after committing, it checks for a `CLOSED` (not merged) PR on the branch and reopens it — without that, a caller's default `gh pr list --head <branch>` (open-only) would find nothing and create a duplicate PR instead of updating the real one.
 
 ### Temporary fork pins for tarball-pinned elements
 
@@ -2082,6 +2093,43 @@ grep -E '^ *sha:' elements/desktop/greetd.bst | awk '{print length($2)}' | sort 
 
 Bumping a direct dependency does **not** bump its own dependencies unless the new version strictly requires a newer one. Confirmed while fixing greetd's `tokio`/`bytes` CVEs (#496): `cargo update -p tokio` alone moved `tokio` 1.37.0→1.42.1 but left `bytes` at 1.6.0 — tokio's manifest only declares `bytes = "1"`, and 1.6.0 still satisfies that caret range, so cargo's conservative resolver had no reason to touch it. `bytes`' own CVE (GHSA-434x-w66g-qw3r, fixed at 1.11.1) needed its own explicit `cargo update -p bytes`. **Don't assume a vulnerable transitive dependency "comes along for the ride"** when bumping the crate that pulls it in — check the resulting `Cargo.lock` for the actual version and `-p` it directly if it didn't move.
 
+### Never hand-write a `Cargo.lock` bump patch — resolve it with a real cargo
+
+A `kind: patch` source that edits `Cargo.lock` by hand is a resolver decision made
+without the resolver, and cargo's own constraint data is not visible in the lock
+file being edited. #682 bumped greetd's `tokio` 1.42.1→1.43.1 (+ `tokio-macros`
+2.4.0→2.5.0, which *is* visible — tokio's lock entry lists it) and the build broke:
+tokio 1.43 also raised its unix `libc` floor to `^0.2.168`, and nothing in the old
+lock says so, so the vendored 0.2.153 no longer satisfied it (#692):
+
+```
+error: failed to select a version for the requirement `libc = "^0.2.168"`
+candidate versions found which didn't match: 0.2.153
+location searched: directory source `.vendored-crates` (which is replacing registry `crates-io`)
+required by package `tokio v1.43.1`
+```
+
+**Only a real build catches this.** `bst show` resolves the element fine (the
+cargo2 refs are internally consistent), and `bst source track` regenerates the
+ref list *from that same wrong `Cargo.lock`*, so it reports success too. The
+failure surfaces only inside the sandbox at `cargo build --locked`.
+
+Do the resolution with an actual cargo instead — `mise run greetd-relock --crate
+tokio --version 1.43.1` (see `mise/tasks/greetd-relock`). It extracts the pinned
+tarball, applies every *other* patch the element lists, runs
+`cargo update -p <crate> --precise <version>` in `docker.io/library/rust:1-slim`,
+writes the resulting diff as `patches/greetd/bump-<crate>-<version>.patch`, and
+regenerates the cargo2 `ref:` list from the new lock. The container is not
+incidental: the bst sandbox has no DNS for `index.crates.io`, and no host cargo is
+declared in `mise.toml` `[tools]` (a full Rust toolchain for one maintenance task
+is not worth forcing on every `mise install`).
+
+Re-running the task with an existing `--patch` name regenerates it in place, so it
+also serves as a re-verification of a carried patch against the current index. It
+refuses to write if cargo resolved no change, if the tarball sha doesn't match the
+element's `ref:`, or if the cargo2 `ref:` list is no longer the tail of the element
+(it appends rather than splices).
+
 ### Dropping an unused workspace member to eliminate an unpatchable-semver-range CVE
 
 When a vulnerable crate's fix is a major-version bump outside the range the workspace's `Cargo.toml` declares (`cargo update -p <crate>` can't cross it) and that crate turns out to be needed by only one, genuinely-unused workspace member — dropping the member is often cleaner and lower-risk than bumping the constraint and hoping nothing broke. Done for `rpassword` (5.0.1→7.5.0 needed, a two-major jump) via dropping `agreety` — greetd's own unused reference text-greeter binary (krytis ships `noctalia-greeter-session`, confirmed via `greetd-config.bst`'s `[default_session]`, not `agreety`) — from `[workspace] members` in a `kind: patch` source (`patches/greetd/drop-agreety-workspace-member.patch`), then regenerating `Cargo.lock`/the `cargo2` block from the now-narrower dependency graph.
@@ -2093,6 +2141,65 @@ Two things this doesn't automatically clean up:
 **Same technique also applies to a mirrored (not krytis-owned) element.** `elements/overrides/rust-bindgen.bst` (#498) drops freedesktop-sdk's `bindgen-tests/tests/quickchecking` workspace member the identical way — the difference is *where* the patch lives: since `components/rust-bindgen.bst` belongs to the freedesktop-sdk junction, the fix goes through "Mirroring a junction element to patch its source" (above) rather than patching a krytis-owned element directly. `quickchecking` was never in the workspace's `default-members`, so — like `agreety` — it was already dead weight in the built binary; only `Cargo.lock`'s full-workspace resolution (which ignores `default-members`) pulled its `quickcheck -> rand` 0.8.5 pin into the SBOM.
 
 greetd links libpam via `pam-sys`. Add `linux-pam.bst` to **both** `build-depends` AND `depends` — it transitively provides `linux-pam-base.bst` which supplies `libpam.so` + `libpam_misc.so`.
+
+## `build.rs` calling `git describe` (vergen / vergen-gitcl) — `git_repo` sources DO stage a real `.git`
+
+Don't assume a BST `git_repo`/`git_tag` source exports a bare tree with no
+git metadata. It doesn't: `stage()` runs `git clone --no-checkout
+--no-hardlinks <mirror> <dir>` then `git checkout --force <ref>` (see
+`buildstream_plugins_community/sources/git_tag.py`), so the sandbox's source
+directory is a real `.git` checkout. A `build.rs` that shells out to `git`
+(e.g. `vergen-gitcl`'s `GitclBuilder::describe()`, used by
+`desktop/xwayland-satellite.bst`, #499) *can* work here — but only if `git`
+itself is on `PATH` inside the sandbox, which most Rust `build-depends`
+lists (`components/rust.bst`, `components/pkg-config.bst`,
+`public-stacks/buildsystem-make.bst`) do not provide. Add
+`freedesktop-sdk.bst:components/git.bst` to `build-depends` if the crate
+graph needs it.
+
+**`VERGEN_IDEMPOTENT=1` does not suppress the describe — don't reach for it.**
+That was this section's original advice and a real sandbox build disproved it:
+`xwayland-satellite -version` printed `v0.8.2-dirty`, i.e. a live
+`git describe`, not the `VERGEN_IDEMPOTENT_OUTPUT` placeholder. Read from
+source (vergen-gitcl 1.0.8 / vergen-lib 0.1.6), the flag does exactly three
+things: sets `Emitter.idempotent` (`vergen-lib/src/emitter.rs:65`), skips
+`cargo:rerun-if-changed=.git/…` (`vergen-gitcl/src/gitcl/mod.rs:574`), and
+defaults **only** `VERGEN_GIT_COMMIT_DATE`/`_TIMESTAMP` (`mod.rs:840`). The
+describe block (`mod.rs:676-701`) never reads it. The crate's own rustdoc
+(`mod.rs:209-232`) claims otherwise and is stale — its integration test
+`git_all_idempotent_output()` asserts a real describe value.
+
+**Set `VERGEN_GIT_DESCRIBE` instead.** Any pre-set `VERGEN_*` value
+short-circuits the corresponding git call (`mod.rs:681` →
+`vergen-lib/src/utils.rs:29`, emitting `cargo:warning=… overidden`, sic).
+Two useful values:
+
+- `VERGEN_GIT_DESCRIBE=VERGEN_IDEMPOTENT_OUTPUT` — the sentinel a crate's own
+  fallback may already special-case. `xwayland-satellite`'s
+  `src/lib.rs::version()` does (`if version == "VERGEN_IDEMPOTENT_OUTPUT" {
+  version = env!("CARGO_PKG_VERSION") }`), so `-version` prints `0.8.2` with
+  the element hardcoding no version string of its own. This is what
+  `desktop/xwayland-satellite.bst` uses.
+- `VERGEN_GIT_DESCRIBE=v1.2.3` — a literal, when the crate has no fallback.
+  Duplicates the version into the element; only do it if there is no sentinel
+  path.
+
+Either way `git` is still required in `build-depends`: `add_map_entries`
+(`mod.rs:911-931`) runs `check_git` + `check_inside_git_worktree` *before* the
+per-key short-circuits. Those failing isn't fatal — `Emitter`'s
+`fail_on_error` is false by default, so the error path defaults every
+requested key to the placeholder — but relying on that means relying on a
+build error, so keep `components/git.bst` listed.
+
+**Why the `-dirty` even appeared:** `describe(tags, dirty, …)` implements the
+dirty check as a separate `git status --porcelain --untracked-files=no`
+(`mod.rs:900`), not `git describe --dirty`. Every `kind: patch` source in the
+element modifies the staged worktree, so a patched element is *always* dirty
+and the suffix is unavoidable as long as the describe runs at all.
+
+Verified in the real sandbox, not just on the host: with the sentinel set,
+`mise run bst build desktop/xwayland-satellite.bst` succeeds and
+`bst shell … -- xwayland-satellite -version` prints `0.8.2`.
 
 ## Greeter Stack: greetd display-manager Alias
 
@@ -2368,7 +2475,7 @@ Some VT console emulators (kmscon's `kmsconvt@.service`, similarly `agetty@.serv
 
 **Do not do that with `enable kmsconvt@tty2.service` lines in a system-preset file.** `systemctl preset-all` iterates unit *files*, and a template instance is not a file, so it never acts on an instance named only in a preset file — the lines are silently inert. And once no rule matches the *bare* template, preset-all falls through to its default `enable` policy and enables `DefaultInstance=tty1`, which is precisely the VT1 preemption you were avoiding. This shipped in krytis and started kmscon on greetd's VT on every boot (#503).
 
-Instead, enable the instances with static `.wants` symlinks in the vendor unit path, and add a `disable` rule for the bare template to close the fall-through:
+Instead, enable the instances with static `.wants` symlinks in the vendor unit path, and add `disable` rules for **every** unit the package ships that carries an `[Install]` section — the bare template *and* its non-template siblings (see below):
 
 ```yaml
   install-commands:
@@ -2382,6 +2489,7 @@ Instead, enable the instances with static `.wants` symlinks in the vendor unit p
     install -Dm644 /dev/stdin \
       "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset" <<'EOF'
     disable kmsconvt@.service
+    disable kmscon.service
     EOF
 ```
 
@@ -2389,6 +2497,24 @@ Instead, enable the instances with static `.wants` symlinks in the vendor unit p
 
 - `systemctl is-enabled kmsconvt@tty2.service` reports **`static`**, not `enabled` — that is the expected label for a unit enabled from the vendor unit path. The dependency is still real; systemd ships `sysinit.target.wants/systemd-firstboot.service` the same way. Assert `systemctl show -p Wants --value getty.target` instead.
 - Never `systemctl enable` the instances, in an image or by hand: that materialises the `Alias=autovt@.service` symlink, after which `autovt@ttyN.service` resolves to kmscon rather than `getty@.service` and logind spawns kmscon on any VT switch.
+
+### The fall-through applies to the package's other units too, not just the template
+
+Closing the hole for the bare template is not enough. `preset-all`'s default `enable` policy catches **every** unit file with an `[Install]` section that no rule matches, so a package shipping more than one installable unit needs a rule for each.
+
+kmscon ships two: `kmsconvt@.service` (the per-VT template) and a bare `kmscon.service` — a seat daemon with `WantedBy=multi-user.target` that runs `kmscon` with no `--vt` and with upstream's `--switchvt [on]` default. #503 added a rule for the template only, so the seat daemon kept falling through and shipped enabled. It picked a VT for itself (`/dev/tty2`, colliding with `kmsconvt@tty2.service`), switched the foreground VT off tty1 at `multi-user.target`, and modeset the primary output:
+
+```console
+$ ps -eo pid,args | grep '[k]mscon'
+1077 kmscon                          # kmscon.service — no --vt, switchvt on
+1078 kmscon --vt=tty2 --no-switchvt  # kmsconvt@tty2
+$ journalctl -b -u kmscon.service | grep Display
+kmscon[1077]: NOTICE: terminal: Display [DP] with backend [drm2d] ...
+```
+
+Two symptoms, one cause: a `login:` prompt on screen between the Plymouth splash and the greeter, and — because the greeter's tty1 logind session never went **active** — `noctalia-greeter-compositor` dying on wlroots' hard-coded `WAIT_SESSION_TIMEOUT` (`10000 // ms`, `backend/backend.c:35`, no retry) on every single boot, masked only by greetd's `Restart=always` (#711, #712).
+
+**Audit rule when vendoring any element that ships systemd units:** list every unit with an `[Install]` section, and confirm each is either named by a preset rule or genuinely wanted enabled. `grep -l '^\[Install\]' /usr/lib/systemd/system/*` against a staged tree, cross-checked with `find /etc/systemd/system -name '*<pkg>*'` after `systemctl --root=<tree> preset-all`, catches this before it boots.
 
 ### Keep `NAutoVTs` aligned with the VT layout — but never set `ReserveVT=0`
 

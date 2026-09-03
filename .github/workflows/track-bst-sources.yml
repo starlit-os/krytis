@@ -109,18 +109,8 @@ jobs:
           BRANCH="auto/track-linux-cachyos"
           TITLE="chore(deps): update linux-cachyos ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Stash the update, switch to a fresh branch from main, then re-apply
-          # so the PR diff is relative to main — not the detached checkout HEAD.
-          git stash push -- elements/core/linux-cachyos.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/core/linux-cachyos.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/core/linux-cachyos.bst
 
           {
             echo "## linux-cachyos update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -206,16 +196,8 @@ jobs:
           BRANCH="auto/track-mise"
           TITLE="chore(deps): update mise ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/core/mise.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/core/mise.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/core/mise.bst
 
           {
             echo "## mise update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -303,16 +285,8 @@ jobs:
           BRANCH="auto/track-microsoft-dbx"
           TITLE="chore(deps): update Microsoft dbx ${OLD_CNT} -> ${NEW_CNT} revocations"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- files/microsoft-uefi-certs/dbx.bin files/microsoft-uefi-certs/dbx.esl
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add files/microsoft-uefi-certs/dbx.bin files/microsoft-uefi-certs/dbx.esl
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt files/microsoft-uefi-certs/dbx.bin files/microsoft-uefi-certs/dbx.esl
 
           {
             echo "## Microsoft dbx update: \`${OLD_CNT}\` → \`${NEW_CNT}\` revoked hashes"
@@ -404,16 +378,8 @@ jobs:
           BRANCH="auto/track-gum"
           TITLE="chore(deps): update gum ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/core/gum.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/core/gum.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/core/gum.bst
 
           {
             echo "## gum update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -499,16 +465,8 @@ jobs:
           BRANCH="auto/track-libsodium"
           TITLE="chore(deps): update libsodium ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/libsodium.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/libsodium.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/libsodium.bst
 
           {
             echo "## libsodium update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -594,16 +552,8 @@ jobs:
           BRANCH="auto/track-niri"
           TITLE="chore(deps): update niri v${OLD_VER} -> v${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/niri.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/niri.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/niri.bst
 
           {
             echo "## niri update: \`v${OLD_VER}\` → \`v${NEW_VER}\`"
@@ -689,16 +639,8 @@ jobs:
           BRANCH="auto/track-ghostty"
           TITLE="chore(deps): update ghostty ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/ghostty.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/ghostty.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/ghostty.bst
 
           {
             echo "## ghostty update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -786,16 +728,8 @@ jobs:
           BRANCH="auto/track-symbols-nerd-font"
           TITLE="chore(deps): update symbols-nerd-font ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/symbols-nerd-font.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/symbols-nerd-font.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/symbols-nerd-font.bst
 
           {
             echo "## symbols-nerd-font update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -873,6 +807,10 @@ jobs:
             element: desktop/oo7.bst
             branch: auto/track-oo7
             title: "chore(deps): update oo7"
+          - group: manual-merge
+            element: desktop/xwayland-satellite.bst
+            branch: auto/track-xwayland-satellite
+            title: "chore(deps): update xwayland-satellite"
           - group: manual-merge
             element: desktop/vainfo.bst
             branch: auto/track-vainfo
@@ -1019,16 +957,8 @@ jobs:
           OLD_SHA=$(echo "$OLD_REF" | grep -oP '(?<=g)[0-9a-f]+$' || echo "$OLD_REF")
           NEW_SHA=$(echo "$NEW_REF" | grep -oP '(?<=g)[0-9a-f]+$' || echo "$NEW_REF")
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/
 
           {
             echo "## \`${{ matrix.element }}\` update"
@@ -1103,13 +1033,8 @@ jobs:
         run: |
           git diff --quiet && { echo "No junction updates"; exit 0; }
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git checkout -B auto/track-core-junctions origin/main
-          git add elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
-          git commit -m "chore(deps): update core junctions (gnome-build-meta + freedesktop-sdk)"
-          git push --force-with-lease origin auto/track-core-junctions
+          printf '%s\n' "chore(deps): update core junctions (gnome-build-meta + freedesktop-sdk)" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh auto/track-core-junctions /tmp/commit-msg.txt elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
 
           EXISTING=$(gh pr list --head auto/track-core-junctions --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$EXISTING" ]; then
@@ -1181,16 +1106,8 @@ jobs:
           BRANCH="auto/track-pangolin"
           TITLE="chore(deps): update pangolin-cli ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/core/pangolin-cli.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/core/pangolin-cli.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/core/pangolin-cli.bst
 
           {
             echo "## pangolin-cli update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1274,16 +1191,8 @@ jobs:
           BRANCH="auto/track-game-devices-udev"
           TITLE="chore(deps): update game-devices-udev ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/game-devices-udev.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/game-devices-udev.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/game-devices-udev.bst
 
           {
             echo "## game-devices-udev update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1367,16 +1276,8 @@ jobs:
           BRANCH="auto/track-proton-pass"
           TITLE="chore(deps): update proton-pass ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/proton-pass.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/proton-pass.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/proton-pass.bst
 
           {
             echo "## proton-pass update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1462,16 +1363,8 @@ jobs:
           BRANCH="auto/track-falcond"
           TITLE="chore(deps): update falcond ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/falcond.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/falcond.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/falcond.bst
 
           {
             echo "## falcond update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1560,16 +1453,8 @@ jobs:
           BRANCH="auto/track-libqalculate"
           TITLE="chore(deps): update libqalculate ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/libqalculate.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/libqalculate.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/libqalculate.bst
 
           {
             echo "## libqalculate update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1662,16 +1547,8 @@ jobs:
           BRANCH="auto/track-falcond-profiles"
           TITLE="chore(deps): update falcond-profiles ${OLD_SHA} -> ${NEW_SHA}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/falcond.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/falcond.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/falcond.bst
 
           {
             echo "## falcond-profiles update: \`${OLD_SHA}\` → \`${NEW_SHA}\`"
@@ -1760,16 +1637,8 @@ jobs:
           BRANCH="auto/track-scx-loader"
           TITLE="chore(deps): update scx-loader ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/scx-loader.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/scx-loader.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/scx-loader.bst
 
           {
             echo "## scx-loader update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1855,16 +1724,8 @@ jobs:
           BRANCH="auto/track-zed"
           TITLE="chore(deps): update zed ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/zed.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/zed.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/zed.bst
 
           {
             echo "## zed update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -1950,16 +1811,8 @@ jobs:
           BRANCH="auto/track-zen-browser"
           TITLE="chore(deps): update zen-browser ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/zen-browser.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/zen-browser.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/zen-browser.bst
 
           {
             echo "## zen-browser update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -2035,16 +1888,8 @@ jobs:
           BRANCH="auto/track-chunkah"
           TITLE="chore(deps): update chunkah digest"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- mise/tasks/chunkify
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add mise/tasks/chunkify
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt mise/tasks/chunkify
 
           {
             echo "Automated chunkah digest bump"
@@ -2124,16 +1969,8 @@ jobs:
           BRANCH="auto/track-warp"
           TITLE="chore(deps): update warp ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/warp.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/warp.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/warp.bst
 
           {
             echo "## warp update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -2219,16 +2056,8 @@ jobs:
           BRANCH="auto/track-qemu"
           TITLE="chore(deps): update qemu ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/dev/qemu.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/dev/qemu.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/dev/qemu.bst
 
           {
             echo "## qemu update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -2314,16 +2143,8 @@ jobs:
           BRANCH="auto/track-equibop"
           TITLE="chore(deps): update equibop ${OLD_VER} -> ${NEW_VER}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- elements/desktop/equibop.bst
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add elements/desktop/equibop.bst
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/desktop/equibop.bst
 
           {
             echo "## equibop update: \`${OLD_VER}\` → \`${NEW_VER}\`"
@@ -2420,16 +2241,8 @@ jobs:
           BRANCH="auto/track-${{ matrix.name }}"
           TITLE="chore(deps): update ${{ matrix.name }}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash push -- "$ELEMENT"
-          git checkout -B "$BRANCH" origin/main
-          git stash pop
-
-          git add "$ELEMENT"
-          git commit -m "$TITLE"
-          git push --force-with-lease origin "$BRANCH"
+          printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt "$ELEMENT"
 
           {
             echo "## ${{ matrix.name }} update"

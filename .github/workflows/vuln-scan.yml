@@ -1,0 +1,78 @@
+name: Vulnerability Report
+
+# Periodic + on-demand SBOM vulnerability report (#41), independent of
+# publish.yml's much heavier 420-minute build pipeline. buildstream-sbom's
+# `bst show` reads static element/source metadata only — no image build, no
+# artifact cache, no BuildBarn wiring needed (confirmed: publish.yml's own
+# "Scan for vulnerabilities (pre-build gate)" step runs with none of that,
+# before its Build step). That is what makes a fast, standalone reporting
+# workflow possible instead of piggybacking on a real publish run.
+#
+# Deliberately schedule + workflow_dispatch only, not pull_request: checks.yml
+# keeps every-PR gates BST-free by design (see its own header comment), and
+# "does this PR change the vulnerability findings" is a different, diff-based
+# question anyway — see vuln-diff.yml for that.
+#
+# Report surfaces two ways: an inline GitHub Actions job summary (readable
+# without downloading anything) and the raw SBOM/Grype JSON as a workflow
+# artifact (for tooling or manual follow-up).
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: krytis-vuln-report
+  cancel-in-progress: true
+
+jobs:
+  report:
+    name: Generate vulnerability report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          experimental: true
+
+      - name: Install system dependencies
+        run: mise bootstrap --yes
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Enable unprivileged user namespaces
+        # Same as publish.yml's pre-build gate — bwrap-based sandboxing needs
+        # this even for a read-only `bst show`.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Scan for vulnerabilities
+        # Warn-only (no --fail-on): this workflow reports, it never blocks —
+        # matches mise run vuln-scan's own default philosophy (docs/skills/
+        # sbom.md § --fail-on / severity gating). Blocking belongs to
+        # publish.yml's pre-build gate and vuln-diff.yml's PR check, not a
+        # periodic report.
+        run: mise run vuln-scan
+
+      - name: Write job summary
+        run: uv run python3 scripts/vuln-summary.py krytis.grype.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SBOM + vulnerability report artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: krytis-vuln-report-${{ github.run_id }}
+          path: |
+            krytis.spdx.json
+            krytis.enriched.spdx.json
+            krytis.grype.json
+          retention-days: 90
+          if-no-files-found: error

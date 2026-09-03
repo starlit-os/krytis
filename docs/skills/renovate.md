@@ -2,13 +2,22 @@
 
 Load when changing `.github/renovate.json5`, enabling a manager, or deciding whether a dependency should auto-merge. Expansion plan and per-source rationale: [`docs/design/renovate-expansion.md`](../design/renovate-expansion.md).
 
+## `platformCommit`
+
+Every manager commits via the GitHub API (Contents/GraphQL) rather than a raw
+git push — `"platformCommit": "enabled"` at the top level. API-authored
+commits are auto-signed by GitHub regardless of caller credential, which is
+what lets these PRs merge once `main` requires signed commits (#154, #698).
+No other behavior changes; this is purely how the commit object gets
+created.
+
 ## Current coverage
 
 | Manager | Files | Auto-merge |
 |---|---|---|
 | `github-actions` | `.github/workflows/*.yml` | digest/pin/patch/minor |
 | `pep621` | `pyproject.toml` (+ `uv.lock`) | patch/minor, except the packages listed below |
-| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | never — the lockfile needs a manual refresh |
+| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | digest/pin/patch/minor — except `pass-cli` (see below), which is never |
 | `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `pass-cli` pin | patch/minor; `pass-cli` never |
 
 Everything else is tracked by the `track-bst-sources.yml` CI matrix, not Renovate — see [`bst.md`](bst.md) § Element update path.
@@ -60,7 +69,7 @@ Two extraction behaviours that need explicit rules:
 
 Reads `mise.toml` `[tools]` only — `[env]` values need a custom manager (see below) — and picks each tool's datasource out of the [mise registry](https://mise.jdx.dev/registry.html), so any registry tool on a supported backend works without configuration. It also reads `mise.lock`, reporting each tool's `lockedVersion` alongside the pin.
 
-**Nothing from this manager auto-merges.** Renovate cannot refresh `mise.lock`: mise lockfile updates are classed as an unsafe execution that only a self-hosted admin can enable via `allowedUnsafeExecutions` ([docs](https://docs.renovatebot.com/modules/manager/mise/#trust-model-for-lock-file-updates)). Auto-merging a tool bump would therefore land `mise.toml` and `mise.lock` disagreeing on main, with no CI to notice. The `prBodyNotes` on the rule tells the reviewer to run `mise run mise-lock` — see [`mise.md`](mise.md) § `mise.lock`.
+**The native manager auto-merges patch/minor/digest bumps; the `pass-cli` custom-regex pin does not.** Renovate's `mise` manager updates `mise.lock` in the same commit as the `mise.toml` bump when it changes a dependency — proven reliable across every native-manager PR since 2026-08 (zero CI failures) — so it inherits the repo's default `automerge: true` for digest/patch/minor. `pass-cli` comes from a `custom.regex` manager instead (see below) and does *not* get that lockfile treatment: two of its PRs (2026-08-25, 2026-08-27) landed with a stale `mise.lock` entry and failed CI's `mise install --locked` step, needing a manual force-push fix — so that rule stays `automerge: false`. Either way, CI's `mise install --locked` (`checks.yml`, via `jdx/mise-action`) hard-fails on any `mise.toml`/`mise.lock` mismatch, which is what makes auto-merging the native manager safe — see [`mise.md`](mise.md) § `mise.lock`.
 
 Two tools need rules of their own:
 

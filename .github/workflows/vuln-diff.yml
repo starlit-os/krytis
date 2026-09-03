@@ -1,0 +1,121 @@
+name: Vulnerability Diff
+
+# PR gate: does this change introduce a new vulnerability match versus its
+# base commit? Scans both the PR head and its base with the same
+# `mise run vuln-scan` pipeline used everywhere else (#41), then diffs the
+# two Grype reports on (vulnerability id, package name, package version) —
+# scripts/vuln-diff.py.
+#
+# Deliberately scans base fresh in this job rather than reusing a stored
+# baseline from vuln-scan.yml's periodic run: a PR's base is often not
+# tip-of-main (stacked PRs, older base commits, rebases — see AGENTS.md's
+# stacked-PR note), and a stale stored baseline would misreport. Scanning
+# both commits fresh is the only version-accurate way to diff, at the cost of
+# doubling the `bst show` time versus a single scan — acceptable since that
+# needs no image build (see vuln-scan.yml's header for why that holds).
+#
+# Each scan runs its own commit's own `.grype.yaml`, so a PR that adds or
+# removes an ignore rule (like #500/#688) shows up here as fixed/new exactly
+# like a real dependency change would — this is real Grype output, not a
+# bypass of the ignore mechanism.
+#
+# Default posture: REPORT ONLY. The job summary always lists new/fixed
+# matches; the job only fails when NEW_VULN_FAIL_ON below is set to a Grype
+# severity, matching `mise run vuln-scan --fail-on`'s own opt-in philosophy
+# (docs/skills/sbom.md § --fail-on / severity gating). Flipping this into a
+# blocking PR gate is a one-line change, deliberately not made here — that
+# is a Design Gate call (AGENTS.md), not an engineering default. Tracked in
+# #690: severity floor, burn-in period, and override path all need a
+# decision before flipping NEW_VULN_FAIL_ON below.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: krytis-vuln-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Set to a Grype severity (negligible|low|medium|high|critical) to fail the
+  # job when the PR introduces a NEW match at/above that severity. Empty =
+  # report only, never fails. See header comment above.
+  NEW_VULN_FAIL_ON: ""
+
+jobs:
+  diff:
+    name: Diff vulnerabilities vs base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          experimental: true
+
+      - name: Install system dependencies
+        run: mise bootstrap --yes
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Enable unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Scan PR head for vulnerabilities
+        # Written outside the repo tree (runner.temp) so the base checkout's
+        # `git clean` below cannot touch it.
+        run: mise run vuln-scan --output "${{ runner.temp }}/head-grype.json"
+
+      - name: Preserve diff script for the base checkout
+        # The base commit may not have scripts/vuln-diff.py at all — it is
+        # new in whichever PR first adds this workflow, and even after that
+        # PR merges, an older base commit (stacked PR, pre-rebase) still
+        # might not carry the current version. The diff step below must
+        # always run HEAD's copy of the tool, not whatever (or nothing) the
+        # base commit happens to have — copy it out before the base checkout
+        # (`clean: true`, below) can remove or shadow it.
+        run: cp scripts/vuln-diff.py "${{ runner.temp }}/vuln-diff.py"
+
+      - name: Checkout PR base
+        # actions/checkout can fetch an arbitrary commit SHA directly, and
+        # defaults to `clean: true` — wipes head's .venv/generated files so
+        # the base scan can't inherit anything from head's checkout.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Re-sync dependencies for base commit
+        # pyproject.toml/uv.lock/mise.toml may differ at the base commit.
+        run: |
+          mise bootstrap --yes
+          uv sync
+
+      - name: Scan PR base for vulnerabilities
+        run: mise run vuln-scan --output "${{ runner.temp }}/base-grype.json"
+
+      - name: Diff vulnerability reports
+        run: |
+          uv run python3 "${{ runner.temp }}/vuln-diff.py" \
+            "${{ runner.temp }}/base-grype.json" \
+            "${{ runner.temp }}/head-grype.json" \
+            --fail-on "${NEW_VULN_FAIL_ON}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload head/base vulnerability reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: krytis-vuln-diff-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/base-grype.json
+            ${{ runner.temp }}/head-grype.json
+          retention-days: 30
+          if-no-files-found: error

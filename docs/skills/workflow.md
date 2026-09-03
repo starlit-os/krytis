@@ -145,6 +145,36 @@ cd <worktree-path> && gh pr create --title "..."
 
 Running from the main repo dir produces: `head branch "main" is the same as base branch "main"`.
 
+## The One Verification Gate an Agent Cannot Run: `generate-disk`
+
+AGENTS.md § Verification requires every PR to confirm the image booted, and `mise run boot-test` is the automated pass/fail for it. An agent session cannot complete that command. Step 1/5 shells out to `mise/tasks/generate-disk`, which needs real root, and an agent's non-TTY shell dies immediately with:
+
+```
+==> [1/5] Installing localhost/krytis:latest → /var/tmp/krytis-boot-test.XXXX/test.raw (filesystem: btrfs)...
+==> Creating 15G sparse disk image at /var/tmp/krytis-boot-test.XXXX/test.raw...
+==> Copying localhost/krytis:latest to root podman store...
+sudo: A terminal is required to authenticate
+```
+
+There is nothing to retry: `sudo -n true` also fails (no `NOPASSWD` rule for these commands), and a `sudo` timestamp primed in the human's own terminal is not visible to the agent's shell. Do not try to work around it — hand it off.
+
+**The privileged part is one step, not the whole gate.** `bootc install to-disk --via-loopback` has to create a loop device and mount the new filesystem, which requires `CAP_SYS_ADMIN` in the initial user namespace (see the comment block at `mise/tasks/boot-test:76`). Everything after it — the QEMU boot, the serial-console assertions, the verdict — is unprivileged, and `boot-test` exposes the split via `--reuse-disk`:
+
+```shell
+# human, once per built image — the only privileged command
+mise run generate-disk --image localhost/krytis:latest \
+    --disk /var/tmp/krytis-test.raw --size 15G
+
+# agent, unprivileged, as many times as needed
+mise run boot-test --reuse-disk /var/tmp/krytis-test.raw
+```
+
+`--reuse-disk` is only honest for the image that disk was installed from. A disk left over from an earlier build proves nothing about the current one, so a new image means a new `generate-disk` — don't reuse a stale disk to make the checklist look complete.
+
+**Sequence the handoff so it is the last thing outstanding.** Run every gate that works unprivileged first — `mise run build` (which ends in `bootc container lint`), `mise run validate`, `mise run docs-links`, `mise run vuln-scan`, the element build, and any in-sandbox smoke check via `bst shell` — then open the PR with that evidence and exactly one named command left for the maintainer. When they report the result, **edit the PR body** to record it; AGENTS.md § PR Comment Policy forbids a follow-up comment for a new observation.
+
+The same root requirement applies to `mise run chunkify` and to `mise/tasks/load-image-root` (which `generate-disk` calls to copy the image into the root podman store, invisible to rootless podman).
+
 ## Stacked PRs on a Squash-Only Repo
 
 Stack when the next piece of work needs a file state that only exists in an open PR — a prerequisite (#24 → #25) or the same lines of one config (#26 → #27). Base the child on the parent branch and say so in the body, so the reviewer knows the order:

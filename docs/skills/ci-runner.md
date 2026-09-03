@@ -158,6 +158,20 @@ The `starlit-os` org has an allowlist of permitted external actions. Any `uses: 
 
 When adding a new action to any workflow, check whether `<owner>/<repo>` is already allowlisted. If not, prompt the user to add it before the PR is merged. The allowlist is managed in the org's GitHub Actions settings.
 
+**Easy to miss when adding a *new* action, not just re-pinning an existing one.**
+Hit for real in PR #689: two new workflows added `actions/checkout` and
+`jdx/mise-action` (both already used elsewhere in this repo, already
+allowlisted — fine) alongside `actions/upload-artifact` (genuinely new,
+zero prior uses anywhere in `.github/workflows/`) without flagging the
+latter for an allowlist check at all, until the user asked directly. An
+agent has no way to self-verify allowlist membership — `gh api
+orgs/<org>/actions/permissions/selected-actions` needs org-admin or the
+`admin:org` scope, which an agent's token will not have. **Checklist for
+any new `uses:` line:** grep the rest of `.github/workflows/` for the same
+`<owner>/<repo>` first; if it's not already there, call it out explicitly
+in the PR description and ask the user to confirm/add it — do not assume
+"it's a well-known action" is the same as "it's allowlisted."
+
 ### `remove-unwanted-software` → `free-disk-space` migration (#703)
 
 `ublue-os/remove-unwanted-software` had no push since 2025-10-10 and no `v10`

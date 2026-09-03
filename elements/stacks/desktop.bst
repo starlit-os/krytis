@@ -84,10 +84,15 @@ depends:
   # xwayland.bst: Xwayland server binary.
   # xwayland-satellite: rootless XWayland manager for Niri — starts XWayland
   # on demand when an X11 client connects and sets DISPLAY in the session.
-  # config/xwayland-satellite.bst: corrected service file + preset (gnome-build-meta
-  # cargo kind only installs the binary, not the upstream resources/ service file).
+  # Vendored as a first-party element (desktop/xwayland-satellite.bst)
+  # instead of consumed from gnome-build-meta.bst:sdk/xwayland-satellite.bst
+  # — that pin carries a vulnerable `time` and gnome-build-meta has no
+  # overrides mechanism to fix it in place. See #499 for the removal
+  # condition.
+  # config/xwayland-satellite.bst: corrected service file + preset (upstream's
+  # own `cargo install`-only build doesn't ship the resources/ service file).
   - freedesktop-sdk.bst:components/xwayland.bst
-  - gnome-build-meta.bst:sdk/xwayland-satellite.bst
+  - desktop/xwayland-satellite.bst
   - config/xwayland-satellite.bst
 
   # ── Vulkan ICD discovery ────────────────────────────────────────────────
