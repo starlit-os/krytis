@@ -434,6 +434,30 @@ Toolkit hints go in **`environment.d/`** only, never `/etc/environment`:
 
 **Do not set `SDL_VIDEODRIVER=wayland`** in `environment.d` or `/etc/environment`. SDL2 apps break when this is forced: SDL2's own Wayland auto-detection (`SDL_VIDEODRIVER` unset) is more reliable than overriding it unconditionally. Setting it caused regressions in SDL2 apps that need fallback paths.
 
+### XDG autostart runs, but `OnlyShowIn=GNOME` entries never do
+
+*Found while scoping `desktop/gnome-disk-utility.bst` (#713).*
+
+Both halves matter when judging whether a package's `/etc/xdg/autostart/*.desktop` will do
+anything on krytis, and each is easy to get backwards:
+
+- **Autostart is processed.** niri's `niri.service` carries
+  `Wants=xdg-desktop-autostart.target` / `Before=xdg-desktop-autostart.target`, so
+  `systemd-xdg-autostart-generator` turns every `/etc/xdg/autostart` entry into a user unit
+  on each session. This is not GNOME-only plumbing that krytis skipped — an entry shipped by
+  any element (`sdk/at-spi2-core.bst`, `core-deps/localsearch.bst`,
+  `core-deps/xdg-user-dirs-gtk.bst`, `components/xdg-user-dirs.bst` all ship one today) will
+  be started.
+- **`OnlyShowIn`/`NotShowIn` still filter.** The generator translates them into conditions on
+  `XDG_CURRENT_DESKTOP`, which is `niri` here (table above). So a GNOME-scoped entry is
+  generated and then skipped — the binary behind it is dead weight, no matter how
+  desktop-agnostic the binary itself is.
+
+Consequence for packaging: `OnlyShowIn=GNOME;` is the mechanism that makes a feature
+unreachable, not "it has GNOME in the name". Check the entry, not the branding — and if a
+feature you *want* ships with `OnlyShowIn=GNOME`, the fix is a session-side autostart entry
+or unit of our own, not the upstream one.
+
 ## niri vs wlroots
 
 niri uses **smithay** (pure Rust), not wlroots. Its rendering stack handles EGL/GPU failures

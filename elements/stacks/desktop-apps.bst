@@ -26,3 +26,11 @@ depends:
   # real $XDG_RUNTIME_DIR and game detection sees host PIDs (#591, #595).
   # Closes #609.
   - desktop/equibop.bst
+
+  # ── Disk management ────────────────────────────────────────────────────────
+  # GNOME Disks: partition editor / LUKS / SMART / disk-image tooling over the
+  # udisks2 daemon already in the image. Local mirror of
+  # gnome-build-meta.bst:core/gnome-disk-utility.bst with the
+  # gnome-settings-daemon notification plug-in disabled — see the element
+  # header for the measurement and the removal condition.
+  - desktop/gnome-disk-utility.bst
