@@ -292,10 +292,36 @@ on a real publish run.
   **Default posture is report-only**, matching `mise run vuln-scan
   --fail-on`'s own "no flag = warn-only" philosophy (§ `--fail-on` / severity
   gating above): the job summary always lists new/fixed matches, but the job
-  only fails when the workflow's `NEW_VULN_FAIL_ON` env var is set to a Grype
-  severity. Left empty deliberately — turning this into a blocking PR gate
-  is a Design Gate call (AGENTS.md), not something to default to
-  unilaterally when wiring the check.
+  only fails when the severity floor is set. Whether to block at all, and at
+  which floor, is a Design Gate call (AGENTS.md) tracked in #690.
+
+  **The floor is the repository variable `NEW_VULN_FAIL_ON`, not a value in
+  the workflow file** (#730) — flipping the gate, raising the floor, or
+  reverting to report-only takes no PR:
+
+  ```bash
+  mise run vuln-gate                  # show current posture
+  mise run vuln-gate --set critical   # block on new Critical matches
+  mise run vuln-gate --clear          # back to report-only
+  ```
+
+  Two consequences of moving a security-relevant value out of the reviewed
+  tree, both handled rather than assumed away:
+
+  - **A typo has no code review to catch it.** `severity_at_least()` treats
+    any severity outside Grype's scale as "never trips the floor", so
+    `hgih` — or a trailing space — would leave the gate configured and dead.
+    `scripts/vuln-diff.py` therefore validates the floor up front and exits
+    **2** on an unrecognized value (1 stays "the gate fired", 0 "clean"),
+    and `mise run vuln-gate --set` refuses anything off the list before
+    writing it.
+  - **Repository variables are not passed to `pull_request` runs from a
+    fork** ([community discussion 44322](https://github.com/orgs/community/discussions/44322)),
+    so on a fork PR the floor reads empty and this gate cannot block,
+    however it is set. `pull_request_target` would see the variable and is
+    deliberately not used — it runs fork-authored code with the base repo's
+    token. `vuln-diff.yml`'s `Report gate posture` step says so in the job
+    summary instead of failing open silently.
 
 Both scan-output JSON files are written outside the repo tree (`$RUNNER_TEMP`
 / the default `krytis.grype.json` in the job workspace, uploaded before any

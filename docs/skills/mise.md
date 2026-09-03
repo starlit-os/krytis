@@ -764,7 +764,7 @@ tasks while `mise/tasks/` held 53.
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` `generate-image-version` |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `fetch-microsoft-certs` `seal-uki` |
-| Supply chain | `sbom` `vuln-scan` `sign` |
+| Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
 | Docs & upstreams | `docs-links` `upstream-sync` |

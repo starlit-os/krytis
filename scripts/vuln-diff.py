@@ -15,8 +15,10 @@ Usage: vuln-diff.py <base.json> <head.json> [--fail-on <severity>]
 Writes GitHub-flavored Markdown to stdout — redirect to $GITHUB_STEP_SUMMARY.
 Exits 1 only when --fail-on is set (Grype severity: negligible|low|medium|
 high|critical) and a NEW match at or above it exists. Empty/unset --fail-on
-means report-only: always exits 0. See vuln-diff.yml's header for why this
-defaults to non-blocking.
+means report-only: always exits 0. An unrecognized --fail-on value exits 2
+rather than degrading to report-only — the value comes from the
+NEW_VULN_FAIL_ON repository variable (#730), so a typo has no code review to
+catch it. See vuln-diff.yml's header for why this defaults to non-blocking.
 """
 import argparse
 import json
@@ -68,6 +70,22 @@ def main() -> int:
     parser.add_argument("head", help="Grype JSON report generated at the PR's head commit")
     parser.add_argument("--fail-on", default="", help="Grype severity; fail if a NEW match is at/above it")
     args = parser.parse_args()
+
+    # The floor arrives from the NEW_VULN_FAIL_ON repository variable (#730),
+    # which no code review sees. Validate it here: severity_at_least() treats
+    # anything outside Grype's scale as "never trips", so a typo would leave
+    # the gate configured-but-dead. Exit 2 to distinguish a broken floor from
+    # exit 1's "the gate fired".
+    floor = args.fail_on.strip()
+    if floor and floor.capitalize() not in SEVERITY_ORDER:
+        print(
+            f"ERROR: --fail-on {floor!r} is not a Grype severity "
+            f"({'|'.join(s.lower() for s in SEVERITY_ORDER)}). "
+            "Fix the NEW_VULN_FAIL_ON repository variable: mise run vuln-gate --set <severity>",
+            file=sys.stderr,
+        )
+        return 2
+    args.fail_on = floor
 
     base = load_matches(args.base)
     head = load_matches(args.head)
