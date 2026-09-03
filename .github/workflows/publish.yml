@@ -75,14 +75,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Maximize build space
-        # This pinned SHA's action.yml only accepts `extra-squeeze` (verified
-        # against ublue-os/remove-unwanted-software@695eb75... directly) — the
-        # remove-dotnet/remove-android/remove-haskell/remove-codeql inputs
-        # cache-warm.yml uses predate this pin and are silently ignored
-        # (composite actions warn, not error, on unrecognized inputs). See #389.
-        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6 # v10
-        with:
-          extra-squeeze: "true"
+        # Migrated off ublue-os/remove-unwanted-software (#703, untagged
+        # upstream broke Renovate). hastd/free-disk-space's bare defaults
+        # already cover what extra-squeeze: true used to remove (miniconda +
+        # hostedtoolcache) plus more — see docs/skills/ci-runner.md § remove-
+        # unwanted-software migration. Same step as cache-warm.yml verbatim,
+        # including the deliberate v0.1.1 (not newest v0.1.2) pin — see that
+        # workflow's comment for why.
+        uses: hastd/free-disk-space@78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1
 
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0

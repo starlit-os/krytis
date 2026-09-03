@@ -172,6 +172,52 @@ any new `uses:` line:** grep the rest of `.github/workflows/` for the same
 in the PR description and ask the user to confirm/add it — do not assume
 "it's a well-known action" is the same as "it's allowlisted."
 
+### `remove-unwanted-software` → `free-disk-space` migration (#703)
+
+`ublue-os/remove-unwanted-software` had no push since 2025-10-10 and no `v10`
+tag was ever cut (tags stop at `v9`), so Renovate's `github-tags` datasource
+couldn't resolve a digest for the pinned commit `695eb75b…` used in
+`cache-warm.yml`/`publish.yml`. Replaced with `hastd/free-disk-space`
+(properly tagged, actively maintained, same action `zirconium-hawaii` already
+uses) at `78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1`.
+
+**The old action's per-tool boolean inputs were dead code.** Reading
+`action.yml` at the pinned commit shows the composite step reads only
+`extra-squeeze`; `cache-warm.yml`'s `remove-dotnet`/`remove-android`/
+`remove-haskell`/`remove-codeql` inputs were silently ignored the entire time
+(composite actions warn, not error, on unrecognized inputs) — it ran the same
+fixed `rm -rf` list as `publish.yml` without `extra-squeeze`. If a similar
+action's inputs ever look suspicious, read the composite `action.yml` at the
+exact pinned SHA rather than trusting the input names in the calling
+workflow.
+
+**`hastd/free-disk-space`'s bare defaults (no `with:` block) are a superset**
+of what the old action + `extra-squeeze: true` ever removed — its default
+path list already includes `/opt/hostedtoolcache/{CodeQL,PyPy,Python,Ruby,
+go,node}` and `/usr/share/miniconda` (the old `extra-squeeze` set) alongside
+`/usr/share/dotnet`, `/usr/local/.ghcup`, `/usr/local/lib/android`,
+`/usr/lib/{firefox,llvm-*}`, `/opt/{az,google,microsoft,pipx}`, etc. Neither
+krytis workflow uses `actions/setup-python`/`setup-node` (both install
+Python via `uv`/mise), so the extra paths the new default also clears
+(`/opt/hostedtoolcache/Python`, `/usr/local/lib/node_modules`, …) are safe.
+Net: both workflows now run the *identical* input-free step, and it frees
+more than either did before — no `include:`/`exclude:` mapping needed.
+
+**Pinned to `v0.1.1`, one release behind newest, on purpose.** Diffed
+`v0.1.1...v0.1.2` via GitHub's compare API: the only functional change is an
+opt-in `skip-if-available` input (default empty, unused here) — the default
+path-removal list is byte-identical between the two tags. So pinning the
+older tag costs nothing behaviorally, and leaves Renovate a real minor bump
+(`v0.1.1` → `v0.1.2`) to open once this merges. That bump is the actual
+end-to-end proof the fix works: `mise run renovate-check --dry-run` only
+proves extraction succeeds, not that Renovate can open and auto-merge a real
+PR for this dependency (it already falls under the blanket
+`digest`/`pin`/`patch`/`minor` automerge rule in `renovate.json5`, no
+exception needed). Confirm the bump PR actually appears and auto-merges
+before treating #703 as fully closed — if it doesn't, something about the
+new dependency's Renovate config is still wrong despite `--dry-run` looking
+clean.
+
 ## Buildbarn CAS (Quadlet)
 
 krytis owns a Buildbarn deployment (`bb-storage` + `bb-remote-asset`) on the
