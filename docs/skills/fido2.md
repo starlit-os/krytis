@@ -89,6 +89,32 @@ For getting GitHub to render such a commit as **Verified**, see `docs/skills/wor
 
 Found while building `fido2:enroll-signing` (#678): the same `Couldn't sign message (signer): agent refused operation?` above, and a bare `ssh-keygen -Y sign` hitting `device not found`, can also come from the token's `/dev/hidraw*` node losing its session ACL — seen after a replug, where the new node briefly enumerates as `crw-------  root root` (no `+`, no per-user ACL) instead of the expected `crw-rw----+`. `fido2-token -L` goes silent (no devices listed) in this state, which is the tell — a real agent-refusal failure still lists the device fine, since that failure happens after device discovery. Check `fido2-token -L` and `ls -la /dev/hidraw*` *before* concluding it's the agent: a confounded diagnosis here wastes real touches chasing the wrong fix. Once the ACL is back (replug is usually enough), re-test with the handle file before touching this doc's guidance — a `.pub`-vs-handle comparison run *during* the ACL-less window is not evidence about the agent at all.
 
+### A listed device can still be CTAP2-dead — check `caps`, not just presence
+
+Third variant of the same symptom pair, hit 2026-09-03 while signing a commit. `git commit` failed with `Couldn't sign message (signer): agent refused operation?`, and the direct route failed differently:
+
+```
+$ env -u SSH_AUTH_SOCK ssh-keygen -Y sign -n git -f ~/.ssh/id_ed25519_sk_rk_Signing <file>
+Confirm user presence for key ED25519-SK SHA256:E132hz…
+Couldn't sign message: device not found
+```
+
+`device not found` **while the token is plugged in and `fido2-token -L` lists it** — so neither the gcr-agent explanation nor the dead-ACL one above fits. The tell is one line further in:
+
+```bash
+fido2-token -I /dev/hidraw2 | grep caps
+caps: 0x01 (wink, nocbor, msg)     # broken: CTAP2 not advertised → U2F only
+caps: 0x05 (wink, cbor, msg)       # healthy, after a replug
+```
+
+`nocbor` means the device is speaking U2F/CTAP1 only. An `ed25519-sk` credential is FIDO2/CTAP2-only, so `ssh-keygen` enumerates the device, finds nothing that can serve the credential, and reports `device not found` — indistinguishable from an absent key unless you look at `caps`. A physical replug restored `cbor` on the same `/dev/hidraw2` node (same vendor/product, so this is a device-state fault, not the wrong key).
+
+Diagnostic order that separates all three, cheapest first, before spending touches:
+
+1. `fido2-token -L` silent → dead `hidraw` ACL (previous section).
+2. Listed but `caps` shows `nocbor` → CTAP2-dead; replug.
+3. Listed with `cbor`, and only the *agent* path fails → gcr-agent problem; use `env -u SSH_AUTH_SOCK`.
+
 ## enroll-luks task: fresh bootc installs have no /etc/crypttab
 
 A freshly installed bootc system with encrypted root has **no `/etc/crypttab`**. The encrypted block device is configured via the bootloader/initrd, not crypttab. The task must fall back to a `blkid` scan when crypttab is absent or yields nothing:
