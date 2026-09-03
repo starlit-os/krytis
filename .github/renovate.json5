@@ -55,7 +55,11 @@
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
       "automerge": true,
       "automergeType": "pr",
-      "automergeStrategy": "squash",
+      // Must match the repo's only enabled merge method (#697 disabled squash
+      // and rebase). Renovate adapted on its own when this still said
+      // "squash" — PR #721 automerged as a merge commit — but the mismatch
+      // read as if squash automerge were still in play.
+      "automergeStrategy": "merge",
     },
     {
       // Hard-pinned in pyproject.toml for BST 2.5.x compatibility. A bump has

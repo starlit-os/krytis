@@ -4,17 +4,20 @@
 #USAGE flag "--yes" help="Skip the confirmation pause and remove immediately"
 #USAGE flag "--allow-diverged" help="Also remove branches whose local tip differs from the merged PR head (verify the content is upstream first)"
 
-# Why this exists: this repo is squash-only (AGENTS.md § Merge strategy), so a
-# merged branch shares no ancestry with the squashed commit on main. Every
-# ancestry-based check lies here:
+# Why this exists: the PR state on GitHub is the only signal that covers both
+# merge eras. Since #697 this repo merges with merge commits, so a branch
+# merged after 2026-09-02 IS an ancestor of main and `git branch -d` works —
+# but every branch squash-merged before that date shares no ancestry with the
+# squashed commit on main, and for those the ancestry checks all lie:
 #
 #   git branch -d <branch>      refuses — "not fully merged"
 #   git branch --merged main    never lists it
 #   git log --merged            never shows it
 #
-# The only trustworthy signal is the PR state on GitHub, so that is what this
-# task asks. See docs/skills/workflow.md § Cleaning Up Merged Worktrees and
-# Branches.
+# So this task asks GitHub for the PR state instead, and keeps `git branch -D`
+# (below) to cover both eras uniformly — the PR-state check plus the
+# tip-vs-PR-head comparison already provide the safety `-d` would. See
+# docs/skills/workflow.md § Cleaning Up Merged Worktrees and Branches.
 
 set -euo pipefail
 
@@ -163,8 +166,9 @@ fi
 
 # ── Remove ────────────────────────────────────────────────────────────────────
 # --force covers a still-dirty include/image-version.yml, which the check above
-# already decided is acceptable. `git branch -D` (not -d) is mandatory: see the
-# squash-only note at the top of this file.
+# already decided is acceptable. `git branch -D` (not -d) is mandatory for any
+# branch squash-merged before 2026-09-02: see the merge-era note at the top of
+# this file.
 for e in "${REMOVE_WT[@]}"; do
     IFS='|' read -r wt branch _ <<<"$e"
     git worktree remove --force "$wt"

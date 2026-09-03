@@ -203,10 +203,10 @@ Example: `Fix composefs boot failure` → `fix-composefs-boot-failure`
 
 Worktrees are not automatically deleted — prune manually after merge or abandonment.
 
-**Merge strategy is squash-only**, enforced at the GitHub repo settings level (`allow_squash_merge: true`, `allow_merge_commit: false`, `allow_rebase_merge: false` — not just convention, the other options are disabled). This matters for cleanup:
-- `git branch -d <branch>` after merge will refuse — a squashed merge commit has no ancestry link back to the local branch's commits, so git can't see it as "merged." Use `git branch -D` (or check `gh pr view <n> --json state` first) instead of treating the safety check as a signal something's wrong.
-- Same applies to worktree pruning — don't rely on `git log --merged` to decide whether a worktree's branch landed; check the PR state directly.
-- A **stacked** PR (based on another open PR's branch) always turns `CONFLICTING` the moment its parent merges — the child still carries the parent's pre-squash commit. It is not a content conflict; `git rebase --onto origin/main <parent-tip-sha>` fixes it. Recipe: `docs/skills/workflow.md` § Stacked PRs on a Squash-Only Repo.
+**Merge strategy is merge-commit-only**, enforced at the GitHub repo-settings level (`allow_merge_commit: true`, `allow_squash_merge: false`, `allow_rebase_merge: false`) and in ruleset "Main" (`allowed_merge_methods: ["merge"]`, no `required_linear_history`). Switched from squash-only in #697 so that a human can merge a bot-authored PR under signed-commit enforcement — GitHub restricts the squash path to the PR's own author once `required_signatures` is on. This matters for cleanup:
+- Ancestry is real: `git branch -d <branch>`, `git branch --merged main` and `git log --merged` all tell the truth for anything merged since 2026-09-02, because the topic branch's tip is a parent of `main`'s merge commit.
+- **Branches merged *before* 2026-09-02 were squashed and still have no ancestry link** — those refuse `-d` forever. `mise run prune-worktrees` keeps using `-D` for that reason; it gates on the PR state and a tip-vs-PR-head match instead of on git's ancestry check, so nothing is lost by the force.
+- A **stacked** PR (based on another open PR's branch) survives its parent merging: the parent's commits keep their SHAs, so once GitHub retargets the child to `main` it stays mergeable with no rebase. See `docs/skills/workflow.md` § Stacked PRs.
 
 ---
 
@@ -286,6 +286,14 @@ Do not request review without evidence. Before opening a PR for review:
 Common types: `feat` `fix` `docs` `ci` `refactor` `chore` `build`
 
 Subject line: soft max 72 characters.
+
+### Commit signing (enforced)
+
+Ruleset "Main" carries `required_signatures` with **no bypass actors** (#701) — every commit reaching `main` must verify, human or bot. Nothing merges otherwise.
+
+- **Humans:** run `mise run fido2:enroll-signing` once per dev machine (#678); it sets `gpg.format=ssh`, `commit.gpgsign=true` and registers the FIDO2 resident key. If a commit lands "Unverified", the cause is almost always a repo-local `user.email` GitHub cannot map to the account — see `docs/skills/workflow.md` § Getting a Commit Signature to Show "Verified" on GitHub.
+- **`renovate[bot]`:** `platformCommit: "enabled"` in `.github/renovate.json5` (#698) routes commits through the GitHub API, which signs them server-side.
+- **`github-actions[bot]`:** has no key to enroll — `scripts/commit-tracking-update.sh` creates commits via the `createCommitOnBranch` GraphQL mutation instead of `git commit`/`git push` (#699). Any new workflow that writes to a branch must call that script, not raw git.
 
 ### AI attribution
 
