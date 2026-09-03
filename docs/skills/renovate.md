@@ -7,9 +7,16 @@ Load when changing `.github/renovate.json5`, enabling a manager, or deciding whe
 Every manager commits via the GitHub API (Contents/GraphQL) rather than a raw
 git push — `"platformCommit": "enabled"` at the top level. API-authored
 commits are auto-signed by GitHub regardless of caller credential, which is
-what lets these PRs merge once `main` requires signed commits (#154, #698).
-No other behavior changes; this is purely how the commit object gets
-created.
+what lets these PRs merge now that `main` enforces `required_signatures`
+(#154, #698 — live since 2026-09-03). No other behavior changes; this is
+purely how the commit object gets created. Verified on PRs #721 (`1ea80673`)
+and #723 (`83df8ec3`): `committer: GitHub`, `verification.verified: true`.
+
+`automergeStrategy` must track the repo's enabled merge method — `"merge"`
+since #697 disabled squash and rebase. Renovate does adapt on its own if it
+disagrees (#721 automerged as a merge commit while the config still said
+`squash`), so a mismatch is stale documentation rather than a broken
+automerge, but fix it anyway.
 
 ## Current coverage
 

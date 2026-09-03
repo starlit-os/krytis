@@ -74,7 +74,7 @@ mise run prune-worktrees             # remove, with a confirmation prompt
 
 It removes a worktree and its branch only when GitHub says the branch's newest PR is `MERGED`. Do not hand-roll the `git worktree remove` / `git branch -D` pair — the task encodes four things that are easy to get wrong:
 
-**Ancestry checks all lie on a squash-only repo.** `git branch -d`, `git branch --merged main` and `git log --merged` all treat a merged branch as unmerged, because the squashed commit on `main` shares no ancestry with it. The PR state is the only trustworthy signal; `-D` is mandatory once it says `MERGED`.
+**Ancestry checks are trustworthy again — but only back to 2026-09-02.** Since #697 switched `main` to merge-commit-only, a merged branch's tip is a parent of `main`'s merge commit, so `git branch -d`, `git branch --merged main` and `git log --merged` all report it as merged. Anything merged *before* that date was squashed and shares no ancestry with `main`, so those branches refuse `-d` permanently. The task keeps using `-D` to cover both eras, and gates the delete on the PR state plus a tip-vs-PR-head match rather than on git's ancestry check.
 
 **`include/image-version.yml` is always locally modified.** `mise generate-image-version` writes a timestamp and commit SHA into it, so any worktree that ran a build carries it dirty and `git worktree remove` refuses. The task ignores that one path and refuses on anything else, rather than blanket-forcing.
 
@@ -175,7 +175,7 @@ mise run boot-test --reuse-disk /var/tmp/krytis-test.raw
 
 The same root requirement applies to `mise run chunkify` and to `mise/tasks/load-image-root` (which `generate-disk` calls to copy the image into the root podman store, invisible to rootless podman).
 
-## Stacked PRs on a Squash-Only Repo
+## Stacked PRs
 
 Stack when the next piece of work needs a file state that only exists in an open PR — a prerequisite (#24 → #25) or the same lines of one config (#26 → #27). Base the child on the parent branch and say so in the body, so the reviewer knows the order:
 
@@ -184,34 +184,24 @@ git worktree add -b <child-branch> <base>/<path> <parent-branch>
 cd <worktree-path> && gh pr create --base <parent-branch> --title "..."
 ```
 
-### The parent's merge breaks the child, every time
+### The parent's merge no longer breaks the child
 
-This repo is squash-only (`AGENTS.md` § Merge strategy), so when the parent merges, `main` gains the parent's changes as **one new commit with a new SHA**, and the parent branch is deleted. GitHub retargets the child PR to `main`, and it immediately reads:
+Since #697 switched `main` to merge-commit-only, merging the parent does not rewrite its commits — their SHAs land on `main` untouched, as the second parent of the merge commit. GitHub retargets the child PR to `main` and it stays `MERGEABLE`. Nothing to do: no rebase, no force-push.
+
+Verified in a scratch repo (`git merge --no-ff parent` on `main`, then merging the child):
 
 ```
-"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"
+parent tip is ancestor of main: YES
+git branch -d parent:           SUCCEEDS
+merge child after parent landed: CLEAN
 ```
 
-This is not a real content conflict. The child branch still carries the parent's *original* commit, so git sees two unrelated commits touching the same files and refuses. Do not try to merge `main` in and hand-resolve — that reintroduces the duplicate. Replay only your own commits:
+The same script against `git merge --squash` reproduces the old failure exactly — `parent tip is ancestor of main: NO`, `git branch -d parent: REFUSES`, `merge child: CONFLICT` — which is what the squash-era recipe in this section (rebase `--onto origin/main <parent-tip-sha>`, worked examples #430/#432) existed to work around. That recipe is retired; it is only needed for a child still stacked on a branch that was **squash**-merged before 2026-09-02, where the child carries a commit whose content exists on `main` under a different SHA.
 
-```shell
-git fetch origin --prune
-git rebase --onto origin/main <parent-tip-sha>      # the SHA the child branched from
-git push --force-with-lease origin <child-branch>
-```
+### Two things stacking still costs
 
-`<parent-tip-sha>` is the parent's last local commit — `git log --oneline` on the child shows it directly under your own commits.
-
-### Confirm the rebase kept the right scope
-
-```shell
-git diff origin/main --stat              # must be exactly the child's own files
-git diff <parent-tip-sha> origin/main --stat   # empty ⇒ the squash was verbatim
-```
-
-If the second diff is *not* empty the maintainer edited something while merging — no action needed, since the rebase replays only your commit and `main`'s version of the parent's files wins automatically. Then re-run the change's verification against the merged `main`: a clean rebase still shifts the ground your change sits on.
-
-Worked examples: #430 rebased onto the squashed #427, #432 onto the squashed #431 — both were three commands, no conflict markers touched.
+- **A stale base branch.** If the parent is force-pushed, the child's base moves under it. `git fetch origin --prune && git log --oneline origin/<parent-branch>..HEAD` shows what is genuinely yours.
+- **Re-verification after the parent lands.** A clean auto-merge still shifts the ground the change sits on — re-run the change's own verification against the merged `main` before asking for review.
 
 ## Splitting a Branch: Cherry-Pick, Never `checkout <sha> -- <paths>`
 
@@ -403,6 +393,14 @@ The skill file update must be in the same commit as the change that produced the
 See `AGENTS.md` § Self-improvement loop for the full mandate and `/skills-check` for a compliance self-diagnosis.
 
 ## Getting a Commit Signature to Show "Verified" on GitHub
+
+**This is enforced, not cosmetic.** Ruleset "Main" carries `required_signatures` with zero bypass actors since 2026-09-03 (#701) — an unverified commit makes the PR unmergeable for everyone, including a maintainer. Check before asking for review:
+
+```bash
+gh pr view <n> --json commits --jq '.commits[].oid' \
+  | xargs -I{} gh api repos/starlit-os/krytis/commits/{} \
+      --jq '[.sha[0:8], (.commit.verification.verified|tostring), .commit.verification.reason] | @tsv'
+```
 
 Three things must line up, and a valid local signature proves only the first:
 
