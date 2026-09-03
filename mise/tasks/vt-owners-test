@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+#MISE description="Assert VT ownership in the built image: greetd owns tty1, kmscon only tty2-4 (#503, #711)"
+#USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image to inspect"
+#USAGE flag "--tree <dir>" help="Inspect an already-extracted rootfs instead of exporting the image"
+#USAGE flag "--keep" help="Keep the scratch directory and print its path"
+
+# krytis has now shipped the wrong VT layout twice, by the same mechanism both
+# times: `systemctl preset-all` catches every unit file with an [Install]
+# section that no preset rule matches, and falls through to its default
+# `enable` policy.
+#
+#   #503  kmsconvt@.service  -> DefaultInstance=tty1 enabled, kmscon started on
+#         greetd's VT on every boot.
+#   #711  kmscon.service     -> the bare seat daemon (no --vt, --switchvt on by
+#         default) enabled, grabbing /dev/tty2 and switching the foreground VT
+#         off tty1. That also killed every first greeter start: with tty1 no
+#         longer foreground, greetd's logind session never went active and
+#         noctalia-greeter-compositor died on wlroots' 10s
+#         WAIT_SESSION_TIMEOUT before greetd's Restart=always retried (#712).
+#
+# Both were silent — the units exit successfully, so `systemctl --failed` is
+# clean and nothing shows up in CI. Hence this gate. It asserts the *shipped*
+# tree, i.e. what actually boots, not what the preset file says it wants; the
+# whole class of bug is the two disagreeing.
+#
+# The last check is the forward-looking one: it requires every kmscon unit
+# carrying an [Install] section to be named by a preset rule, so the next unit
+# upstream adds cannot fall through the same way a third time.
+#
+# See docs/skills/bst.md § Enabling one instance of a templated
+# getty-replacement unit, never the bare template.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+TAG="${usage_tag:-localhost/krytis:latest}"
+TREE="${usage_tree:-}"
+KEEP="${usage_keep:-false}"
+
+SCRATCH=""
+cleanup() {
+    if [ -n "$SCRATCH" ]; then
+        if [ "$KEEP" = "true" ]; then
+            echo "==> scratch kept at $SCRATCH"
+        else
+            rm -rf "$SCRATCH"
+        fi
+    fi
+}
+trap cleanup EXIT
+
+if [ -z "$TREE" ]; then
+    SCRATCH="$(mktemp -d /var/tmp/vt-owners-test.XXXXXX)"
+    TREE="$SCRATCH/rootfs"
+    mkdir -p "$TREE"
+    echo "==> Exporting ${TAG}..."
+    CTR="$(podman create "$TAG" /bin/true 2>/dev/null)" || {
+        echo "==> FAILED to create a container from ${TAG} — run 'mise build' first."
+        exit 1
+    }
+    podman export "$CTR" | tar -x -C "$TREE" 2>/dev/null
+    podman rm "$CTR" >/dev/null
+fi
+
+UNITS="$TREE/usr/lib/systemd/system"
+PRESETS="$TREE/usr/lib/systemd/system-preset"
+ETC="$TREE/etc/systemd/system"
+
+if [ ! -d "$UNITS" ]; then
+    echo "==> FAILED: no $UNITS — is $TREE a krytis rootfs?"
+    exit 1
+fi
+
+fail=0
+pass() { echo "    PASS  $1"; }
+bad()  { echo "    FAIL  $1"; fail=1; }
+
+echo "==> VT1 belongs to greetd, nothing else"
+
+if [ -e "$ETC/multi-user.target.wants/kmscon.service" ]; then
+    bad "kmscon.service is enabled in /etc — the bare seat daemon switches the VT off tty1 (#711)"
+else
+    pass "kmscon.service not enabled"
+fi
+
+if [ -e "$ETC/getty.target.wants/kmsconvt@tty1.service" ]; then
+    bad "kmsconvt@tty1.service is enabled — preempts greetd on VT1 (#503)"
+else
+    pass "kmsconvt@tty1.service not enabled"
+fi
+
+# Any leftover autovt@ alias pointing at kmscon means logind spawns kmscon on
+# every on-demand VT switch, VT1 included.
+for alias_path in "$ETC/autovt@.service" "$UNITS/autovt@.service"; do
+    [ -L "$alias_path" ] || continue
+    target="$(readlink "$alias_path")"
+    case "$target" in
+        *kmscon*) bad "autovt@.service -> $target (must resolve to getty@.service)" ;;
+        *)        pass "autovt@.service -> $target" ;;
+    esac
+done
+
+dm="$ETC/display-manager.service"
+if [ -L "$dm" ]; then
+    target="$(readlink "$dm")"
+    case "$target" in
+        *greetd.service) pass "display-manager.service -> $target" ;;
+        *)               bad "display-manager.service -> $target (expected greetd.service)" ;;
+    esac
+fi
+
+echo "==> VT2-4 belong to kmscon, from the vendor unit path"
+
+for vt in tty2 tty3 tty4; do
+    link="$UNITS/getty.target.wants/kmsconvt@${vt}.service"
+    if [ -L "$link" ]; then
+        pass "kmsconvt@${vt}.service wanted by getty.target ($(readlink "$link"))"
+    else
+        bad "missing $link — VT${vt#tty} would get a plain getty instead of kmscon"
+    fi
+done
+
+echo "==> logind's on-demand VT range stays inside the layout"
+
+nautovts="$(grep -rhs '^NAutoVTs=' "$TREE/usr/lib/systemd/logind.conf.d" "$TREE/etc/systemd/logind.conf.d" 2>/dev/null | tail -1)"
+case "$nautovts" in
+    NAutoVTs=4) pass "$nautovts" ;;
+    "")         bad "no NAutoVTs= drop-in — Ctrl+Alt+F5 gets a plain getty on the wizard's VT" ;;
+    *)          bad "$nautovts (expected NAutoVTs=4)" ;;
+esac
+
+# ReserveVT=0 would remove the only in-band way into a box whose greeter has
+# wedged: root is locked and sshd ships disabled by preset.
+if grep -rhsq '^ReserveVT=0' "$TREE/usr/lib/systemd/logind.conf.d" "$TREE/etc/systemd/logind.conf.d" 2>/dev/null; then
+    bad "ReserveVT=0 is set — kills the VT6 rescue getty"
+else
+    pass "ReserveVT left at its default (VT6 rescue getty intact)"
+fi
+
+echo "==> Every kmscon unit with an [Install] section is named by a preset rule"
+
+shopt -s nullglob
+for unit_file in "$UNITS"/kmscon*.service; do
+    unit="$(basename "$unit_file")"
+    grep -q '^\[Install\]' "$unit_file" || continue
+    if grep -rhsqE "^(enable|disable)[[:space:]]+${unit//./\\.}([[:space:]]|$)" "$PRESETS" 2>/dev/null; then
+        pass "$unit has an explicit preset rule"
+    else
+        bad "$unit has [Install] but no preset rule — preset-all will fall through to 'enable' (#503, #711)"
+    fi
+done
+shopt -u nullglob
+
+if [ "$fail" -eq 0 ]; then
+    echo "==> vt-owners-test passed."
+else
+    echo "==> vt-owners-test FAILED."
+fi
+exit "$fail"

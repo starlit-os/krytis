@@ -14,8 +14,21 @@
 # prevent, observed starting kmscon on greetd's VT on every boot. The
 # `disable kmsconvt@.service` rule below closes that fall-through.
 #
-# Fixes #503. See docs/skills/bst.md § Enabling one instance of a templated
-# getty-replacement unit, never the bare template.
+# The same fall-through applies to kmscon's OTHER unit. Upstream ships a bare
+# `kmscon.service` (`WantedBy=multi-user.target`) alongside the template — the
+# seat daemon, which runs `kmscon` with no `--vt` and with upstream's
+# `--switchvt [on]` default. #503 fixed the template and left this one matching
+# no rule, so preset-all enabled it too. It picked /dev/tty2 itself (colliding
+# with kmsconvt@tty2), pulled the foreground VT off tty1 the instant
+# multi-user.target was reached, and modeset the primary output: a login prompt
+# on screen between the Plymouth splash and the greeter. It also broke every
+# first greeter start — with tty1 no longer foreground, greetd's logind session
+# never went active and noctalia-greeter-compositor died on wlroots'
+# 10s WAIT_SESSION_TIMEOUT before greetd's Restart=always retried (#712).
+# `disable kmscon.service` covers it. krytis wants only the vt2-4 consoles.
+#
+# Fixes #503, #711. See docs/skills/bst.md § Enabling one instance of a
+# templated getty-replacement unit, never the bare template.
 
 kind: manual
 
@@ -50,10 +63,12 @@ config:
       "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset" <<'EOF'
     # Deliberately NOT `enable kmsconvt@tty2.service` etc: preset-all cannot act
     # on template instances, so such lines are inert. The instances are enabled
-    # by static getty.target.wants symlinks instead. This rule exists solely to
-    # stop the bare template falling through to preset-all's default `enable`
-    # policy, which enables DefaultInstance=tty1 and preempts greetd on VT1.
+    # by static getty.target.wants symlinks instead. These rules exist solely to
+    # stop both of kmscon's units falling through to preset-all's default
+    # `enable` policy: the template would enable DefaultInstance=tty1, and the
+    # bare seat daemon switches the foreground VT away from greetd's tty1.
     disable kmsconvt@.service
+    disable kmscon.service
     EOF
 
     install -Dm644 /dev/stdin \

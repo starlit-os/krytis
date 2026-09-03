@@ -876,7 +876,13 @@ Plymouth is sourced from `freedesktop-sdk.bst:components/plymouth.bst` (also exi
 
 ### Three integration points
 
-**1. Runtime binary** — `freedesktop-sdk.bst:components/plymouth.bst` in `stacks/desktop.bst`. Provides `plymouthd`, `plymouth`, and systemd units. `plymouth-quit.service` has `After=display-manager.service`; greetd ships `Alias=display-manager.service`, so quit ordering is automatic.
+**1. Runtime binary** — `freedesktop-sdk.bst:components/plymouth.bst` in `stacks/desktop.bst`. Provides `plymouthd`, `plymouth`, and systemd units.
+
+> **There is no splash-to-greeter handoff.** An earlier version of this section claimed `plymouth-quit.service` has `After=display-manager.service` and that greetd's `Alias=display-manager.service` therefore makes quit ordering automatic. That is false — fdsdk ships upstream plymouth's unit unmodified, whose only ordering is `After=rc-local.service plymouth-start.service systemd-user-sessions.service`. The `display-manager` edge is a *downstream* addition made by GDM in other distros, not something plymouth ships. Verify with `systemctl cat plymouth-quit.service`, never from memory.
+>
+> The real ordering runs the other way: `greetd.service` is `After=plymouth-quit-wait.service`, so greetd is *guaranteed* not to start until the splash is already down, and `plymouth-quit` calls plain `plymouth quit` (no `--retain-splash`), which explicitly tears the splash down and reverts the framebuffer to the text console. The display is unowned for the whole of greetd + compositor startup (#711).
+>
+> **Do not "fix" this by adding `After=display-manager.service` to `plymouth-quit.service`.** greetd waits on `plymouth-quit-wait`, which runs `plymouth --wait` with `TimeoutSec=0` and blocks until plymouthd exits, which only happens when `plymouth-quit` runs — which would now be waiting on greetd. systemd sees **no cycle** (the `quit-wait → quit` link is a runtime dependency through plymouthd, not a declared edge), so it drops no edge and the boot hangs forever. GDM's own unit documents the trap: it inherits plymouth-quit's dependencies *"except for plymouth-quit-wait.service since it waits until plymouth is quit, which we do"*, takes `Conflicts=plymouth-quit.service`, quits plymouth itself, and keeps `OnFailure=plymouth-quit.service` as an escape hatch. Any real fix here has to take that shape, or stay with `plymouth quit --retain-splash` and change no ordering at all.
 
 **2. Initramfs** — `freedesktop-sdk.bst:components/plymouth.bst` is also a build-dep of `core/initramfs.bst`. This stages Plymouth's binary and dracut module into the BST sandbox so dracut can include it. The dracut conf (`30-bootcrew-bootc-container-build.conf`) adds `plymouth` to `add_dracutmodules`.
 
