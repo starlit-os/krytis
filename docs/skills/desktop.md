@@ -456,7 +456,9 @@ anything on krytis, and each is easy to get backwards:
 Consequence for packaging: `OnlyShowIn=GNOME;` is the mechanism that makes a feature
 unreachable, not "it has GNOME in the name". Check the entry, not the branding — and if a
 feature you *want* ships with `OnlyShowIn=GNOME`, the fix is a session-side autostart entry
-or unit of our own, not the upstream one.
+or unit of our own, not the upstream one. #726 is the open worked example: GNOME Disks'
+SMART-failure notifier is a desktop-agnostic binary that only its autostart scoping keeps
+from running here.
 
 ## niri vs wlroots
 
