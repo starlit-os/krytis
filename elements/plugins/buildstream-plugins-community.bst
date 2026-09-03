@@ -2,5 +2,5 @@ kind: junction
 
 sources:
 - kind: tar
-  url: pypi:e1/ea/7da8d02d3aff56805c50312cff61d4d27add62e64b7d3236d105e334d383/buildstream_plugins_community-2.3.1.tar.gz
-  ref: 85c2bae9d3a1eb3121c9674f68ef6e87211fddb9c930f3e5057b9a1e66eb41d9
+  url: pypi:7c/c7/506ac062b53c97972135c957eaa592cd79756ce6c207e1e299f796f20b0b/buildstream_plugins_community-2.3.2.tar.gz
+  ref: ccfcee9f763dff019765924331b470cfe97934ffe2a76c456b807b2a7efd47d6
