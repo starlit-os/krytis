@@ -29,12 +29,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Maximize build space
-        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6 # v10
-        with:
-          remove-dotnet: "true"
-          remove-android: "true"
-          remove-haskell: "true"
-          remove-codeql: "true"
+        # ublue-os/remove-unwanted-software has had no push since 2025-10-10
+        # and no v10 tag was ever cut, breaking Renovate's github-tags lookup
+        # (#703). hastd/free-disk-space is properly tagged, actively
+        # maintained, and its bare defaults already free more space than the
+        # old action's fixed removal list ever did with these inputs — see
+        # docs/skills/ci-runner.md § remove-unwanted-software migration for
+        # the full path-by-path comparison.
+        #
+        # Deliberately pinned to v0.1.1, not the newest v0.1.2: the two
+        # releases are behaviorally identical for us (v0.1.2 only adds an
+        # opt-in skip-if-available input, unused here), so this leaves
+        # Renovate a real minor bump to open and auto-merge as proof the
+        # github-tags lookup that broke on the old action now actually
+        # works end-to-end.
+        uses: hastd/free-disk-space@78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1
 
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
