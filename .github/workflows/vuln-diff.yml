@@ -20,13 +20,23 @@ name: Vulnerability Diff
 # bypass of the ignore mechanism.
 #
 # Default posture: REPORT ONLY. The job summary always lists new/fixed
-# matches; the job only fails when NEW_VULN_FAIL_ON below is set to a Grype
+# matches; the job only fails when NEW_VULN_FAIL_ON is set to a Grype
 # severity, matching `mise run vuln-scan --fail-on`'s own opt-in philosophy
 # (docs/skills/sbom.md § --fail-on / severity gating). Flipping this into a
-# blocking PR gate is a one-line change, deliberately not made here — that
-# is a Design Gate call (AGENTS.md), not an engineering default. Tracked in
-# #690: severity floor, burn-in period, and override path all need a
-# decision before flipping NEW_VULN_FAIL_ON below.
+# blocking PR gate is a Design Gate call (AGENTS.md), not an engineering
+# default; #690 owns the severity-floor and burn-in decision.
+#
+# The floor lives in the *repository variable* NEW_VULN_FAIL_ON, not in this
+# file (#730), so changing the posture takes no workflow edit and no merge:
+#
+#   mise run vuln-gate                  # show current posture
+#   mise run vuln-gate --set critical   # start blocking
+#   mise run vuln-gate --clear          # back to report-only
+#
+# Unset variable = empty string = report-only, which is the default state.
+# scripts/vuln-diff.py rejects an unrecognized value outright rather than
+# treating it as "no floor" — a typo in a variable nobody code-reviews would
+# otherwise silently disable the gate.
 
 on:
   pull_request:
@@ -39,10 +49,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Set to a Grype severity (negligible|low|medium|high|critical) to fail the
-  # job when the PR introduces a NEW match at/above that severity. Empty =
-  # report only, never fails. See header comment above.
-  NEW_VULN_FAIL_ON: ""
+  # Repository variable (#730): a Grype severity
+  # (negligible|low|medium|high|critical) fails the job when the PR
+  # introduces a NEW match at/above it. Unset/empty = report only, never
+  # fails. Change it with `mise run vuln-gate`, never by editing this line.
+  NEW_VULN_FAIL_ON: ${{ vars.NEW_VULN_FAIL_ON }}
 
 jobs:
   diff:
@@ -100,6 +111,36 @@ jobs:
 
       - name: Scan PR base for vulnerabilities
         run: mise run vuln-scan --output "${{ runner.temp }}/base-grype.json"
+
+      - name: Report gate posture
+        # State the posture in the summary, because "no failure" is
+        # ambiguous on its own — report-only and "blocking, nothing found"
+        # look identical otherwise.
+        #
+        # Written to the step log as well as the summary, deliberately:
+        # $GITHUB_STEP_SUMMARY content is not retrievable through the REST
+        # API (only rendered in the web UI), so the log is the only copy a
+        # later `gh run view --log` — or an agent verifying that the
+        # repository variable actually reached the run — can read.
+        #
+        # The fork branch is not hypothetical hedging: repository variables
+        # are NOT passed to `pull_request` runs from a forked repo (GitHub
+        # community discussion 44322), so the floor reads empty there and
+        # this gate cannot block, however it is configured. Fixing that
+        # would mean `pull_request_target`, which runs fork-authored code
+        # with the base repo's token — not a trade this gate is worth. Say
+        # so loudly instead of failing open in silence.
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          if [ -n "${NEW_VULN_FAIL_ON}" ]; then
+            POSTURE="Gate: **blocking** — a new match at or above \`${NEW_VULN_FAIL_ON}\` fails this job."
+          elif [ "${IS_FORK}" = "true" ]; then
+            POSTURE=":warning: Gate: **report only, and cannot be enforced** — repository variables are not passed to \`pull_request\` runs from a fork, so \`NEW_VULN_FAIL_ON\` is unreadable here even if set. Review the diff below by hand."
+          else
+            POSTURE="Gate: **report only** — \`NEW_VULN_FAIL_ON\` is unset (see #690). Set it with \`mise run vuln-gate --set <severity>\`."
+          fi
+          printf '%s\n' "$POSTURE" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Diff vulnerability reports
         run: |
