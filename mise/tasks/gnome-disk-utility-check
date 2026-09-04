@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+#MISE description="Verify desktop/gnome-disk-utility.bst still matches gnome-build-meta's pinned gnome-disk-utility"
+
+# elements/desktop/gnome-disk-utility.bst mirrors gnome-build-meta's
+# elements/core/gnome-disk-utility.bst so that one meson option can be flipped:
+# -Dgsd_plugin=false, which drops the gnome-settings-daemon notification
+# plug-in and with it g-s-d's entire closure (nine elements krytis can never
+# run under niri — see the element header).
+#
+# A mirrored element rots silently: bumping the gnome-build-meta junction moves
+# upstream's tarball and dependency list while the copy keeps building the old
+# one. Two things are checked here, in order of what actually goes wrong:
+#
+#   1. Source drift — upstream's `url:`/`ref:` vs the mirror's. This is the
+#      one that matters: a GNOME release bump leaves the mirror a version
+#      behind with nothing else complaining.
+#   2. Dependency drift — upstream's dependency set, with the junction-internal
+#      build plumbing removed and the `channel` conditional flattened to its
+#      stable arm, vs the mirror's. Compared as sets, because the mirror has to
+#      re-namespace every entry (`gnome-build-meta.bst:` prefix) and therefore
+#      cannot be diffed line-for-line.
+#
+# It also watches for the exit condition. gnome-disk-utility main is being
+# rewritten for GTK4 and upstream's `channel == "nightly"` arm already has no
+# gnome-settings-daemon dependency. When the stable arm loses
+# `core/gnome-settings-daemon.bst`, the whole reason for this mirror is gone:
+# the task says so and fails, so nobody has to remember to look.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+MIRROR="elements/desktop/gnome-disk-utility.bst"
+UPSTREAM_PATH="elements/core/gnome-disk-utility.bst"
+
+if [ ! -f "$MIRROR" ]; then
+    echo "==> $MIRROR is gone — nothing to check."
+    exit 0
+fi
+
+REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/gnome-build-meta.bst | head -1)"
+SHA="${REF##*-g}"
+if [ -z "$SHA" ] || [ "$SHA" = "$REF" ]; then
+    echo "==> Could not read a git-describe ref from elements/gnome-build-meta.bst" >&2
+    exit 1
+fi
+
+URL="https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/${SHA}/${UPSTREAM_PATH}"
+echo "==> Comparing $MIRROR against gnome-build-meta ${SHA:0:12}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
+    echo "==> Could not fetch $URL" >&2
+    exit 1
+fi
+
+fail=0
+
+# ── 1. Source ─────────────────────────────────────────────────────────────────
+source_lines() {
+    grep -oP '^\s*(url|ref):\s*\K\S+' "$1" | head -2
+}
+
+if ! diff -u --label "gnome-build-meta/$UPSTREAM_PATH" <(source_lines "$TMP/upstream.bst") \
+        --label "$MIRROR" <(source_lines "$MIRROR"); then
+    echo
+    echo "==> Source drift: upstream ships a different gnome-disk-utility release."
+    echo "    Copy upstream's url:/ref: into $MIRROR and rebuild it."
+    fail=1
+fi
+
+# ── 2. Dependencies ───────────────────────────────────────────────────────────
+# Junction-internal build plumbing the mirror replaces with fdsdk equivalents,
+# plus the dep the mirror exists to remove. Whole-line exact matches.
+#
+#   *-for-recc.yml:              gnome-build-meta's remote-execution plumbing;
+#                                krytis pins recc: passthrough and depends on
+#                                fdsdk's compiler stack directly.
+#   buildsystems/meson.bst:      gnome-build-meta-internal; replaced by
+#                                freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst.
+#   sdk/blueprint-compiler.bst:  build tool for the unreleased GTK4 rewrite;
+#                                46.1 has no .blp files.
+#   core/gnome-settings-daemon:  the whole point of the mirror.
+UPSTREAM_IGNORES=(
+    "- (@): include/gcc-for-recc.yml"
+    "- buildsystems/meson.bst"
+    "- sdk/blueprint-compiler.bst"
+    "- core/gnome-settings-daemon.bst"
+)
+
+# Lines the mirror adds on purpose. libcanberra and libnotify are NOT optional
+# extras: gnome-disk-utility's meson.build requires libcanberra-gtk3 and
+# libnotify unconditionally and upstream only gets them transitively through
+# gnome-settings-daemon.
+LOCAL_ADDITIONS=(
+    "- freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst"
+    "- core-deps/libcanberra.bst"
+    "- sdk/libnotify.bst"
+)
+
+# Upstream's `channel` conditional. krytis defines no `channel` project option,
+# so the mirror carries the stable arm flattened into `depends:` — which means
+# the stable arm's own entries (libhandy, gtk+-3) must still be compared, not
+# discarded. Flatten it: keep the indented entries under
+# `- channel == "stable":`, re-dedented to top-level list items, and drop the
+# nightly arm and the conditional scaffolding.
+#
+# Not a sed range: `sed '/start/,/end/'` restarts scanning once the range
+# closes and would mangle any later conditional (see systemd-base-check).
+flatten_channel_block() {
+    awk '
+        $0 == "(?):"                       { cond = 1; next }
+        cond && /^- channel == "stable":/  { arm = 1; next }
+        cond && /^- channel == /           { arm = 0; next }
+        cond && arm && /^ +- /             { sub(/^ +/, ""); print; next }
+        cond                               { next }
+        { print }
+    '
+}
+
+dep_lines() {
+    # Dependency entries only — element paths, so the `- kind: tar` source item
+    # and any future non-element list entry stay out. The mirror's
+    # re-namespacing is undone so both sides speak upstream's paths.
+    grep -E '^- .*\.bst$' \
+        | sed 's/^- gnome-build-meta\.bst:/- /'
+}
+
+drop_lines() {
+    local -n _patterns=$1
+    local args=() line
+    for line in "${_patterns[@]}"; do
+        args+=(-e "$line")
+    done
+    grep -vxF "${args[@]}"
+}
+
+flatten_channel_block <"$TMP/upstream.bst" | dep_lines \
+    | drop_lines UPSTREAM_IGNORES | LC_ALL=C sort >"$TMP/upstream.deps"
+dep_lines <"$MIRROR" | drop_lines LOCAL_ADDITIONS | LC_ALL=C sort >"$TMP/mirror.deps"
+
+if ! diff -u --label "gnome-build-meta/$UPSTREAM_PATH" "$TMP/upstream.deps" \
+        --label "$MIRROR" "$TMP/mirror.deps"; then
+    echo
+    echo "==> Dependency drift: upstream's dependency set has changed."
+    echo "    Resync $MIRROR (prefix junction-local paths with gnome-build-meta.bst:)."
+    fail=1
+fi
+
+# ── 3. The change the mirror exists to make ───────────────────────────────────
+if ! grep -q -- '-Dgsd_plugin=false' "$MIRROR"; then
+    echo "==> $MIRROR no longer passes -Dgsd_plugin=false — the mirror is pointless." >&2
+    fail=1
+fi
+
+# ── 4. Exit condition ─────────────────────────────────────────────────────────
+# `-e` is required: the pattern starts with `-`, and grep would otherwise parse
+# it as a bundle of options.
+if ! grep -qxF -e "- core/gnome-settings-daemon.bst" "$TMP/upstream.bst"; then
+    echo
+    echo "==> Upstream no longer depends on gnome-settings-daemon."
+    echo "    Delete $MIRROR and this task, and depend on"
+    echo "    gnome-build-meta.bst:core/gnome-disk-utility.bst from"
+    echo "    elements/stacks/desktop-apps.bst instead."
+    exit 1
+fi
+
+if [ "$fail" -ne 0 ]; then
+    echo "==> gnome-disk-utility-check FAILED."
+    exit 1
+fi
+
+echo "==> gnome-disk-utility-check passed."

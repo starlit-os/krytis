@@ -713,15 +713,99 @@ Recipe — set-difference the candidate's closure against the current image clos
 
 ```bash
 mise run bst show --deps all --format '%{name}' <junction>.bst:<path>.bst \
-  | grep '\.bst' | sort -u > /tmp/cand.txt
+  | grep '\.bst' | LC_ALL=C sort -u > /tmp/cand.txt
 mise run bst show --deps all --format '%{name}' oci/krytis/image.bst \
-  | grep '\.bst' | sort -u > /tmp/image.txt
-comm -23 /tmp/cand.txt /tmp/image.txt        # elements the image does not already have
+  | grep '\.bst' | LC_ALL=C sort -u > /tmp/image.txt
+LC_ALL=C comm -23 /tmp/cand.txt /tmp/image.txt   # elements the image does not already have
 ```
+
+`LC_ALL=C` on all three is load-bearing, not decoration: element names contain `-`, `/` and
+`:`, and a UTF-8 collation orders `core-deps/…` and `core/…` differently from `comm`'s
+byte-wise expectation. Without it `comm` prints `file 1 is not in sorted order` and then
+*still emits a plausible-looking diff* — 168 bogus lines in the run that found this.
 
 Run the image side from a checkout that does **not** yet contain your new element, or the
 diff comes back empty. Per `AGENTS.md`, this measures the *graph*, not a live system — a
 static answer about what an installed image contains still needs `/usr/manifest.json`.
+
+### A junction app can encode a feature you cannot run — mirror it and flip the option
+
+*Source: `elements/desktop/gnome-disk-utility.bst` + `mise/tasks/gnome-disk-utility-check`
+(#713).*
+
+When the survey above comes back expensive, check *why* before dropping the app or
+swallowing the closure. Often the cost is one optional upstream feature that krytis can
+never reach, exposed as a meson/configure option — and a local mirror with that option
+flipped is both smaller and honest.
+
+gnome-build-meta's `core/gnome-disk-utility.bst` depends on `core/gnome-settings-daemon.bst`
+for `src/notify/gsd-disk-utility-notify`, the SMART-failure notifier. g-s-d drags nine more
+elements in (colord, cups-pk-helper, geocode-glib, gweather-locations, libgweather,
+ibus-daemon, libcanberra, xdg-sound-theme, intltool). `-Dgsd_plugin=false` in the mirror's
+`meson-local`: **14 elements new to the image graph via the junction element, 7 via the
+mirror.**
+
+**Read the feature's own build files before believing the element's dependency list.** Two
+things were only true after checking, and both changed the argument:
+
+- The notifier is *not* a g-s-d plug-in module despite the name and the install path. It is
+  a standalone `executable()` whose meson deps are gmodule, gtk3, libnotify and udisks2;
+  `dependency('gnome-settings-daemon')` appears nowhere in the project. So g-s-d is not a
+  build requirement at all — the element-level dep is upstream's own packaging choice, and a
+  mirror could keep the feature *and* drop the dep.
+- What actually makes it unreachable is its autostart entry:
+  `/etc/xdg/autostart/org.gnome.SettingsDaemon.DiskUtilityNotify.desktop` is
+  `OnlyShowIn=GNOME;`. **krytis does process XDG autostart** — niri's `niri.service` carries
+  `Wants=xdg-desktop-autostart.target`, so `systemd-xdg-autostart-generator` runs over
+  `/etc/xdg/autostart` on every session — but every krytis session sets
+  `XDG_CURRENT_DESKTOP=niri` (`config/greetd-config.bst`, `files/niri/config.kdl`) and the
+  generator honours `OnlyShowIn`, so the generated unit's condition never passes.
+
+Do not reach for "it's GNOME-only, so it can't run here" as a *reason* — reach for the
+mechanism. "krytis never starts `gnome-session`, so `PartOf=gnome-session.target` units stay
+dead" is true for g-s-d's own services and would have been the wrong argument for this
+feature, which is autostart-driven and would otherwise have run fine.
+
+**The trap: the upstream element's dependency list is only complete *given* the dependency
+you removed.** gnome-disk-utility's `meson.build` calls `dependency('libcanberra-gtk3')`
+and `dependency('libnotify')` at top level, outside the `gsd_plugin` block; upstream's
+element declares neither, because g-s-d supplies both transitively. Drop g-s-d without
+adding them and `meson setup` fails in the sandbox. Nothing static catches this — `bst
+show`, `mise run validate` and a set-difference all pass, because the missing deps are a
+*staging* fact, not a graph fact. So after removing a dep from a mirrored element, re-read
+the upstream build definition and declare every `dependency()`/`find_program()` the removed
+element was silently covering.
+
+Conventions for this flavour of mirror (a leaf app, as opposed to the override-target
+mirrors in `elements/overrides/` — see § Mirroring a junction element to patch its *source*):
+
+- It lives where a first-party element of its kind would (`elements/desktop/`), and the stack
+  depends on it directly. No junction `overrides:` entry — nothing else references the
+  upstream path. `desktop/xwayland-satellite.bst` (#499) is the other example of this shape.
+- Leave `project_licensedir` alone. The pin to `%{licensedir}/gnome` is only needed when the
+  mirrored element is consumed through `kind: filter` elements with an `overlap-whitelist`
+  expanded in the upstream project's scope; a leaf app has no such consumer.
+- Re-namespace every junction-local dependency with the junction prefix
+  (`core-deps/udisks2.bst` → `gnome-build-meta.bst:core-deps/udisks2.bst`), replace
+  `buildsystems/meson.bst` with `freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst`,
+  and drop the `(@): include/*-for-recc.yml` include and any `channel`-keyed conditional
+  (krytis defines no `channel` option; flatten its `stable` arm into `depends:`).
+- Ship a `mise run <name>-check` drift task and keep the element **out** of the
+  `track-bst-sources.yml` matrix: the ref is tied to the junction bump, not tracked
+  independently. That is the § Element update path answer for mirrors.
+
+Three things that bit the check task itself, all worth copying:
+
+- `grep -vxF "- foo"` fails with `invalid option -- ' '` — a pattern starting with `-` is
+  parsed as an option bundle. Every literal dependency line needs `-e`.
+- Flatten the `channel` conditional, don't delete it. Deleting the block drops the stable
+  arm's own deps (`libhandy`, `gtk+-3`) from the comparison, so an upstream change to either
+  would go unnoticed.
+- Filter dependency lines as `^- .*\.bst$`. A bare `^- ` also matches `- kind: tar` from the
+  `sources:` list, which then shows up as phantom drift.
+
+Compare deps as *sorted sets*, not line-for-line: the mirror re-namespaces every entry, so
+a positional diff is noise by construction.
 
 ### Meson `find_program()` calling a tool by the wrong name
 
