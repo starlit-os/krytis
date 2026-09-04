@@ -194,11 +194,12 @@ else
     bad "missing OnFailure in $fallback_dropin — a dead greeter leaves a frozen splash and no console"
 fi
 
+fallback_script="$TREE/usr/libexec/krytis/greeter-fallback.sh"
 if [ -f "$fallback_unit" ]; then
-    if grep -qE '^ExecStart=/usr/bin/chvt ' "$fallback_unit"; then
-        pass "krytis-greeter-fallback.service switches to the rescue VT"
+    if grep -qE '^ExecStart=/usr/libexec/krytis/greeter-fallback\.sh$' "$fallback_unit"; then
+        pass "krytis-greeter-fallback.service runs greeter-fallback.sh"
     else
-        bad "$fallback_unit does not chvt to a rescue console"
+        bad "$fallback_unit does not run /usr/libexec/krytis/greeter-fallback.sh"
     fi
     # It is reached only via OnFailure=. An [Install] section would make it one
     # more unit for preset-all to enable by fall-through — the #711 bug class.
@@ -209,6 +210,19 @@ if [ -f "$fallback_unit" ]; then
     fi
 else
     bad "missing $fallback_unit"
+fi
+
+# The gate is the point of the script: OnFailure= fires on every entry into
+# `failed`, so switching unconditionally bounces the foreground to VT6 during
+# transient crashes that greetd recovers from on its own (#733).
+if [ -x "$fallback_script" ]; then
+    if grep -q 'is-active' "$fallback_script" && grep -q 'chvt' "$fallback_script"; then
+        pass "greeter-fallback.sh waits for greetd to recover before switching VT"
+    else
+        bad "greeter-fallback.sh switches VT without checking whether greetd came back (#733)"
+    fi
+else
+    bad "missing or non-executable $fallback_script"
 fi
 
 if [ -x "$TREE/usr/bin/chvt" ]; then
