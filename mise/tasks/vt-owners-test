@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Assert VT ownership in the built image: greetd owns tty1, kmscon only tty2-4 (#503, #711)"
+#MISE description="Assert display ownership in the built image: greetd owns tty1, kmscon only tty2-4, splash hands off cleanly (#503, #711, #727)"
 #USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image to inspect"
 #USAGE flag "--tree <dir>" help="Inspect an already-extracted rootfs instead of exporting the image"
 #USAGE flag "--keep" help="Keep the scratch directory and print its path"
@@ -62,6 +62,11 @@ if [ -z "$TREE" ]; then
     podman export "$CTR" | tar -x -C "$TREE" 2>/dev/null
     podman rm "$CTR" >/dev/null
 fi
+
+# `--tree /` is the useful negative test — run the gate against the running
+# system. Strip the trailing slash so paths in the output read /usr/... rather
+# than //usr/...
+TREE="${TREE%/}"
 
 UNITS="$TREE/usr/lib/systemd/system"
 PRESETS="$TREE/usr/lib/systemd/system-preset"
@@ -151,6 +156,66 @@ for unit_file in "$UNITS"/kmscon*.service; do
     fi
 done
 shopt -u nullglob
+
+echo "==> Splash hands off to the greeter without revealing what is underneath"
+
+# Upstream's plymouth-quit.service runs a plain `plymouth quit`, which returns
+# the display to the text console ~0.55s before the compositor modesets. What
+# shows through is machine-dependent: an empty tty1 plus cursor here, the
+# firmware BGRT logo and systemd-boot/systemd-stub lines on a machine whose EFI
+# framebuffer was never overwritten. --retain-splash leaves the frame up.
+retain="$UNITS/plymouth-quit.service.d/10-retain-splash.conf"
+if [ -f "$retain" ]; then
+    if grep -q -- '--retain-splash' "$retain" && grep -qE '^ExecStart=$' "$retain"; then
+        pass "plymouth-quit.service drop-in resets ExecStart and quits with --retain-splash"
+    else
+        bad "$retain exists but is not a clean 'ExecStart=' reset + --retain-splash"
+    fi
+else
+    bad "missing $retain — the console flashes between splash and greeter (#727)"
+fi
+
+# Ordering, not the quit itself, is the trap here: `After=display-manager.service`
+# on plymouth-quit deadlocks against greetd's After=plymouth-quit-wait.service,
+# and systemd cannot see the cycle to break it. Assert nobody adds it.
+if grep -rqs 'After=.*display-manager' "$UNITS/plymouth-quit.service" "$UNITS/plymouth-quit.service.d" 2>/dev/null; then
+    bad "plymouth-quit is ordered After=display-manager.service — deadlocks with plymouth-quit-wait (#727)"
+else
+    pass "plymouth-quit carries no display-manager ordering"
+fi
+
+# Retaining the splash removes the only feedback a wedged greeter gives, so the
+# failure path has to put a console back.
+fallback_dropin="$UNITS/greetd.service.d/10-splash-fallback.conf"
+fallback_unit="$UNITS/krytis-greeter-fallback.service"
+if grep -qs 'OnFailure=krytis-greeter-fallback.service' "$fallback_dropin"; then
+    pass "greetd OnFailure -> krytis-greeter-fallback.service"
+else
+    bad "missing OnFailure in $fallback_dropin — a dead greeter leaves a frozen splash and no console"
+fi
+
+if [ -f "$fallback_unit" ]; then
+    if grep -qE '^ExecStart=/usr/bin/chvt ' "$fallback_unit"; then
+        pass "krytis-greeter-fallback.service switches to the rescue VT"
+    else
+        bad "$fallback_unit does not chvt to a rescue console"
+    fi
+    # It is reached only via OnFailure=. An [Install] section would make it one
+    # more unit for preset-all to enable by fall-through — the #711 bug class.
+    if grep -q '^\[Install\]' "$fallback_unit"; then
+        bad "$fallback_unit has an [Install] section — preset-all will enable it (#711)"
+    else
+        pass "krytis-greeter-fallback.service has no [Install] section"
+    fi
+else
+    bad "missing $fallback_unit"
+fi
+
+if [ -x "$TREE/usr/bin/chvt" ]; then
+    pass "chvt present in the image"
+else
+    bad "no /usr/bin/chvt — the OnFailure escape cannot run"
+fi
 
 if [ "$fail" -eq 0 ]; then
     echo "==> vt-owners-test passed."
