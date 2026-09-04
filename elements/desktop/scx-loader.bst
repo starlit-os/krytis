@@ -48,8 +48,9 @@ config:
       "%{install-root}%{datadir}/scx_loader/config.toml"
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-scx-loader.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-scx-loader.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-scx-loader.preset" <<'EOF'
     enable scx_loader.service
     EOF
 

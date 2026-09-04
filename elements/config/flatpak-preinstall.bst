@@ -22,8 +22,9 @@ config:
     install -Dm644 flatpak-preinstall.service \
       "%{install-root}%{indep-libdir}/systemd/system/flatpak-preinstall.service"
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-flatpak-preinstall.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-flatpak-preinstall.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-flatpak-preinstall.preset" <<'EOF'
     enable flatpak-preinstall.service
     EOF
 

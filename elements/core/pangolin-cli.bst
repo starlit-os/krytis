@@ -94,12 +94,14 @@ config:
   install-commands:
   - install -Dm755 pangolin-cli "%{install-root}%{bindir}/pangolin"
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/sysusers.d/pangolin-cli.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/sysusers.d/pangolin-cli.conf"
+    cat > "%{install-root}%{indep-libdir}/sysusers.d/pangolin-cli.conf" <<'EOF'
     g pangolin - -
     EOF
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}/etc/sudoers.d/zz-pangolin-cli" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}/etc/sudoers.d/zz-pangolin-cli"
+    cat > "%{install-root}/etc/sudoers.d/zz-pangolin-cli" <<'EOF'
     %pangolin ALL=(root) NOPASSWD: %{bindir}/pangolin up *
     EOF

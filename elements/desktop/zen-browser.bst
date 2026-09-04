@@ -39,7 +39,8 @@ config:
         "%{install-root}/usr/share/icons/hicolor/${size}x${size}/apps/zen-browser.png"
     done
 
-    install -Dm644 /dev/stdin "%{install-root}/usr/share/applications/zen-browser.desktop" <<'EOF'
+    install -Dm644 /dev/null "%{install-root}/usr/share/applications/zen-browser.desktop"
+    cat > "%{install-root}/usr/share/applications/zen-browser.desktop" <<'EOF'
     [Desktop Entry]
     Name=Zen Browser
     GenericName=Web Browser
@@ -54,7 +55,8 @@ config:
     MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
     EOF
 
-    install -Dm644 /dev/stdin "%{install-root}/usr/lib/zen-browser/distribution/policies.json" <<'EOF'
+    install -Dm644 /dev/null "%{install-root}/usr/lib/zen-browser/distribution/policies.json"
+    cat > "%{install-root}/usr/lib/zen-browser/distribution/policies.json" <<'EOF'
     {
       "policies": {
         "DisableAppUpdate": true

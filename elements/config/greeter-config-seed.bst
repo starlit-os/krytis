@@ -36,8 +36,9 @@ config:
     install -Dm644 greeter-config-seed.service \
       "%{install-root}%{indep-libdir}/systemd/system/greeter-config-seed.service"
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-greeter-config-seed.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-greeter-config-seed.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-greeter-config-seed.preset" <<'EOF'
     enable greeter-config-seed.service
     EOF
 

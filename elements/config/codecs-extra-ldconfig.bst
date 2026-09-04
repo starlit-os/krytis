@@ -23,8 +23,9 @@ variables:
 config:
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-        "%{install-root}/etc/ld.so.conf.d/codecs-extra.conf" <<'EOF'
+    install -Dm644 /dev/null \
+        "%{install-root}/etc/ld.so.conf.d/codecs-extra.conf"
+    cat > "%{install-root}/etc/ld.so.conf.d/codecs-extra.conf" <<'EOF'
     /usr/lib/%{gcc_triplet}/codecs-extra/lib
     EOF
   - "%{install-extra}"

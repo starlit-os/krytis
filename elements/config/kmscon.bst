@@ -59,8 +59,9 @@ config:
         ln -s "../kmsconvt@.service" "${wants_dir}/kmsconvt@${vt}.service"
     done
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/80-kmscon.preset" <<'EOF'
     # Deliberately NOT `enable kmsconvt@tty2.service` etc: preset-all cannot act
     # on template instances, so such lines are inert. The instances are enabled
     # by static getty.target.wants symlinks instead. These rules exist solely to
@@ -71,8 +72,9 @@ config:
     disable kmscon.service
     EOF
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/logind.conf.d/10-krytis-vts.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/logind.conf.d/10-krytis-vts.conf"
+    cat > "%{install-root}%{indep-libdir}/systemd/logind.conf.d/10-krytis-vts.conf" <<'EOF'
     # krytis: keep logind's on-demand VT range aligned with the console layout.
     #
     #   vt1     greetd            (greetd-config.bst `vt = 1`)
