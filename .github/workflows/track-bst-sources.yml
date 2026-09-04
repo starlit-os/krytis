@@ -831,6 +831,10 @@ jobs:
             element: overrides/vim.bst
             branch: auto/track-vim
             title: "chore(deps): update vim"
+          - group: manual-merge
+            element: desktop/scx-scheds.bst
+            branch: auto/track-scx-scheds
+            title: "chore(deps): update scx-scheds"
           - group: papirus-icon-theme
             element: desktop/papirus-icon-theme.bst
             branch: auto/track-papirus-icon-theme

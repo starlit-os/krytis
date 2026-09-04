@@ -80,13 +80,17 @@ gaming packages should start from that ref rather than re-porting from upstream.
   `gamescope-session-steam` and, with it, the last argument for native Steam —
   Flatpak Steam has no session to integrate with. Do not reopen this as a
   side-effect of some other gaming change.
-- **`scx_loader` has no schedulers to load** — tracked separately, not
-  gaming-specific. Live on 2026-08-14: `scx_loader.service` is active and
-  advertises 13 `SupportedSchedulers` over `org.scx.Loader`, `/usr/bin` holds
-  no `scx_*` binary but the loader itself, and `/sys/kernel/sched_ext/state`
-  reads `disabled`. Nothing errors today only because every shipped falcond
-  profile sets `scx_sched = none` and `scx_loader`'s `default_sched` is
-  commented out. See issue #590.
+- **`scx_loader` has no schedulers to load — closed by #590.** Live on
+  2026-08-14: `scx_loader.service` is active and advertises 13
+  `SupportedSchedulers` over `org.scx.Loader`, `/usr/bin` holds no `scx_*`
+  binary but the loader itself, and `/sys/kernel/sched_ext/state` reads
+  `disabled`. `desktop/scx-scheds.bst` (see `docs/skills/desktop.md` §
+  scx-scheds) now ships `scx_lavd`/`scx_bpfland`/`scx_cosmos` — a deliberate
+  3-of-13 subset, not the full monorepo — so the loader has something to
+  `exec`. No `default_sched` is set anywhere: every shipped falcond profile
+  still sets `scx_sched = none`, and activation stays entirely manual
+  (`busctl ... StartScheduler`) or per-profile in a future change. Making a
+  scheduler the system default remains a separate, explicit decision.
 - **Discord presence is a known cost of this choice.** Sandboxing breaks it in
   two independent ways: the RPC socket is namespaced per app so consumers never
   find a client (#591), and Discord's process-scan game detection cannot see
