@@ -406,15 +406,20 @@ has `/etc/sudoers` at 0644 today, and always has. A genuinely stricter mode has 
 from `public.initial-script`, the same mechanism the setuid bit needs (§ Junction
 override: sudo-rs).
 
-**No CI gate catches an element that stops building.** `Checks` is static-only — no `bst
-build` on PRs, as `checks.yml`'s own header comment states — and `cache-warm.yml`'s build
-step ends in `exit 0` with a `::warning::`, so run 33872185343 reported **success** nine
-minutes after the break landed, and pushed the failed artifact to the shared cache for
-`publish` to pull and discard. Element-build regressions surface only in the 420-minute
-`publish` job. When a PR touches `install-commands`, build the touched element locally
-first: `mise run bst -- build core/<element>.bst` (~30s for a leaf element with warm
-deps), then `mise run bst -- artifact checkout <element> --directory /tmp/co` to inspect
-what actually landed.
+**No PR gate catches an element that stops building.** `Checks` is static-only — no `bst
+build` on PRs, as `checks.yml`'s own header comment states. The only scheduled job that
+compiles elements is `cache-warm.yml` (06:00 Mon–Fri), and until #741 its build step ended
+in `set +e` … `exit 0` with a `::warning::`, so run 33872185343 reported **success** nine
+minutes after the #735 break landed, then pushed the failed artifact to the shared cache
+for `publish` to pull and discard. That swallow is gone: a cache-warm build failure now
+fails the run. Warmth is not lost by failing — artifacts push to bow as they build, and
+the two reporting steps carry `if: always()`.
+
+A red cache-warm is therefore the earliest signal that `main` does not build; treat it as
+such rather than as flake. On a PR it is still on you: when a PR touches
+`install-commands`, build the touched element locally first: `mise run bst -- build
+core/<element>.bst` (~30s for a leaf element with warm deps), then `mise run bst --
+artifact checkout <element> --directory /tmp/co` to inspect what actually landed.
 
 ## Multi-line YAML Plain Scalars Do Not Shell-Continue
 
