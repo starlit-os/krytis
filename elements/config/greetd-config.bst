@@ -26,6 +26,10 @@
 # not in runtime-minimal. Override strip-commands with a no-op.
 kind: manual
 
+sources:
+- kind: local
+  path: files/greeter-fallback
+
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
@@ -230,14 +234,17 @@ config:
   # `plymouth quit --retain-splash` (#727). Retaining the splash means a dead
   # greeter no longer shows anything: the frame stays on the scanout with
   # plymouthd already exited, so there is no console, no cursor, and no error.
+  # Without this the box is unreachable — root is locked
+  # (root:!unprovisioned) and sshd ships disabled by preset, leaving the rescue
+  # VT logind keeps on ReserveVT as the only way in (config/kmscon.bst
+  # documents why that VT is deliberately preserved).
   #
-  # greetd is Restart=always with StartLimitBurst=5 over
-  # StartLimitIntervalUSec=30s, so after five failures in 30s it enters `failed`
-  # and stops retrying — which is exactly when OnFailure= fires. chvt 6 forces
-  # fbcon to repaint over the retained splash and lands on the rescue getty
-  # logind keeps on the reserved VT (config/kmscon.bst documents why ReserveVT
-  # is deliberately left at its default). Without this the box is unreachable:
-  # root is locked (root:!unprovisioned) and sshd ships disabled by preset.
+  # The switch is gated on greetd actually staying down, in
+  # greeter-fallback.sh. OnFailure= fires on EVERY entry into `failed`, not
+  # just on give-up — an earlier revision switched VTs unconditionally and so
+  # fired on transient crashes too, bouncing the foreground to VT6 for a second
+  # while greetd restarted underneath it (#733). The script waits out
+  # RestartSec=1 and only takes the display if the greeter does not come back.
   - |
     dropin="%{install-root}%{indep-libdir}/systemd/system/greetd.service.d/10-splash-fallback.conf"
     install -Dm644 /dev/null "${dropin}"
@@ -246,21 +253,25 @@ config:
     OnFailure=krytis-greeter-fallback.service
     EOF
 
+    install -Dm755 greeter-fallback.sh \
+      "%{install-root}/usr/libexec/krytis/greeter-fallback.sh"
+
     unit="%{install-root}%{indep-libdir}/systemd/system/krytis-greeter-fallback.service"
     install -Dm644 /dev/null "${unit}"
     cat > "${unit}" <<'EOF'
     [Unit]
-    Description=Reveal a console after the greeter has given up
+    Description=Reveal a console if the greeter does not come back
     # Not WantedBy anything: greetd's OnFailure= is the only trigger. No
     # [Install] section either, so `systemctl preset-all` has nothing to act on
     # and cannot enable it by fall-through (see docs/skills/bst.md and #711).
     DefaultDependencies=no
-    
+
     [Service]
     Type=oneshot
-    # chvt writes the VT_ACTIVATE ioctl to /dev/tty0; as root that needs no
-    # controlling terminal of its own.
-    ExecStart=/usr/bin/chvt 6
+    # Runs to ~5s while it waits out greetd's restart window; the default
+    # TimeoutStartSec would not bite, but be explicit rather than implicit.
+    TimeoutStartSec=30
+    ExecStart=/usr/libexec/krytis/greeter-fallback.sh
     EOF
 
   - "%{install-extra}"
