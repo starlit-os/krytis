@@ -16,7 +16,8 @@ config:
   - ":"
   install-commands:
   - |
-    install -Dm755 /dev/stdin "%{install-root}%{bindir}/sass" <<'SCRIPT'
+    install -Dm755 /dev/null "%{install-root}%{bindir}/sass"
+    cat > "%{install-root}%{bindir}/sass" <<'SCRIPT'
     #!/bin/sh
     set -e
     if [ "$1" = "--no-source-map" ]; then

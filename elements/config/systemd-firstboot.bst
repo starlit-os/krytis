@@ -35,8 +35,9 @@ config:
     install -Dm644 systemd-homed-firstboot.service.d/10-krytis.conf \
         "%{install-root}%{indep-libdir}/systemd/system/systemd-homed-firstboot.service.d/10-krytis.conf"
 
-    install -Dm644 /dev/stdin \
-        "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-firstboot.preset" <<'EOF'
+    install -Dm644 /dev/null \
+        "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-firstboot.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/72-krytis-firstboot.preset" <<'EOF'
     enable krytis-firstboot.service
     # Restated explicitly even though freedesktop-sdk's own unprefixed
     # systemd-homed-firstboot.preset already disables it: this unit must never be

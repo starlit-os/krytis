@@ -11,8 +11,9 @@ config:
   - ":"
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{datadir}/xdg-desktop-portal/portals/niri.portal" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{datadir}/xdg-desktop-portal/portals/niri.portal"
+    cat > "%{install-root}%{datadir}/xdg-desktop-portal/portals/niri.portal" <<'EOF'
     [preferred]
     default=gnome;gtk
     org.freedesktop.impl.portal.Settings=gnome

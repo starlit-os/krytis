@@ -50,8 +50,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/pam.d/greetd"
+    cat > "%{install-root}%{sysconfdir}/pam.d/greetd" <<'EOF'
     #%PAM-1.0
     # Self-contained: greetd has session-specific auth requirements that differ
     # from system-auth (pam_nologin, oo7).
@@ -139,8 +140,9 @@ config:
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/greetd/config.toml" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/greetd/config.toml"
+    cat > "%{install-root}%{sysconfdir}/greetd/config.toml" <<'EOF'
     [terminal]
     vt = 1
 
@@ -150,8 +152,9 @@ config:
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/sysusers.d/greetd.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/sysusers.d/greetd.conf"
+    cat > "%{install-root}%{indep-libdir}/sysusers.d/greetd.conf" <<'EOF'
     u greeter - "greetd greeter user" /var/lib/greetd -
     m greeter video
     m greeter render
@@ -168,22 +171,25 @@ config:
   # Only /var/lib/greetd is krytis's (greetd's own state dir, from the
   # sysusers home above).
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/tmpfiles.d/krytis-greetd.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/tmpfiles.d/krytis-greetd.conf"
+    cat > "%{install-root}%{indep-libdir}/tmpfiles.d/krytis-greetd.conf" <<'EOF'
     d /var/lib/greetd 0750 greeter greeter -
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/environment" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/environment"
+    cat > "%{install-root}%{sysconfdir}/environment" <<'EOF'
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
     LIBSEAT_LOGLEVEL=debug
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf"
+    cat > "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf" <<'EOF'
     XDG_SESSION_TYPE=wayland
     XDG_CURRENT_DESKTOP=niri
     XDG_SESSION_DESKTOP=niri
@@ -212,8 +218,9 @@ config:
   # zz- sorts after any numeric prefix, so it wins without having to masquerade
   # under upstream's filename.
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/systemd/journald.conf.d/zz-krytis-persist.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/systemd/journald.conf.d/zz-krytis-persist.conf"
+    cat > "%{install-root}%{sysconfdir}/systemd/journald.conf.d/zz-krytis-persist.conf" <<'EOF'
     [Journal]
     Storage=persistent
     SyncIntervalSec=5s

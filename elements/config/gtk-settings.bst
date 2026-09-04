@@ -13,12 +13,14 @@ config:
   # dconf system database — sets defaults for GTK4 and any GSettings-aware app.
   # Per-user `gsettings set` overrides these (user-db takes priority over system-db).
   - |
-    install -Dm644 /dev/stdin "%{install-root}%{sysconfdir}/dconf/profile/user" <<'CONF'
+    install -Dm644 /dev/null "%{install-root}%{sysconfdir}/dconf/profile/user"
+    cat > "%{install-root}%{sysconfdir}/dconf/profile/user" <<'CONF'
     user-db:user
     system-db:local
     CONF
   - |
-    install -Dm644 /dev/stdin "%{install-root}%{sysconfdir}/dconf/db/local.d/00-defaults" <<'CONF'
+    install -Dm644 /dev/null "%{install-root}%{sysconfdir}/dconf/db/local.d/00-defaults"
+    cat > "%{install-root}%{sysconfdir}/dconf/db/local.d/00-defaults" <<'CONF'
     [org/gnome/desktop/interface]
     icon-theme='Papirus'
     color-scheme='prefer-dark'
@@ -28,7 +30,8 @@ config:
   # gtk-application-prefer-dark-theme. GTK3 also reads icon-theme/gtk-theme
   # from dconf but settings.ini provides a fallback without dconf infrastructure.
   - |
-    install -Dm644 /dev/stdin "%{install-root}%{sysconfdir}/gtk-3.0/settings.ini" <<'CONF'
+    install -Dm644 /dev/null "%{install-root}%{sysconfdir}/gtk-3.0/settings.ini"
+    cat > "%{install-root}%{sysconfdir}/gtk-3.0/settings.ini" <<'CONF'
     [Settings]
     gtk-icon-theme-name=Papirus
     gtk-theme-name=adw-gtk3-dark

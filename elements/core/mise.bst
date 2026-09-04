@@ -38,17 +38,20 @@ config:
     # for all users without touching $XDG_CONFIG_HOME.
     # The command -v guard ensures a missing or broken mise binary does
     # not break interactive shells.
-    install -Dm644 /dev/stdin "%{install-root}%{sysconfdir}/profile.d/mise.sh" <<'EOF'
+    install -Dm644 /dev/null "%{install-root}%{sysconfdir}/profile.d/mise.sh"
+    cat > "%{install-root}%{sysconfdir}/profile.d/mise.sh" <<'EOF'
     command -v mise >/dev/null 2>&1 || return 0
     eval "$(mise activate bash)"
     EOF
   - |
-    install -Dm644 /dev/stdin "%{install-root}%{sysconfdir}/profile.d/mise.zsh" <<'EOF'
+    install -Dm644 /dev/null "%{install-root}%{sysconfdir}/profile.d/mise.zsh"
+    cat > "%{install-root}%{sysconfdir}/profile.d/mise.zsh" <<'EOF'
     command -v mise >/dev/null 2>&1 || return 0
     eval "$(mise activate zsh)"
     EOF
   - |
-    install -Dm644 /dev/stdin "%{install-root}%{datadir}/fish/vendor_conf.d/01-mise.fish" <<'EOF'
+    install -Dm644 /dev/null "%{install-root}%{datadir}/fish/vendor_conf.d/01-mise.fish"
+    cat > "%{install-root}%{datadir}/fish/vendor_conf.d/01-mise.fish" <<'EOF'
     if status is-interactive
       command -v mise >/dev/null 2>&1 && mise activate fish | source
     else

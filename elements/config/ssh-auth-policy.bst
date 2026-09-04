@@ -27,8 +27,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/ssh/sshd_config.d/10-krytis-auth.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/ssh/sshd_config.d/10-krytis-auth.conf"
+    cat > "%{install-root}%{sysconfdir}/ssh/sshd_config.d/10-krytis-auth.conf" <<'EOF'
     # krytis: SSH authentication is public-key only.
     #
     # BOTH settings are required. Setting PasswordAuthentication alone is the

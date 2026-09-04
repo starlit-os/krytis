@@ -33,13 +33,15 @@ config:
     install -Dm644 starlit-update-user.timer \
       "%{install-root}%{indep-libdir}/systemd/user/starlit-update-user.timer"
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-starlit-update.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-starlit-update.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-starlit-update.preset" <<'EOF'
     enable starlit-update.timer
     EOF
 
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/user-preset/71-krytis-starlit-update.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/user-preset/71-krytis-starlit-update.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/user-preset/71-krytis-starlit-update.preset" <<'EOF'
     enable starlit-update-user.timer
     EOF
 

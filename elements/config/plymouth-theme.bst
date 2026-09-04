@@ -65,8 +65,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/plymouth/plymouthd.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/plymouth/plymouthd.conf"
+    cat > "%{install-root}%{sysconfdir}/plymouth/plymouthd.conf" <<'EOF'
     [Daemon]
     Theme=spinner
     EOF
@@ -110,8 +111,9 @@ config:
     # Stock spinner.plymouth (from fdsdk plymouth-logo.bst), trimmed of
     # translated Name[xx] lines (cosmetic only, not read by the two-step
     # module) and with WatermarkVerticalAlignment moved from .96 to .4.
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{datadir}/plymouth/themes/spinner/spinner.plymouth" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{datadir}/plymouth/themes/spinner/spinner.plymouth"
+    cat > "%{install-root}%{datadir}/plymouth/themes/spinner/spinner.plymouth" <<'EOF'
     [Plymouth Theme]
     Name=Spinner
     Description=A theme designed by jimmac that features a simple spinner.

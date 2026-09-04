@@ -62,8 +62,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/pam.d/system-auth" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/pam.d/system-auth"
+    cat > "%{install-root}%{sysconfdir}/pam.d/system-auth" <<'EOF'
     auth        required      pam_env.so
     -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_u2f.so cue pinverification
@@ -87,8 +88,9 @@ config:
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/pam.d/password-auth" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/pam.d/password-auth"
+    cat > "%{install-root}%{sysconfdir}/pam.d/password-auth" <<'EOF'
     auth        required      pam_env.so
     -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_u2f.so cue pinverification

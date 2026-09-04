@@ -17,8 +17,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system/secure-boot-enroll.service" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system/secure-boot-enroll.service"
+    cat > "%{install-root}%{indep-libdir}/systemd/system/secure-boot-enroll.service" <<'EOF'
     [Unit]
     Description=Set secure-boot-enroll=manual in the ESP's loader.conf
     ConditionFirstBoot=yes
@@ -34,8 +35,9 @@ config:
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-secure-boot-enroll.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-secure-boot-enroll.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-secure-boot-enroll.preset" <<'EOF'
     enable secure-boot-enroll.service
     EOF
 

@@ -15,8 +15,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/oomd.conf.d/krytis.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/oomd.conf.d/krytis.conf"
+    cat > "%{install-root}%{indep-libdir}/systemd/oomd.conf.d/krytis.conf" <<'EOF'
     [OOMPolicy]
     SwapUsedLimit=90%
     DefaultMemoryPressureLimit=60%
@@ -24,7 +25,8 @@ config:
     EOF
 
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/system-preset/70-krytis-oomd.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/system-preset/70-krytis-oomd.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/system-preset/70-krytis-oomd.preset" <<'EOF'
     enable systemd-oomd.service
     EOF

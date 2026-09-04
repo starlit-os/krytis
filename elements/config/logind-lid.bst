@@ -59,8 +59,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/logind.conf.d/20-krytis-lid.conf" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/logind.conf.d/20-krytis-lid.conf"
+    cat > "%{install-root}%{indep-libdir}/systemd/logind.conf.d/20-krytis-lid.conf" <<'EOF'
     # krytis: lid-switch policy, pinned rather than inherited. See the element
     # comment in elements/config/logind-lid.bst for the full lid -> logind ->
     # noctalia lock chain and the knobs left at their defaults on purpose.

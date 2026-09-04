@@ -18,8 +18,9 @@ config:
   - ':'
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/user/xwayland-satellite.service" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/user/xwayland-satellite.service"
+    cat > "%{install-root}%{indep-libdir}/systemd/user/xwayland-satellite.service" <<'EOF'
     [Unit]
     Description=Xwayland outside your Wayland
     BindsTo=graphical-session.target
@@ -37,8 +38,9 @@ config:
     WantedBy=graphical-session.target
     EOF
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{indep-libdir}/systemd/user-preset/80-xwayland-satellite.preset" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{indep-libdir}/systemd/user-preset/80-xwayland-satellite.preset"
+    cat > "%{install-root}%{indep-libdir}/systemd/user-preset/80-xwayland-satellite.preset" <<'EOF'
     enable xwayland-satellite.service
     EOF
   - '%{install-extra}'

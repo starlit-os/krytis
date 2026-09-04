@@ -90,7 +90,8 @@ config:
     install -Dm644 equibop.svg \
       "%{install-root}%{datadir}/icons/hicolor/scalable/apps/equibop.svg"
 
-    install -Dm644 /dev/stdin "%{install-root}%{datadir}/applications/equibop.desktop" <<'EOF'
+    install -Dm644 /dev/null "%{install-root}%{datadir}/applications/equibop.desktop"
+    cat > "%{install-root}%{datadir}/applications/equibop.desktop" <<'EOF'
     [Desktop Entry]
     Name=Equibop
     GenericName=Internet Messenger

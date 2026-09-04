@@ -136,8 +136,9 @@ config:
 
     # Enable on graphical.target
     - |
-      install -Dm644 /dev/stdin \
-        "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-falcond.preset" <<'EOF'
+      install -Dm644 /dev/null \
+        "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-falcond.preset"
+      cat > "%{install-root}%{indep-libdir}/systemd/system-preset/71-krytis-falcond.preset" <<'EOF'
       enable falcond.service
       EOF
 
@@ -160,8 +161,9 @@ config:
 
     # State directories
     - |
-      install -Dm644 /dev/stdin \
-        "%{install-root}%{indep-libdir}/tmpfiles.d/falcond.conf" <<'EOF'
+      install -Dm644 /dev/null \
+        "%{install-root}%{indep-libdir}/tmpfiles.d/falcond.conf"
+      cat > "%{install-root}%{indep-libdir}/tmpfiles.d/falcond.conf" <<'EOF'
       d /var/lib/falcond 0755 root root -
       d /etc/falcond 0755 root root -
       EOF

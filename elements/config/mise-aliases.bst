@@ -17,8 +17,9 @@ config:
 
   install-commands:
   - |
-    install -Dm644 /dev/stdin \
-      "%{install-root}%{sysconfdir}/mise/conf.d/aliases.toml" <<'EOF'
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/mise/conf.d/aliases.toml"
+    cat > "%{install-root}%{sysconfdir}/mise/conf.d/aliases.toml" <<'EOF'
     [tool_alias]
     fish = "github:fish-shell/fish-shell"
     froggit = "github:thewizardshell/froggit"
