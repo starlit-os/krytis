@@ -12,7 +12,7 @@ usage = "6.6.1"
 # deliberate call, so Renovate is capped below it (allowedVersions in
 # .github/renovate.json5).
 python = "3.12.14"
-uv = "0.12.9"
+uv = "0.12.10"
 gum = "2.0.0"
 bat = "0.26.1"
 # `just` drives the dakota-iso ISO build pipeline (mise run build-iso).
