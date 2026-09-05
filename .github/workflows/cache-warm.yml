@@ -162,16 +162,20 @@ jobs:
 
       - name: Build image
         run: |
-          set +e
           # --retry-failed matches mise/tasks/load-image: a cached failed
           # artifact is pulled and re-reported in 0s otherwise, so cache-warm
           # would keep re-publishing yesterday's failure instead of rebuilding.
+          #
+          # Failure is fatal (#741). This step used to `set +e` … `exit 0` as
+          # "non-blocking", which bought nothing: artifacts push to bow as they
+          # build (`push:` above), so everything cached before the failure is
+          # already uploaded when bst exits, and both reporting steps below run
+          # under `if: always()`. All the swallow achieved was a green tick on a
+          # tree that cannot build — run 33872185343 passed 9 minutes before
+          # publish run 33872670405 died on the same broken element. cache-warm
+          # is the only scheduled job that compiles elements at all (`Checks` is
+          # static-only), so its result has to mean something.
           uv run bst -o x86_64_v3 true --no-interactive build --retry-failed oci/krytis/image.bst
-          rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "::warning::Cache warm build failed (rc=${rc}) — non-blocking"
-          fi
-          exit 0
 
       - name: Print disk usage after build
         if: always()
