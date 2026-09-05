@@ -20,13 +20,13 @@ url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/50328600
 provenance = "cosign"
 
 [[tools.fnox]]
-version = "1.35.0"
+version = "1.35.1"
 backend = "github:jdx/fnox"
 
 [tools.fnox."platforms.linux-x64"]
-checksum = "sha256:7b720b5852b01bc1e549fcf307ff6642d9929b25386d935da31f372ecedb88e4"
-url = "https://github.com/jdx/fnox/releases/download/v1.35.0/fnox-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/jdx/fnox/releases/assets/542598851"
+checksum = "sha256:ecdbccd01cac2d5e32601636cc0a7b1d8b1501151b4683d660b1c024763ced45"
+url = "https://github.com/jdx/fnox/releases/download/v1.35.1/fnox-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/jdx/fnox/releases/assets/546210980"
 provenance = "github-attestations"
 provenance_verified = true
 
