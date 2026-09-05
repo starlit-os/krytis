@@ -72,7 +72,7 @@ depends:
 - desktop/xdg-utils.bst
 
 variables:
-  version: "3.2.2"
+  version: "3.3.0"
   strip-binaries: ''
 
 config:
@@ -116,11 +116,11 @@ sources:
   directory: bundle
   (?):
   - arch == "x86_64":
-      url: github_files:Equicord/Equibop/releases/download/v3.2.2/equibop-3.2.2.tar.gz
-      ref: 1550a0fbfcb7ccad882c5b6258204c6219820d61a84c4270c9e2934bce2591b0
+      url: github_files:Equicord/Equibop/releases/download/v3.3.0/equibop-3.3.0.tar.gz
+      ref: 7ab42e569da77f73d8c3dbdedc041b161d6339119fdd9843c477b92be6154774
   - arch == "aarch64":
-      url: github_files:Equicord/Equibop/releases/download/v3.2.2/equibop-3.2.2-arm64.tar.gz
-      ref: 28bc1fd135c77910470b6fa508f998eab43124628897b674d14ad1b1defa404e
+      url: github_files:Equicord/Equibop/releases/download/v3.3.0/equibop-3.3.0-arm64.tar.gz
+      ref: 2d51491583c5410258fa35b1a19db9d15c08ae2387033c82c8b7d554f08e3a11
 - kind: remote
   filename: equibop.svg
   url: github_raw:Equicord/Equibop/59012b50cdebbeabfb2f0ca1443c7be3dcfb7efa/build/icon.svg
