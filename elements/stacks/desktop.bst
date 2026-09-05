@@ -192,6 +192,13 @@ depends:
   # for per-game scheduler switching. Requires kernel sched-ext support
   # (present in linux-cachyos). Closes #228.
   - desktop/scx-loader.bst
+  # scx_lavd/scx_bpfland/scx_cosmos: the sched-ext scheduler binaries
+  # scx_loader actually loads over org.scx.Loader — the loader ships with
+  # nothing to exec without them. No default_sched/default_mode is set here
+  # or in any falcond profile: this closes the "loader has nothing to load"
+  # gap without opting the system into a scheduler swap by default — that
+  # remains a deliberate follow-up decision, not an oversight. Closes #590.
+  - desktop/scx-scheds.bst
 
   # ── Apps ───────────────────────────────────────────────────────────────
   # All pre-built desktop apps are grouped in desktop-apps to keep this file

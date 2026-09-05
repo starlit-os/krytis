@@ -1316,6 +1316,80 @@ Install targets from the upstream source tree:
 - `configs/org.scx.Loader.policy` → `%{datadir}/polkit-1/actions/`
 - `configs/scx_loader.toml` → `%{datadir}/scx_loader/config.toml`
 
+## scx-scheds (sched-ext scheduler binaries — #590)
+
+`elements/desktop/scx-scheds.bst`. Source: https://github.com/sched-ext/scx — the monorepo the
+scx_loader repo-disambiguation note above tells you *not* to use for the loader itself. This
+element is the legitimate reason that monorepo is in the graph at all: the actual scheduler
+*binaries* only exist there, never in the standalone `scx-loader` repo. It builds only 3 of the
+13 upstream schedulers, not the full workspace:
+`scx_lavd` (gaming/latency) and `scx_bpfland` (interactive) — the two `stacks/desktop.bst`'s own
+falcond comment already names — plus `scx_cosmos`, upstream's own `default_sched`
+recommendation. `cargo build -p scx_lavd -p scx_bpfland -p scx_cosmos`, not `--workspace`.
+
+**Pinned to v1.1.2, not the newer v1.1.3.** v1.1.3's `scx_lavd` causes massive freezes on 7.2.x
+kernels — krytis ships `linux-cachyos` 7.2.2 (`elements/core/linux-cachyos.bst`), an exact match
+for the affected line. Sibling fork zirconium-hawaii's `gamerslop/scx-scheds.bst` hit this first
+and carries the same `exclude: [v1.1.3]` on its `git_repo` source with the same comment — verify
+independently before ever dropping the exclude, don't just trust that a later scx release fixed
+it without re-checking against whatever kernel line krytis is on by then.
+
+**No `default_sched`/`default_mode` is set, in `scx_loader`'s config or any falcond profile.**
+This was a real decision, not an oversight (see issue #590's own framing): shipping the binaries
+closes the actual reported hole — `scx_loader` had nothing to `exec` — without opting the system
+into a scheduler swap by default. `busctl ... StartScheduler su scx_lavd 0` still works today;
+it's just not automatic. Making any scheduler the default is a user-visible behavioral change
+(AGENTS.md's Design Gate) left to a future, explicit decision.
+
+**Toolchain, derived from actually tracing upstream's `build.rs` chain, not copied wholesale from
+zirconium-hawaii's own (full-workspace) `gamerslop/scx-scheds.bst`:**
+- `scx_utils`/`scx_arena`'s `build.rs` (via the `scx_cargo` crate's `ClangInfo`/`BpfBuilder`)
+  shells out to `clang` directly (`clang -target bpf -c ...`) and never calls `bpftool` — vmlinux.h
+  ships pre-generated inside `scx_utils`'s own `vmlinux.tar.zst`, decoded at build time with the
+  pure-Rust `ruzstd` crate. `freedesktop-sdk.bst:components/bpf-maybe.bst` (bpftool + vmlinuxh) is
+  therefore **not** a dependency here, unlike `overrides/systemd-base.bst`'s own bpf-framework
+  build, which does need it.
+- `libbpf-rs`'s default feature is `vendored-libbpf` (not `static`): it compiles libbpf from a
+  bundled source snapshot against the *system's* libelf/zlib (`components/elfutils.bst`,
+  `components/zlib.bst` in `build-depends`, for headers) and links the result dynamically
+  (`cargo:rustc-link-lib=bpf`, non-static). That means each shipped binary needs a `libbpf.so`
+  satisfying that SONAME **at runtime** — `freedesktop-sdk.bst:components/libbpf.bst` is a real
+  `depends:`, not just a build tool, even though nothing in this element's own install-commands
+  installs a `.so`. Same upstream libbpf release (v1.7.0) as scx's vendored copy, so the SONAME
+  matches. zirconium-hawaii's own element omits this from its `depends:` list — don't copy that
+  part forward without re-checking it against whatever libbpf-rs's default feature is by then.
+- `scx_utils` build.rs also uses the `bindgen` crate as a library (not the `bindgen` CLI tool —
+  `components/rust-bindgen.bst` is unrelated here, that's for consumers who shell out to a
+  `bindgen` binary). `bindgen`'s `clang-sys` dependency dlopens `libclang.so` at build-script run
+  time; `freedesktop-sdk.bst:components/llvm.bst` in `build-depends` supplies it (same component
+  `overrides/rust-bindgen.bst` depends on for the same reason), alongside the `clang` binary
+  itself for the two points above.
+- Reverse-dependency-checked against the pinned commit's full workspace `Cargo.lock` (BFS closure
+  from `scx_lavd`/`scx_bpfland`/`scx_cosmos`) before trusting or dropping any of zirconium-hawaii's
+  full-workspace deps: `libseccomp` is pulled in only by `scx_rustland_core` (the `scx_rustland`
+  scheduler), `protobuf`/`jq` only by `scxtop`/`perfetto_protos` — none reachable from this
+  element's 3-scheduler subset, so none of the three are declared here. Re-run the same closure
+  check (`cargo metadata`-equivalent BFS over `Cargo.lock`'s `dependencies` arrays) before adding
+  a 4th scheduler to the subset; don't assume the current dependency set still covers it.
+
+The `kind: cargo2` source vendors crates.io tarballs for the **entire workspace** `Cargo.lock`
+(what `python3 files/scripts/generate_cargo_sources.py` and `bst source track` both always
+produce — there's no per-package-subset mode), even though only 3 of ~30 workspace members
+actually get compiled. That's expected and matches every other cargo2 element in this repo —
+the extra vendored tarballs cost fetch/disk, not build time, since `cargo build -p` only compiles
+what the resolved dependency graph of the requested packages actually needs.
+
+Update path: `kind: git_repo` + `track: v*`, `manual-merge` group in `track-bst-sources.yml`
+(option (a) of AGENTS.md's update path gate — no separate mise task, unlike `scx-loader-update`,
+because this source is `git_repo` not `kind: tar`).
+
+**Verification note:** a from-scratch native build of this element was not runnable on the
+workstation this was authored on (95% full local disk, BuildStream's local CAS quota exceeding
+free space partway through a cold freedesktop-sdk bootstrap) — `mise validate` (full element
+graph + `fatal-warnings` resolution, including the `unaliased-url` check against the ~3200-line
+cargo2 block) passed, but no sandboxed `cargo build` was actually run before this landed. Treat
+the CI build on the PR as the first real build signal, not a formality.
+
 ## Kernel Tuning — config/desktop-udev.bst
 
 `config/desktop-udev.bst` installs kernel configuration files from `files/desktop-tweaks/`. It covers:
