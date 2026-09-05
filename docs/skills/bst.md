@@ -379,12 +379,42 @@ went live; the two-step form preserves the exact same parent-dir-creation and mo
 behavior (`install -D`) and has no such dependency, so it costs nothing even where
 remote execution isn't in play. Krytis has no `remote-execution:` block in `project.conf`
 today (CAS-only — source/artifact caching, not sandbox execution) so this isn't live yet,
-but the single-step form is used at 20+ sites across `elements/config/*.bst`,
-`core/mise.bst`, and `core/pangolin-cli.bst` — all latent failures for the day remote
-execution is turned on. New elements should use the two-step form from here on — every
-example in this file does — and #673 tracks backporting the existing sites. Expect to see
-the single-step form when reading `elements/`; that is the un-migrated tail, not a
-counter-example to follow.
+but the single-step form was used at 46 sites across `elements/config/*.bst`,
+`core/mise.bst`, `core/pangolin-cli.bst` and others — all latent failures for the day
+remote execution is turned on. #735 backported every one of them (2026-09-04), so
+`elements/` is uniformly two-step today; keep it that way in new elements.
+
+### The rewrite is not mode-transparent — writable mode first, never `-Dm440`
+
+`install -Dm440 /dev/stdin "<target>" <<'EOF'` worked because a single `install` opens the
+target writable, copies, and only *then* `fchmod`s it to 0440. Split into two steps, the
+0440 is already in place when `cat >` tries to open the file, and the build sandbox does
+not run as root, so DAC applies:
+
+```
+sh: line 3: /buildstream-install/etc/sudoers: Permission denied
+```
+
+That is exactly how #735 broke `core/sudo-rs.bst` (`/etc/sudoers`, the one 0440 target
+among 48 install sites) and with it every `publish` run on `main` — see run
+[33872670405](https://github.com/starlit-os/krytis/actions/runs/33872670405). Before
+converting a site, check the mode: only modes with an owner write bit (`6xx`, `7xx`)
+survive the mechanical rewrite. **And don't "fix" it by chmod'ing after the `cat` — that
+is theatre.** BST's CAS stores only an executable bit per file, so every artifact file
+arrives in the image as 0644 or 0755 no matter what `install -m` said; the running system
+has `/etc/sudoers` at 0644 today, and always has. A genuinely stricter mode has to come
+from `public.initial-script`, the same mechanism the setuid bit needs (§ Junction
+override: sudo-rs).
+
+**No CI gate catches an element that stops building.** `Checks` is static-only — no `bst
+build` on PRs, as `checks.yml`'s own header comment states — and `cache-warm.yml`'s build
+step ends in `exit 0` with a `::warning::`, so run 33872185343 reported **success** nine
+minutes after the break landed, and pushed the failed artifact to the shared cache for
+`publish` to pull and discard. Element-build regressions surface only in the 420-minute
+`publish` job. When a PR touches `install-commands`, build the touched element locally
+first: `mise run bst -- build core/<element>.bst` (~30s for a leaf element with warm
+deps), then `mise run bst -- artifact checkout <element> --directory /tmp/co` to inspect
+what actually landed.
 
 ## Multi-line YAML Plain Scalars Do Not Shell-Continue
 
@@ -2825,12 +2855,24 @@ Key patterns (matched from `dakota/elements/bluefin/sudo-rs.bst`):
 - **`kind: make`** not `kind: manual`
 - **No `--locked`** on `cargo build --release`
 - **No `pkg-config`** in build-depends — PAM found without it
-- **Setuid via `initial-script`** — BST strips setuid bits from artifacts; `install -Dm4755` in `install-commands` does NOT survive. Use `install -Dm755` to install the binary, then set `public.initial-script` to run `chmod 4755` on the assembled sysroot (see pattern below)
+- **Setuid — and every non-default mode — via `initial-script`** — BST's CAS stores one bit
+  of mode per file (executable or not), so artifacts arrive as 0644/0755 and `install
+  -Dm4755` or `-Dm440` in `install-commands` does NOT survive. Install the binary
+  `-Dm755`, then set `public.initial-script` to `chmod 4755` on the assembled sysroot (see
+  pattern below). Same for a read-only config file: `install -Dm440` buys nothing and, with
+  the two-step `/dev/null` + `cat >` write, actively breaks the build (§ Config-only
+  Elements)
 - **`sudoedit` is a symlink** to `sudo` (`ln -sr ... sudo sudoedit`)
 - **`overlap-whitelist`**: `/usr/bin/sudo`, `/usr/bin/sudoedit`, `/usr/lib/debug/usr/bin/sudo.debug`
 - **PAM linking**: `linux-pam.bst` must appear in BOTH `build-depends` (linker) AND `depends` (runtime)
 - **`vm/config/sudo.bst` stays**: installs `sudoers.d/wheel`; no change to `base-system.bst` needed
-- **Must install `/etc/sudoers`**: overriding `components/sudo.bst` drops the sudoers file that GNU sudo's `make install` creates. sudo-rs requires it to exist (no fallback). Install with `#includedir /etc/sudoers.d` content, mode 0440.
+- **Must install `/etc/sudoers`**: overriding `components/sudo.bst` drops the sudoers file
+  that GNU sudo's `make install` creates. sudo-rs requires it to exist (no fallback).
+  Install `-Dm644` with `#includedir /etc/sudoers.d` content. Upstream ships 0440 and the
+  element used to ask for it, but CAS normalizes it to 0644 on the way into the image
+  (`stat /etc/sudoers` on a running krytis: `644 root:root`) — sudo-rs only rejects sudoers
+  that is group/world *writable*, so 0644 is accepted. Want 0440 for real? It has to go
+  through `initial-script`, and that is a Security Gate change
 - **Must install `/etc/pam.d/sudo`**: same override drops fdsdk's `pam.conf`. Install with `include system-auth` (which `config/u2f-config.bst` provides via `pam_u2f` → `pam_unix` chain).
 - **No visudo**: sudo-rs doesn't ship it; omit without replacement
 - Upstream URL: `github:trifectatechfoundation/sudo-rs.git` (org was renamed from `memorysafety`)

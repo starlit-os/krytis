@@ -27,8 +27,15 @@ config:
   install-commands:
   - install -Dm755 target/release/sudo "%{install-root}/usr/bin/sudo"
   - ln -sr "%{install-root}/usr/bin/sudo" "%{install-root}/usr/bin/sudoedit"
+  # Install /etc/sudoers 0644, not 0440: with the two-step write the mode lands
+  # before `cat >` opens the file, and the build sandbox is not root, so 0440
+  # gives `Permission denied` (broke publish run 33872670405). Chmod'ing after
+  # the write would be theatre — BST's CAS keeps only the exec bit, so every
+  # artifact file arrives 0644/0755 regardless (live image: /etc/sudoers 0644).
+  # A stricter mode has to be applied from `initial-script`, like the setuid
+  # bit above. sudo-rs only requires sudoers not be group/world writable.
   - |
-    install -Dm440 /dev/null \
+    install -Dm644 /dev/null \
       "%{install-root}/etc/sudoers"
     cat > "%{install-root}/etc/sudoers" <<'EOF'
     #includedir /etc/sudoers.d
