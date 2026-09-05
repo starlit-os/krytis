@@ -159,6 +159,16 @@ if [ -n "$DRY_RUN" ]; then
 fi
 
 if [ -z "$ASSUME_YES" ]; then
+    # No TTY (CI, an agent's shell, `| tee`) means `read` fails immediately and
+    # `set -e` would abort with a bare "task failed" right after printing the
+    # removal list — indistinguishable from the task deciding not to run. Say
+    # what to do instead. Never auto-confirm: the list is the whole review step.
+    if [ ! -t 0 ]; then
+        echo >&2
+        echo "ERROR: stdin is not a terminal, so the confirmation prompt cannot be answered." >&2
+        echo "       Re-run with --yes to remove the worktrees listed above, or --dry-run to only report." >&2
+        exit 1
+    fi
     echo
     read -r -p "Remove the above? [y/N] " reply
     case "$reply" in [yY]*) ;; *) echo "Aborted."; exit 0 ;; esac
