@@ -818,11 +818,11 @@ In-guest afterwards: `is-system-running` → `running`, `bootctl status` →
 `ghcr.io/starlit-os/krytis:sealed`. That is the acceptance criterion #438 was filed
 for, on the real artifact rather than the isolated ESP.
 
-## Microsoft's `DBXUpdate.bin` has to be re-signed with our KEK
+## Microsoft's dbx has to be re-signed with our KEK — and unioned with ours
 
 
 krytis enrols Microsoft's revocation list, but not Microsoft's copy of it. Their
-published `DBXUpdate.bin` is already an `EFI_VARIABLE_AUTHENTICATION_2` **signed by
+published dbx is already an `EFI_VARIABLE_AUTHENTICATION_2` **signed by
 Microsoft's KEK** — and krytis enrols only its own KEK plus Microsoft's *db* CAs.
 Firmware accepts a `dbx` update only when a KEK it trusts signed it, so shipping
 their file unchanged would produce an update every krytis machine rejects.
@@ -835,20 +835,53 @@ interchangeable:
 
 | File | What it is | Consumed by |
 |---|---|---|
-| `dbx.bin` | upstream artifact, Microsoft-KEK-signed | `generate-ovmf-vars --set-dbx` (virt-fw-vars reads the `EFI_TIME` header; a bare ESL makes it fail with `month must be in 1..12`) |
-| `dbx.esl` | the bare signature list extracted from it | `sign-efi-sig-list dbx …` in the Containerfile, re-signed with krytis's KEK |
+| `dbx.bin` | the upstream artifact verbatim, Microsoft-KEK-signed | `generate-ovmf-vars --set-dbx` (virt-fw-vars reads the `EFI_TIME` header; a bare ESL makes it fail with `month must be in 1..12`) |
+| `dbx.esl` | the union of that payload, the previously committed list, and `files/dbx-extra-revocations/*.der` | `sign-efi-sig-list dbx …` in the Containerfile, re-signed with krytis's KEK |
+
+`dbx.esl` legitimately revokes **more** than `dbx.bin` — it is not extracted from it.
+That is deliberate; see below.
 
 
-Source note: the list lived at `uefi.org/revocationlistfile` for years and moved to
-`github.com/microsoft/secureboot_objects` in 2024, which the UEFI Forum now names as
-authoritative. The old uefi.org URLs return 403.
+Source note: the list lived at `uefi.org/revocationlistfile` for years (those URLs now
+403), moved to `github.com/microsoft/secureboot_objects` in 2024, and moved *again*
+inside that repo in 2026-09 — `PostSignedObjects/DBX/amd64/DBXUpdate.bin` 404s. The
+tree now carries `SignedByKEK2011/` (a `dbx_x64_Legacy` cumulative list plus one file
+per later addition) and `SignedByKEK2023/dbx_x64.efiauth2` (a single cumulative list,
+exactly Legacy + those increments). The task fetches the KEK2023 one because it is the
+superset; which KEK signed it does not matter to us, since the signature is discarded
+and the payload re-signed. Upstream's `PostSignedObjects/Readme.md` still documents the
+pre-move layout, so read the tree, not the docs, when this breaks again.
+
+**An upstream refresh can revoke *less*, and a binary diff will not tell you.** That
+move did not only relocate the file, it pruned it: 443 hashes in what #446 committed,
+289 in the new Legacy list, 297 in the union of every dbx artifact Microsoft now
+publishes. Every list is plain SHA256 (`SignatureSize` 48) — no SVN or SHA384 list
+hiding the difference. Taking upstream verbatim would have un-revoked 154 hashes: the
+#446 staleness hazard running backwards.
+
+So `fetch-microsoft-dbx` merges rather than replaces (#755):
+
+- `dbx.esl` = committed entries, in their existing order, plus upstream entries not
+  already present. Regression is impossible by construction; the task re-parses what it
+  is about to write and aborts if any committed digest is missing.
+- Append-only ordering means an unchanged upstream reproduces the file byte for byte —
+  the task is a no-op, not a reshuffle — and a real update reads as an append.
+- It prints `upstream no longer publishes N of the M committed revocation(s)` whenever
+  upstream shrinks, so a prune is visible in the job log instead of buried in a blob.
+- A signature list type it cannot merge (SVN, SHA384) is fatal, never silently dropped:
+  `Microsoft has changed the dbx format … update the task deliberately`.
 
 
 **`dbx` entries are hashes, not certificates.** A revocation is 16 bytes of owner GUID
 plus a 32-byte SHA-256 digest, so `SignatureSize` is 48 and there is nothing for
 openssl to parse. Any tooling that assumes X509 will report a `dbx` as corrupt —
-`scripts/parse-efi-auth.py` handles both and prints `443 revoked sha256 image hash(es)`
-rather than trying to read a subject line. The build-time `assert_esl` check happens to
+`scripts/parse-efi-auth.py` handles both. Note which mode you want: the default treats
+its argument as an `.auth` and reports per list (`dbx.bin` → `291 revoked sha256 image
+hash(es)`), while `--count-esl` reads a bare signature list and prints a total entry
+count (`dbx.esl` → `447` = 445 hashes + the 2 local x509 revocations). Pointing the
+default mode at a bare `.esl` reports `would enrol nothing` — that is the wrong mode,
+not a corrupt file. The CI job uses `--count-esl` for the PR title.
+The build-time `assert_esl` check happens to
 work unchanged, since 48 > 16.
 
 
