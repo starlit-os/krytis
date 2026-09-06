@@ -1476,6 +1476,46 @@ Before relocating, verify the binary doesn't hardcode the `/opt/...` path: `read
 
 **Diagnosing this on a live system:** `stat /opt` shows `-> var/opt`; `ls -la /opt/<vendor>/` reports "No such file or directory" even though the element is listed in `/usr/manifest.json`; the payload is recoverable for inspection via `/usr/share/licenses/krytis/<element>/opt/...` (license-harvest copy) or by re-extracting the pinned `.deb`/`.tar` directly — the live rootfs itself no longer has it.
 
+### Relative symlinks in the image root: count the `..`s
+
+`oci/krytis/stack.bst`'s `integration-commands` create the ostree-convention symlinks
+(`/home → var/home`, `/opt → var/opt`, `/usr/local → ../var/usrlocal`, …). Only the ones
+living inside `/usr` need a `..` at all, and they need **exactly one**.
+
+`ln -s ../../var/usrlocal usr/local` looks equivalent — resolved on a live kernel it lands
+on `/var/usrlocal` either way, because `/..` is `/`. It is not equivalent to anything that
+resolves the path *sandboxed*: `cap_std` (and tar/OCI extractors, and `openat2`
+`RESOLVE_BENEATH`) reject a traversal that steps above the root even if it steps back down
+afterwards, with:
+
+```
+a path led outside of the filesystem
+```
+
+bootc **1.16.11** added a `runtime-deps` lint that walks every `$PATH` entry inside the
+image root with `cap_std`, and the image's `$PATH` starts with `/usr/local/sbin`. Result:
+`RUN bootc container lint` aborted the whole build (#752, publish run 33980900225) on a
+symlink that had been fine since the image existed. Two aggravating factors worth knowing:
+
+- The lint is *warning*-level, but the escape surfaces as `Err`, and an unexpected `Err`
+  from any lint is fatal — severity does not protect you.
+- It only reproduces with a container-shaped `$PATH`. Running the same binary against the
+  same rootfs with a workstation `$PATH` (no `/usr/local/…` entries) passes.
+
+Isolating one lint is the fast way to confirm a diagnosis without composing an image —
+`--rootfs` takes any directory, and `--skip` everything else:
+
+```shell
+mise run bst -- artifact checkout core/bootc.bst --directory /tmp/bootc-co
+/tmp/bootc-co/usr/bin/bootc container lint --list          # names to skip
+env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  /tmp/bootc-co/usr/bin/bootc container lint --rootfs /tmp/fixture --skip kernel --skip …
+```
+
+A fixture root of a dozen `mkdir`s and the symlinks under test is enough. Note the checked-
+out binary is the *new* bootc, so this also works when the version that added the lint has
+never been in a booted image.
+
 ### Raw binary elements (`kind: remote` + `filename`)
 
 For pre-built raw binaries (not tarballs) use `kind: remote`. The `filename:` key controls the staged filename — place it at the source level, *outside* the arch-conditional block, so `install-commands` can reference a stable name regardless of arch:

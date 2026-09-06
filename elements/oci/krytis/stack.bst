@@ -35,7 +35,12 @@ public:
       - ln -s var/opt /opt
       - ln -s var/mnt /mnt
       - ln -s var/srv /srv
-      - ln -s ../../var/usrlocal usr/local
+      # One `..`, not two: resolved from /usr it lands exactly on the root.
+      # `../../var/usrlocal` resolves to the same place on a real filesystem
+      # (because `/..` is `/`) but escapes the root under any sandboxed
+      # traversal — bootc 1.16.11's new `runtime-deps` lint walks $PATH with
+      # cap_std and died with "a path led outside of the filesystem" (#752).
+      - ln -s ../var/usrlocal usr/local
 
       # "uninitialized" triggers ConditionFirstBoot=yes for systemd-firstboot.service.
       # An empty file does not.
