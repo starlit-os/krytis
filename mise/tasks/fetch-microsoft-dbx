@@ -3,43 +3,102 @@
 
 set -euo pipefail
 
-# Why we re-sign rather than ship Microsoft's file as-is: DBXUpdate.bin is an
+# Why we re-sign rather than ship Microsoft's file as-is: their published dbx is an
 # EFI_VARIABLE_AUTHENTICATION_2 already signed by **Microsoft's KEK**, and krytis
 # does not enrol Microsoft's KEK — only its own, plus Microsoft's *db* CAs. A
 # firmware will only accept a dbx update signed by a KEK it trusts, so Microsoft's
 # signature is useless to us. We keep the payload (the revocation list itself) and
 # re-sign it with krytis's KEK in the Containerfile.
 #
-# That makes the extracted .esl the artifact the build consumes. The upstream
-# .bin's sha256 is recorded next to it so the provenance of that payload stays
-# checkable against Microsoft's published file.
-#
 # Source moved in 2024: uefi.org/revocationlistfile now redirects to Microsoft's
 # repo, which the UEFI Forum names as the authoritative location.
+#
+# Moved again in 2026-09 (#755): PostSignedObjects/DBX/amd64/DBXUpdate.bin 404s.
+# The tree now splits into SignedByKEK2011/ (a `dbx_x64_Legacy` cumulative list plus
+# one file per later addition) and SignedByKEK2023/ (a single cumulative list). We
+# take the KEK2023 one because it is the superset — verified: it is exactly
+# dbx_x64_Legacy plus the two per-hash increment files sitting next to it, so the
+# increments need no separate fetch, and a source that stops growing is the failure
+# mode this whole task exists to avoid.
+#
+# Which KEK signed it is irrelevant *here*: the signature is discarded below and the
+# payload re-signed with krytis's KEK, so the only thing that matters is coverage.
+# Upstream's own PostSignedObjects/Readme.md still documents the pre-move layout, so
+# read the tree, not the docs, if this 404s again.
 CERTS_DIR="files/microsoft-uefi-certs"
-DBX_URL="https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PostSignedObjects/DBX/amd64/DBXUpdate.bin"
+DBX_URL="https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PostSignedObjects/SignedByKEK2023/dbx_x64.efiauth2"
 
-# Both files are committed and both are used:
+# That restructure did not just move the file, it *shrank* it: 443 revoked hashes
+# in what #446 committed, 289 in the new Legacy list, and 297 in the union of every
+# dbx artifact Microsoft now publishes. Taking upstream verbatim would un-revoke
+# 154 hashes — the #446 staleness hazard running backwards, and invisible in a diff
+# of two binary blobs.
+#
+# So dbx.esl is the UNION of what is already committed and what upstream publishes,
+# and the extraction below refuses to write a list that revokes less than the one it
+# replaces. The cost is that dbx.esl is no longer byte-derivable from dbx.bin;
+# provenance for the retained entries is this repo's history (#446 fetched them while
+# Microsoft still published them), which is why both files stay committed.
+#
 #   dbx.bin  the upstream artifact, still carrying Microsoft's KEK signature. It is
-#            the provenance record, and `virt-fw-vars --set-dbx` consumes exactly
-#            this format (it reads the EFI_TIME header, so a bare .esl makes it
-#            fail with "month must be in 1..12").
-#   dbx.esl  the payload extracted from it, which the Containerfile re-signs with
-#            krytis's KEK. sign-efi-sig-list wants a bare signature list.
+#            the provenance record for whatever upstream publishes *today*, and
+#            `virt-fw-vars --set-dbx` consumes exactly this format (it reads the
+#            EFI_TIME header, so a bare .esl makes it fail with "month must be in
+#            1..12"). It may legitimately revoke fewer hashes than dbx.esl.
+#   dbx.esl  the union payload, which the Containerfile re-signs with krytis's KEK.
+#            sign-efi-sig-list wants a bare signature list. This is the file that
+#            decides what a krytis machine actually refuses to boot.
 mkdir -p "$CERTS_DIR"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 echo "==> Fetching ${DBX_URL}"
-curl -sSfL --max-time 120 -o "$TMP/DBXUpdate.bin" "$DBX_URL"
+curl -sSfL --max-time 120 -o "$TMP/dbx-upstream.auth" "$DBX_URL"
 
-python3 - "$TMP/DBXUpdate.bin" "$CERTS_DIR/dbx.esl" <<'PY'
+python3 - "$TMP/dbx-upstream.auth" "$CERTS_DIR/dbx.esl" <<'PY'
 import pathlib, struct, sys, uuid
 
 SHA256 = uuid.UUID("c1c41626-504c-4092-aca9-41f936934328")
 X509 = uuid.UUID("a5c059a1-94e4-4aa7-87b5-ab155c2bf072")
+SHA256_SIG_SIZE = 48  # 16-byte owner GUID + 32-byte digest
 
 src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+
+
+def signature_lists(payload, where):
+    """[(list_type, sig_size, [entry_bytes, ...]), ...] — or exit on malformed input."""
+    out, pos = [], 0
+    while pos + 28 <= len(payload):
+        list_type = uuid.UUID(bytes_le=payload[pos:pos + 16])
+        size, header, sig = struct.unpack_from("<III", payload, pos + 16)
+        if size < 28 or pos + size > len(payload) or sig == 0:
+            sys.exit(f"malformed signature list at offset {pos} in {where}")
+        body = payload[pos + 28 + header:pos + size]
+        if len(body) % sig:
+            sys.exit(f"signature list at offset {pos} in {where} is not a whole number of entries")
+        out.append((list_type, sig, [body[i:i + sig] for i in range(0, len(body), sig)]))
+        pos += size
+    if pos != len(payload):
+        sys.exit(f"trailing bytes after the last signature list in {where} ({len(payload) - pos})")
+    return out
+
+
+def sha256_entries(lists, where):
+    """Ordered 48-byte owner+digest entries. Anything else is fatal, never dropped."""
+    entries = []
+    for list_type, sig, items in lists:
+        if list_type != SHA256:
+            sys.exit(
+                f"{where} carries a {list_type} signature list, which this task cannot merge. "
+                "Microsoft has changed the dbx format (an SVN or SHA384 list would do this); "
+                "update the task deliberately rather than shipping a list that silently drops it."
+            )
+        if sig != SHA256_SIG_SIZE:
+            sys.exit(f"{where}: SHA256 list with SignatureSize {sig}, expected {SHA256_SIG_SIZE}")
+        entries.extend(items)
+    return entries
+
+
 data = src.read_bytes()
 if len(data) < 40:
     sys.exit(f"{src} is too short to be an EFI_VARIABLE_AUTHENTICATION_2")
@@ -50,25 +109,34 @@ payload = data[16 + dw_length:]
 if not payload:
     sys.exit("no signature-list payload after the authentication header")
 
-hashes = certs = lists = 0
-pos = 0
-while pos + 28 <= len(payload):
-    list_type = uuid.UUID(bytes_le=payload[pos:pos + 16])
-    size, header, sig = struct.unpack_from("<III", payload, pos + 16)
-    if size < 28 or pos + size > len(payload) or sig == 0:
-        sys.exit(f"malformed signature list at offset {pos}")
-    entries = (size - 28 - header) // sig
-    if list_type == SHA256:
-        hashes += entries
-    elif list_type == X509:
-        certs += entries
-    lists += 1
-    pos += size
+upstream = sha256_entries(signature_lists(payload, "the upstream dbx"), "the upstream dbx")
+if not upstream:
+    sys.exit("upstream revocation list is empty — refusing to ship a dbx that revokes nothing")
 
-if pos != len(payload):
-    sys.exit(f"trailing bytes after the last signature list ({len(payload) - pos})")
-if hashes + certs == 0:
-    sys.exit("revocation list is empty — refusing to ship a dbx that revokes nothing")
+# Baseline: what krytis already enrols. Only its SHA256 entries matter here; its X509
+# lists are the local revocations appended below and are regenerated on every run.
+baseline = []
+if dst.exists():
+    baseline = sha256_entries(
+        [entry for entry in signature_lists(dst.read_bytes(), dst) if entry[0] == SHA256],
+        dst,
+    )
+
+digest = lambda e: e[16:]  # noqa: E731 — owner GUID is not part of identity
+upstream_digests = {digest(e) for e in upstream}
+baseline_digests = {digest(e) for e in baseline}
+
+# Order is baseline-then-additions, not upstream-then-retained, so that an unchanged
+# upstream reproduces the committed file byte for byte (the task is a no-op instead of
+# a reshuffle) and a real update shows up as an append in `git diff --stat`.
+added = [e for e in upstream if digest(e) not in baseline_digests]
+retained = [e for e in baseline if digest(e) not in upstream_digests]
+merged = baseline + added
+
+print(f"    upstream publishes {len(upstream)} revocation(s): {len(added)} not previously committed")
+if retained:
+    print(f"    upstream no longer publishes {len(retained)} of the {len(baseline)} committed "
+          "revocation(s) — retained, an update must never revoke less")
 
 # Extra certificate-level revocations Microsoft does not publish (#502). Appended as
 # one X509 signature list per file, because SignatureSize is fixed per list and
@@ -82,7 +150,8 @@ MS_OWNER = uuid.UUID("77fa9abd-0359-4d32-bd60-28f4e78f784b")
 extra_dir = pathlib.Path("files/dbx-extra-revocations")
 extra = sorted(extra_dir.glob("*.der")) if extra_dir.is_dir() else []
 
-chunks = [payload]
+body = b"".join(merged)
+chunks = [SHA256.bytes_le + struct.pack("<III", 28 + len(body), 0, SHA256_SIG_SIZE) + body]
 for der_path in extra:
     der = der_path.read_bytes()
     if not der or der[0] != 0x30:
@@ -94,44 +163,45 @@ for der_path in extra:
         + MS_OWNER.bytes_le
         + der
     )
-    certs += 1
     print(f"    + x509 revocation {der_path.name} ({len(der)} bytes)")
 
 combined = b"".join(chunks)
+
+# Re-walk what we are about to write. A list with a wrong size field produces a dbx the
+# firmware rejects wholesale, which would disable every revocation rather than adding
+# two — a silent downgrade, so it is worth parsing back. The superset assertion is the
+# same guard one level up: whatever the merge did, the result may not revoke less than
+# what it replaces.
+read_back = signature_lists(combined, "the merged dbx")
+hashes = [e for lt, _, items in read_back if lt == SHA256 for e in items]
+certs = [e for lt, _, items in read_back if lt == X509 for e in items]
+if len(hashes) != len(merged):
+    sys.exit(f"read back {len(hashes)} hashes, expected {len(merged)}")
+if len(certs) != len(extra):
+    sys.exit(f"expected {len(extra)} x509 revocation(s) from {extra_dir}, read back {len(certs)}")
+
+written = {digest(e) for e in hashes}
+lost = {digest(e) for e in baseline} - written
+if lost:
+    sys.exit(
+        f"refusing to write {dst}: it would drop {len(lost)} revocation(s) that the committed "
+        "list carries. A dbx update must never revoke less than the one it replaces."
+    )
+
 dst.write_bytes(combined)
-
-# Re-walk what we just wrote. An appended list with a wrong size field produces a dbx
-# the firmware rejects wholesale, which would disable every revocation rather than
-# adding two — a silent downgrade, so it is worth parsing back.
-pos = check_hashes = check_certs = 0
-while pos + 28 <= len(combined):
-    lt = uuid.UUID(bytes_le=combined[pos:pos + 16])
-    size, header, sig = struct.unpack_from("<III", combined, pos + 16)
-    if size < 28 or pos + size > len(combined) or sig == 0:
-        sys.exit(f"produced a malformed signature list at offset {pos}")
-    n = (size - 28 - header) // sig
-    if lt == SHA256:
-        check_hashes += n
-    elif lt == X509:
-        check_certs += n
-    pos += size
-if pos != len(combined):
-    sys.exit("produced trailing bytes after the last signature list")
-if (check_hashes, check_certs) != (hashes, certs):
-    sys.exit(f"read back {check_hashes} hashes / {check_certs} certs, expected {hashes} / {certs}")
-if check_certs != len(extra):
-    sys.exit(f"expected {len(extra)} x509 revocation(s) from {extra_dir}, read back {check_certs}")
-
-print(f"    lists={lists + len(extra)} sha256-hashes={check_hashes} x509-certs={check_certs}"
+print(f"    lists={len(read_back)} sha256-hashes={len(hashes)} x509-certs={len(certs)}"
       f" -> {dst} ({len(combined)} bytes)")
 PY
 
-cp "$TMP/DBXUpdate.bin" "$CERTS_DIR/dbx.bin"
+cp "$TMP/dbx-upstream.auth" "$CERTS_DIR/dbx.bin"
 
 echo "==> Revocation list in $CERTS_DIR/:"
 echo "    dbx.bin   $(wc -c < "$CERTS_DIR/dbx.bin") bytes  upstream, Microsoft-KEK-signed (provenance; used by generate-ovmf-vars)"
-echo "    dbx.esl   $(wc -c < "$CERTS_DIR/dbx.esl") bytes  extracted payload (re-signed with krytis's KEK by the Containerfile)"
+echo "    dbx.esl   $(wc -c < "$CERTS_DIR/dbx.esl") bytes  union payload (re-signed with krytis's KEK by the Containerfile)"
 echo "    sha256    $(sha256sum "$CERTS_DIR/dbx.bin" | awk '{print $1}')"
+echo
+echo "    dbx.esl may revoke more than dbx.bin: upstream pruned 154 hashes in their"
+echo "    2026-09 restructure and this task never lets an update revoke less (#755)."
 echo
 echo "    Re-run this task to refresh. Microsoft adds revocations over time, and an"
 echo "    old dbx silently keeps trusting binaries that have since been revoked —"
