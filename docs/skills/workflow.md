@@ -70,7 +70,10 @@ The ≤ 5-word issue title constraint means no truncation is needed.
 ```shell
 mise run prune-worktrees --dry-run   # report only
 mise run prune-worktrees             # remove, with a confirmation prompt
+mise run prune-worktrees --yes       # remove without the prompt — required from an agent shell or CI
 ```
+
+**Agents: pass `--yes`.** The bare form's `read` prompt cannot be answered without a TTY. The task detects that and exits 1 telling you which flag to add — but review the printed removal list first, because `--yes` skips the only review step there is.
 
 It removes a worktree and its branch only when GitHub says the branch's newest PR is `MERGED`. Do not hand-roll the `git worktree remove` / `git branch -D` pair — the task encodes four things that are easy to get wrong:
 
