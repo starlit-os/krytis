@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update libqalculate element to the latest GitHub release"
+#MISE hide=true
 
 # elements/desktop/libqalculate.bst is `kind: tar`, and `bst source track` is a
 # no-op on that source kind — so without this task the element silently falls

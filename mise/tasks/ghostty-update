@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#MISE hide=true
 """
 Update ghostty.bst to the latest release.
 

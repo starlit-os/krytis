@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update a tarball-pinned element to its latest upstream release"
+#MISE hide=true
 #USAGE arg "<name>" required=#false help="Entry from the table below, or 'all' to walk every entry"
 #USAGE flag "--list" help="Print the table and exit"
 

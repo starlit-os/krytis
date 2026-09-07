@@ -759,23 +759,65 @@ fi
 because a hand-maintained copy of the tree rots: the list that lived here named 16
 tasks while `mise/tasks/` held 53.
 
+**25 of the 87 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+tasks below for the list and `mise tasks --hidden` to see them.
+
 | Group | Tasks |
 |---|---|
-| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` `generate-image-version` |
+| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
-| Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `fetch-microsoft-certs` `seal-uki` |
+| Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden) |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
 | Docs & upstreams | `docs-links` `upstream-sync` |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock` |
-| Element updates | one `<name>-update` per tracked element — see § Element update tasks |
+| Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 
 `generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).
 `push` tags and pushes to `ghcr.io/starlit-os/krytis`. `docs-links` resolves
 `docs/*.md` references and markdown links across the tree — run it before any PR
 that touches docs (see `docs/skills/workflow.md` § Where Plan and Design Docs Go).
+
+### Hidden tasks
+
+A task carrying `#MISE hide=true` in its header is **omitted from `mise tasks`** but
+otherwise completely normal: `mise run <name>` works, `#MISE depends=[…]` on it still
+fires, and CI calls it by the same name. It is a listing filter, nothing more —
+verified on mise 2026.9.1 (`mise tasks` omits it, `mise tasks --hidden` lists it,
+`mise run` executes it). Deleting the line un-hides it.
+
+This exists because `mise/tasks/` had grown to 87 tasks, 25 of which no human types
+(#587). Hiding was chosen over the namespace rename the issue originally proposed
+precisely because it renames nothing: `track-bst-sources.yml`'s hardcoded
+`run: mise run <name>-update` lines and every doc that names a task stay correct, and
+it needs no AGENTS.md rename approval.
+
+```bash
+mise tasks --hidden          # the full 87
+mise tasks                  # the 62 worth scanning
+```
+
+Hidden today:
+
+| Task | Only caller |
+|---|---|
+| the 21 `<name>-update` tasks | one `track-bst-sources.yml` job each |
+| `generate-image-version` | `bootstrap`, `bst`/`validate` via `depends`, `cache-warm.yml` |
+| `assert-vault-access` | `publish.yml`, right after `pass-cli login` |
+| `fetch-microsoft-certs` / `fetch-microsoft-dbx` | the secure-boot key flow; `generate-ovmf-vars` prints the command when a cert dir is empty |
+
+The tradeoff is discoverability: someone debugging a tracking failure who does not
+already know `kernel-update` exists will not find it in `mise tasks`. That is why the
+names stay listed above and why `--hidden` is documented here rather than left to be
+rediscovered.
+
+Do **not** hide a task merely because another task calls it. `bst` `validate` `build`
+`load-image` `load-image-root` `lint` `sbom` `sign` `generate-disk` `chunkify`
+`pull-keys` `mise-lock` are all called internally *and* run directly by humans, so they
+stay visible. `load-image-root` in particular was split out of `generate-disk` in #588
+specifically to be run standalone.
 
 ## `boot-test` provisions the guest with systemd credentials, not disk edits
 
@@ -838,6 +880,12 @@ Update tasks live in `mise/tasks/<name>-update`. Each task:
 4. Prints a summary; exits 0 (already up-to-date) or leaves the diff for CI to detect
 
 The CI job in `track-bst-sources.yml` calls the task, checks `git diff`, and opens/updates a PR if anything changed.
+
+**A new update task must carry `#MISE hide=true` in its header** (#587) — these are
+CI-only, one job each, and 21 of them at the top of `mise tasks` is what buried the
+commands humans actually run. Hiding does not affect `mise run <name>-update`; see
+§ Hidden tasks. Put the line directly under `#MISE description=…`; in a Python task
+(`ghostty-update`) it goes right after the shebang, before the module docstring.
 
 ### GitHub sources (`gh api`)
 

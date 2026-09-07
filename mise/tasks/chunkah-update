@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update the pinned chunkah container digest in mise/tasks/chunkify"
+#MISE hide=true
 
 set -euo pipefail
 

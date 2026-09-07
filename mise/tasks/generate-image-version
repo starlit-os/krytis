@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update include/image-version.yml from git history; run before builds in CI"
+#MISE hide=true
 
 # Tasks run from config_root by default, so relative paths resolve to the project root.
 set -euo pipefail
