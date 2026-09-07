@@ -1238,16 +1238,44 @@ This makes matching launcher-dependent, not just "is it Wine":
 Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
 invocation puts one of those literal needles in cmdline/comm within 10 hops.
 
-### dmem_protect cgroup delegation gap (#260)
+### dmem_protect is a no-op, and `Delegate=` cannot fix it (#260)
 
-`dmem_protect = true` in a profile is currently a silent no-op on krytis. The kernel's
-`dmem` controller is present in root `cgroup.controllers` but is not delegated into
-`app.slice`'s `cgroup.subtree_control` (only `cpu io memory pids` are) — so no
-`dmem.min`/`dmem.max` file exists at a game's actual cgroup scope for falcond to write
-into. No error logged; verified by walking a live game's full cgroup ancestry and
-finding zero non-empty `dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd
-drop-in delegating `dmem` (e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice`
-level before this profile field does anything. See #260.
+`dmem_protect = true` in a profile is a silent no-op on krytis, and the drop-in fix that
+#260 originally proposed does not exist.
+
+The gap is real and still present. The kernel's `dmem` controller is in root
+`cgroup.controllers` and accounts for actual VRAM — on an RX 7700 XT,
+`/sys/fs/cgroup/dmem.capacity` reads `drm/0000:2f:00.0/vram 17163091968` and
+`dmem.current` tracks live usage — but it is enabled in no `cgroup.subtree_control`
+below the root: root itself carries `cpuset cpu io memory pids`, `app.slice` carries
+`cpu io memory pids`. So no `dmem.min`/`dmem.low`/`dmem.max` file exists at a game's
+actual scope for falcond to write into, and falcond logs nothing when its write target
+is missing.
+
+**`Delegate=dmem` is rejected by systemd, not merely undocumented.** Re-verified on the
+shipped systemd 261.2 (2026-09-07; first checked on 260.2):
+
+```
+$ systemd-analyze verify ./test-dmem.service   # [Service] Delegate=pids memory cpu dmem
+test-dmem.service:6: Invalid controller name 'dmem', ignoring
+```
+
+`systemd.resource-control(5)` accepts only `cpu cpuset io memory pids` plus the `bpf-*`
+controllers, and states that other kernel controllers are "not covered here yet". The
+shipped pid1 binary contains no `dmem` string at all. This is not version lag a fdsdk
+bump would close: systemd/systemd#37079 (`DeviceMemory{Min,Low,Max}=`) is open,
+`needs-rebase`, and its author marked it draft on 2026-02-27 after a maintainer objected
+that the kernel side is still in flux for anything but GPUs. No activity since
+2026-07-25.
+
+The only remaining path is a manual `echo +dmem > .../cgroup.subtree_control` at every
+level from root down to the app scope, re-applied per login because
+`user-<uid>.slice`/`user@<uid>.service` are created fresh each session — hand-rolled
+surgery on files systemd manages idempotently, so it needs real testing. That testing is
+possible: any amdgpu desktop exposes the controller (numbers above are from one). #260's
+2026-08 comment saying no `dmem`-bearing hardware was available reflects running the
+check inside a container, where the root cgroup exposes only `cpu memory pids`; do not
+repeat that measurement from a container.
 
 ### Proton-catch-all matching depends on launcher process ancestry, not filename
 
@@ -1283,16 +1311,12 @@ anything relying on the Proton fallback does.
 
 ### dmem_protect cgroup delegation gap (#260)
 
-`dmem_protect = true` — set on every profile in this vendored set — is currently a
-silent no-op on krytis. The kernel's `dmem` controller is present in root
-`cgroup.controllers` but is not delegated into `app.slice`'s `cgroup.subtree_control`
-(only `cpu io memory pids` are) — so no `dmem.min`/`dmem.max` file exists at a game's
-actual cgroup scope for falcond to write into. No error logged; verified by walking a
-live game's full cgroup ancestry and finding zero non-empty
-`dmem.min`/`dmem.low`/`dmem.max` anywhere. Needs a systemd drop-in delegating `dmem`
-(e.g. `Delegate=+dmem`) at the `user@.service`/`app.slice` level before this field does
-anything. See #260 — not a defect in this profile set, the profiles are correct, the
-delegation just isn't wired up yet.
+`dmem_protect = true` is set on every profile in this vendored set and does nothing on
+krytis. That is not a defect in the profile set — the profiles are correct, the
+controller is simply not reachable at a game's cgroup scope, and `Delegate=` cannot make
+it reachable. See § dmem_protect is a no-op, and `Delegate=` cannot fix it (#260) above
+for the full evidence; don't propose a `Delegate=+dmem` drop-in, it is rejected at parse
+time.
 
 ## scx_loader (sched-ext D-Bus scheduler loader)
 
