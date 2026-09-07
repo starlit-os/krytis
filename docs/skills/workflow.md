@@ -434,3 +434,15 @@ gh api repos/<owner>/<repo>/commits/<sha> \
 Linked worktrees share one `.git/config`, so a single `git config --local --unset user.email` fixes every worktree of the repo at once — confirm `git config --get extensions.worktreeConfig` is unset first, otherwise per-worktree overrides survive it.
 
 The hardware-key enrollment side lives in `docs/skills/fido2.md` § Signing git commits with the same key.
+
+### Locally rebasing a bot-authored branch strips its signature
+
+`auto/track-*` and similar bot branches get their commit created via the `createCommitOnBranch` GraphQL mutation (see `AGENTS.md` § Commit signing) — server-signed, author *and* committer `github-actions[bot]`, verified. If that branch falls behind `main` (a sibling PR merged) and a human brings it up to date with `git rebase origin/main` + force-push instead of a merge, the rebase replays the bot's commit as a *new* object: new parent SHA invalidates the original signature, and the committer identity flips to the local git user. Nothing re-signs the replay automatically, so the pushed tip lands `verified: false, reason: "unsigned"` even though the human's own commits sign fine — and ruleset "Main" (`required_signatures`, no bypass actors) then reports `mergeStateStatus: BLOCKED` while every status check is green and `mergeable: MERGEABLE`. That combination (checks pass, still blocked) is the signature diagnostic:
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup
+gh api repos/starlit-os/krytis/commits/<tip-sha> \
+  --jq '{verified: .commit.verification.verified, reason: .commit.verification.reason, committer: .commit.committer.name}'
+```
+
+A committer that isn't `github-actions[bot]` on a commit whose message/author still says the bot is the tell that a local rebase touched it. Fix by updating the branch with a merge instead of a rebase (`git merge main` — preserves the bot's signed commit, adds a new human-signed merge commit on top), or by re-running the tracking workflow so `commit-tracking-update.sh` regenerates the commit server-side against current `main`.
