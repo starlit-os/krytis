@@ -201,6 +201,29 @@ ExecStart=
 ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/krytis.boottest_authorized_keys"
 DROPIN
 
+# greetd starts unconditionally (it's enabled via Alias=display-manager.service
+# in the image, no external Wants= needed) and its compositor has nothing to
+# render to in this headless, GPU-less VM: no /dev/dri/card* at all. Rather
+# than failing outright it falls back to software-cursor rendering with no
+# real display to pace itself against, and free-spins rendering frames as
+# fast as the CPU allows -- thousands of "Direct scan-out disabled by
+# software cursor" lines over the run, which starved krytis-boot-probe's own
+# journalctl -p err diagnostics into a 362s timeout instead of ~1s (#764).
+#
+# Reset ExecStart to a no-op, per #487's documented lesson: dependency
+# directives (Before=/After=/Wants=/Requires=) are additive in a drop-in and
+# cannot be cleared, but ExecStart= and other scalar settings CAN be reset by
+# assigning empty first. Restart= must also be reset -- greetd ships
+# Restart=always/RestartSec=1, so leaving it in place would restart the
+# no-op ExecStart every second until StartLimitBurst hits and the unit ends
+# up in "failed" anyway, defeating the point.
+cat > "${WORKDIR}/greetd-dropin.conf" <<'DROPIN'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/true
+Restart=no
+DROPIN
+
 # Always-on failure diagnostics: dump the guest's state to /dev/ttyS0, which QEMU
 # writes to serial.log, so a failing run prints something actionable instead of
 # just firmware banners. DefaultDependencies=no + Type=simple with no After= is
@@ -230,6 +253,7 @@ echo "--- failed units ---";        systemctl --no-pager --no-legend --failed
 # several mountpoints (which silently prints nothing).
 echo "--- mounts ---";              findmnt -A -o TARGET,SOURCE,FSTYPE,OPTIONS | grep -E '^/(etc|var|sysroot)?( |$)'
 echo "--- sshd ---";                systemctl status sshd.service --no-pager | head -20
+echo "--- greetd (should be masked, inactive) ---"; systemctl status greetd.service --no-pager | head -10
 echo "--- listening ---";           ss -tlnp | head -15
 echo "--- errors ---";              journalctl -b --no-pager -p err | tail -40
 echo "===KRYTIS-BOOT-TEST-DIAGNOSTICS-END==="
@@ -239,6 +263,7 @@ cred_b64() { base64 -w0 < "$1"; }
 CRED_ARGS=(
     -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")"
     -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")"
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")"
     -smbios "type=11,value=io.systemd.credential.binary:systemd.extra-unit.krytis-boot-probe.service=$(cred_b64 "${WORKDIR}/probe.service")"
     -smbios "type=11,value=io.systemd.credential.binary:probe.sh=$(cred_b64 "${WORKDIR}/probe.sh")"
     -smbios "type=11,value=io.systemd.credential.binary:krytis.boottest_authorized_keys=$(cred_b64 "${WORKDIR}/id_boottest.pub")"
