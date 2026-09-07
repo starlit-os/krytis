@@ -442,6 +442,62 @@ Gotchas learned the hard way:
 Worth dumping: `systemctl list-jobs`, `systemctl list-units --state=activating`,
 `systemctl --failed`, `findmnt -A`, `journalctl -b -p err`, `ss -tlnp`.
 
+### When the injected probe unit itself fails: pull the offline journal, don't guess from `serial.log` alone
+
+`serial.log` only has what the probe explicitly `echo`ed to `/dev/ttyS0` (see above) — if
+the probe's own script exits non-zero before finishing (or its output never lands there for
+an unrelated reason), `serial.log` can look like a perfectly clean boot with the failure
+totally invisible, because the probe's diagnostics dump is exactly the thing that didn't
+run. `--debug-keep` preserves `test.raw`; read the guest's *actual* journal from it offline
+instead of re-guessing from console text:
+
+```bash
+cd "$WORKDIR"                                   # wherever --debug-keep left test.raw
+sudo losetup -fP --show test.raw                # -> /dev/loopN, with /dev/loopNp1, p2, ...
+lsblk /dev/loopN                                # identify the btrfs ROOT partition, not the ESP
+sudo mkdir -p /mnt/krytis-probe
+sudo mount -o ro /dev/loopNpX /mnt/krytis-probe  # X = the root partition number
+```
+
+The journal is **not** at a plain `/var/log/journal` — per § Btrfs disk layout above, the
+writable `/var` for a composefs deployment lives at `state/deploy/<hash>/var`:
+
+```bash
+HASH=$(ls /mnt/krytis-probe/state/deploy)
+journalctl --directory="/mnt/krytis-probe/state/deploy/$HASH/var/log/journal" \
+  -u <unit> --no-pager -o short-precise --all
+journalctl --directory="/mnt/krytis-probe/state/deploy/$HASH/var/log/journal" \
+  -b --no-pager -o short-precise > /tmp/guest-journal.txt   # whole boot, then grep locally
+```
+
+Cleanup: `sudo umount /mnt/krytis-probe && sudo losetup -d /dev/loopN`.
+
+**Two mistakes that waste a round trip, both hit in practice:**
+
+- **A bare `ls /mnt/krytis-probe/state/deploy` prints the hash on its own line — don't
+  concatenate it with the next command's output.** Running `echo $HASH; ls
+  .../var/log/journal` in one shot and copy-pasting the *combined* output back into a path
+  produces a garbage hash-plus-machine-id string that silently resolves to nothing useful.
+  Keep the deployment hash (from `echo $HASH`, ~64-byte hex) and the machine-id
+  subdirectory `ls .../journal` lists (32-hex-char dir *inside* `journal/`, systemd's normal
+  per-machine layout) as two separate values — `journalctl --directory=` wants the
+  `journal/` parent, not the machine-id dir itself; it discovers the subdirectory on its
+  own.
+- **A multi-line `sudo journalctl --directory=... \` command that gets mis-pasted (e.g.
+  wrapped across a narrow terminal) can silently execute a bare `journalctl` against the
+  *host's own* live journal instead** — the output looks plausible (real timestamps, real
+  service names) until you notice content that cannot possibly come from the guest (e.g. a
+  graphical compositor logging when the guest is serial-only headless with no GPU device at
+  all). Sanity-check any journal dump by grepping for something guest-specific first (the
+  deployment's kernel cmdline, a unit name only the guest's PAM/greetd config carries) before
+  trusting it.
+
+This is how #764 (`noctalia-greeter-compositor` free-spinning in `boot-test`'s
+GPU-less VM, starving `krytis-boot-probe.service`'s own diagnostics into a 362s timeout) was
+root-caused — the fatal `greetd: error: check_children: greeter exited without creating a
+session` line, and the 8,633 repeats of the render-loop warning that explained the timing,
+were both invisible on `serial.log` and only showed up in the offline journal.
+
 ### Screendump the console instead of guessing
 
 A UKI's cmdline has no `console=ttyS0` (it is a desktop cmdline: `rw quiet splash
