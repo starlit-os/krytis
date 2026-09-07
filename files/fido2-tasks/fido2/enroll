@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-#MISE description="Enroll a FIDO2 security key for login and sudo (homed-aware)"
+#MISE description="Enroll a FIDO2 security key for sudo/polkit (homed-aware)"
 
 set -euo pipefail
 
 AUTHFILE="${XDG_CONFIG_HOME:-${HOME}/.config}/Yubico/u2f_keys"
 ORIGIN="pam://$(hostname)"
 
-# A systemd-homed user needs TWO enrollments of the same key, one per consumer:
+# systemd-homed users do NOT get a homed-owned login credential here anymore
+# (`homectl update --fido2-device=auto`, rp_id io.systemd.home). #411 added
+# it; #759/#532 retired it, because systemd-homed always attempts that
+# credential first and only falls back to a password after it fails —
+# unconditionally, even with no key plugged in, since the PIN prompt fires
+# from enrollment metadata before homed ever checks device presence. Worse,
+# a successful FIDO2-only homed login skips pam_unix entirely, so PAM_AUTHTOK
+# never reaches pam_oo7 and the login keyring stays locked all session (#532).
+# homed login is password-only now, full stop; this script cleans up any
+# credential a pre-#759 run left behind. See docs/skills/pam.md and
+# docs/skills/fido2.md.
 #
-#   login     → homed itself, via `homectl update --fido2-device=auto`
-#               (rp_id io.systemd.home). The token's hmac-secret output IS the
-#               key material that decrypts the home area, so nothing but homed
-#               can consume it. pam_u2f cannot serve homed login at all: the
-#               authfile below lives inside the home, which is still an
-#               unmounted encrypted image during the auth phase.
-#   sudo/polkit → pam_u2f, from the authfile below. That path is fine here
-#               because by then homed has mounted the home.
-#
-# For a classic /etc/passwd user pam_u2f covers both, and homed is skipped.
-# See docs/skills/pam.md and docs/skills/fido2.md.
+# pam_u2f still covers a homed user's sudo/polkit: by the time sudo or a
+# polkit prompt runs, homed has already mounted the home, so the authfile
+# below is reachable. For a classic /etc/passwd user pam_u2f covers login,
+# sudo and polkit alike, and homed is skipped entirely.
 is_homed_user() {
   homectl list --json=short 2>/dev/null |
     jq -e --arg u "$1" 'any(.[]; .name == $u)' >/dev/null 2>&1
@@ -75,45 +78,26 @@ else
 fi
 echo ""
 
-# ── 1. Login credential ──────────────────────────────────────────────────────
+# ── 1. Homed login credential cleanup ────────────────────────────────────────
+# Retired by #759/#532 — see the comment block above. Left over from a run
+# of this script before that decision, a homed login credential still causes
+# the PIN-before-presence prompt on every greeter/sudo auth, so remove it
+# rather than leave it to keep tripping people.
 if (( HOMED )); then
-  gum style --foreground 220 --bold "  [1/2] Login credential (systemd-homed)"
-
   EXISTING_HOMED=$(homectl inspect --json=short "$USER" 2>/dev/null |
     jq -r '(.fido2HmacCredential // []) | length' 2>/dev/null || echo 0)
   if [[ "$EXISTING_HOMED" -gt 0 ]]; then
-    gum style --foreground 220 \
-      "  ${EXISTING_HOMED} FIDO2 credential(s) already in your home record."
+    gum style --foreground 220 --bold "  Removing stale homed login credential"
     gum style --foreground 240 \
-      "  homectl replaces them — the old key will stop unlocking your home."
-    gum confirm --default=false "  Replace the homed FIDO2 enrollment?" \
-      || { gum style --foreground 240 "  Skipping homed enrollment."; SKIP_HOMED=1; }
+      "  ${EXISTING_HOMED} FIDO2 credential(s) found in your home record." \
+      "  Retired by #759/#532: it prompts for a PIN even with no key plugged" \
+      "  in, and a FIDO2-only login leaves your keyring locked all session."
+    # No re-key needed for a removal-only update — homectl does not prompt.
+    homectl update "$USER" --fido2-device=
+    gum style --foreground 2 "  ✓ Removed — greeter/sudo login is password-only now"
   fi
-
-  if [[ -z "${SKIP_HOMED:-}" ]]; then
-    # Mirror the detected capabilities into homed's own flags so both
-    # enrollments demand the same factors. homed defaults are PIN|UP.
-    HOMECTL_FLAGS=(
-      --fido2-device=auto
-      --fido2-with-client-pin="$PIN_CAP"
-      --fido2-with-user-presence=yes
-      --fido2-with-user-verification="$UV_CAP"
-    )
-    gum style --foreground 240 \
-      "  homectl asks for your account password first (it re-keys the home's" \
-      "  LUKS/fscrypt slots), then the key PIN, then a touch."
-    echo ""
-    # No gum spin here: homectl needs the terminal for its own prompts.
-    homectl update "$USER" "${HOMECTL_FLAGS[@]}"
-    echo ""
-    gum style --foreground 2 "  ✓ Login credential enrolled in your homed record"
-  fi
-  echo ""
-  gum style --foreground 220 --bold "  [2/2] sudo / polkit credential (pam_u2f)"
-  echo ""
-else
   gum style --foreground 240 \
-    "  Not a systemd-homed user — pam_u2f covers login and sudo alike."
+    "  systemd-homed login is password-only. This key still covers sudo and polkit."
   echo ""
 fi
 
@@ -172,6 +156,6 @@ fi
 gum style --foreground 240 "  Stored in: ${AUTHFILE}"
 if (( HOMED )); then
   gum style --foreground 240 \
-    "  This credential covers sudo and polkit. Login uses the homed record."
+    "  This credential covers sudo and polkit. Greeter login is password-only."
 fi
 echo ""

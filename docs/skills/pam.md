@@ -66,7 +66,7 @@ connecting and `Successfully created item` — the prompt being read and answere
 a secret stored *before* the lock read back correctly. So the unlock genuinely restored access
 rather than just letting the new write through.
 
-## systemd-homed users: FIDO2 login belongs to homed, not pam_u2f
+## systemd-homed users: FIDO2 login belonged to homed, not pam_u2f — until #759/#532 retired it
 
 Two independent things broke FIDO2 login for `systemd-homed`-managed users. Both were fixed in #409; keep them straight, because fixing only the first looks plausible and achieves nothing.
 
@@ -76,7 +76,9 @@ In per-user mode (no `authfile=`) pam_u2f builds the path from the passwd entry 
 
 Moving the authfile to a root-owned absolute path *would* make the `open()` succeed (`authfile=/etc/security/u2f_mappings/%u` + `expand`, no `openasuser` → read as root; note `expand` substitutes only `%u` and `%%`, there is no `%h`). **Do not do it.** For homed, the token's `hmac-secret` output *is* the key material that decrypts the home — `fido2_use_token()` in `src/home/homework-fido2.c` derives the LUKS/fscrypt passphrase from it. A `sufficient` pam_u2f success would end the auth stack before `pam_systemd_home` ever ran, landing the user in a session with no home mounted. FIDO2 for homed login is homed's job, via `homectl update <user> --fido2-device=auto` (rp_id `io.systemd.home`).
 
-pam_u2f is still right for a homed user's **sudo/polkit**: by then the home is mounted, so the per-user authfile is readable. Hence `mise fido2:enroll` enrolls the key twice for homed users — once into the home record, once into `~/.config/Yubico/u2f_keys`.
+pam_u2f is still right for a homed user's **sudo/polkit**: by then the home is mounted, so the per-user authfile is readable. `mise fido2:enroll` enrolls only this authfile for homed users now (see below) — it used to also enroll a homed login credential, retired by #759/#532.
+
+**Retired by #759/#532 (see the dedicated section below).** homed's own FIDO2 login credential is what this subsection describes, and it worked exactly as designed — but "as designed" turned out to mean *always* trying that credential first, with no way to check the key is present before prompting for its PIN, and no way to let a successful FIDO2-only login also populate `PAM_AUTHTOK` for the keyring. Both are structural to how `pam_systemd_home`/`homework-fido2.c` work, not bugs in this wiring. krytis's answer is to stop enrolling this credential at all: `mise fido2:enroll` no longer creates it and actively removes any it finds, so homed login is password-only and pam_u2f keeps covering that user's sudo/polkit exactly as this section still describes. The mechanics above remain correct background for *why* pam_u2f can never take over login duty either — read them as history, not as the current login story.
 
 **2. `/etc/pam.d/greetd` had no `pam_systemd_home.so` at all.**
 
@@ -126,7 +128,41 @@ busctl --system call org.freedesktop.home1 /org/freedesktop/home1 \
 
 **Also drive `sudo` and `login`, not just `system-auth` directly** — they `include` it, and an ordering mistake can show up only through the wrapper. One caveat: a `sudo` probe run as root returns `Success` for *any* password because `pam_rootok.so` is first, so that row proves nothing; test `sudo` as an unprivileged user, or rely on the `system-auth` row it includes.
 
-**Known gap, not a regression:** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore leaves `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129.
+**Known gap, not a regression — and now moot for homed login specifically:** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close this specific instance by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
+
+## #759/#532 — retired the homed FIDO2 login credential; homed login is password-only
+
+**Decision applied 2026-09-07.** Two issues turned out to be the same root cause: #759 (systemd-homed prompts for a FIDO2 PIN before checking the key is even plugged in, both at the greeter and for `sudo`) and #532 (a FIDO2-only homed login leaves the login keyring locked because `pam_unix` never runs to populate `PAM_AUTHTOK`). Both trace to the same thing — a homed user having a FIDO2 *login* credential enrolled at all (`homectl update <user> --fido2-device=auto`, added by #411). Fixing either symptom without removing the credential just trades one bad UX for the other.
+
+**Root cause, source-verified against systemd 261.2** (`src/home/homework-fido2.c:fido2_use_token()`):
+
+```c
+if (salt->client_pin > 0) {
+        if (strv_isempty(secret->token_pin))
+                return -ENOANO;      // returns BEFORE any libfido2 call
+        flags |= FIDO2ENROLL_PIN;
+}
+...
+r = fido2_use_hmac_hash(NULL, "io.systemd.home", ...);   // device enumeration happens in here
+```
+
+The `-ENOANO` short-circuit fires off enrollment metadata alone — no USB/HID enumeration happens until *after* a PIN has been collected via the pam conversation. Reproduced live (`lily`, homed, `fido2HmacCredential` enrolled, `fido2-token -L` empty):
+
+```
+$ sudo -k -v
+[sudo] Please confirm presence on security token of user lily.
+[sudo: authenticate] Security token PIN: ****
+[sudo error] Security token of user lily not inserted.
+[sudo: authenticate] Try again with password:
+```
+
+There is no `pam_systemd_home(8)` option to change this, and it is not unique to homed — [systemd/systemd#32615](https://github.com/systemd/systemd/issues/32615) is the same ask against `systemd-cryptsetup`, closed as not-easy by Poettering (USB enumeration timing at boot). `pam_u2f`, by contrast, checks device presence (`fido_dev_info_manifest`) before ever prompting for a PIN (`util.c:do_authentication()`) — confirmed empirically too, it never triggered a prompt with no device present.
+
+**Fix: stop enrolling the homed login credential; remove any that already exist.** `files/fido2-tasks/fido2/enroll` no longer runs `homectl update --fido2-device=auto` at all. Instead, if it finds an existing `fido2HmacCredential` on the user's home record (left over from before this decision, or hand-enrolled against the grain), it removes it with `homectl update "$USER" --fido2-device=` — an empty value is homed's remove syntax (`parse_fido2_device_field()` unconditionally calls `drop_from_identity("fido2HmacCredential", "fido2HmacSalt")`, then only re-adds if the value is non-empty). Removal needs **no** account password — unlike enrollment, it does not re-key the LUKS/fscrypt slots (`and_change_password` is only set when `arg_fido2_device` ends up non-empty), so this is safe for a script to do unprompted. Verified live: `homectl update lily --fido2-device=` returned immediately with no prompt, `fido2HmacCredential` was gone from the JSON record afterward, and a follow-up `sudo -k -v` went straight to `Password:` with no PIN/presence detour at all.
+
+**Consequence, accepted deliberately:** systemd-homed users lose "touch key to log in" at the greeter entirely — login is password-only. This is not a new restriction in practice: `config/greetd-config.bst`'s `pam_u2f` line has been commented out since #585 anyway (a different keyring-lock hazard), so the greeter has been password-only for everyone already. What changes is that a homed user's login can no longer even *attempt* FIDO2 and hit the PIN-before-presence detour. `sudo`/polkit are unaffected either way — that FIDO2 factor comes from `pam_u2f` on `system-auth`, a completely separate credential that already does device-presence checking correctly.
+
+**`docs/skills/fido2.md`'s enrollment table drops the homed-login row** accordingly — see that file. No PAM-stack change was needed for any of this: `pam_systemd_home`'s jump line in `greetd`/`system-auth` is unchanged, because the fix is entirely at the enrollment layer (never create the credential that made it try FIDO2 at all).
 
 ## pam_oo7: null PAM_AUTHTOK does not unlock
 

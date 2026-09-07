@@ -1,37 +1,36 @@
 # FIDO2 Skills
 
-## One key, four enrollments — know which consumer you are talking to
+## One key, three enrollments — know which consumer you are talking to
 
 A single security key has to be enrolled separately for each consumer, because each uses its own relying-party ID and its own credential store. Enrolling one does nothing for the others:
 
 | Consumer | Enrolled by | rp_id / origin | Stored in |
 |---|---|---|---|
 | LUKS boot unlock | `mise fido2:enroll-luks` → `systemd-cryptenroll --fido2-device=auto` | `io.systemd.cryptsetup` | LUKS2 header token slot |
-| systemd-homed login | `mise fido2:enroll` → `homectl update <user> --fido2-device=auto` | `io.systemd.home` | user record: public `fido2HmacCredential`, privileged `fido2HmacSalt[]` |
 | sudo / polkit / non-homed login | `mise fido2:enroll` → `pamu2fcfg` | `pam://$(hostname)` | `~/.config/Yubico/u2f_keys` |
 | git commit / tag signing | `mise fido2:enroll-signing` → `ssh-keygen -t ed25519-sk -O resident` | `ssh:Signing` | token resident slot + `~/.ssh/id_ed25519_sk_rk_Signing{,.pub}` |
 
-`mise fido2:enroll` detects a homed user and does both the homed and pam_u2f rows in one run; a classic `/etc/passwd` user only gets the pam_u2f row. `mise fido2:enroll-signing` (#678) covers the signing row — see below. Unlike the other three, it is a **repo dev task** (`mise/tasks/fido2/enroll-signing`, run from a krytis checkout on a contributor's own machine), not image content: it writes to the invoking user's own global git config, which has no meaning on a deployed OS image the way LUKS/homed/pam_u2f enrollment does. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
+**A fourth row — systemd-homed login (`homectl update <user> --fido2-device=auto`, rp_id `io.systemd.home`) — existed from #411 and was retired by #759/#532.** systemd-homed always tries an enrolled login credential first and prompts for its PIN before ever checking the key is plugged in (the PIN requirement comes from static enrollment metadata, checked before any libfido2 device enumeration — see `docs/skills/pam.md` § #759/#532), and a successful FIDO2-only homed login skips `pam_unix` entirely, leaving the login keyring's `PAM_AUTHTOK` unset and the collection locked. `mise fido2:enroll` no longer creates this credential and actively removes any it finds on a homed user's record. **A homed user's login is password-only now, full stop** — pam_u2f still cannot serve homed login either way (below), so there is no FIDO2 login path for homed users at all. Their sudo/polkit factor is unaffected: it's the pam_u2f row above, a separate credential store the home being unmounted doesn't touch.
+
+`mise fido2:enroll` detects a homed user only to decide whether to run the cleanup step above; both homed and classic users get the same single pam_u2f enrollment afterward. `mise fido2:enroll-signing` (#678) covers the signing row — see below. Unlike the other two image-side tasks, it is a **repo dev task** (`mise/tasks/fido2/enroll-signing`, run from a krytis checkout on a contributor's own machine), not image content: it writes to the invoking user's own global git config, which has no meaning on a deployed OS image the way LUKS/pam_u2f enrollment does. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
 
 ```bash
 homectl list --json=short 2>/dev/null | jq -e --arg u "$1" 'any(.[]; .name == $u)' >/dev/null
 ```
 
-`homectl list`'s JSON keys come from `table_new("name", "uid", "gid", "state", "realname", "home", "shell")` in `homectl.c:list_homes` — `.name`, not `.userName`. `homectl inspect --json=short <user>` dumps one record at top level, so the enrollment count is `(.fido2HmacCredential // []) | length`.
+`homectl list`'s JSON keys come from `table_new("name", "uid", "gid", "state", "realname", "home", "shell")` in `homectl.c:list_homes` — `.name`, not `.userName`. `homectl inspect --json=short <user>` dumps one record at top level, so the stale-credential count for the cleanup check is `(.fido2HmacCredential // []) | length`.
 
-Why the split is architectural, not a packaging accident: homed derives the home area's LUKS/fscrypt passphrase from the token's `hmac-secret` output, so only homed can consume that credential — and the pam_u2f authfile lives inside the home it would have to unlock. See `docs/skills/pam.md` § systemd-homed users.
+Why homed login and pam_u2f were architecturally split in the first place, even though krytis no longer uses the homed side: homed derives the home area's LUKS/fscrypt passphrase from the token's `hmac-secret` output, so only homed can consume that credential — and the pam_u2f authfile lives inside the home it would have to unlock. See `docs/skills/pam.md` § systemd-homed users.
 
-**`homectl update --fido2-device=` needs no admin auth for your own account** (`org.freedesktop.home1.update-home-by-owner` is `allow_active=yes`), but it *does* imply `--and-change-password`, so it prompts for the existing account password before the key PIN and touch — it has to re-key the underlying LUKS/fscrypt slots. It also **replaces** any existing FIDO2 enrollment: `ARG_FIDO2_DEVICE` drops `fido2HmacCredential`/`fido2HmacSalt` first, so there is no "add a second key" mode. Warn before overwriting.
-
-Mirror the detected key capabilities into homed's flags (`--fido2-with-client-pin=`, `--fido2-with-user-presence=`, `--fido2-with-user-verification=`) so both enrollments demand the same factors; homed's own defaults are `PIN|UP` only, which silently diverges from a pam_u2f credential enrolled with `-V` on a biometric key.
+**`homectl update --fido2-device=` needs no admin auth for your own account** (`org.freedesktop.home1.update-home-by-owner` is `allow_active=yes`). A non-empty value *does* imply `--and-change-password` (prompts for the account password before the key PIN and touch, since it re-keys the LUKS/fscrypt slots) and **replaces** any existing enrollment: `parse_fido2_device_field()` drops `fido2HmacCredential`/`fido2HmacSalt` first regardless of the value given, then only re-adds them if the value is non-empty. That drop-first behavior is also the **removal** syntax — `--fido2-device=` with nothing after the `=` drops the credential and adds nothing back, and since `arg_fido2_device` ends up empty, `and_change_password` is never set, so removal prompts for nothing at all. This is what the enroll script's cleanup step relies on.
 
 **Do not tell users to run `ykman` — it is not in the image.** Set a PIN with `fido2-token -S <device>` (libfido2, which is present).
 
-## Signing git commits with the same key — a fourth consumer
+## Signing git commits with the same key — a third consumer
 
 `mise fido2:enroll-signing` (#678, `mise/tasks/fido2/enroll-signing`) does everything below in one idempotent run: generates the credential if it doesn't already exist locally, points global git config at it, and appends it to `~/.ssh/allowed_signers`. It's a repo dev task, not image content — see the table note above. Read on for what it does and why, needed when troubleshooting the task itself or setting this up somewhere the task doesn't reach.
 
-Git's SSH signing backend (`gpg.format = ssh`) drives an `ed25519-sk` key directly, so every commit carries a hardware-backed signature gated on a physical touch. Enroll it as its own credential — the pam_u2f and homed credentials answer to different rp_ids and are not reachable from `ssh-keygen`.
+Git's SSH signing backend (`gpg.format = ssh`) drives an `ed25519-sk` key directly, so every commit carries a hardware-backed signature gated on a physical touch. Enroll it as its own credential — the pam_u2f and LUKS credentials answer to different rp_ids and are not reachable from `ssh-keygen`.
 
 ```bash
 ssh-keygen -t ed25519-sk -O resident -O application=ssh:Signing \

@@ -57,12 +57,18 @@ config:
     # from system-auth (pam_nologin, oo7).
     #
     # pam_systemd_home must come first and short-circuit on success. For a
-    # systemd-homed user, homed owns the entire credential flow — FIDO2
-    # included (rp_id io.systemd.home) — because the token's HMAC secret IS
-    # the key material that decrypts the home area. pam_u2f cannot serve
-    # homed login: its authfile lives inside the still-unmounted home, and
-    # even a readable authfile would let `sufficient` end the stack before
-    # homed ever activated the home.
+    # systemd-homed user, homed owns the entire credential flow. It used to
+    # include FIDO2 (rp_id io.systemd.home, the token's HMAC secret being the
+    # key material that decrypts the home area) via a login credential
+    # `mise fido2:enroll` enrolled — #759/#532 retired that: homed always
+    # tries an enrolled FIDO2 credential first and prompts for its PIN before
+    # ever checking the key is plugged in, and a FIDO2-only success skips
+    # pam_unix, leaving the login keyring's PAM_AUTHTOK unset. homed login is
+    # password-only now; `mise fido2:enroll` actively removes any leftover
+    # credential instead of creating one. pam_u2f cannot serve homed login
+    # either way, credential or not: its authfile lives inside the
+    # still-unmounted home, and even a readable authfile would let
+    # `sufficient` end the stack before homed ever activated the home.
     #
     # Without this line the greeter does NOT reject a homed user — it does
     # something worse. /etc/nsswitch.conf has `shadow: files systemd`, so
