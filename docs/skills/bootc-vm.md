@@ -438,6 +438,17 @@ Gotchas learned the hard way:
 - `systemd.unit-dropin.multi-user.target` adding `Wants=sshd.service` is also the
   cleanest way to enable a service in a deployed image for a single boot — no
   need to mount the disk and hand-place a `multi-user.target.wants` symlink.
+- **Neutralizing an already-enabled unit for one boot is `ExecStart=` reset, not
+  `Conflicts=`/masking via drop-in.** `boot-test` needed `greetd.service` inert
+  in its GPU-less VM (#764: the compositor free-spins with no display to pace
+  against). A drop-in can't add `Conflicts=`/mask the unit — dependency-type
+  directives are additive, per the `ExecStart=`-reset table above — but it CAN
+  reset `ExecStart=` to a no-op (`ExecStart=` empty, then
+  `ExecStart=/usr/bin/true`), the same trick `sshd-dropin.conf` already uses.
+  **Also reset `Restart=` if the unit ships `Restart=always`** (greetd does,
+  with `RestartSec=1`) — otherwise the no-op `ExecStart` restarts every second
+  until `StartLimitBurst` trips and the unit lands in `failed` anyway, which
+  is the exact "degraded" state this was trying to avoid.
 
 Worth dumping: `systemctl list-jobs`, `systemctl list-units --state=activating`,
 `systemctl --failed`, `findmnt -A`, `journalctl -b -p err`, `ss -tlnp`.
