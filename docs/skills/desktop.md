@@ -1347,15 +1347,18 @@ zirconium-hawaii's own (full-workspace) `gamerslop/scx-scheds.bst`:**
   pure-Rust `ruzstd` crate. `freedesktop-sdk.bst:components/bpf-maybe.bst` (bpftool + vmlinuxh) is
   therefore **not** a dependency here, unlike `overrides/systemd-base.bst`'s own bpf-framework
   build, which does need it.
-- `libbpf-rs`'s default feature is `vendored-libbpf` (not `static`): it compiles libbpf from a
-  bundled source snapshot against the *system's* libelf/zlib (`components/elfutils.bst`,
-  `components/zlib.bst` in `build-depends`, for headers) and links the result dynamically
-  (`cargo:rustc-link-lib=bpf`, non-static). That means each shipped binary needs a `libbpf.so`
-  satisfying that SONAME **at runtime** — `freedesktop-sdk.bst:components/libbpf.bst` is a real
-  `depends:`, not just a build tool, even though nothing in this element's own install-commands
-  installs a `.so`. Same upstream libbpf release (v1.7.0) as scx's vendored copy, so the SONAME
-  matches. zirconium-hawaii's own element omits this from its `depends:` list — don't copy that
-  part forward without re-checking it against whatever libbpf-rs's default feature is by then.
+- `libbpf-rs`'s default feature is `vendored-libbpf`: it compiles libbpf from a bundled source
+  snapshot against the *system's* libelf/zlib (`components/elfutils.bst`, `components/zlib.bst`
+  in `build-depends`, for headers). **Verified 2026-09-07 via a completed sandboxed build:**
+  despite the feature name suggesting a dynamic link, `ldd` on the resulting `scx_lavd` shows no
+  `libbpf.so` — only `libelf.so.1`, `libz.so.1`, `libzstd.so.1`, `libgcc_s.so.1`, `libm.so.6`,
+  `libc.so.6`. libbpf is linked **statically** into each binary, not dynamically as originally
+  assumed when this element was authored. `freedesktop-sdk.bst:components/libbpf.bst` is
+  therefore *not* required in `depends:` for a SONAME to resolve at runtime — it is currently
+  kept anyway (harmless, just an unused runtime dep) pending confirmation that no BPF-skeleton
+  codepath `dlopen`s it under a flag this 3-scheduler subset doesn't exercise. Don't re-derive
+  the "needs libbpf.so at runtime" assumption for a future scheduler addition without re-running
+  `ldd` against the actual built binary — the crate/feature name is not a reliable signal here.
 - `scx_utils` build.rs also uses the `bindgen` crate as a library (not the `bindgen` CLI tool —
   `components/rust-bindgen.bst` is unrelated here, that's for consumers who shell out to a
   `bindgen` binary). `bindgen`'s `clang-sys` dependency dlopens `libclang.so` at build-script run
@@ -1381,12 +1384,14 @@ Update path: `kind: git_repo` + `track: v*`, `manual-merge` group in `track-bst-
 (option (a) of AGENTS.md's update path gate — no separate mise task, unlike `scx-loader-update`,
 because this source is `git_repo` not `kind: tar`).
 
-**Verification note:** a from-scratch native build of this element was not runnable on the
-workstation this was authored on (95% full local disk, BuildStream's local CAS quota exceeding
-free space partway through a cold freedesktop-sdk bootstrap) — `mise validate` (full element
-graph + `fatal-warnings` resolution, including the `unaliased-url` check against the ~3200-line
-cargo2 block) passed, but no sandboxed `cargo build` was actually run before this landed. Treat
-the CI build on the PR as the first real build signal, not a formality.
+**Verification status: built and lint-passed 2026-09-07.** `mise run build --pull` (full
+`generate-image-version` → `load-image` → `lint` pipeline) completed clean: BuildStream 901/901
+subtasks, 0 failed; `desktop/scx-scheds.bst`'s `cargo build --release --frozen --offline -p
+scx_lavd -p scx_bpfland -p scx_cosmos` succeeded in 8m25s; `bootc container lint` passed (13
+checks, 1 skipped) on both the `load-image` and `lint` stages. Confirmed in the resulting image:
+`/usr/bin/scx_lavd`, `scx_bpfland`, `scx_cosmos` present, executable, valid ELF. This is the
+first successful sandboxed build of this element — see the libbpf-linkage correction above,
+which the build made possible to verify.
 
 ## Kernel Tuning — config/desktop-udev.bst
 
