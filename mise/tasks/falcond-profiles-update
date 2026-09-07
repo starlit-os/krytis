@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update falcond-profiles element to the latest GitHub commit"
+#MISE hide=true
 
 set -euo pipefail
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Assert the current Proton Pass session can see the vault fnox.toml names"
+#MISE hide=true
 
 # Creating a personal access token and granting it vault access are two separate
 # operations. Miss the second and every secret lookup fails with fnox's generic

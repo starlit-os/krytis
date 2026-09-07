@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update equibop element to the latest release"
+#MISE hide=true
 
 set -euo pipefail
 

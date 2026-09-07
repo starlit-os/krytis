@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update linux-cachyos element to the latest version from the CachyOS v3 repo"
+#MISE hide=true
 
 set -euo pipefail
 

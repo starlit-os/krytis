@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update gum element to the latest GitHub release"
+#MISE hide=true
 
 set -euo pipefail
 

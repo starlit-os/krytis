@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Update game-devices-udev element to the latest Codeberg release"
+#MISE hide=true
 
 set -euo pipefail
 

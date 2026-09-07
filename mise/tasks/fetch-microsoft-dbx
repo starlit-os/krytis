@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Fetch Microsoft's UEFI revocation list (dbx) into files/microsoft-uefi-certs/ (public, committed)"
+#MISE hide=true
 
 set -euo pipefail
 
