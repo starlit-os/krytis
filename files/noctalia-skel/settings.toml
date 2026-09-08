@@ -9,6 +9,9 @@ start = [ "control-center", "workspaces", "media" ]
 [desktop_widgets]
 enabled = false
 
+[plugins]
+enabled = [ "dumbasaroc/bazaarsearch" ]
+
 [[plugins.source]]
 kind = "git"
 location = "https://github.com/noctalia-dev/official-plugins"

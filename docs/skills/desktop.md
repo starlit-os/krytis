@@ -1414,6 +1414,40 @@ palette name — e.g. palette `"Rose Pine Moon"` is cached as literal filename
 `Rose%20Pine%20Moon.json` (percent signs literally in the filename, not real spaces). Match
 this exactly or the lookup misses.
 
+## noctalia plugins: enabling in skel, and daemon-backed plugins like bazaarsearch
+
+Plugins are **installed but inactive by default** — noctalia's `official` and `community`
+git sources are pre-wired in `files/noctalia-skel/settings.toml` (`[[plugins.source]]`),
+but nothing in either source runs until listed by fully-qualified `<author>/<plugin>` id
+under `[plugins].enabled` in the same `settings.toml`:
+
+```toml
+[plugins]
+enabled = [ "dumbasaroc/bazaarsearch" ]
+```
+
+Same one-shot-skel caveat as everything else in this file (see above) — existing accounts
+need the key added to their own `~/.local/state/noctalia/settings.toml`, or toggled on via
+Settings → Plugins, to pick up a newly-enabled default plugin.
+
+**A plugin that shells out to an external D-Bus service needs that service actually
+running** — enabling the plugin alone only makes the *launcher provider* available, it does
+not start whatever backs it. `bazaarsearch` (issue #763) queries Bazaar's
+`org.gnome.Shell.SearchProvider2` D-Bus interface via `busctl`; Bazaar ships a D-Bus-
+activatable `io.github.kolunmi.Bazaar.SearchProvider.service`, but upstream's own plugin
+docs don't rely on that activation — they call out `spawn-at-startup` as the supported way
+for niri-based DEs to guarantee the daemon is up, so krytis follows that instead of betting
+on the exported flatpak service file being visible on the session bus's `XDG_DATA_DIRS`.
+`files/niri/startup.kdl` spawns it explicitly:
+
+```kdl
+spawn-at-startup "flatpak" "run" "--command=bazaar-daemon" "io.github.kolunmi.Bazaar" "--no-window"
+```
+
+Bazaar itself is a `--system` flatpak (`files/flatpak-preinstall/flatpak-preinstall.sh`,
+#66), not a BST element — nothing to add to the dependency graph for this class of plugin,
+just the settings.toml enable + the niri-side daemon spawn.
+
 ## Apps launched from noctalia share its cgroup — one app's OOM kills the shell
 
 By default (`launch_apps_as_systemd_services = false`) noctalia `fork`+`exec`s launcher,
