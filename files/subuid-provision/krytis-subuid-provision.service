@@ -1,0 +1,22 @@
+[Unit]
+Description=Provision subuid/subgid ranges for local login accounts
+Documentation=https://github.com/starlit-os/krytis/issues/703
+# Neither systemd-sysusers nor systemd-homed populate /etc/subuid/subgid the
+# way `useradd` does, so rootless podman (mise run runner/build,
+# renovate-check, and every per-user podman-restart.service /
+# podman-auto-update.service) fails for any homed-managed account with "no
+# subuid ranges found". See docs/skills/pam.md and docs/skills/ci-runner.md.
+#
+# After systemd-homed.service so a homed account's user record is already
+# registered; before systemd-user-sessions.service so the range exists
+# before any session's own podman-restart.service can race it.
+After=systemd-homed.service
+Before=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/krytis/subuid-provision.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
