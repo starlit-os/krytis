@@ -280,4 +280,27 @@ config:
     ExecStart=/usr/libexec/krytis/greeter-fallback.sh
     EOF
 
+  # greeter is a service account that never runs user containers, but it
+  # gets a full user@<uid>.service session (to launch the compositor) and
+  # inherits the image's global default.target enablement of podman's user
+  # units regardless. Without a subuid/subgid range (systemd-sysusers
+  # doesn't assign one — see config/subuid-provision.bst, which
+  # deliberately does not cover service accounts), every login fails
+  # podman-restart.service/podman-auto-update.service/etc. with "no subuid
+  # ranges found" for no benefit. ConditionUser= skips them for greeter
+  # specifically, same pattern already shipped upstream for pipewire's
+  # ConditionUser=!root. Found investigating a live keyring-lock report
+  # that turned out to be this instead — see docs/skills/pam.md.
+  - |
+    for unit in podman.service podman.socket podman-restart.service \
+        podman-auto-update.service podman-auto-update.timer \
+        podman-clean-transient.service; do
+      dropin="%{install-root}%{indep-libdir}/systemd/user/${unit}.d/50-krytis-no-greeter.conf"
+      install -Dm644 /dev/null "${dropin}"
+      cat > "${dropin}" <<'EOF'
+    [Unit]
+    ConditionUser=!greeter
+    EOF
+    done
+
   - "%{install-extra}"

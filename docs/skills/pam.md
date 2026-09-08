@@ -233,6 +233,44 @@ prompter is not a degraded mode — it is an indefinite hang in every caller, wi
 anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
 `busctl --user list | grep SystemPrompter` before anything else.
 
+### 2026-09-08 investigation: "keyring won't unlock" traced to `podman-restart.service` subuid noise, not a keyring bug
+
+Investigated a live-system report of `gh auth status` intermittently seeing the login
+collection as locked. Journal evidence from a fresh boot (`journalctl -b`), ruling things in
+and out:
+
+- **`oo7-daemon.service` did not restart mid-session** (`systemctl --user status` showed a
+  single PID since login, `Invocation` ID unchanged) — the documented oo7#506 "unlocked
+  collection re-locks with no explicit `Lock()` call on daemon restart" gap above does **not**
+  apply to this instance.
+- **No residual homed FIDO2 login credential** — `mise fido2:status` reported `lily: none`
+  under "systemd-homed login credentials", confirming #759/#532's retirement (see below) is
+  correctly applied on this account. Ruled out as a cause.
+- **The greeter's first `pam_systemd_home` "failure" in the log is not a failure** — it is
+  greetd's normal `create_session` handshake (auth attempted with no credential yet, homed
+  replies "None of the supplied plaintext passwords unlock…", greetd relays the `Password:`
+  prompt, the real password arrives via `post_auth_data` and succeeds a second later). Do not
+  mistake this pair of lines for an authentication regression.
+- **Real bug found, unrelated to the keyring:** at every login, `podman[…]: cannot find
+  UID/GID for user lily: no subuid ranges found for user "lily" in /etc/subuid` — logged by
+  the user's own `podman-restart.service`/`podman-auto-update.service` (started automatically
+  at session start). The identical line repeats for `greeter` moments later when the greeter
+  session tears down. Same root cause as `docs/skills/ci-runner.md` § Rootless podman
+  subuid/subgid, except this fires unconditionally on **every boot for every account**, not
+  just when a contributor happens to run `mise run runner/build`/`renovate-check`. Neither
+  `lily` nor the `greeter` service account has a `/etc/subuid`/`/etc/subgid` entry on this
+  system — systemd-sysusers/homed account creation does not assign one the way classic
+  `useradd` does. Not yet fixed at the image level; worth a deliberate decision (sysusers.d
+  hook, first-boot script, or accepting it as a documented manual step) rather than another
+  per-task warning.
+- **Separate, noisy-but-likely-harmless bug found in passing:** every `sudo` invocation spins
+  up a full `user@0.service` (root's own systemd user manager) that tries to start
+  `oo7-daemon.service` for root and crash-loops it 5× in under a second — `Capability error
+  Operation not permitted (os error 1)` — before hitting `start-limit-hit`. Root has no
+  practical use for a Secret Service, so this is journal noise on every `sudo` call rather
+  than a functional break, but it points at `oo7-daemon`'s systemd unit not handling uid 0
+  cleanly. Not investigated further.
+
 ## oo7's collection path: `Login` on 0.6.0, `login` from 0.7.0.alpha
 
 **Version-specific — check before hardcoding either.** On **0.6.0** oo7 derived the collection

@@ -20,6 +20,11 @@ depends:
   - freedesktop-sdk.bst:vm/config/sudo.bst
   - freedesktop-sdk.bst:vm/config/systemd-homed-firstboot.bst
   - config/systemd-firstboot.bst
+  # Assigns a subuid/subgid range to every local login account at boot —
+  # neither systemd-sysusers nor systemd-homed do this the way `useradd`
+  # does, so rootless podman fails for a homed user without it. See
+  # docs/skills/pam.md and docs/skills/ci-runner.md.
+  - config/subuid-provision.bst
 
   # ── Networking ─────────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/iproute2.bst
