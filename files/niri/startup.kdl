@@ -2,6 +2,15 @@
 
 spawn-at-startup "noctalia"
 
+// Bazaar's D-Bus SearchProvider2 daemon, for noctalia's bazaarsearch launcher
+// plugin (`/bzr <query>`, settings.toml's [plugins].enabled). Bazaar ships a
+// D-Bus-activatable io.github.kolunmi.Bazaar.SearchProvider.service, but
+// upstream's plugin docs call out spawn-at-startup as the supported way to
+// guarantee it's running under niri rather than relying on that activation
+// (see docs/skills/desktop.md). Bazaar itself is a --system flatpak, not a
+// BST element -- files/flatpak-preinstall/flatpak-preinstall.sh (#66).
+spawn-at-startup "flatpak" "run" "--command=bazaar-daemon" "io.github.kolunmi.Bazaar" "--no-window"
+
 hotkey-overlay {
     skip-at-startup
 }
