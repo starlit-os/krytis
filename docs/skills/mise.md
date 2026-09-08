@@ -49,6 +49,36 @@ mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot 
   (`generate-image-version` → `load-image` → `lint`), and confirm the change by inspecting
   image *contents* — `podman run --rm localhost/krytis:latest ...`, or `/usr/manifest.json`
   for element-level presence — never by the lint exit code alone.
+- **`mise lint` is a real multi-stage `podman build`, not a fast static check — its
+  name undersells it.** `Containerfile` has two stages: `base` (`FROM
+  localhost/krytis-input:latest` + `RUN bootc container lint` — this part really is
+  fast, 13 checks in well under a second) and `sealed` (`COPY
+  files/microsoft-uefi-certs/` + a `RUN --mount=type=secret,...` step gated on
+  `SEAL_SECURE_BOOT`). **Both stages build every time**, even for the everyday
+  unsigned case where `SEAL_SECURE_BOOT` defaults to `false` — the `RUN` becomes a
+  no-op `if` branch, but `podman build` still commits a full second image layer for
+  it. `--squash-all` then rewrites/recompresses the *entire* image (krytis is
+  multi-GB — see `docs/skills/bst.md` § `--squash-all` erases parent/layer
+  provenance) once per commit, which is where the wall-clock actually goes.
+  Observed on this repo (2026-09-08): a `mise run lint` invocation still running at
+  442s of wall time before failing partway through the `sealed` stage's commit —
+  budget several minutes minimum, not seconds, and treat it like any other
+  long-running build step (background it, don't block on it inline expecting a
+  quick return).
+- **`mise lint` needs real free disk, not just CPU time — a "no space left on
+  device" failure here is a storage problem, not a broken Containerfile.**
+  `--squash-all` writes a full rewritten copy of the image into podman's graphroot
+  (`~/.local/share/containers/storage/overlay-layers/` for the default rootless
+  store) before the old one is dropped, so peak usage during the build is close to
+  **2×** the image size, not 1×. Observed live: `mise run lint` failed with
+  `Error: committing container for step {...}: exhausting input failed (error:
+  write .../overlay-layers/tmp/temp-dir-.../0-addition: no space left on device)`
+  on a host whose home partition (where the rootless podman store lives) had
+  dropped to 7.5G free against a ~16G podman image store (`podman system df`).
+  Before debugging the build itself, check `df -h` on the podman graphroot
+  (`podman info --format '{{.Store.GraphRoot}}'`) and `podman system df` — the fix
+  is usually `podman image prune`/freeing host disk, not an element or
+  Containerfile change.
 - `generate-disk` requires `sudo` (bootc loopback install needs root).
 - **Three stores, two hops.** `load-image` puts the BST artifact into the *rootless* podman
   store; `load-image-root` copies from there into the *rootful* one. They are separate stores,
