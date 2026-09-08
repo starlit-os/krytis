@@ -13,6 +13,37 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 | `wlroots.so` | `desktop/wlroots.bst` | Shared by noctalia-greeter-compositor |
 
 Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-config.bst`.
+## Alternative compositor: umbriel (planned, #774/#775)
+
+`noctalia-dev/umbriel` — wlroots-based (C++23), scrolling/dwindle/master
+layouts, built by the same team as `desktop/noctalia.bst` and described
+upstream as "Noctalia's compositor side". Decision (#774): **additive**,
+not a niri replacement — ships as a second selectable greetd session
+(`umbriel.desktop` next to `niri.desktop`), niri stays the default.
+Implementation tracked in #775.
+
+Dependency overlap with the existing niri/noctalia stack is unusually high:
+`desktop/wlroots.bst` is already pinned to `0.20.2`, inside umbriel's
+required `wlroots-0.20 >=0.20.1,<0.21.0` range, and
+`desktop/xwayland-satellite.bst` (X11 app support) is already packaged for
+niri. The only genuinely new packaging surface is
+`xdg-desktop-portal-umbriel` (screencast/screenshot portal backend — no
+existing element anywhere). umbriel's own scene-graph fork (`umbrielfx`,
+a SceneFX hard fork) builds in-tree as a static archive via
+`subdir('umbrielfx')` in `meson.build` — unlike niri, no separate
+cargo-vendoring step is needed.
+
+**Config format differs from niri**: umbriel uses TOML
+(`~/.config/umbriel/config.toml`, falling back to
+`<datadir>/umbriel/config.toml`), not niri's KDL — a
+`config/umbriel-config.bst` element is not a reuse of `config/niri-config.bst`,
+it is a parallel element with its own format.
+
+**Tracking caveat**: as of the #774 investigation, `noctalia-dev/umbriel` has
+no tags/releases yet, so it cannot use the `track: v*` pattern
+`noctalia.bst`/`noctalia-greeter.bst` use. Use `kind: git_repo`,
+`track: refs/heads/main` (same branch-tracking pattern as `desktop/stb.bst`
+below) until upstream cuts a first release, then switch to `track: v*`.
 
 ## noctalia-greeter source and config
 
