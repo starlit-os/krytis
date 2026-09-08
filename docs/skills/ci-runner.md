@@ -50,6 +50,41 @@ gh api -X DELETE repos/starlit-os/krytis/actions/runners/<id>
 
 They must hold the same value: the `ARG` default is the only thing a build that bypasses the mise task sees, so it rots silently if only `mise.toml` is bumped. Renovate keeps them in step — the `custom.regex` manager in `.github/renovate.json5` matches both files and rewrites them in one PR (#27, see [`renovate.md`](renovate.md) § Custom regex managers). Bumping by hand means editing both.
 
+### Rootless podman subuid/subgid
+
+`mise run runner/build` (pulls `ubuntu:24.04`) and `mise run renovate-check`
+(pulls `ghcr.io/renovatebot/renovate:latest`) both run **rootless** podman as
+the invoking user, not `sudo podman`. Unpacking a multi-layer image under
+rootless podman requires the user to own a subordinate UID/GID range —
+`/etc/subuid`/`/etc/subgid` — so podman can remap each layer's UIDs into its
+own user namespace. Accounts created without that range (or predating it)
+fail with:
+
+```
+creating build container: unable to copy from source docker://ubuntu:24.04: ...
+unpacking failed (error: exit status 1; output: potentially insufficient UIDs
+or GIDs available in user namespace (requested 0:42 for /etc/gshadow): Check
+/etc/subuid and /etc/subgid if configured locally and run "podman system
+migrate": lchown /etc/gshadow: invalid argument)
+```
+
+**This is per-machine, per-user-account host state — not something the repo,
+`mise.toml`, or the Containerfile can default.** It lives entirely outside
+the project (`/etc/subuid`/`/etc/subgid` are shadow-utils files owned by the
+host), and fixing it needs one-time interactive root:
+
+```bash
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$(id -un)"
+podman system migrate
+```
+
+`runner/build` and `renovate-check` both preflight-check for the range and
+print this fix before the cryptic podman error if it's missing (same pattern
+as `runner/start`'s `apparmor_restrict_unprivileged_userns` warning above) —
+the check surfaces the problem clearly, it doesn't auto-run `sudo` on the
+user's behalf. First hit and root-caused in #703 (`docs/plans/done/2026-09-03-migrate-free-disk-space.md`
+Task 7), where it blocked a local `renovate-check --dry-run` verification.
+
 ---
 
 ## BST Cache in CI

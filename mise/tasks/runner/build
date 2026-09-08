@@ -3,6 +3,20 @@
 
 set -euo pipefail
 
+# Rootless podman needs a subuid/subgid range for the current user to unpack
+# multi-layer images (UID remapping on layer extraction). Missing range ->
+# cryptic failure: "potentially insufficient UIDs or GIDs available in user
+# namespace ... lchown /etc/gshadow: invalid argument". Host-account state,
+# not fixable from repo defaults — see docs/skills/ci-runner.md § Rootless
+# podman subuid/subgid.
+if ! grep -q "^$(id -un):" /etc/subuid 2>/dev/null || ! grep -q "^$(id -un):" /etc/subgid 2>/dev/null; then
+    echo "WARNING: no /etc/subuid/subgid range for $(id -un) — rootless podman will fail"
+    echo "         unpacking multi-layer images from ubuntu:24.04."
+    echo "         Fix (once per machine): sudo usermod --add-subuids 100000-165535 \\"
+    echo "           --add-subgids 100000-165535 $(id -un) && podman system migrate"
+    echo ""
+fi
+
 podman build \
     -f Containerfile.runner \
     -t "${RUNNER_IMAGE}" \
