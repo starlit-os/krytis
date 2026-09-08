@@ -737,3 +737,46 @@ system stays pubkey-only and a `DEBUG=0` production ISO is unaffected.
 Do **not** relax `10-krytis-auth.conf` itself to make tooling work, and do not read this as
 a reason to revisit § Priority above: the fix belongs in the debug-only live environment,
 which is not a krytis release artifact.
+
+## systemd-homed disk-space management: `--auto-resize-mode` defaults to `off`, and an explicit `homectl resize` silently disables rebalancing
+
+**Symptom, found on a real deployed machine (2026-09-08):** the physical disk backing
+`/sysroot` was 95% full while the mounted home filesystem (`df -h /var/home/<user>`) reported
+only ~90% of its own, much smaller size used. The gap was a single file,
+`/sysroot/state/os/default/var/home/<user>.home` — homed's LUKS2 backing image — sized far
+past what the btrfs filesystem inside it actually needed. `btrfs filesystem usage
+/var/home/<user>` on the mounted fs showed a large `Device slack` figure: the btrfs
+filesystem had been shrunk (by an earlier `homectl resize` or rebalance) but the *backing
+loopback file* was never truncated to match, so the difference is pure dead weight on the
+real disk.
+
+**Root cause, from `man homectl`/`man homed.conf` (systemd 261):** two independent knobs, both
+per-user record properties (no `homed.conf` global default exists for either — that file only
+has `DefaultStorage=`/`DefaultFileSystemType=`):
+
+- `--rebalance-weight=` (default **100**, i.e. on) makes homed periodically redistribute free
+  space between active home areas and their backing storage in the background. **A resize
+  turns this off**: "resizing the home area explicitly (with `homectl resize`) will implicitly
+  turn off the automatic [rebalancing]" — so any one-off `homectl resize <user> <size>` an
+  admin runs by hand permanently disables the self-healing background pass for that account,
+  with no warning. Re-enable with `homectl update <user> --rebalance-weight=100`.
+- `--auto-resize-mode=` (default **off**) is separate from rebalancing: `grow` expands the
+  image to `--disk-size=` on login if smaller; `shrink-and-grow` additionally shrinks it back
+  to the minimum the used space allows on a **clean logout**, every session. Neither is enabled
+  by default — a homed image only ever grows unless one of these two mechanisms is active.
+
+**Reclaiming space after the fact:** `homectl resize <user> min` (per `man homectl`, btrfs
+supports this **while the user is logged in** — unlike ext4, which needs the home
+deactivated/logged-out first, and xfs, which cannot shrink at all). Note this resize call
+itself flips `Rebalance` to `off` per the mechanism above, so pair it with
+`--rebalance-weight=100` (or just use `--auto-resize-mode=shrink-and-grow` going forward
+instead of one-off manual resizes).
+
+**Do not "fix" this by enabling `--luks-discard=on` (online discard).** `homectl inspect`
+normally shows `LUKS Discard: online=no offline=yes` — that split is systemd's deliberate
+default, not a misconfiguration: online discard thin-provisions the home area live, so if the
+*outer* filesystem fills up, the *inner* one gets I/O errors mid-write instead of behaving like
+a normal disk. `--auto-resize-mode`/`--rebalance-weight` reclaim space through explicit,
+bounded resize operations instead, which is why krytis's first-boot wizard sets
+`--auto-resize-mode=shrink-and-grow` on the initial account rather than touching discard (see
+`docs/design/first-boot-setup.md`, `files/systemd-firstboot/firstboot-wizard.sh`).
