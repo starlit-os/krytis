@@ -128,7 +128,7 @@ busctl --system call org.freedesktop.home1 /org/freedesktop/home1 \
 
 **Also drive `sudo` and `login`, not just `system-auth` directly** — they `include` it, and an ordering mistake can show up only through the wrapper. One caveat: a `sudo` probe run as root returns `Success` for *any* password because `pam_rootok.so` is first, so that row proves nothing; test `sudo` as an unprivileged user, or rely on the `system-auth` row it includes.
 
-**Known gap, not a regression — and now moot for homed login specifically:** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close this specific instance by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
+**Known gap, not a regression — but NOT moot for homed login, contrary to what this section used to say (see #782).** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close the FIDO2-specific case by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set on the pam handle. That much was verified against `pam_systemd_home.c` source. What #759/#532 did **not** fix, and what this file previously claimed it did: `pam_oo7.so`'s own `auth`-phase line still never runs for a homed user, because `-auth [success=done …] pam_systemd_home.so` terminates the whole auth phase on success regardless of *why* it succeeded — password or FIDO2 makes no difference to that jump. See the dedicated section below (#782) for the mechanics and the fix. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
 
 ## #759/#532 — retired the homed FIDO2 login credential; homed login is password-only
 
@@ -163,6 +163,60 @@ There is no `pam_systemd_home(8)` option to change this, and it is not unique to
 **Consequence, accepted deliberately:** systemd-homed users lose "touch key to log in" at the greeter entirely — login is password-only. This is not a new restriction in practice: `config/greetd-config.bst`'s `pam_u2f` line has been commented out since #585 anyway (a different keyring-lock hazard), so the greeter has been password-only for everyone already. What changes is that a homed user's login can no longer even *attempt* FIDO2 and hit the PIN-before-presence detour. `sudo`/polkit are unaffected either way — that FIDO2 factor comes from `pam_u2f` on `system-auth`, a completely separate credential that already does device-presence checking correctly.
 
 **`docs/skills/fido2.md`'s enrollment table drops the homed-login row** accordingly — see that file. No PAM-stack change was needed for any of this: `pam_systemd_home`'s jump line in `greetd`/`system-auth` is unchanged, because the fix is entirely at the enrollment layer (never create the credential that made it try FIDO2 at all).
+
+## #782 — pam_oo7's auth phase was still unreachable on homed success, even password-only
+
+**Found 2026-09-09, on a live homed login.** #759/#532 made homed login password-only, and
+`docs/skills/pam.md` (this file) claimed that made the pam_oo7-needs-a-password gap "moot" for
+homed users. It didn't check the actual `Locked` property. It was still `b true` for the whole
+session:
+
+```
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked
+b true
+```
+
+Audit trail for the login showed why: `op=PAM:authentication grantors=pam_systemd_home` —
+`pam_unix` and `pam_oo7` are absent from the grantor list. The greetd auth stack is:
+
+```
+-auth  [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
+auth   required   pam_unix.so
+auth   optional   pam_oo7.so
+```
+
+`success=done` terminates the **entire** auth phase immediately on any homed success —
+password or FIDO2 makes no difference to that jump, so retiring the FIDO2 credential in
+#759/#532 never touched this. `pam_unix.so` and `pam_oo7.so`'s auth line simply never execute
+for a homed user.
+
+**Why that breaks the unlock even though `PAM_AUTHTOK` gets set.** Source-verified against
+`systemd/src/home/pam_systemd_home.c:acquire_home()`: on a successful password login it does
+call `sym_pam_set_item(pamh, PAM_AUTHTOK, *secret->password)`, so the token really is on the
+pam handle. But oo7's session-phase module (`session optional pam_oo7.so auto_start`) does not
+read `PAM_AUTHTOK` live — per the existing note below (§ pam_oo7: null PAM_AUTHTOK does not
+unlock, and `pam/src/lib.rs`), `pam_sm_open_session` looks for a stash that `pam_sm_authenticate`
+creates for the transient login helper. If the auth-phase module never runs, there is nothing to
+stash, and `auto_start` only starts the daemon — it can't unlock with a token it never receives.
+
+**Fix: `success=1`, not `success=done`.** PAM's numeric skip action skips exactly N modules
+that follow, then continues the stack — unlike `done`, which ends the phase outright. With
+`pam_unix.so` as the only module between `pam_systemd_home.so` and `pam_oo7.so`, `success=1`
+skips just that one (same as `done` did — a homed user's password is already verified by
+homed, and nss_systemd would let `pam_unix` pass too via the privileged hash, so re-running it
+is redundant at best) and falls through naturally to `pam_oo7.so`, which is the last real line
+in the stack anyway. Net effect: `pam_unix.so` still never runs for a homed login (unchanged
+behavior), and `pam_oo7.so` now does (the fix).
+
+**Scope note: the password stack has the identical shape and was deliberately left alone
+here.** `-password sufficient pam_systemd_home.so` also short-circuits past
+`-password optional pam_oo7.so` on a homed password change (`sufficient` ≈
+`[success=done new_authtok_reqd=done default=ignore]`) — so a homed user who changes their
+password via `homectl`/`passwd` would have their login keyring silently left encrypted under
+the *old* password, re-locking it on every subsequent login. Same mechanism, different
+trigger (password change, not login), not verified live, and not part of #782's fix. Worth its
+own issue if anyone hits it.
 
 ## pam_oo7: null PAM_AUTHTOK does not unlock
 

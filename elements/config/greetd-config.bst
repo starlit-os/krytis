@@ -90,6 +90,32 @@ config:
     # for classic /etc/passwd users, so `default=ignore` is what lets them
     # fall through, while real homed auth failures stay fatal.
     #
+    # success=1, not success=done (#782): `done` terminates the auth phase
+    # immediately, so `pam_oo7.so` below never gets to run its own
+    # `pam_sm_authenticate`. That matters because pam_oo7 does not read
+    # PAM_AUTHTOK live from the session phase — `auto_start` only starts
+    # the daemon. The actual credential handoff to the daemon happens
+    # during the AUTH phase (pam_sm_authenticate stashes it for the
+    # transient login helper `session … pam_oo7.so auto_start` later
+    # consumes) — verified against oo7's `pam/src/lib.rs`:
+    # `pam_sm_open_session` looks for a stash created by
+    # `pam_sm_authenticate`, and finds nothing if that never ran.
+    # `pam_systemd_home` does set PAM_AUTHTOK on a successful password
+    # login (`pam_systemd_home.c:acquire_home()`,
+    # `sym_pam_set_item(pamh, PAM_AUTHTOK, *secret->password)` when
+    # ACQUIRE_MUST_AUTHENTICATE), so the token is there — pam_oo7 just
+    # never got called to pick it up. `success=1` skips exactly the one
+    # module between here and `pam_oo7.so` (`pam_unix.so`, still skipped
+    # for the same reason `done` used to skip it — a homed user's password
+    # is already verified by homed, and nss_systemd would let pam_unix
+    # pass too via the privileged hash, so re-running it is redundant at
+    # best) and lets the stack fall through naturally to `pam_oo7.so`
+    # instead of returning early. Confirmed on a live system: before this
+    # fix, `busctl --user get-property org.freedesktop.secrets
+    # /org/freedesktop/secrets/collection/login
+    # org.freedesktop.Secret.Collection Locked` read `b true` for the
+    # entire session after a normal homed greetd login.
+    #
     # pam_u2f would cover classic users here, before pam_unix (absent authfile
     # falls through) -- but it is DISABLED on this testbed branch as the
     # workaround for krytis#585.
@@ -117,7 +143,7 @@ config:
     # so a FIDO2 key still works for sudo.
 
     auth       required     pam_nologin.so
-    -auth      [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
+    -auth      [success=1 authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     # auth     sufficient   pam_u2f.so cue pinverification   # disabled: krytis#585
     auth       required     pam_unix.so
     auth       optional     pam_oo7.so
