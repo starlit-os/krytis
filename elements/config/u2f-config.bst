@@ -23,12 +23,26 @@ kind: manual
 # Users enroll keys without root via: mise fido2:enroll
 #
 # systemd-homed users: the home area is still an unmounted encrypted image
-# during auth, so the authfile above is unreachable and pam_u2f can never
-# serve homed *login*. That is by design — homed derives the home's volume
-# key from the token's own HMAC secret (rp_id io.systemd.home), so FIDO2 for
-# homed login belongs to pam_systemd_home, which must therefore run first and
-# end the stack on success. pam_u2f still covers homed users' sudo/polkit,
-# where the home is mounted by then. See docs/skills/pam.md.
+# during login, so pam_u2f's per-user authfile is unreachable and it can
+# never serve homed *login* either way — it fails closed
+# (PAM_AUTHINFO_UNAVAIL, device presence checked before any prompt) and
+# falls through regardless of stack position. That is what makes putting
+# pam_u2f *first* safe: for login it is a no-op (home not mounted yet),
+# for sudo/polkit it now actually gets a chance (home is mounted by
+# then).
+#
+# pam_u2f used to sit *after* pam_systemd_home (#411's ordering, matching
+# where upstream's pam_systemd_home(8) EXAMPLE places its own jump line).
+# That was wrong for sudo/polkit: pam_systemd_home always succeeds for a
+# homed user via password (no homed FIDO2 login credential exists
+# post-#759/#532), and `success=done` ends the whole auth phase
+# immediately — pam_u2f, one line below, never ran. The key being
+# enrolled and the home being mounted were both irrelevant; sudo always
+# fell straight to a password prompt with no FIDO2 attempt at all.
+# Reordered in #784: pam_u2f now runs first. FIDO2 for homed *login*
+# (unmounted home) still belongs to pam_systemd_home, which still owns
+# that credential flow — this reorder only lets pam_u2f actually compete
+# for sudo/polkit, where it could not before.
 #
 # The pam_systemd_home jump spec is upstream's (pam_systemd_home(8) EXAMPLE),
 # not `sufficient`: the module returns PAM_USER_UNKNOWN — not PAM_IGNORE —
@@ -66,8 +80,8 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/system-auth"
     cat > "%{install-root}%{sysconfdir}/pam.d/system-auth" <<'EOF'
     auth        required      pam_env.so
-    -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_u2f.so cue pinverification
+    -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_unix.so try_first_pass nullok_secure
     auth        required      pam_deny.so
 
@@ -92,8 +106,8 @@ config:
       "%{install-root}%{sysconfdir}/pam.d/password-auth"
     cat > "%{install-root}%{sysconfdir}/pam.d/password-auth" <<'EOF'
     auth        required      pam_env.so
-    -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_u2f.so cue pinverification
+    -auth       [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
     auth        sufficient    pam_unix.so try_first_pass nullok_secure
     auth        required      pam_deny.so
 
