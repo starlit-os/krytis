@@ -128,7 +128,7 @@ busctl --system call org.freedesktop.home1 /org/freedesktop/home1 \
 
 **Also drive `sudo` and `login`, not just `system-auth` directly** — they `include` it, and an ordering mistake can show up only through the wrapper. One caveat: a `sudo` probe run as root returns `Success` for *any* password because `pam_rootok.so` is first, so that row proves nothing; test `sudo` as an unprivileged user, or rely on the `system-auth` row it includes.
 
-**Known gap, not a regression — and now moot for homed login specifically:** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close this specific instance by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
+**Known gap, not a regression — but NOT moot for homed login, contrary to what this section used to say (see #782).** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close the FIDO2-specific case by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set on the pam handle. That much was verified against `pam_systemd_home.c` source. What #759/#532 did **not** fix, and what this file previously claimed it did: `pam_oo7.so`'s own `auth`-phase line still never runs for a homed user, because `-auth [success=done …] pam_systemd_home.so` terminates the whole auth phase on success regardless of *why* it succeeded — password or FIDO2 makes no difference to that jump. See the dedicated section below (#782) for the mechanics and the fix. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
 
 ## #759/#532 — retired the homed FIDO2 login credential; homed login is password-only
 
@@ -169,6 +169,60 @@ sense that #759/#532 didn't make anything worse for them — it does not mean pa
 worked for sudo/polkit before this decision either. That was a separate, pre-existing bug
 (module ordering, not the FIDO2-login-credential issue this section is about) — see the
 dedicated #784 section below.
+
+## #782 — pam_oo7's auth phase was still unreachable on homed success, even password-only
+
+**Found 2026-09-09, on a live homed login.** #759/#532 made homed login password-only, and
+`docs/skills/pam.md` (this file) claimed that made the pam_oo7-needs-a-password gap "moot" for
+homed users. It didn't check the actual `Locked` property. It was still `b true` for the whole
+session:
+
+```
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked
+b true
+```
+
+Audit trail for the login showed why: `op=PAM:authentication grantors=pam_systemd_home` —
+`pam_unix` and `pam_oo7` are absent from the grantor list. The greetd auth stack is:
+
+```
+-auth  [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
+auth   required   pam_unix.so
+auth   optional   pam_oo7.so
+```
+
+`success=done` terminates the **entire** auth phase immediately on any homed success —
+password or FIDO2 makes no difference to that jump, so retiring the FIDO2 credential in
+#759/#532 never touched this. `pam_unix.so` and `pam_oo7.so`'s auth line simply never execute
+for a homed user.
+
+**Why that breaks the unlock even though `PAM_AUTHTOK` gets set.** Source-verified against
+`systemd/src/home/pam_systemd_home.c:acquire_home()`: on a successful password login it does
+call `sym_pam_set_item(pamh, PAM_AUTHTOK, *secret->password)`, so the token really is on the
+pam handle. But oo7's session-phase module (`session optional pam_oo7.so auto_start`) does not
+read `PAM_AUTHTOK` live — per the existing note below (§ pam_oo7: null PAM_AUTHTOK does not
+unlock, and `pam/src/lib.rs`), `pam_sm_open_session` looks for a stash that `pam_sm_authenticate`
+creates for the transient login helper. If the auth-phase module never runs, there is nothing to
+stash, and `auto_start` only starts the daemon — it can't unlock with a token it never receives.
+
+**Fix: `success=1`, not `success=done`.** PAM's numeric skip action skips exactly N modules
+that follow, then continues the stack — unlike `done`, which ends the phase outright. With
+`pam_unix.so` as the only module between `pam_systemd_home.so` and `pam_oo7.so`, `success=1`
+skips just that one (same as `done` did — a homed user's password is already verified by
+homed, and nss_systemd would let `pam_unix` pass too via the privileged hash, so re-running it
+is redundant at best) and falls through naturally to `pam_oo7.so`, which is the last real line
+in the stack anyway. Net effect: `pam_unix.so` still never runs for a homed login (unchanged
+behavior), and `pam_oo7.so` now does (the fix).
+
+**Scope note: the password stack has the identical shape and was deliberately left alone
+here.** `-password sufficient pam_systemd_home.so` also short-circuits past
+`-password optional pam_oo7.so` on a homed password change (`sufficient` ≈
+`[success=done new_authtok_reqd=done default=ignore]`) — so a homed user who changes their
+password via `homectl`/`passwd` would have their login keyring silently left encrypted under
+the *old* password, re-locking it on every subsequent login. Same mechanism, different
+trigger (password change, not login), not verified live, and not part of #782's fix. Worth its
+own issue if anyone hits it.
 
 ## #784 — pam_u2f was unreachable for sudo/polkit too, via the same `success=done` short-circuit
 
@@ -222,12 +276,21 @@ Safe on all three paths this stack serves, verified against each:
   changes nothing for them since it already ran before `pam_systemd_home` in relative terms —
   the only line that moved is `pam_systemd_home`'s.
 
-**Not covered by this fix:** the identical `success=done`-first-ordering pattern was
-specifically avoided for `greetd` because there pam_u2f is disabled entirely (#585, unrelated
-keyring-lock hazard) — nothing to reorder. If #585 is ever resolved and pam_u2f re-enabled at
-the greeter, re-check whether it needs the same reorder or whether the unmounted-home
-fail-closed behavior already makes ordering moot there too (it should, by the same reasoning
-as the console-`login` bullet above, but verify live before assuming).
+**Why `system-auth` keeps `success=done` while `greetd` moved to `success=1` (#782).** The two
+stacks now differ deliberately. `greetd` needs the phase to *continue* after a homed success so
+`pam_oo7.so` gets its auth turn; `system-auth`/`password-auth` have no pam_oo7 line at all, and
+everything after `pam_systemd_home.so` there (`pam_unix.so`, `pam_deny.so`) is exactly what a
+successful homed auth should skip. Do not "harmonise" the two jump specs — see #782 above for
+what `success=1` is buying, and note that its skip count is tied to `pam_unix.so` being the one
+module between homed and oo7.
+
+**Not covered by this fix: `greetd`.** No reorder was applied there because `pam_u2f` is
+commented out entirely (#585, unrelated keyring-lock hazard) — nothing to reorder. If #585 is
+ever resolved and pam_u2f re-enabled at the greeter, the unmounted-home fail-closed behavior
+should make its position moot (same reasoning as the console-`login` bullet above), but verify
+live before assuming — and mind #782's `success=1`: re-inserting `pam_u2f.so` *between*
+`pam_systemd_home.so` and `pam_unix.so` would silently change which module the skip count
+lands on, letting `pam_unix.so` run on homed success instead of being skipped.
 
 ## pam_oo7: null PAM_AUTHTOK does not unlock
 
@@ -297,6 +360,44 @@ So oo7's `GNOMEPrompterProxy` really does drive the GCR prompter protocol, and a
 prompter is not a degraded mode — it is an indefinite hang in every caller, with no error
 anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
 `busctl --user list | grep SystemPrompter` before anything else.
+
+### 2026-09-08 investigation: "keyring won't unlock" traced to `podman-restart.service` subuid noise, not a keyring bug
+
+Investigated a live-system report of `gh auth status` intermittently seeing the login
+collection as locked. Journal evidence from a fresh boot (`journalctl -b`), ruling things in
+and out:
+
+- **`oo7-daemon.service` did not restart mid-session** (`systemctl --user status` showed a
+  single PID since login, `Invocation` ID unchanged) — the documented oo7#506 "unlocked
+  collection re-locks with no explicit `Lock()` call on daemon restart" gap above does **not**
+  apply to this instance.
+- **No residual homed FIDO2 login credential** — `mise fido2:status` reported `lily: none`
+  under "systemd-homed login credentials", confirming #759/#532's retirement (see below) is
+  correctly applied on this account. Ruled out as a cause.
+- **The greeter's first `pam_systemd_home` "failure" in the log is not a failure** — it is
+  greetd's normal `create_session` handshake (auth attempted with no credential yet, homed
+  replies "None of the supplied plaintext passwords unlock…", greetd relays the `Password:`
+  prompt, the real password arrives via `post_auth_data` and succeeds a second later). Do not
+  mistake this pair of lines for an authentication regression.
+- **Real bug found, unrelated to the keyring:** at every login, `podman[…]: cannot find
+  UID/GID for user lily: no subuid ranges found for user "lily" in /etc/subuid` — logged by
+  the user's own `podman-restart.service`/`podman-auto-update.service` (started automatically
+  at session start). The identical line repeats for `greeter` moments later when the greeter
+  session tears down. Same root cause as `docs/skills/ci-runner.md` § Rootless podman
+  subuid/subgid, except this fires unconditionally on **every boot for every account**, not
+  just when a contributor happens to run `mise run runner/build`/`renovate-check`. Neither
+  `lily` nor the `greeter` service account has a `/etc/subuid`/`/etc/subgid` entry on this
+  system — systemd-sysusers/homed account creation does not assign one the way classic
+  `useradd` does. Not yet fixed at the image level; worth a deliberate decision (sysusers.d
+  hook, first-boot script, or accepting it as a documented manual step) rather than another
+  per-task warning.
+- **Separate, noisy-but-likely-harmless bug found in passing:** every `sudo` invocation spins
+  up a full `user@0.service` (root's own systemd user manager) that tries to start
+  `oo7-daemon.service` for root and crash-loops it 5× in under a second — `Capability error
+  Operation not permitted (os error 1)` — before hitting `start-limit-hit`. Root has no
+  practical use for a Secret Service, so this is journal noise on every `sudo` call rather
+  than a functional break, but it points at `oo7-daemon`'s systemd unit not handling uid 0
+  cleanly. Not investigated further.
 
 ## oo7's collection path: `Login` on 0.6.0, `login` from 0.7.0.alpha
 
@@ -802,3 +903,46 @@ system stays pubkey-only and a `DEBUG=0` production ISO is unaffected.
 Do **not** relax `10-krytis-auth.conf` itself to make tooling work, and do not read this as
 a reason to revisit § Priority above: the fix belongs in the debug-only live environment,
 which is not a krytis release artifact.
+
+## systemd-homed disk-space management: `--auto-resize-mode` defaults to `off`, and an explicit `homectl resize` silently disables rebalancing
+
+**Symptom, found on a real deployed machine (2026-09-08):** the physical disk backing
+`/sysroot` was 95% full while the mounted home filesystem (`df -h /var/home/<user>`) reported
+only ~90% of its own, much smaller size used. The gap was a single file,
+`/sysroot/state/os/default/var/home/<user>.home` — homed's LUKS2 backing image — sized far
+past what the btrfs filesystem inside it actually needed. `btrfs filesystem usage
+/var/home/<user>` on the mounted fs showed a large `Device slack` figure: the btrfs
+filesystem had been shrunk (by an earlier `homectl resize` or rebalance) but the *backing
+loopback file* was never truncated to match, so the difference is pure dead weight on the
+real disk.
+
+**Root cause, from `man homectl`/`man homed.conf` (systemd 261):** two independent knobs, both
+per-user record properties (no `homed.conf` global default exists for either — that file only
+has `DefaultStorage=`/`DefaultFileSystemType=`):
+
+- `--rebalance-weight=` (default **100**, i.e. on) makes homed periodically redistribute free
+  space between active home areas and their backing storage in the background. **A resize
+  turns this off**: "resizing the home area explicitly (with `homectl resize`) will implicitly
+  turn off the automatic [rebalancing]" — so any one-off `homectl resize <user> <size>` an
+  admin runs by hand permanently disables the self-healing background pass for that account,
+  with no warning. Re-enable with `homectl update <user> --rebalance-weight=100`.
+- `--auto-resize-mode=` (default **off**) is separate from rebalancing: `grow` expands the
+  image to `--disk-size=` on login if smaller; `shrink-and-grow` additionally shrinks it back
+  to the minimum the used space allows on a **clean logout**, every session. Neither is enabled
+  by default — a homed image only ever grows unless one of these two mechanisms is active.
+
+**Reclaiming space after the fact:** `homectl resize <user> min` (per `man homectl`, btrfs
+supports this **while the user is logged in** — unlike ext4, which needs the home
+deactivated/logged-out first, and xfs, which cannot shrink at all). Note this resize call
+itself flips `Rebalance` to `off` per the mechanism above, so pair it with
+`--rebalance-weight=100` (or just use `--auto-resize-mode=shrink-and-grow` going forward
+instead of one-off manual resizes).
+
+**Do not "fix" this by enabling `--luks-discard=on` (online discard).** `homectl inspect`
+normally shows `LUKS Discard: online=no offline=yes` — that split is systemd's deliberate
+default, not a misconfiguration: online discard thin-provisions the home area live, so if the
+*outer* filesystem fills up, the *inner* one gets I/O errors mid-write instead of behaving like
+a normal disk. `--auto-resize-mode`/`--rebalance-weight` reclaim space through explicit,
+bounded resize operations instead, which is why krytis's first-boot wizard sets
+`--auto-resize-mode=shrink-and-grow` on the initial account rather than touching discard (see
+`docs/design/first-boot-setup.md`, `files/systemd-firstboot/firstboot-wizard.sh`).

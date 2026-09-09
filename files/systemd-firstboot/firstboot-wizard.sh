@@ -56,8 +56,19 @@ fi
 # vm/config/sudo.bst) without prompting for group membership: the first-boot user
 # IS the admin account. --prompt-groups=no is what keeps that value -- were the
 # groups prompt left on, an interactive answer would overwrite memberOf wholesale.
+#
+# --auto-resize-mode=shrink-and-grow is NOT homed's own default (that's "off").
+# Without it, the LUKS/btrfs backing image only ever grows: homed's per-user
+# encrypted home area can end up sized far past what's actually stored, with
+# no reclaim path short of an admin manually running `homectl resize <user>
+# min`. shrink-and-grow makes homed grow the image to --disk-size on login (if
+# smaller) and shrink it back to the minimum the used space allows on a clean
+# logout, automatically, every session -- see docs/skills/pam.md § systemd-homed
+# disk-space management. `--disk-size=` is left unset (homed's own default,
+# 85% of free space on the LUKS backend, is fine here).
 if ! homectl firstboot --prompt-new-user --prompt-shell=no \
-        --prompt-groups=no --member-of=wheel --mute-console=yes; then
+        --prompt-groups=no --member-of=wheel \
+        --auto-resize-mode=shrink-and-grow --mute-console=yes; then
     log "initial user creation failed"
 fi
 

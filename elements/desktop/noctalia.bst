@@ -79,7 +79,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.0.0-beta.8-137-g47c1df893246f0c6b736e11ca595daf39d04628d
+  ref: v5.0.1-2-g0b4ae36c830098d7c6c9a89fcece9737256c0167
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test

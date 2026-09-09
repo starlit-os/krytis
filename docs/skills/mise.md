@@ -49,6 +49,36 @@ mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot 
   (`generate-image-version` → `load-image` → `lint`), and confirm the change by inspecting
   image *contents* — `podman run --rm localhost/krytis:latest ...`, or `/usr/manifest.json`
   for element-level presence — never by the lint exit code alone.
+- **`mise lint` is a real multi-stage `podman build`, not a fast static check — its
+  name undersells it.** `Containerfile` has two stages: `base` (`FROM
+  localhost/krytis-input:latest` + `RUN bootc container lint` — this part really is
+  fast, 13 checks in well under a second) and `sealed` (`COPY
+  files/microsoft-uefi-certs/` + a `RUN --mount=type=secret,...` step gated on
+  `SEAL_SECURE_BOOT`). **Both stages build every time**, even for the everyday
+  unsigned case where `SEAL_SECURE_BOOT` defaults to `false` — the `RUN` becomes a
+  no-op `if` branch, but `podman build` still commits a full second image layer for
+  it. `--squash-all` then rewrites/recompresses the *entire* image (krytis is
+  multi-GB — see `docs/skills/bst.md` § `--squash-all` erases parent/layer
+  provenance) once per commit, which is where the wall-clock actually goes.
+  Observed on this repo (2026-09-08): a `mise run lint` invocation still running at
+  442s of wall time before failing partway through the `sealed` stage's commit —
+  budget several minutes minimum, not seconds, and treat it like any other
+  long-running build step (background it, don't block on it inline expecting a
+  quick return).
+- **`mise lint` needs real free disk, not just CPU time — a "no space left on
+  device" failure here is a storage problem, not a broken Containerfile.**
+  `--squash-all` writes a full rewritten copy of the image into podman's graphroot
+  (`~/.local/share/containers/storage/overlay-layers/` for the default rootless
+  store) before the old one is dropped, so peak usage during the build is close to
+  **2×** the image size, not 1×. Observed live: `mise run lint` failed with
+  `Error: committing container for step {...}: exhausting input failed (error:
+  write .../overlay-layers/tmp/temp-dir-.../0-addition: no space left on device)`
+  on a host whose home partition (where the rootless podman store lives) had
+  dropped to 7.5G free against a ~16G podman image store (`podman system df`).
+  Before debugging the build itself, check `df -h` on the podman graphroot
+  (`podman info --format '{{.Store.GraphRoot}}'`) and `podman system df` — the fix
+  is usually `podman image prune`/freeing host disk, not an element or
+  Containerfile change.
 - `generate-disk` requires `sudo` (bootc loopback install needs root).
 - **Three stores, two hops.** `load-image` puts the BST artifact into the *rootless* podman
   store; `load-image-root` copies from there into the *rootful* one. They are separate stores,
@@ -322,7 +352,7 @@ mise run mise-lock            # write/refresh it
 mise run mise-lock --check    # fail if the *committed* lockfile is behind
 ```
 
-Five things worth knowing:
+Six things worth knowing:
 
 - **mise never creates a lockfile implicitly.** `[settings] lockfile = true` only makes mise *maintain* one; `mise lock` has to write it the first time. Enabling the setting without running the task leaves you with no lockfile and no warning.
 - **The lockfile records a checksum, download URL, and API URL per platform.** That makes installs reproducible and lets them skip the release APIs, so CI does not need a `GITHUB_TOKEN` just to resolve tools. `mise lock --platform` only records the platforms you name; `linux-x64` is the default here because that is all krytis builds on.
@@ -330,6 +360,7 @@ Five things worth knowing:
 - **Renovate's native `mise` manager refreshes it automatically, reliably enough to auto-merge on.** Bumping a `[tools]` pin updates `mise.toml` and `mise.lock` in the same bot commit, and CI's `mise install --locked` (`checks.yml`, via `jdx/mise-action`) hard-fails — `"<tool>@<version> is not in the lockfile"`, exit 1 — on any drift between the two, so a bad refresh cannot silently merge. Zero failures across native-manager PRs since 2026-08; that's why (#25 superseded) mise deps now inherit the repo's default `automerge: true` for digest/patch/minor. The `pass-cli` pin is the exception: it comes from a `custom.regex` manager (see [`renovate.md`](renovate.md) § Custom regex managers), which does not get the same automatic lockfile refresh — two of its PRs landed with a stale lock and needed a manual `mise run mise-lock` + force-push before merge, so that rule stays `automerge: false`.
 - **The resolved checksum/URL depends on which `mise` binary writes the lock, not just the pinned version.** aqua-registry data ships inside the `mise` binary itself, and different `mise` releases can prefer a different build variant for the exact same tool version — e.g. `bat`/`usage`/`uv` flipped from `musl` to `gnu` artifacts between mise `2026.7.16` and `2026.9.0` with no dependency bump involved (#702, CI run 33605345953). A relock done on a stale local `mise` can be internally consistent and still fail `checks.yml`'s CI gate, which always runs whatever `jdx/mise-action` installs as current. If `--check` fails in CI but passes locally, update local `mise` first (`mise self-update`, or a standalone binary from [github.com/jdx/mise/releases/latest](https://github.com/jdx/mise/releases/latest) if the system package blocks self-update) and relock again — don't assume the CI failure is wrong.
 - **`checks.yml` runs `mise run mise-lock --check` on every PR** (`Check mise.lock is in sync` step) — a general drift gate, not Renovate-specific. Any PR, human or bot, that lands `mise.toml` without a matching `mise.lock` refresh fails CI.
+- **A `lockfile_version` field was added upstream; existing files silently stay on the old, unversioned format ("version 0") forever.** Plain `mise lock` (what `mise run mise-lock` runs) only refreshes checksums/URLs for the currently locked versions — it does not add the field even when the installed `mise` binary supports it, specifically to avoid surprise drift on every ordinary relock. Migrating requires the explicit one-time `mise lock --upgrade --platform linux-x64` (or add `--upgrade` to the `mise-lock` task's `mise lock` invocation for a permanent switch). It rewrites every tool block with a `specifiers = [...]` array (the requested version strings, distinct from the resolved `version`) alongside the top-level `lockfile_version = 1`; it can also surface previously-missing metadata mise now knows how to record, e.g. `provenance = "cosign"` appearing on an `aqua` tool's platform block that had none before, from re-resolving that entry — not a real config change. Verify a `--upgrade` relock the same way as any other: confirm every `version =` and checksum/URL is byte-identical, only the new fields are additions.
 
 ## System-wide config: `/etc/mise/conf.d/*.toml`
 
