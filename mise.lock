@@ -118,12 +118,12 @@ url = "https://github.com/jdx/usage/releases/download/v6.8.0/usage-x86_64-unknow
 url_api = "https://api.github.com/repos/jdx/usage/releases/assets/547479229"
 
 [[tools.uv]]
-version = "0.12.10"
+version = "0.12.11"
 backend = "aqua:astral-sh/uv"
-specifiers = ["0.12.10"]
+specifiers = ["0.12.11"]
 
 [tools.uv."platforms.linux-x64"]
-checksum = "sha256:173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b"
-url = "https://github.com/astral-sh/uv/releases/download/0.12.10/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/545034465"
+checksum = "sha256:4ae93e0f148a18434cc094072547cec88912fc4a72b984183c7d0d0e9586cb5e"
+url = "https://github.com/astral-sh/uv/releases/download/0.12.11/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/551278642"
 provenance = "github-attestations"
