@@ -139,8 +139,12 @@ config:
     # branch is ever reworked to keep gnome-keyring.
     #
     # Only the *greeter* path is affected. sudo and sshd get pam_u2f from
-    # config/u2f-config.bst (system-auth / password-auth), which is untouched,
-    # so a FIDO2 key still works for sudo.
+    # config/u2f-config.bst (system-auth / password-auth), which this #585
+    # workaround does not touch. That said, "so a FIDO2 key still works for
+    # sudo" -- as this comment used to claim -- was false for systemd-homed
+    # users until #784: pam_systemd_home ran ahead of pam_u2f there and ended
+    # the auth phase on success. Fixed by reordering in u2f-config.bst; see
+    # docs/skills/pam.md section #784.
 
     auth       required     pam_nologin.so
     -auth      [success=1 authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
