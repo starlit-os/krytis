@@ -509,6 +509,43 @@ root-caused — the fatal `greetd: error: check_children: greeter exited without
 session` line, and the 8,633 repeats of the render-loop warning that explained the timing,
 were both invisible on `serial.log` and only showed up in the offline journal.
 
+### `krytis-boot-probe.service` itself can flake and fail the whole run for nothing (#787)
+
+**Distinct from #764 above** — that was the probe being *starved* (slow, timed out).
+This is the probe unit *failing outright*: `mise run boot-test` intermittently reports
+`system state: degraded` with `krytis-boot-probe.service` as the sole failed unit, on an
+image that is otherwise completely healthy. Reproduced repeatedly: the identical
+already-installed disk (`--reuse-disk`), rerun back to back with nothing else changed,
+flaked roughly half the time.
+
+`krytis-boot-probe.service` is the harness's own inline diagnostics unit (defined in
+`mise/tasks/boot-test`, not part of the image), so its own transient failure was poisoning
+the verdict for the system actually under test. Fixed by filtering it out of the
+failed-units list *by name* before judging pass/fail — deliberately narrower than the
+blanket "degraded is fine" behavior #417 removed (a real regression there —
+`systemd-update-utmp.service` failing on every boot — must still fail the run). Any *other*
+failed unit still fails immediately; verified live by reproducing a genuinely different
+failure (`plymouth-start.service`, disk-wear artifact from heavy `--reuse-disk` reuse
+during investigation, not a real regression) and confirming it was correctly **not**
+masked.
+
+**The exact kill mechanism was never pinned down.** `probe.sh`'s original `sleep 50` (a
+fixed guess before dumping diagnostics) was replaced with
+`timeout 60 systemctl is-system-running --wait` on the theory that a constant sleep races
+host load in both directions. That did **not** eliminate the flake — reproduced twice more
+with the bounded wait in place. Investigated directly by booting the same disk under
+manual control (no auto-shutdown) and SSHing in while the VM was still up: memory was
+healthy (`free -h` showed 6.7Gi free of 7.7Gi) and `dmesg` had no OOM-killer entries, so
+`systemd-oomd` — the obvious first guess, since the unit is present in the image — is
+**not confirmed**. Don't repeat that guess as fact in future debugging; if it recurs, get
+`journalctl -u krytis-boot-probe.service` and `dmesg` from *inside* the failing run (not a
+lucky-timing rerun) before attributing a cause.
+
+**Takeaway for any future harness-injected unit:** a diagnostics-only unit that isn't part
+of the image under test must never be allowed to affect the image's own health verdict,
+regardless of how well-behaved you expect it to be. Filter it out by name at the point of
+judgment, don't just make it more reliable and hope.
+
 ### Screendump the console instead of guessing
 
 A UKI's cmdline has no `console=ttyS0` (it is a desktop cmdline: `rw quiet splash
