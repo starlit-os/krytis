@@ -453,3 +453,45 @@ gh api repos/starlit-os/krytis/commits/<tip-sha> \
 ```
 
 A committer that isn't `github-actions[bot]` on a commit whose message/author still says the bot is the tell that a local rebase touched it. Fix by updating the branch with a merge instead of a rebase (`git merge main` — preserves the bot's signed commit, adds a new human-signed merge commit on top), or by re-running the tracking workflow so `commit-tracking-update.sh` regenerates the commit server-side against current `main`.
+
+### Signing YubiKey not plugged in: commit server-side instead of stalling
+
+`required_signatures` has no bypass, so a commit that cannot be signed cannot be made
+at all — `git commit` aborts with `fatal: failed to write commit object`. Distinguish
+the two causes before doing anything, because only one of them is fixable in software:
+
+```bash
+ssh-add -l                                         # key listed by the agent?
+env -u SSH_AUTH_SOCK ssh-keygen -Y sign \
+  -f ~/.ssh/id_ed25519_sk_rk_Signing -n git /tmp/probe
+```
+
+- `agent refused operation` **plus** `Couldn't sign message: device not found` from the
+  direct probe → the token holding the resident credential is physically absent (a
+  *different* YubiKey being plugged in still lists fine via the agent, since the agent
+  lists key handles, not devices). No local workaround exists.
+- `agent refused operation` but the direct probe prompts for presence → the gcr-ssh-agent
+  proxy at `$SSH_AUTH_SOCK` is the problem; retry against the inner plain agent it spawns
+  (`ps -eo args | grep ssh-agent` shows `-a /run/user/1000/gcr/.ssh`, note the leading dot).
+
+For the first case, `createCommitOnBranch` is not bot-only: GitHub signs **any** commit it
+creates through that mutation, so a human with an authenticated `gh` can land a verified
+commit with no key present. Unlike `scripts/commit-tracking-update.sh` — which resets the
+branch to `main` first and is therefore wrong for a feature branch — pass the branch's own
+tip as `expectedHeadOid` and only the changed files as `additions` (base64 `contents`,
+full post-change file, not a diff):
+
+```bash
+gh api graphql -f query='mutation($repo:String!,$branch:String!,$oid:GitObjectID!,
+    $headline:String!,$body:String!,$additions:[FileAddition!]!){
+  createCommitOnBranch(input:{branch:{repositoryNameWithOwner:$repo,branchName:$branch},
+    message:{headline:$headline,body:$body}, expectedHeadOid:$oid,
+    fileChanges:{additions:$additions}}){commit{oid url}}}' ...
+git fetch origin <branch> && git reset --hard FETCH_HEAD
+```
+
+The local reset afterwards is mandatory — the commit exists only on the remote until then,
+and the still-dirty worktree will otherwise be re-committed as a duplicate. Author/committer
+are the `gh` token's account (`Lily`, `verified: true`, reason `valid`), *not*
+`github-actions[bot]`, so this does not muddy the bot-commit conventions above. Verified on
+`c83b6c7` (PR #785).

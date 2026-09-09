@@ -76,7 +76,7 @@ In per-user mode (no `authfile=`) pam_u2f builds the path from the passwd entry 
 
 Moving the authfile to a root-owned absolute path *would* make the `open()` succeed (`authfile=/etc/security/u2f_mappings/%u` + `expand`, no `openasuser` → read as root; note `expand` substitutes only `%u` and `%%`, there is no `%h`). **Do not do it.** For homed, the token's `hmac-secret` output *is* the key material that decrypts the home — `fido2_use_token()` in `src/home/homework-fido2.c` derives the LUKS/fscrypt passphrase from it. A `sufficient` pam_u2f success would end the auth stack before `pam_systemd_home` ever ran, landing the user in a session with no home mounted. FIDO2 for homed login is homed's job, via `homectl update <user> --fido2-device=auto` (rp_id `io.systemd.home`).
 
-pam_u2f is still right for a homed user's **sudo/polkit**: by then the home is mounted, so the per-user authfile is readable. `mise fido2:enroll` enrolls only this authfile for homed users now (see below) — it used to also enroll a homed login credential, retired by #759/#532.
+**Was stale, corrected by #784:** this paragraph used to read "pam_u2f is still right for a homed user's sudo/polkit: by then the home is mounted, so the per-user authfile is readable." True but irrelevant, and not what determines whether pam_u2f actually runs — see the dedicated #784 section below. Authfile *reachability* was never the blocker; module *reachability* was. `mise fido2:enroll` enrolls only this per-user authfile for homed users now (see below) — it used to also enroll a homed login credential, retired by #759/#532.
 
 **Retired by #759/#532 (see the dedicated section below).** homed's own FIDO2 login credential is what this subsection describes, and it worked exactly as designed — but "as designed" turned out to mean *always* trying that credential first, with no way to check the key is present before prompting for its PIN, and no way to let a successful FIDO2-only login also populate `PAM_AUTHTOK` for the keyring. Both are structural to how `pam_systemd_home`/`homework-fido2.c` work, not bugs in this wiring. krytis's answer is to stop enrolling this credential at all: `mise fido2:enroll` no longer creates it and actively removes any it finds, so homed login is password-only and pam_u2f keeps covering that user's sudo/polkit exactly as this section still describes. The mechanics above remain correct background for *why* pam_u2f can never take over login duty either — read them as history, not as the current login story.
 
@@ -164,6 +164,12 @@ There is no `pam_systemd_home(8)` option to change this, and it is not unique to
 
 **`docs/skills/fido2.md`'s enrollment table drops the homed-login row** accordingly — see that file. No PAM-stack change was needed for any of this: `pam_systemd_home`'s jump line in `greetd`/`system-auth` is unchanged, because the fix is entirely at the enrollment layer (never create the credential that made it try FIDO2 at all).
 
+**Update, #784:** "`sudo`/polkit are unaffected either way" above is true only in the narrow
+sense that #759/#532 didn't make anything worse for them — it does not mean pam_u2f actually
+worked for sudo/polkit before this decision either. That was a separate, pre-existing bug
+(module ordering, not the FIDO2-login-credential issue this section is about) — see the
+dedicated #784 section below.
+
 ## #782 — pam_oo7's auth phase was still unreachable on homed success, even password-only
 
 **Found 2026-09-09, on a live homed login.** #759/#532 made homed login password-only, and
@@ -217,6 +223,74 @@ password via `homectl`/`passwd` would have their login keyring silently left enc
 the *old* password, re-locking it on every subsequent login. Same mechanism, different
 trigger (password change, not login), not verified live, and not part of #782's fix. Worth its
 own issue if anyone hits it.
+
+## #784 — pam_u2f was unreachable for sudo/polkit too, via the same `success=done` short-circuit
+
+**Found 2026-09-09, right after #782, on the same live system.** A homed user's `sudo su` went
+straight to a password prompt with **no FIDO2 attempt at all**, despite a key enrolled
+(`mise fido2:status` showed `lily: 1 key(s)` under pam_u2f). `docs/skills/pam.md` (this file,
+line 79 as it read before this section) claimed pam_u2f "is still right for a homed user's
+sudo/polkit: by then the home is mounted, so the per-user authfile is readable." Never
+checked live.
+
+Journal correlated exactly with the `sudo` attempt:
+```
+systemd-homed: lily: changing state active → authenticating-for-acquire
+systemd-homework: Discovered used LUKS device /dev/mapper/home-lily, and validated password.
+systemd-homework: Successfully re-activated LUKS device.
+systemd-homed: Home lily is signed exclusively by our key, accepting.
+```
+`pam_systemd_home` was doing full homed/LUKS verification on every `sudo` call —
+`pam_u2f` never got a turn.
+
+**Root cause: same `success=done` short-circuit as #782, different file
+(`elements/config/u2f-config.bst`'s `system-auth`/`password-auth`), different mechanism.**
+`pam_systemd_home` ran *first*, ahead of `pam_u2f.so`:
+```
+-auth  [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
+auth   sufficient   pam_u2f.so cue pinverification
+```
+For a homed user it always succeeds via password (no homed FIDO2 login credential exists
+post-#759/#532), and `success=done` ends the whole auth phase immediately — `pam_u2f.so`, the
+very next line, never runs. Unlike #782, there was nothing to skip *past* to reach it —
+`pam_u2f.so` was already the immediately-following module, so a numeric `success=N` skip
+would not help here. The fix is a **reorder**, not a skip-count change.
+
+**Fix: `pam_u2f.so` now runs before `pam_systemd_home.so`.**
+```
+auth   sufficient   pam_u2f.so cue pinverification
+-auth  [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
+```
+Safe on all three paths this stack serves, verified against each:
+
+- **sudo/polkit** (home already mounted): `pam_u2f` now actually gets a chance and can succeed
+  alone on a key touch — the intended UX, previously impossible for any homed user.
+- **console `login`** (home not yet mounted): per § *pam_u2f structurally cannot serve homed
+  login* above, `pam_u2f`'s per-user authfile lives inside the still-unmounted home, so
+  `open()` fails with `ENOENT` → `PAM_AUTHINFO_UNAVAIL` regardless of stack position. It falls
+  through to `pam_systemd_home` exactly as before. `pam_u2f` also checks device presence
+  (`fido_dev_info_manifest`) before ever prompting for a PIN, so reordering does not
+  reintroduce the PIN-before-presence detour #759/#532 removed.
+- **classic (non-homed) users**: `pam_systemd_home` returns `PAM_USER_UNKNOWN` →
+  `default=ignore` → falls through to `pam_unix` exactly as before; `pam_u2f` running first
+  changes nothing for them since it already ran before `pam_systemd_home` in relative terms —
+  the only line that moved is `pam_systemd_home`'s.
+
+**Why `system-auth` keeps `success=done` while `greetd` moved to `success=1` (#782).** The two
+stacks now differ deliberately. `greetd` needs the phase to *continue* after a homed success so
+`pam_oo7.so` gets its auth turn; `system-auth`/`password-auth` have no pam_oo7 line at all, and
+everything after `pam_systemd_home.so` there (`pam_unix.so`, `pam_deny.so`) is exactly what a
+successful homed auth should skip. Do not "harmonise" the two jump specs — see #782 above for
+what `success=1` is buying, and note that its skip count is tied to `pam_unix.so` being the one
+module between homed and oo7.
+
+**Not covered by this fix: `greetd`.** No reorder was applied there because `pam_u2f` is
+commented out entirely (#585, unrelated keyring-lock hazard) — nothing to reorder. If #585 is
+ever resolved and pam_u2f re-enabled at the greeter, the unmounted-home fail-closed behavior
+should make its position moot (same reasoning as the console-`login` bullet above), but verify
+live before assuming — and mind #782's `success=1`: re-inserting `pam_u2f.so` *between*
+`pam_systemd_home.so` and `pam_unix.so` would silently change which module the skip count
+lands on, letting `pam_unix.so` run on homed success instead of being skipped.
 
 ## pam_oo7: null PAM_AUTHTOK does not unlock
 
