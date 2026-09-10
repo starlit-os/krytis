@@ -17,6 +17,16 @@ build-depends:
 - freedesktop-sdk.bst:components/scdoc.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 - freedesktop-sdk.bst:extensions/mesa/libdrm.bst
+# mesa-headers.bst: desktop/wlroots.bst enables the gles2 renderer, so
+# wlroots-0.20.pc now has `Requires.private: … egl, gbm, glesv2 …` and
+# pkg-config cannot resolve wlroots-0.20 without those .pc files present
+# (see desktop/cage.bst for the failure mode). Side effect: upstream's
+# `dependency('egl', required: false)` / `dependency('glesv2', required: false)`
+# now succeed instead of falling back to libepoxy, so the greeter compositor
+# links libEGL.so.1/libGLESv2.so.2 directly — both already ship via
+# extensions/mesa/mesa.bst -> components/libglvnd.bst. The greeter still
+# renders with pixman: elements/config/greetd-config.bst pins WLR_RENDERER.
+- freedesktop-sdk.bst:components/mesa-headers.bst
 # stb and nlohmann-json are genuinely header-only (no .so in either
 # artifact), so compile-time only — same call as in desktop/noctalia.bst.
 # Required by upstream meson.build:43 and :60 as of v1.1.0 (#412).

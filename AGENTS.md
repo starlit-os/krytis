@@ -131,7 +131,7 @@ Non-compliance = automatic rejection.
 
 **Operator accountability:** The human deploying the agent is responsible for all decisions.
 
-**Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs.
+**Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs. `mise run build` already ends with `mise run lint` (`generate-image-version` → `load-image` → `lint`) — running `mise run build` satisfies this gate on its own; a separate `mise run lint` afterward is redundant (it re-lints the same image) and running it *before* `mise run build` completes only lints stale content. See `docs/skills/mise.md`'s "Standard build workflow" section.
 
 **Mise task integrity:** All maintenance tasks must be `mise` tasks. No loose shell commands. If a task isn't covered by an existing task, add one alongside your change. Every agent action must be replicable by a human via `mise <task>`. Do not rename existing tasks without explicit human approval.
 

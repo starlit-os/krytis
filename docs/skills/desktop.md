@@ -10,40 +10,157 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 | `noctalia-greeter-compositor` | `desktop/noctalia-greeter.bst` | wlroots compositor run by greetd |
 | `noctalia-greeter` | `desktop/noctalia-greeter.bst` | Wayland client (UI) spawned by the compositor |
 | `niri` | `desktop/niri.bst` | User session compositor (Rust/smithay, not wlroots) |
+| `umbriel` | `desktop/umbriel.bst` | Second, opt-in user session compositor (C++/wlroots) — see below |
+| `xdg-desktop-portal-umbriel` | `desktop/xdg-desktop-portal-umbriel.bst` | Screencast/Screenshot portal backend for umbriel |
 | `wlroots.so` | `desktop/wlroots.bst` | Shared by noctalia-greeter-compositor |
 
 Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-config.bst`.
-## Alternative compositor: umbriel (planned, #774/#775)
+## Alternative compositor: umbriel (#774/#775)
 
 `noctalia-dev/umbriel` — wlroots-based (C++23), scrolling/dwindle/master
 layouts, built by the same team as `desktop/noctalia.bst` and described
 upstream as "Noctalia's compositor side". Decision (#774): **additive**,
 not a niri replacement — ships as a second selectable greetd session
 (`umbriel.desktop` next to `niri.desktop`), niri stays the default.
-Implementation tracked in #775.
 
 Dependency overlap with the existing niri/noctalia stack is unusually high:
 `desktop/wlroots.bst` is already pinned to `0.20.2`, inside umbriel's
 required `wlroots-0.20 >=0.20.1,<0.21.0` range, and
-`desktop/xwayland-satellite.bst` (X11 app support) is already packaged for
-niri. The only genuinely new packaging surface is
-`xdg-desktop-portal-umbriel` (screencast/screenshot portal backend — no
-existing element anywhere). umbriel's own scene-graph fork (`umbrielfx`,
-a SceneFX hard fork) builds in-tree as a static archive via
-`subdir('umbrielfx')` in `meson.build` — unlike niri, no separate
-cargo-vendoring step is needed.
+`desktop/xwayland-satellite.bst` (X11 app support, PATH lookup at runtime —
+not a build/link dependency) is already packaged for niri. umbriel's own
+scene-graph fork (`umbrielfx`, a SceneFX hard fork) builds in-tree as a
+static archive via `subdir('umbrielfx')` in `meson.build` — unlike niri, no
+separate cargo-vendoring step is needed. The one genuinely new packaging
+surface was `xdg-desktop-portal-umbriel` (screencast/screenshot portal
+backend) — no existing element anywhere provided this.
 
-**Config format differs from niri**: umbriel uses TOML
-(`~/.config/umbriel/config.toml`, falling back to
-`<datadir>/umbriel/config.toml`), not niri's KDL — a
-`config/umbriel-config.bst` element is not a reuse of `config/niri-config.bst`,
-it is a parallel element with its own format.
+### umbrielfx has a hard, non-optional `dependency('egl')`/`dependency('glesv2')` — no epoxy fallback
 
-**Tracking caveat**: as of the #774 investigation, `noctalia-dev/umbriel` has
-no tags/releases yet, so it cannot use the `track: v*` pattern
-`noctalia.bst`/`noctalia-greeter.bst` use. Use `kind: git_repo`,
-`track: refs/heads/main` (same branch-tracking pattern as `desktop/stb.bst`
-below) until upstream cuts a first release, then switch to `track: v*`.
+This is the load-bearing discovery of #775, and the reason umbriel took real
+investigation rather than a straight copy of `desktop/noctalia-greeter.bst`'s
+pattern. `desktop/noctalia-greeter.bst`'s own compositor code hits the exact
+same "fdsdk mesa doesn't expose `egl.pc`/`glesv2.pc`" gap (see `bst.md`) but
+works around it in its *own* `meson.build`:
+
+```meson
+egl_dep = dependency('egl', required: false)
+gles2_dep = dependency('glesv2', required: false)
+if not egl_dep.found()
+  egl_dep = dependency('epoxy')
+endif
+if not gles2_dep.found()
+  gles2_dep = dependency('epoxy')
+endif
+```
+
+`umbrielfx/meson.build` has no such fallback — `dependency('egl')`,
+`dependency('gbm')`, and `dependency('glesv2')` are called directly, required
+by default, with zero optionality. Reading `bst.md`'s existing "fdsdk mesa
+doesn't expose `egl.pc`/`glesv2.pc`" note and stopping there would wrongly
+conclude umbriel can't be packaged at all. The actual fix, found by cloning
+the pinned `freedesktop-sdk` ref locally and grepping its own element tree
+(`elements/components/mesa-headers.bst`) rather than trusting the letter of an
+existing doc note: `freedesktop-sdk.bst:components/mesa-headers.bst` exists
+specifically to regenerate `egl.pc`/`glesv2.pc`/`gl.pc` (standard
+`%{libdir}/pkgconfig`, *not* mesa's namespaced `GL/default` split) plus the
+matching `EGL/`/`GLES2/`/`GLES3/`/`KHR/` headers — `components/libglvnd.bst`
+deliberately `rm`s those three `.pc` files from its own install, and
+`mesa-headers.bst` is the fdsdk-provided element that puts them back. It's
+normally only reached as a `build-depends` of other components (`libepoxy`,
+`gstreamer-plugins-base`, `sdl2-compat`, `sdl3`, `v4l-utils`) — `build-depends`
+never propagates to a downstream consumer's own sandbox, so anything that
+`dependency('egl')`s directly (like umbriel) must declare it itself. The
+actual runtime `libEGL.so.1`/`libGLESv2.so.2` still come from
+`components/libglvnd.bst` separately (`mesa-headers.bst` ships no `.so` of
+its own) — declared in `desktop/umbriel.bst`'s `depends:`.
+
+`gbm.pc`/`libdrm.pc` are unaffected by this (mesa's own `GL/default`
+namespace does ship them) — `desktop/umbriel.bst` uses the same
+`extensions/mesa/mesa.bst` + `extensions/mesa/libdrm.bst` +
+`prepend-mesa-env` PKG_CONFIG_PATH pattern as `desktop/wlroots.bst` and
+`desktop/noctalia-greeter.bst` for those.
+
+If a *future* wlroots-based element hits the same "hard `dependency('egl')`/
+`dependency('glesv2')`, no epoxy fallback" wall, this is the fix — add
+`freedesktop-sdk.bst:components/mesa-headers.bst` to `build-depends`, not a
+hand-rolled `.pc` file, and not "give up, can't be packaged."
+
+### Transitive `depends:` resolution — and where it stops
+
+`desktop/umbriel.bst` links `libwlroots.so` directly (unlike niri, which
+reimplements the compositor protocol in Rust/smithay and doesn't depend on
+`desktop/wlroots.bst` at all). BuildStream stages an element's `depends:`
+*and that dependency's own `depends:`, recursively* into the consuming
+element's build sandbox — so `libinput` (`>=1.23`), `libseat`, `pixman`
+(`>=0.43.0`), and `wayland-server` (`>=1.24`) all resolve for
+`desktop/umbriel.bst` transitively through `desktop/wlroots.bst`'s own
+`depends:`, with no explicit re-declaration needed (same as
+`desktop/noctalia-greeter.bst`, which also depends on `wlroots.bst` and also
+doesn't re-list `libinput.bst` despite its own compositor code calling
+`dependency('libinput')` directly).
+
+**This does not extend to `build-depends:`.** `extensions/mesa/libdrm.bst`
+is one of `desktop/wlroots.bst`'s *build*-depends (needed only inside
+wlroots's own build sandbox, for its own `libdrm.pc` lookup) — it never
+propagates anywhere, so `desktop/umbriel.bst` and
+`desktop/noctalia-greeter.bst` both have to re-declare it directly, even
+though both also depend on `wlroots.bst`. Check *which* dependency list an
+upstream `dependency()` call resolved through before assuming "it's already
+in the graph somewhere" is enough — `depends:` recurses, `build-depends:`
+does not.
+
+xkbcommon and cairo/pango do **not** resolve transitively either —
+`wlroots.bst` only `build-depends` on `libxkbcommon.bst` and never touches
+cairo/pango at all — so `desktop/umbriel.bst` declares
+`components/libxkbcommon.bst`, `components/cairo.bst`, and
+`components/pango.bst` directly in its own `depends:`, matching
+`desktop/noctalia-greeter.bst`'s identical direct declarations.
+
+### Config: umbriel already ships a complete, Noctalia-integrated default — the seed only needed two edits
+
+Unlike niri (which ships no usable default binds/config at all), umbriel's
+own `examples/config.toml` is a complete, working default that the upstream
+team explicitly designed to pair with Noctalia — it already has window rules
+matching `dev.noctalia.Noctalia` and `dev.noctalia.UmbrielSharePicker`, and a
+layer rule blurring every `noctalia-*` namespaced layer-shell surface
+(panels, launcher, notifications, OSD). `desktop/umbriel.bst`'s own
+`meson.build` already installs this file verbatim to
+`<datadir>/umbriel/config.toml` (tier 3 of umbriel's 4-tier config lookup —
+see `PACKAGING.md`'s "Configuration lookup" section) — no seed-service
+pattern needed (config lookup gracefully falls back to it, unlike
+`noctalia-greeter`'s mutable `/var` `greeter.toml`, which needs
+`config/greeter-config-seed.bst`'s oneshot-unit pattern).
+
+`config/umbriel-config.bst` ships the **same** file one tier higher, at
+`/etc/xdg/umbriel/config.toml` (`$XDG_CONFIG_DIRS`, tier 2), with exactly two
+krytis-specific edits (see `files/umbriel/config.toml`'s header comment for
+the full rationale):
+
+1. `autostart = ["noctalia"]` (upstream ships `autostart = []` — without
+   this, noctalia-shell never launches under umbriel, and the panel/
+   launcher/lock-screen acceptance criteria in #775 cannot pass).
+2. `"Mod+Return" = "spawn:ghostty"` (upstream's example binds `kitty`, which
+   krytis does not package; krytis ships ghostty — `desktop/ghostty.bst`).
+
+**Config lookup is first-match, not merged across tiers** — shipping only a
+`[general]` fragment at `/etc/xdg/umbriel/config.toml` would silently drop
+every other upstream default (blur, shadows, animations, all the Noctalia
+window/layer rules) rather than layering on top of them, since umbriel stops
+at the first existing file in its lookup chain. The full file has to be
+duplicated with the two edits, not diffed down to a fragment.
+
+**No `config/xdg-portals.bst`-style routing file needed for umbriel** — unlike
+niri (which isn't a portal implementation itself and needed a hand-authored
+`niri.portal` routing file), `xdg-desktop-portal-umbriel` ships its own valid
+`umbriel-portals.conf` (`default=umbriel;gtk`) automatically via its own
+`meson.build`.
+
+**Tracking caveat**: as of #774/#775, neither `noctalia-dev/umbriel` nor
+`noctalia-dev/xdg-desktop-portal-umbriel` has tags/releases (checked
+independently — the portal is a separate, younger repo). Both use
+`kind: git_repo`, `track: refs/heads/main` (same branch-tracking pattern as
+`desktop/stb.bst` below) until upstream cuts a first release each, then
+switch to `track: v*`.
 
 ## noctalia-greeter source and config
 
@@ -350,11 +467,29 @@ wlroots picks a renderer at startup based on the DRM backend's render node:
 
 pixman uses DRM dumb buffers as its allocator; works on all drivers including amdgpu.
 
-### GLES2 on amdgpu fails with fdsdk mesa
+### GLES2 with fdsdk mesa — works on amdgpu (re-verified 2026-09-10, #775)
 
-wlroots GLES2 requires glvnd to find `libEGL_mesa.so.0` and MESA-LOADER to find `radeonsi_dri.so`.
-With fdsdk's non-standard mesa prefix this path fails. Use `WLR_RENDERER=vulkan` or fall back to
-`WLR_RENDERER=pixman` if Vulkan is unavailable.
+An earlier version of this section claimed "wlroots GLES2 requires glvnd to find
+`libEGL_mesa.so.0` and MESA-LOADER to find `radeonsi_dri.so`; with fdsdk's non-standard mesa
+prefix this path fails." **That is wrong on the image as it ships today.** Measured on a live
+krytis desktop (Navi 32 / RX 7800 XT):
+
+- `/usr/lib/x86_64-linux-gnu/libEGL.so.1` is **libglvnd 1.5**, and it loads mesa's vendor JSON
+  from `…/GL/default/share/glvnd/egl_vendor.d/` with **no** `__EGL_VENDOR_LIBRARY_DIRS` set —
+  even though `/usr/share/glvnd/egl_vendor.d` (the usual default) does not exist at all.
+- `/etc/ld.so.conf.d/00_mesa.conf` puts `GL/default/lib` on the linker path, and
+  `/usr/lib/x86_64-linux-gnu/dri` exists, so `libEGL_mesa.so.0` and the DRI drivers both resolve.
+- `eglQueryDevicesEXT` returns 2 devices; a GLES2 context on device 0 reports
+  `GL_RENDERER = AMD Radeon RX 7800 XT (radeonsi, navi32, ACO, DRM 3.64)`, i.e. real hardware
+  acceleration, not llvmpipe (device 1 is llvmpipe).
+
+So the greeter's `WLR_RENDERER=pixman` pin is **not** justified by GLES2 being broken — it is
+justified by the Vulkan DMA-BUF size limit documented below plus pixman being adequate for a
+login screen. When a compositor genuinely needs GLES2 (umbrielfx does — see below), it works.
+
+If a wlroots-based compositor *does* fail to bring up GLES2, measure before believing a doc:
+`mise run compositor-smoke --compositor umbriel --keep-log` (see § Smoke-testing a wlroots
+compositor headlessly).
 
 ### Vulkan ICD discovery: compat-vulkan-link
 
@@ -371,15 +506,76 @@ search paths:
 The Vulkan loader searches `/usr/share/vulkan/icd.d/` by default, so `VK_ICD_FILENAMES` is
 **not** needed after this element is present. Closes the ICD discovery gap (#94).
 
-### wlroots Vulkan renderer — compiled in but NOT used for the greeter
+### wlroots renderers: `-Drenderers=gles2,vulkan`
 
-`desktop/wlroots.bst` compiles the Vulkan renderer (`-Drenderers=vulkan`) with:
-- build-depends: `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, `components/glslang.bst`
-- runtime depend: `components/vulkan-icd-loader.bst` (provides libvulkan.so)
+`desktop/wlroots.bst` compiles both the Vulkan and the GLES2 renderer:
+- build-depends for Vulkan: `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, `components/glslang.bst`
+- build-depends for GLES2: `components/mesa-headers.bst` (regenerates `egl.pc`/`glesv2.pc`/`gl.pc`
+  at the standard `%{libdir}/pkgconfig`, which fdsdk's mesa does not ship — `components/libglvnd.bst`
+  deliberately `rm`s them). `gbm.pc` comes from mesa's `GL/default` split via `prepend-mesa-env`.
+- runtime depend: `components/vulkan-icd-loader.bst` (libvulkan.so); libEGL/libGLESv2 arrive with
+  `extensions/mesa/mesa.bst` → `components/libglvnd.bst`, so no extra runtime entry is needed.
 
 Build notes:
-- `pixman` is **not** a valid `-Drenderers` value in 0.20.1 — allowed: `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
-- `gles2` must **not** be listed: `egl.pc` is absent from the pkgconfig path in the BST build sandbox, causing an error. With `auto` it was silently skipped.
+- `pixman` is **not** a valid `-Drenderers` value in 0.20.x — allowed: `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
+- `gles2` was previously omitted because `egl.pc` is absent from the sandbox pkgconfig path (with
+  `auto` it was silently skipped). `mesa-headers.bst` is the fix; do not re-drop `gles2`.
+
+**Why gles2 is required at all: umbrielfx.** `desktop/umbriel.bst`'s in-tree SceneFX fork is a
+GLES2-only renderer and `#include <wlr/render/egl.h>`. wlroots' `include/meson.build` adds
+`render/egl.h` and `render/gles2.h` to `install_subdir`'s `exclude_files` unless the
+`gles2-renderer` feature is on, so with `-Drenderers=vulkan` the header is simply not in the
+sysroot and umbrielfx dies with `fatal error: wlr/render/egl.h: No such file or directory`.
+
+**Enabling gles2 ripples to every wlroots consumer.** With the feature on, `wlroots-0.20.pc`
+gains `Requires.private: … egl, gbm, glesv2 …`, and pkg-config refuses to resolve
+`wlroots-0.20` *at all* when those `.pc` files are missing — even for a dynamic link. The
+failure surfaces nowhere near EGL: meson's `dependency('wlroots-0.20', fallback: [...])` falls
+through to the wrap and reports
+
+```
+meson.build:40:17: ERROR: Attempted to resolve subproject without subprojects directory present.
+```
+
+which happened to `desktop/cage.bst` the moment wlroots flipped. Every element that links
+wlroots therefore needs `components/mesa-headers.bst` in `build-depends` plus the
+`prepend-mesa-env` pattern for `gbm.pc`: today that is `desktop/cage.bst`,
+`desktop/noctalia-greeter.bst` and `desktop/umbriel.bst`. Side effect on noctalia-greeter:
+its `dependency('egl', required: false)` / `dependency('glesv2', required: false)` now
+**succeed** instead of falling back to libepoxy, so the greeter compositor links
+libEGL.so.1/libGLESv2.so.2 directly. It still renders with pixman (greetd pins the env).
+
+### Smoke-testing a wlroots compositor headlessly — `mise run compositor-smoke`
+
+`mise boot-test` cannot test any compositor: its VM has **no `/dev/dri` at all**, and it
+deliberately masks greetd (`ExecStart=/usr/bin/true`) because the greeter free-spins frames
+there and starved the boot probe into a timeout (#764). A build that breaks the renderer, the
+scene graph, or config parsing still passes boot-test.
+
+`desktop/wlroots.bst` builds `-Dbackends=libinput,drm,x11` — there is **no wayland backend**, so
+a krytis wlroots compositor cannot be nested inside the running niri session either. The
+headless backend is compiled in unconditionally (it is not one of the `backends` option
+choices), which is what makes the gap coverable: headless backend + the host's real `/dev/dri`
+= full renderer bring-up from the built OCI image, no VM, no root.
+
+```shell
+mise run compositor-smoke                          # umbriel (default)
+mise run compositor-smoke --compositor greeter     # noctalia-greeter-compositor, as greetd runs it
+mise run compositor-smoke --compositor cage        # cage
+mise run compositor-smoke --compositor umbriel --keep-log
+```
+
+Each variant asserts positive markers, never the absence of errors (a compositor that dies in
+20 ms also logs no errors): umbriel must report `initialized EGL`, `OpenGL ES vendor=` and
+`output HEADLESS-1`; the greeter must reach `greeter output: HEADLESS-1` and `started greeter:`;
+cage must create the pixman renderer and start the backend. Observed on the reference machine:
+`[render] OpenGL ES vendor="AMD" renderer="AMD Radeon RX 7800 XT (radeonsi, navi32, ACO)"`.
+
+D-Bus/pipewire/secret-store warnings are expected inside the container and harmless, as is the
+flood of `Direct scan-out disabled by software cursor` under pixman (the task filters it). This
+does **not** replace `mise boot-test` — no seat, no logind, no input, no real KMS — but it is
+the only cheap gate that exercises a compositor at all, so run it after any change to
+`desktop/wlroots.bst`, `desktop/umbriel.bst`, `desktop/cage.bst` or `desktop/noctalia-greeter.bst`.
 
 **The Vulkan renderer cannot be used for the greeter compositor on displays wider than 2560px.**
 

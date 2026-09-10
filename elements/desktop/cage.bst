@@ -10,6 +10,14 @@ build-depends:
 - freedesktop-sdk.bst:components/wayland-protocols.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 - freedesktop-sdk.bst:extensions/mesa/libdrm.bst
+# mesa-headers.bst: since desktop/wlroots.bst enables the gles2 renderer, its
+# wlroots-0.20.pc carries `Requires.private: … egl, gbm, glesv2 …`, and
+# pkg-config refuses to resolve wlroots-0.20 at all when those .pc files are
+# missing. Without this, meson's `dependency('wlroots-0.20', fallback: …)`
+# silently falls through to the wlroots subproject wrap and dies with
+# "Attempted to resolve subproject without subprojects directory present".
+# gbm.pc comes from mesa's GL/default split via prepend-mesa-env below.
+- freedesktop-sdk.bst:components/mesa-headers.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst

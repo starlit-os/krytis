@@ -28,6 +28,8 @@ on:
           - adw-gtk3
           - noctalia
           - noctalia-greeter
+          - umbriel
+          - xdg-desktop-portal-umbriel
           - md4c
           - stb
           - libsodium
@@ -828,6 +830,8 @@ jobs:
       github.event.inputs.group == 'manual-merge' ||
       github.event.inputs.group == 'noctalia' ||
       github.event.inputs.group == 'noctalia-greeter' ||
+      github.event.inputs.group == 'umbriel' ||
+      github.event.inputs.group == 'xdg-desktop-portal-umbriel' ||
       github.event.inputs.group == 'md4c' ||
       github.event.inputs.group == 'stb' ||
       github.event.inputs.group == 'kmscon' ||
@@ -910,6 +914,14 @@ jobs:
             element: desktop/noctalia-greeter.bst
             branch: auto/track-noctalia-greeter
             title: "chore(deps): update noctalia-greeter"
+          - group: umbriel
+            element: desktop/umbriel.bst
+            branch: auto/track-umbriel
+            title: "chore(deps): update umbriel"
+          - group: xdg-desktop-portal-umbriel
+            element: desktop/xdg-desktop-portal-umbriel.bst
+            branch: auto/track-xdg-desktop-portal-umbriel
+            title: "chore(deps): update xdg-desktop-portal-umbriel"
           - group: md4c
             element: desktop/md4c.bst
             branch: auto/track-md4c

@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+#MISE description="Run a shipped wlroots compositor headlessly from the built image and assert it initialised"
+#USAGE flag "--compositor <name>" default="umbriel" help="umbriel | greeter | cage"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to run the compositor out of"
+#USAGE flag "--seconds <n>" default="12" help="How long to let the compositor run before SIGTERM"
+#USAGE flag "--keep-log" help="Print the full captured log, not just the asserted lines"
+
+# Why this exists: `mise boot-test` cannot test any compositor. Its VM has no
+# /dev/dri at all, and it deliberately masks greetd (ExecStart=/usr/bin/true)
+# because the greeter free-spins rendering frames there and starved the boot
+# probe into a timeout — see krytis#764 and the drop-in comment in
+# mise/tasks/boot-test. So a build that breaks the renderer, the scene graph or
+# config parsing still passes boot-test.
+#
+# desktop/wlroots.bst builds -Dbackends=libinput,drm,x11 — there is no wayland
+# backend, so none of these compositors can be nested inside the running niri
+# session for a quick check. The headless backend is compiled in
+# unconditionally (it is not one of the `backends` option choices), which is
+# what makes this possible: WLR_BACKENDS=headless plus the host's real
+# /dev/dri gives a full renderer bring-up, GPU included, with no VM and no root.
+#
+# This is a smoke test, not a substitute for boot-test: there is no seat, no
+# logind, no input, and D-Bus/pipewire/secret-store warnings are expected.
+# It catches renderer/EGL/config failures, which is exactly what changing
+# wlroots' -Drenderers set or re-pinning a compositor can break (#775).
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+COMPOSITOR="${usage_compositor:-umbriel}"
+IMAGE="${usage_image:-localhost/krytis:latest}"
+SECONDS_TO_RUN="${usage_seconds:-12}"
+KEEP_LOG="${usage_keep_log:-false}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --compositor) COMPOSITOR="$2"; shift 2 ;;
+        --image)      IMAGE="$2"; shift 2 ;;
+        --seconds)    SECONDS_TO_RUN="$2"; shift 2 ;;
+        --keep-log)   KEEP_LOG=true; shift ;;
+        *) shift ;;
+    esac
+done
+
+# Each compositor gets its own launch line and its own success markers. A pass
+# is a positive observation (the renderer named itself, the output came up),
+# never the mere absence of an error — a compositor that dies in 20ms also
+# produces no error lines.
+case "$COMPOSITOR" in
+    umbriel)
+        # UMBRIEL_CONFIG=/dev/null: assert upstream defaults, so a broken
+        # files/umbriel/config.toml cannot mask a renderer failure. Use
+        # --compositor umbriel with the shipped config by dropping this via
+        # --keep-log inspection if you specifically want to test the config.
+        LAUNCH='env UMBRIEL_CONFIG=/dev/null /usr/bin/umbriel'
+        REQUIRE=(
+            'initialized EGL'
+            'OpenGL ES vendor='
+            'output HEADLESS-1'
+        )
+        ENV_EXTRA=''
+        ;;
+    greeter)
+        # The greeter compositor is what greetd actually launches, with the
+        # same renderer pin elements/config/greetd-config.bst uses.
+        LAUNCH='noctalia-greeter-session'
+        REQUIRE=(
+            'Creating pixman renderer'
+            'greeter output: HEADLESS-1'
+            'started greeter:'
+        )
+        ENV_EXTRA='export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 NOCTALIA_GREETER_LOG=stderr;'
+        ;;
+    cage)
+        LAUNCH='cage -- /bin/true'
+        REQUIRE=(
+            'Creating pixman renderer'
+            'Starting headless backend'
+        )
+        ENV_EXTRA='export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1;'
+        ;;
+    *)
+        echo "==> FAILED: unknown compositor '$COMPOSITOR' (want: umbriel | greeter | cage)" >&2
+        exit 1
+        ;;
+esac
+
+if ! podman image exists "$IMAGE"; then
+    echo "==> FAILED: no such image '$IMAGE' — run 'mise run build' first." >&2
+    exit 1
+fi
+
+if [ ! -e /dev/dri ]; then
+    echo "==> SKIPPED: no /dev/dri on this host — the headless backend still needs a render node."
+    exit 0
+fi
+
+LOG="$(mktemp /var/tmp/compositor-smoke.XXXXXX.log)"
+trap 'rm -f "$LOG"' EXIT
+
+echo "==> Running $COMPOSITOR headlessly out of $IMAGE for ${SECONDS_TO_RUN}s..."
+
+# --device /dev/dri only; no seat, no privileged flags. The compositor never
+# needs to be root here, but the image's own /usr is read-only in the container
+# and $XDG_RUNTIME_DIR must exist before wlroots looks at it.
+podman run --rm --device /dev/dri --entrypoint sh "$IMAGE" -c "
+    export XDG_RUNTIME_DIR=/tmp/xdg; mkdir -p \$XDG_RUNTIME_DIR
+    export WLR_BACKENDS=headless
+    ${ENV_EXTRA}
+    timeout ${SECONDS_TO_RUN} ${LAUNCH} 2>&1
+" >"$LOG" 2>&1
+
+# `timeout` kills the compositor with SIGTERM, so 124 (timed out) and 0 (clean
+# exit, e.g. cage running /bin/true) are both fine. A non-zero anything else
+# means it fell over on its own.
+RUN_STATUS=$?
+if [ "$RUN_STATUS" -ne 0 ] && [ "$RUN_STATUS" -ne 124 ]; then
+    echo "    note: container exited $RUN_STATUS"
+fi
+
+if [ "$KEEP_LOG" = "true" ]; then
+    # The software-cursor line repeats thousands of times per run with pixman
+    # (krytis#764); it drowns everything else and carries no information.
+    grep -v 'Direct scan-out disabled by software cursor' "$LOG" | sed 's/^/    /'
+fi
+
+fail=0
+for marker in "${REQUIRE[@]}"; do
+    if line=$(grep -m1 -F "$marker" "$LOG"); then
+        echo "    OK   $marker"
+        [ "$KEEP_LOG" = "true" ] || echo "         ${line#*] }"
+    else
+        echo "    FAIL missing: $marker" >&2
+        fail=1
+    fi
+done
+
+if [ "$fail" -ne 0 ]; then
+    echo "==> compositor-smoke FAILED for $COMPOSITOR. Last lines:" >&2
+    grep -v 'Direct scan-out disabled by software cursor' "$LOG" | tail -15 | sed 's/^/    /' >&2
+    exit 1
+fi
+
+echo "==> compositor-smoke PASSED for $COMPOSITOR."

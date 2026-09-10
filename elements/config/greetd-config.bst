@@ -6,12 +6,16 @@
 # greetd.service ships Alias=display-manager.service — installing greetd
 # automatically creates the display-manager symlink; no masking needed.
 #
-# WLR_RENDERER=pixman: wlroots Vulkan renderer is compiled in (desktop/wlroots.bst
-# uses -Drenderers=vulkan) but CANNOT be used for the greeter compositor:
-# it has a DMA-BUF import size limit of 2560x2560 pixels (AMD DCC tiling
-# modifier constraint), which blocks 3440x1440 ultrawides. The wlroots Vulkan
-# renderer is also explicitly "experimental and not expected to be ready for
-# daily use" per its own startup log.
+# WLR_RENDERER=pixman: desktop/wlroots.bst builds -Drenderers=gles2,vulkan
+# (gles2 was added for desktop/umbriel.bst, #775) but the greeter keeps pixman:
+# the Vulkan renderer has a DMA-BUF import size limit of 2560x2560 pixels (AMD
+# DCC tiling modifier constraint), which blocks 3440x1440 ultrawides, and is
+# also explicitly "experimental and not expected to be ready for daily use" per
+# its own startup log. GLES2 does work on amdgpu with fdsdk mesa (re-verified
+# 2026-09-10, see docs/skills/desktop.md § GLES2 with fdsdk mesa), so this pin
+# is a deliberate "pixman is adequate for a login screen" choice, not a
+# workaround for a broken GL stack — but changing it needs a real ultrawide
+# test, not just a boot-test.
 # WLR_NO_HARDWARE_CURSORS=1: required with pixman — no KMS cursor plane support.
 # See #96 (parent: #94) for the investigation history.
 #

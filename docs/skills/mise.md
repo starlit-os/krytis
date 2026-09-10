@@ -287,6 +287,17 @@ forwarding into load-bearing code) and accepting that dormant `depends` lists
 wake up. Prefer the raw-call pattern unless a task genuinely needs another
 task's `sources`/`outputs` freshness check or its `depends` graph honored.
 
+**`build`'s own explicit `generate-image-version` call was later found redundant and dropped.**
+Once `load-image` gained its own raw-call to `generate-image-version` (the fix described
+above), `build`'s pre-existing explicit call became dead weight: `build` always calls
+`load-image` immediately next with nothing in between, so `load-image`'s internal call
+regenerates the exact same `include/image-version.yml` content a second time in the same
+invocation. `mise/tasks/build` no longer calls `generate-image-version` directly — it relies
+on `load-image` to do it, exactly as `load-image` relies on nothing else. This is safe
+specifically *because* the two calls are back-to-back raw script calls with no git-state
+change possible between them; it would not be safe to drop if anything between the two calls
+could change `git log -1`/`git rev-parse HEAD`'s output.
+
 ### Supported `#MISE` metadata fields
 
 | Field | Example |
@@ -791,13 +802,15 @@ fi
 because a hand-maintained copy of the tree rots: the list that lived here named 16
 tasks while `mise/tasks/` held 53.
 
-**25 of the 87 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
-tasks below for the list and `mise tasks --hidden` to see them.
+**25 of the 90 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --hidden
+| wc -l` is the check; this line has drifted before.)
 
 | Group | Tasks |
 |---|---|
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
+| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly) |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden) |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
