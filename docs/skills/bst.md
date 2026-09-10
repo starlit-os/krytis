@@ -1202,6 +1202,14 @@ Two non-obvious things found building it:
 - **`gh api graphql -f`/`-F` cannot pass JSON-typed (array/object) GraphQL variables.** Both flags always coerce to a string (or, for `-F`, a small set of scalar literals) — there is no way to hand `[FileAddition!]!` a real JSON array through them. Build the whole request body (`{query, variables: {...}}`) as JSON with `jq -n --argjson ...` and pipe it to `gh api graphql --input -` instead.
 - **Force-pushing a branch to be identical to its base — even for a moment — auto-closes any open PR for it.** The script's reset step (`git checkout -B` equivalent: move the branch ref to `main`'s current tip) briefly leaves the branch 0 commits ahead before the commit step adds one back; GitHub reacts to that intermediate state by closing the PR (observed directly building this: PR #705, closed and force-pushed in the same timeline event, by the API caller, not a person). The original `git commit && git push --force-with-lease` flow never hit this because reset-then-commit was one local operation force-pushed atomically in a single push; two separate API calls are two separate events GitHub can react to in between. The script defends against it: after committing, it checks for a `CLOSED` (not merged) PR on the branch and reopens it — without that, a caller's default `gh pr list --head <branch>` (open-only) would find nothing and create a duplicate PR instead of updating the real one.
 
+### GitHub App token for opening tracking PRs
+
+Every job mints a token via `actions/create-github-app-token` (the `krytis-tracking-bot` App, installed only on this repo, `contents: write` + `pull-requests: write`) and uses it for the "Create or update PR" step's `GH_TOKEN` — not `secrets.GITHUB_TOKEN`. Reason: a `pull_request` event opened by a workflow authenticated as `GITHUB_TOKEN` always lands with `Checks` in `action_required`, needing a human Approve click before anything runs, regardless of PR content (#656). A GitHub App installation token doesn't get this treatment.
+
+Only the PR-opening step uses the App token. Every other `secrets.GITHUB_TOKEN` use in this workflow (release-data lookups in `mise run <name>-update` and similar) is untouched — those don't open PRs and don't need it.
+
+App ID and private key: `TRACKING_APP_ID` / `TRACKING_APP_PRIVATE_KEY` repo secrets. Rotating the key: generate a new one on the App's settings page, `gh secret set TRACKING_APP_PRIVATE_KEY < new-key.pem`, then revoke the old key from the App settings page — installation tokens are minted fresh per run, so there's no in-flight token to invalidate.
+
 ### Temporary fork pins for tarball-pinned elements
 
 When a `kind: tar` element needs a fix that isn't upstream yet, point the source at a fork branch's archive tarball instead of waiting on a PR merge — same `github_files:<owner>/<repo>/archive/<sha>.tar.gz` shape, just a different owner:
