@@ -59,7 +59,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-251-gda576e4332043bb886b123bb6e1dc344c2530613
+  ref: v0.6.0-alpha-253-g3b9a14b35ae49e65af8af7ee2cbc80d984e5012b
 
 - kind: cargo2
   url: crates:crates
@@ -754,8 +754,8 @@ sources:
     sha: 872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297
   - kind: registry
     name: syn
-    version: 3.0.4
-    sha: e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f
+    version: 3.0.5
+    sha: 12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9
   - kind: registry
     name: target-lexicon
     version: 0.13.5
