@@ -488,12 +488,8 @@ justified by the Vulkan DMA-BUF size limit documented below plus pixman being ad
 login screen. When a compositor genuinely needs GLES2 (umbrielfx does — see below), it works.
 
 If a wlroots-based compositor *does* fail to bring up GLES2, measure before believing a doc:
-
-```shell
-# from the built image, no VM needed — see § Smoke-testing a wlroots compositor headlessly
-podman run --rm --device /dev/dri --entrypoint sh localhost/krytis:latest -c \
-  'export XDG_RUNTIME_DIR=/tmp/x; mkdir -p $XDG_RUNTIME_DIR; WLR_BACKENDS=headless timeout 12 umbriel'
-```
+`mise run compositor-smoke --compositor umbriel --keep-log` (see § Smoke-testing a wlroots
+compositor headlessly).
 
 ### Vulkan ICD discovery: compat-vulkan-link
 
@@ -549,24 +545,37 @@ its `dependency('egl', required: false)` / `dependency('glesv2', required: false
 **succeed** instead of falling back to libepoxy, so the greeter compositor links
 libEGL.so.1/libGLESv2.so.2 directly. It still renders with pixman (greetd pins the env).
 
-### Smoke-testing a wlroots compositor headlessly
+### Smoke-testing a wlroots compositor headlessly — `mise run compositor-smoke`
+
+`mise boot-test` cannot test any compositor: its VM has **no `/dev/dri` at all**, and it
+deliberately masks greetd (`ExecStart=/usr/bin/true`) because the greeter free-spins frames
+there and starved the boot probe into a timeout (#764). A build that breaks the renderer, the
+scene graph, or config parsing still passes boot-test.
 
 `desktop/wlroots.bst` builds `-Dbackends=libinput,drm,x11` — there is **no wayland backend**, so
-a krytis wlroots compositor cannot be nested inside the running niri session. The headless
-backend is compiled in unconditionally (it is not part of the `backends` option), which gives a
-full renderer/scene-graph smoke test from the built OCI image with no VM and no root:
+a krytis wlroots compositor cannot be nested inside the running niri session either. The
+headless backend is compiled in unconditionally (it is not one of the `backends` option
+choices), which is what makes the gap coverable: headless backend + the host's real `/dev/dri`
+= full renderer bring-up from the built OCI image, no VM, no root.
 
 ```shell
-podman run --rm --device /dev/dri --entrypoint sh localhost/krytis:latest -c '
-  export XDG_RUNTIME_DIR=/tmp/xdg; mkdir -p $XDG_RUNTIME_DIR
-  WLR_BACKENDS=headless UMBRIEL_CONFIG=/dev/null timeout 12 /usr/bin/umbriel'
+mise run compositor-smoke                          # umbriel (default)
+mise run compositor-smoke --compositor greeter     # noctalia-greeter-compositor, as greetd runs it
+mise run compositor-smoke --compositor cage        # cage
+mise run compositor-smoke --compositor umbriel --keep-log
 ```
 
-A pass looks like `[gl] initialized EGL 1.5`, `[render] OpenGL ES vendor="AMD" renderer="AMD
-Radeon RX 7800 XT (radeonsi, …)"`, an output `HEADLESS-1`, and a clean `received signal 15`
-shutdown. D-Bus/pipewire/secret-store warnings are expected inside the container and harmless.
-This does **not** replace `mise boot-test` (no seat, no logind, no greeter), but it catches every
-renderer and config-parse failure without waiting on a VM install.
+Each variant asserts positive markers, never the absence of errors (a compositor that dies in
+20 ms also logs no errors): umbriel must report `initialized EGL`, `OpenGL ES vendor=` and
+`output HEADLESS-1`; the greeter must reach `greeter output: HEADLESS-1` and `started greeter:`;
+cage must create the pixman renderer and start the backend. Observed on the reference machine:
+`[render] OpenGL ES vendor="AMD" renderer="AMD Radeon RX 7800 XT (radeonsi, navi32, ACO)"`.
+
+D-Bus/pipewire/secret-store warnings are expected inside the container and harmless, as is the
+flood of `Direct scan-out disabled by software cursor` under pixman (the task filters it). This
+does **not** replace `mise boot-test` — no seat, no logind, no input, no real KMS — but it is
+the only cheap gate that exercises a compositor at all, so run it after any change to
+`desktop/wlroots.bst`, `desktop/umbriel.bst`, `desktop/cage.bst` or `desktop/noctalia-greeter.bst`.
 
 **The Vulkan renderer cannot be used for the greeter compositor on displays wider than 2560px.**
 
