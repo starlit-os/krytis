@@ -178,6 +178,28 @@ next routine dependency bump is the expected failure mode, not a regression to c
 Treat every `mise run vuln-scan` finding with a `namespace` matching one already in
 `.grype.yaml`'s comments as "stale pin, re-verify and bump the version", not "new bug".
 
+### A stale rule can also go *permanently* dead, not just re-flag (package rename, not a version bump)
+
+Confirmed 2026-09-10 vuln-scan-triage pass: the `zlib`/`GHSA-g857-hhfv-j68w`/`1.3.1`
+rule (class 1, table above) produced **zero** matches — not in `.matches`, not in
+`.ignoredMatches` either — meaning it wasn't just failing to suppress (the version-bump
+case above), it was suppressing *nothing at all*. Root cause, found investigating issue
+#79 (zlib-rs adoption) the same day: upstream fdsdk replaced the bare `zlib` package with
+`zlib-ng` 2.3.3 at the bootstrap level sometime in the 26.08 cycle —
+`elements/components/zlib.bst` collapsed from a real build to a `kind: stack` depending
+on the new `elements/bootstrap/zlib-ng.bst`. The SBOM package is now named `zlib-ng`, so
+the old rule's `package.name: zlib` pin can never match again regardless of version.
+
+**Distinguishing this from the routine version-bump case:** a version-bumped rule still
+shows up in a fresh scan's `.matches` (unignored, same name, new version) — that's the
+"re-verify and bump the version" signal above. A **renamed/replaced** package shows up
+*nowhere* in either `.matches` or `.ignoredMatches` for that name — check the enriched
+SBOM (`jq '.packages[] | select(.name == "<old-name>")'`) before assuming "clean, nothing
+to do"; a zero-hit name can mean "genuinely fixed" or "renamed and still just as
+(ir)relevant", and only the SBOM lookup tells them apart. Removed from `.grype.yaml`
+rather than re-pinned to `zlib-ng`, since `zlib-ng` produced no stock-matcher false
+positive of its own in this scan — nothing to suppress until one actually appears.
+
 ### Mitigated: dependency-graph-proven unreachable crate versions (rust-matcher, not stock-matcher)
 
 A distinct, narrower ignore-rule class from the `stock-matcher` cases above — this one
