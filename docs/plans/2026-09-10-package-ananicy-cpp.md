@@ -15,19 +15,26 @@ processes).
 ## Upstream facts (verified this session)
 
 - **Binary**: `https://gitlab.com/ananicy-cpp/ananicy-cpp` (GPL-3.0-or-later, CMake,
-  C++20). *Not* GitHub — the AUR `ananicy-cpp` package (maintainer Antoine Viallon)
-  points here. Latest tag `v1.2.0` (2026-03-26,
-  `7117eaf278082bdbb8e25d94c4f7a141afeb1ae4`) — AUR is stale on `v1.1.1`; use `v1.2.0`.
-  krytis's `gitlab:` alias (`include/aliases.yml`) already covers this host for
+  C++20). *Not* GitHub. **Correction from the first pass of this plan**: the AUR
+  `ananicy-cpp` page (maintainer Antoine Viallon, still pinned at `v1.1.1`) is not the
+  live reference — the package **graduated from AUR into Arch's official `extra`
+  repo** at `1.2.0-1` (built 2026-03-27, maintainer Peter Jung/`ptr1337`), confirmed
+  via `archlinux.org/packages/extra/x86_64/ananicy-cpp/` and its packaging PKGBUILD at
+  `gitlab.archlinux.org/archlinux/packaging/packages/ananicy-cpp`. Use *that* PKGBUILD
+  as the authoritative upstream-packaging reference, not the orphaned AUR one. It
+  confirms `v1.2.0` (`7117eaf278082bdbb8e25d94c4f7a141afeb1ae4`) and surfaces one build
+  flag the AUR page's older `v1.1.1` recipe didn't have — see `ENABLE_REGEX_SUPPORT`
+  below. krytis's `gitlab:` alias (`include/aliases.yml`) already covers this host for
   `kind: git_repo`.
 - **Rules**: `https://github.com/CachyOS/ananicy-rules` (GPL-3.0-or-later). Bare-numeric
   tags (`1.1.49`, no `v` prefix), real GitHub releases — unlike
   `PikaOS-Linux/falcond-profiles` (no releases, forced a bespoke commit-SHA tracker),
   this one tracks cleanly with a plain `track: '*.*.*'` glob.
-- **Build deps** (from `CMakeLists.txt` + AUR `PKGBUILD`, both read this session):
-  `nlohmann_json` 3.9+, `fmt` 8.0+, `spdlog` 1.9+, all fetchable via CPM
-  (`cmake/CPM.cmake`, vendored in-tree — no network needed) *or* via
-  `find_package()` when `USE_EXTERNAL_*=ON` is passed. krytis must pass all three
+- **Build deps** (from `v1.2.0`'s `CMakeLists.txt` + the Arch `extra` PKGBUILD, both
+  read this session): `nlohmann_json` 3.9+, `fmt` 8.0+, `spdlog` 1.9+, `pcre2` (new in
+  1.2.0, see below), all fetchable via CPM (`cmake/CPM.cmake`, vendored in-tree — no
+  network needed) *or* via `find_package()`/`pkg_check_modules()` when
+  `USE_EXTERNAL_*=ON`/`ENABLE_REGEX_SUPPORT=ON` is passed. krytis must pass all
   `USE_EXTERNAL_*=ON` — the sandbox has no network at build time.
   - `nlohmann_json` → already vendored as `desktop/nlohmann-json.bst` (fdsdk dropped it
     in 26.08). Reuse as-is, `build-depends` only (header-only, same classification as
@@ -40,6 +47,16 @@ processes).
     `elements/components/` tree via the GitLab API, alphabetically absent between
     `swig.bst` and `systemd-hwdb-maybe.bst`). Needs a new krytis-vendored element,
     same pattern as `nlohmann-json.bst`/`stb.bst`.
+  - `pcre2` (libpcre2-8) → **new in `v1.2.0`**, gated behind `-DENABLE_REGEX_SUPPORT`
+    (added for the changelog's "[Rules] Add regex rules matching" — CachyOS's own
+    `ananicy-rules` changelog carries matching rule-syntax updates, so treat this as
+    required for the shipped ruleset to fully apply, not optional polish). Read
+    `v1.2.0`'s `CMakeLists.txt` directly: `find_package(PkgConfig REQUIRED)` +
+    `pkg_check_modules(... REQUIRED IMPORTED_TARGET libpcre2-8)`. **Also absent from
+    fdsdk** (confirmed: paged the full `elements/components/` tree, alphabetically
+    absent between `pciutils.bst` and `pcsc-lite.bst`) — third krytis-vendored
+    element, same pattern as `spdlog.bst`. The Arch `extra` package enables this flag;
+    match it.
 - **systemd**: `ENABLE_SYSTEMD=ON` links `libsystemd` and installs
   `ananicy-cpp.service` via `cmake --install` (no manual `install -Dm644` needed,
   unlike falcond's zig build which didn't install its unit). Use
@@ -47,8 +64,10 @@ processes).
   already does (`build-depends` + `depends`, `.pc` + `.so` both present).
 - **Process-detection backend — decision: netlink, not BPF.** ananicy-cpp supports two
   mutually exclusive backends selected by `-DUSE_BPF_PROC_IMPL`:
-  - **BPF** (what the AUR `PKGBUILD` uses): `libananicycpp_bpf/CMakeLists.txt` pulls
-    `libbpf` via CPM (network fetch, even with `BPF_BUILD_LIBBPF=OFF` the surrounding
+  - **BPF** (what the official Arch `extra` `PKGBUILD` uses —
+    `-DUSE_BPF_PROC_IMPL=ON -DBPF_BUILD_LIBBPF=OFF`, `makedepends=(bpf clang ...)`,
+    `depends=(libbpf libelf ...)`): `libananicycpp_bpf/CMakeLists.txt` pulls `libbpf`
+    via CPM (network fetch, even with `BPF_BUILD_LIBBPF=OFF` the surrounding
     `include(CPM)` / `FindBpfObject.cmake` machinery still needs auditing), compiles a
     BPF C skeleton with `clang -target bpf` against a per-arch vendored `vmlinux.h`,
     and optionally shells out to `bpftool`. Substantially heavier build graph than
@@ -58,10 +77,13 @@ processes).
     socket. Zero extra build deps beyond what's already needed for the main binary.
     Functionally complete — every checklist item in upstream's README ("What works")
     is backend-agnostic.
-  - Pick netlink: boring, no new libbpf/clang/CO-RE surface to maintain, no CPM
-    network-fetch path to audit shut. Record this as the deliberate choice (not an
-    oversight) in the element's header comment, same way `scx-scheds.bst` records its
-    version pin rationale.
+  - Pick netlink anyway, diverging from the official Arch/CachyOS packaging choice:
+    boring, no new libbpf/clang/CO-RE surface to maintain, no CPM network-fetch path
+    to audit shut. Record this as the deliberate choice (not an oversight) in the
+    element's header comment, same way `scx-scheds.bst` records its version pin
+    rationale — and flag it explicitly for review, since it's the one place this plan
+    knowingly diverges from the authoritative packaging reference rather than
+    following it.
 - **Config paths are hardcoded, not discoverable at runtime**: `src/main.cpp` defaults
   to `/etc/ananicy.d` (`ANANICY_CPP_CONFDIR` env var override) and
   `/etc/ananicy.d/ananicy.conf` (`ANANICY_CPP_CONF` override). `src/config.cpp`
@@ -116,6 +138,40 @@ sources:
   ref: <resolved by `mise bst source track desktop/spdlog.bst`>
 ```
 
+### `elements/desktop/pcre2.bst` (new)
+
+```yaml
+kind: cmake
+
+# PCRE2 (8-bit build only): required by desktop/ananicy-cpp.bst's regex rule matching
+# (-DENABLE_REGEX_SUPPORT=ON, new in ananicy-cpp v1.2.0). Not shipped by
+# freedesktop-sdk (confirmed absent from the full elements/components/ tree,
+# alphabetically between pciutils.bst and pcsc-lite.bst — same verification method as
+# desktop/spdlog.bst). Vendored the same way.
+
+build-depends:
+- freedesktop-sdk.bst:public-stacks/buildsystem-cmake.bst
+
+depends:
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
+
+variables:
+  cmake-local: >-
+    -DBUILD_SHARED_LIBS=ON
+    -DPCRE2_BUILD_PCRE2_8=ON
+    -DPCRE2_BUILD_PCRE2_16=OFF
+    -DPCRE2_BUILD_PCRE2_32=OFF
+    -DPCRE2_BUILD_PCRE2GREP=OFF
+    -DPCRE2_BUILD_TESTS=OFF
+    -DBUILD_STATIC_LIBS=OFF
+
+sources:
+- kind: git_repo
+  url: github:PCRE2Project/pcre2.git
+  track: pcre2-*
+  ref: <resolved by `mise bst source track desktop/pcre2.bst`>
+```
+
 ### `elements/desktop/ananicy-cpp.bst` (new)
 
 ```yaml
@@ -135,9 +191,10 @@ kind: cmake
 # works" checklist doesn't distinguish by backend). Netlink needs no extra deps beyond
 # what the main binary already pulls in.
 #
-# Source: https://gitlab.com/ananicy-cpp/ananicy-cpp — not GitHub; the AUR ananicy-cpp
-# package (maintainer: Antoine Viallon) points here. AUR is stale on v1.1.1 as of this
-# writing; krytis tracks v1.2.0+ directly upstream.
+# Source: https://gitlab.com/ananicy-cpp/ananicy-cpp — not GitHub. The AUR
+# `ananicy-cpp` package is stale/orphaned (pinned v1.1.1) now that the package
+# graduated into Arch's official `extra` repo at 1.2.0-1 — krytis tracks v1.2.0+
+# directly upstream, cross-checked against the `extra` PKGBUILD rather than AUR.
 #
 # Rules: https://github.com/CachyOS/ananicy-rules — CachyOS's community rule set,
 # vendored the same way desktop/falcond.bst vendors PikaOS-Linux/falcond-profiles, but
@@ -154,6 +211,7 @@ depends:
 - freedesktop-sdk.bst:components/systemd.bst
 - freedesktop-sdk.bst:components/fmtlib.bst
 - desktop/spdlog.bst
+- desktop/pcre2.bst
 
 variables:
   cmake-local: >-
@@ -161,6 +219,7 @@ variables:
     -DUSE_EXTERNAL_FMTLIB=ON
     -DUSE_EXTERNAL_SPDLOG=ON
     -DENABLE_SYSTEMD=ON
+    -DENABLE_REGEX_SUPPORT=ON
     -DSTATIC=OFF
 
 sources:
@@ -215,9 +274,10 @@ config:
 
 Notes for whoever implements this:
 
-- The two `ref:` placeholders **must** be resolved with a real `mise bst source track
-  desktop/ananicy-cpp.bst` run (and `desktop/spdlog.bst` for its own), not hand-typed —
-  don't guess the `git describe` suffix format.
+- Every `ref:` placeholder above **must** be resolved with a real `mise bst source
+  track desktop/ananicy-cpp.bst desktop/spdlog.bst desktop/pcre2.bst` run (four
+  placeholders total: `ananicy-cpp.bst` carries two sources), not hand-typed — don't
+  guess the `git describe` suffix format.
 - `cmake-global`'s BuildStream-plugin default already carries `-DCMAKE_BUILD_TYPE`
   (sibling `kind: cmake` elements `fmtlib.bst`, `sdbus-cpp.bst`, `nlohmann-json.bst`
   don't override it either) — this is *not* the meson `debugoptimized` gap documented
@@ -245,9 +305,9 @@ not overlapping" relationship documented in the element header:
 ## `.github/workflows/track-bst-sources.yml`
 
 Both new elements are plain `git_repo`+`track:` — no Cloudflare/no-releases quirks like
-falcond/falcond-profiles hit, so both fit the **existing shared matrix job** (the one
-whose `matrix.include` list already carries `nlohmann-json`, `kmscon`, `libtsm`, etc. —
-read this session at lines ~836-1000) rather than needing bespoke jobs:
+falcond/falcond-profiles hit, so all three fit the **existing shared matrix job** (the
+one whose `matrix.include` list already carries `nlohmann-json`, `kmscon`, `libtsm`,
+etc. — read this session at lines ~836-1000) rather than needing bespoke jobs:
 
 ```yaml
           - group: ananicy-cpp
@@ -258,11 +318,15 @@ read this session at lines ~836-1000) rather than needing bespoke jobs:
             element: desktop/spdlog.bst
             branch: auto/track-spdlog
             title: "chore(deps): update spdlog"
+          - group: pcre2
+            element: desktop/pcre2.bst
+            branch: auto/track-pcre2
+            title: "chore(deps): update pcre2"
 ```
 
-Also add `ananicy-cpp` and `spdlog` to the `workflow_dispatch.inputs.group.options`
-list near the top of the file (satisfies AGENTS.md's Update Path Gate option (a) — no
-new mise task needed).
+Also add `ananicy-cpp`, `spdlog`, and `pcre2` to the
+`workflow_dispatch.inputs.group.options` list near the top of the file (satisfies
+AGENTS.md's Update Path Gate option (a) — no new mise task needed).
 
 ## `docs/skills/bst.md`
 
@@ -274,9 +338,14 @@ follow-up):
 - The `fmtlib.bst` vs `fmt.bst` naming trap (component is literally named
   `fmtlib.bst` in fdsdk — easy to grep for the wrong name and conclude fmt isn't
   shipped).
-- spdlog absent from fdsdk entirely — where this was verified (paginated the full
-  `elements/components/` tree via the GitLab API rather than trusting web search,
-  which came up empty/unreliable for this specific file).
+- spdlog and pcre2 both absent from fdsdk entirely — where this was verified
+  (paginated the full `elements/components/` tree via the GitLab API rather than
+  trusting web search, which came up empty/unreliable for both).
+- The AUR-vs-`extra` trap: a stale/orphaned AUR page can keep describing an older
+  release long after a package graduates into Arch's official repos (ananicy-cpp:
+  AUR pinned at v1.1.1, `extra` at 1.2.0-1) — check `archlinux.org/packages/` and the
+  `gitlab.archlinux.org/archlinux/packaging/packages/<name>` PKGBUILD before trusting
+  an AUR page's pinned version or build flags as current.
 - The netlink-vs-BPF decision and why (link back to this plan once archived).
 - The CONFDIR/CONF env-var override technique, generalized: any daemon with a single
   hardcoded `/etc/<x>` default and no XDG-style multi-dir search needs its systemd
