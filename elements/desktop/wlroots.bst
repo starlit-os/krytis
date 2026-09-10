@@ -33,6 +33,13 @@ build-depends:
 - freedesktop-sdk.bst:components/vulkan-headers.bst
 - freedesktop-sdk.bst:components/vulkan-icd-loader.bst
 - freedesktop-sdk.bst:components/glslang.bst
+# mesa-headers.bst regenerates egl.pc/glesv2.pc/gl.pc (+ EGL/GLES2/KHR headers)
+# at the standard %{libdir}/pkgconfig, which fdsdk's mesa deliberately does not
+# ship (components/libglvnd.bst rm's them). Required for -Drenderers=gles2:
+# wlroots' GLES2 renderer does a plain dependency('egl')/dependency('glesv2').
+# libEGL.so.1/libGLESv2.so.2 themselves come from components/libglvnd.bst,
+# already a runtime dep of extensions/mesa/mesa.bst below.
+- freedesktop-sdk.bst:components/mesa-headers.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
@@ -76,14 +83,18 @@ variables:
   # omits vulkan — must be listed explicitly in -Drenderers.
   # pixman is NOT a valid -Drenderers value in 0.20.1 (allowed: auto, gles2,
   # vulkan) — pixman renderer is always compiled in unconditionally.
-  # gles2 is NOT listed: with auto it was silently skipped because egl.pc is
-  # not in the pkgconfig search path in the build sandbox. gles2 also fails
-  # at runtime on amdgpu (glvnd can't find radeonsi through fdsdk's non-standard
-  # mesa prefix), so omitting it is correct for this image.
+  # gles2 is required by desktop/umbriel.bst: umbrielfx (its SceneFX fork) is a
+  # GLES2-only renderer that includes <wlr/render/egl.h>, and wlroots'
+  # include/meson.build drops render/egl.h + render/gles2.h from install_subdir
+  # unless the gles2-renderer feature is on. Enabling it needs mesa-headers.bst
+  # above — under -Drenderers=auto gles2 was silently skipped because egl.pc is
+  # not in the sandbox pkgconfig path. This does not change what the greeter
+  # renders with: elements/config/greetd-config.bst pins WLR_RENDERER=pixman on
+  # the session command, and niri is smithay, not wlroots.
   meson-local: >-
     -Dexamples=false
     -Dbackends=libinput,drm,x11
-    -Drenderers=vulkan
+    -Drenderers=gles2,vulkan
 
 sources:
 - kind: tar

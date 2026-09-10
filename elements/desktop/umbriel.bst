@@ -41,6 +41,14 @@
 # which BuildStream only stages when extensions/mesa/libdrm.bst is
 # explicitly in this element's own dependency graph.
 #
+# wlroots must be built with the gles2 renderer for this element to compile at
+# all: umbrielfx includes <wlr/render/egl.h>, and wlroots'
+# include/meson.build excludes render/egl.h + render/gles2.h from install
+# unless the gles2-renderer feature is on. desktop/wlroots.bst therefore uses
+# -Drenderers=gles2,vulkan (#775); see docs/skills/desktop.md
+# § "wlroots renderers" for the pkg-config ripple that flip caused in every
+# other wlroots consumer.
+#
 # nlohmann-json: freedesktop-sdk 26.08 dropped components/nlohmann-json.bst
 # (see desktop/nlohmann-json.bst) -- use the krytis-vendored element, same as
 # desktop/noctalia.bst / desktop/noctalia-greeter.bst.

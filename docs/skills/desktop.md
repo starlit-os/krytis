@@ -467,11 +467,33 @@ wlroots picks a renderer at startup based on the DRM backend's render node:
 
 pixman uses DRM dumb buffers as its allocator; works on all drivers including amdgpu.
 
-### GLES2 on amdgpu fails with fdsdk mesa
+### GLES2 with fdsdk mesa — works on amdgpu (re-verified 2026-09-10, #775)
 
-wlroots GLES2 requires glvnd to find `libEGL_mesa.so.0` and MESA-LOADER to find `radeonsi_dri.so`.
-With fdsdk's non-standard mesa prefix this path fails. Use `WLR_RENDERER=vulkan` or fall back to
-`WLR_RENDERER=pixman` if Vulkan is unavailable.
+An earlier version of this section claimed "wlroots GLES2 requires glvnd to find
+`libEGL_mesa.so.0` and MESA-LOADER to find `radeonsi_dri.so`; with fdsdk's non-standard mesa
+prefix this path fails." **That is wrong on the image as it ships today.** Measured on a live
+krytis desktop (Navi 32 / RX 7800 XT):
+
+- `/usr/lib/x86_64-linux-gnu/libEGL.so.1` is **libglvnd 1.5**, and it loads mesa's vendor JSON
+  from `…/GL/default/share/glvnd/egl_vendor.d/` with **no** `__EGL_VENDOR_LIBRARY_DIRS` set —
+  even though `/usr/share/glvnd/egl_vendor.d` (the usual default) does not exist at all.
+- `/etc/ld.so.conf.d/00_mesa.conf` puts `GL/default/lib` on the linker path, and
+  `/usr/lib/x86_64-linux-gnu/dri` exists, so `libEGL_mesa.so.0` and the DRI drivers both resolve.
+- `eglQueryDevicesEXT` returns 2 devices; a GLES2 context on device 0 reports
+  `GL_RENDERER = AMD Radeon RX 7800 XT (radeonsi, navi32, ACO, DRM 3.64)`, i.e. real hardware
+  acceleration, not llvmpipe (device 1 is llvmpipe).
+
+So the greeter's `WLR_RENDERER=pixman` pin is **not** justified by GLES2 being broken — it is
+justified by the Vulkan DMA-BUF size limit documented below plus pixman being adequate for a
+login screen. When a compositor genuinely needs GLES2 (umbrielfx does — see below), it works.
+
+If a wlroots-based compositor *does* fail to bring up GLES2, measure before believing a doc:
+
+```shell
+# from the built image, no VM needed — see § Smoke-testing a wlroots compositor headlessly
+podman run --rm --device /dev/dri --entrypoint sh localhost/krytis:latest -c \
+  'export XDG_RUNTIME_DIR=/tmp/x; mkdir -p $XDG_RUNTIME_DIR; WLR_BACKENDS=headless timeout 12 umbriel'
+```
 
 ### Vulkan ICD discovery: compat-vulkan-link
 
@@ -488,15 +510,63 @@ search paths:
 The Vulkan loader searches `/usr/share/vulkan/icd.d/` by default, so `VK_ICD_FILENAMES` is
 **not** needed after this element is present. Closes the ICD discovery gap (#94).
 
-### wlroots Vulkan renderer — compiled in but NOT used for the greeter
+### wlroots renderers: `-Drenderers=gles2,vulkan`
 
-`desktop/wlroots.bst` compiles the Vulkan renderer (`-Drenderers=vulkan`) with:
-- build-depends: `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, `components/glslang.bst`
-- runtime depend: `components/vulkan-icd-loader.bst` (provides libvulkan.so)
+`desktop/wlroots.bst` compiles both the Vulkan and the GLES2 renderer:
+- build-depends for Vulkan: `components/vulkan-headers.bst`, `components/vulkan-icd-loader.bst`, `components/glslang.bst`
+- build-depends for GLES2: `components/mesa-headers.bst` (regenerates `egl.pc`/`glesv2.pc`/`gl.pc`
+  at the standard `%{libdir}/pkgconfig`, which fdsdk's mesa does not ship — `components/libglvnd.bst`
+  deliberately `rm`s them). `gbm.pc` comes from mesa's `GL/default` split via `prepend-mesa-env`.
+- runtime depend: `components/vulkan-icd-loader.bst` (libvulkan.so); libEGL/libGLESv2 arrive with
+  `extensions/mesa/mesa.bst` → `components/libglvnd.bst`, so no extra runtime entry is needed.
 
 Build notes:
-- `pixman` is **not** a valid `-Drenderers` value in 0.20.1 — allowed: `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
-- `gles2` must **not** be listed: `egl.pc` is absent from the pkgconfig path in the BST build sandbox, causing an error. With `auto` it was silently skipped.
+- `pixman` is **not** a valid `-Drenderers` value in 0.20.x — allowed: `auto`, `gles2`, `vulkan`; pixman is always compiled in unconditionally.
+- `gles2` was previously omitted because `egl.pc` is absent from the sandbox pkgconfig path (with
+  `auto` it was silently skipped). `mesa-headers.bst` is the fix; do not re-drop `gles2`.
+
+**Why gles2 is required at all: umbrielfx.** `desktop/umbriel.bst`'s in-tree SceneFX fork is a
+GLES2-only renderer and `#include <wlr/render/egl.h>`. wlroots' `include/meson.build` adds
+`render/egl.h` and `render/gles2.h` to `install_subdir`'s `exclude_files` unless the
+`gles2-renderer` feature is on, so with `-Drenderers=vulkan` the header is simply not in the
+sysroot and umbrielfx dies with `fatal error: wlr/render/egl.h: No such file or directory`.
+
+**Enabling gles2 ripples to every wlroots consumer.** With the feature on, `wlroots-0.20.pc`
+gains `Requires.private: … egl, gbm, glesv2 …`, and pkg-config refuses to resolve
+`wlroots-0.20` *at all* when those `.pc` files are missing — even for a dynamic link. The
+failure surfaces nowhere near EGL: meson's `dependency('wlroots-0.20', fallback: [...])` falls
+through to the wrap and reports
+
+```
+meson.build:40:17: ERROR: Attempted to resolve subproject without subprojects directory present.
+```
+
+which happened to `desktop/cage.bst` the moment wlroots flipped. Every element that links
+wlroots therefore needs `components/mesa-headers.bst` in `build-depends` plus the
+`prepend-mesa-env` pattern for `gbm.pc`: today that is `desktop/cage.bst`,
+`desktop/noctalia-greeter.bst` and `desktop/umbriel.bst`. Side effect on noctalia-greeter:
+its `dependency('egl', required: false)` / `dependency('glesv2', required: false)` now
+**succeed** instead of falling back to libepoxy, so the greeter compositor links
+libEGL.so.1/libGLESv2.so.2 directly. It still renders with pixman (greetd pins the env).
+
+### Smoke-testing a wlroots compositor headlessly
+
+`desktop/wlroots.bst` builds `-Dbackends=libinput,drm,x11` — there is **no wayland backend**, so
+a krytis wlroots compositor cannot be nested inside the running niri session. The headless
+backend is compiled in unconditionally (it is not part of the `backends` option), which gives a
+full renderer/scene-graph smoke test from the built OCI image with no VM and no root:
+
+```shell
+podman run --rm --device /dev/dri --entrypoint sh localhost/krytis:latest -c '
+  export XDG_RUNTIME_DIR=/tmp/xdg; mkdir -p $XDG_RUNTIME_DIR
+  WLR_BACKENDS=headless UMBRIEL_CONFIG=/dev/null timeout 12 /usr/bin/umbriel'
+```
+
+A pass looks like `[gl] initialized EGL 1.5`, `[render] OpenGL ES vendor="AMD" renderer="AMD
+Radeon RX 7800 XT (radeonsi, …)"`, an output `HEADLESS-1`, and a clean `received signal 15`
+shutdown. D-Bus/pipewire/secret-store warnings are expected inside the container and harmless.
+This does **not** replace `mise boot-test` (no seat, no logind, no greeter), but it catches every
+renderer and config-parse failure without waiting on a VM install.
 
 **The Vulkan renderer cannot be used for the greeter compositor on displays wider than 2560px.**
 
