@@ -287,6 +287,17 @@ forwarding into load-bearing code) and accepting that dormant `depends` lists
 wake up. Prefer the raw-call pattern unless a task genuinely needs another
 task's `sources`/`outputs` freshness check or its `depends` graph honored.
 
+**`build`'s own explicit `generate-image-version` call was later found redundant and dropped.**
+Once `load-image` gained its own raw-call to `generate-image-version` (the fix described
+above), `build`'s pre-existing explicit call became dead weight: `build` always calls
+`load-image` immediately next with nothing in between, so `load-image`'s internal call
+regenerates the exact same `include/image-version.yml` content a second time in the same
+invocation. `mise/tasks/build` no longer calls `generate-image-version` directly — it relies
+on `load-image` to do it, exactly as `load-image` relies on nothing else. This is safe
+specifically *because* the two calls are back-to-back raw script calls with no git-state
+change possible between them; it would not be safe to drop if anything between the two calls
+could change `git log -1`/`git rev-parse HEAD`'s output.
+
 ### Supported `#MISE` metadata fields
 
 | Field | Example |

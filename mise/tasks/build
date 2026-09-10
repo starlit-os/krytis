@@ -11,6 +11,11 @@ PUSH=${usage_push:+--push}
 PULL=${usage_pull:+--pull}
 FORCE=${usage_force:+--force}
 
-./mise/tasks/generate-image-version
+# No explicit generate-image-version call here: ./mise/tasks/load-image
+# (below) already raw-calls it itself as its own first action (added so
+# load-image works correctly when run standalone — see docs/skills/mise.md
+# § Calling other tasks). Since build always calls load-image next with
+# nothing in between, an explicit call here would just regenerate the exact
+# same include/image-version.yml content twice in one invocation.
 ./mise/tasks/load-image ${CONTAINER:-} ${PUSH:-} ${PULL:-} ${FORCE:-}
 ./mise/tasks/lint
