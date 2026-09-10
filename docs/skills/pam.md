@@ -361,7 +361,22 @@ prompter is not a degraded mode — it is an indefinite hang in every caller, wi
 anyone would think to file. Worth remembering when triaging "the keyring is stuck": check
 `busctl --user list | grep SystemPrompter` before anything else.
 
-### 2026-09-08 investigation: "keyring won't unlock" traced to `podman-restart.service` subuid noise, not a keyring bug
+### 2026-09-08 investigation: "keyring won't unlock" — cause missed, corrected 2026-09-10
+
+> **CORRECTION (2026-09-10).** The eliminations below are sound and worth keeping. The
+> **headline is wrong.** The locked login collection was never explained by the
+> `podman-restart.service` subuid noise — that is a real but entirely separate bug with no
+> connection to the keyring. The actual cause is the `oo7-daemon-login` handoff race in
+> § *Login auto-unlock is lost to a race between `oo7-daemon.service` and `pam_oo7`'s login
+> helper* below, which has broken auto-unlock on **every fresh-boot login since 2026-08-14**.
+>
+> Why it was missed: ruling out a mid-session daemon restart (correctly) left exactly one
+> hypothesis standing — *it was never unlocked in the first place* — and that hypothesis was
+> never tested. The single log line that settles it is the daemon-side
+> `oo7_daemon::pam_listener: Received unlock request for user:`, and the investigation only
+> ever read the **pam-side** `Successfully sent secret to oo7 daemon`, which is emitted
+> unconditionally and is false on the helper path. Checking a success claim against the
+> receiver's own log, not the sender's, is the habit that would have caught it.
 
 Investigated a live-system report of `gh auth status` intermittently seeing the login
 collection as locked. Journal evidence from a fresh boot (`journalctl -b`), ruling things in
@@ -398,6 +413,64 @@ and out:
   practical use for a Secret Service, so this is journal noise on every `sudo` call rather
   than a functional break, but it points at `oo7-daemon`'s systemd unit not handling uid 0
   cleanly. Not investigated further.
+
+## Login auto-unlock is lost to a race between `oo7-daemon.service` and `pam_oo7`'s login helper
+
+**Symptom.** After an ordinary password login the `login` collection is locked for the entire
+session. Every libsecret caller is told the secret does not exist rather than being offered an
+unlock (oo7#585), so `gh` fails with `HTTP 401`, `flatpak` logs `Unable to unlock default
+keyring`, and nothing in the journal reads as an error — `pam_oo7` reports success.
+
+**Confirmed on hardware 2026-09-10** against oo7 pinned at `da576e43`. The window is ~38 ms:
+
+|Time (`journalctl -b`)|Event|
+|---|---|
+|`17.021573`|user manager, just spawned by `pam_systemd.so`, starts `oo7-daemon.service` (`WantedBy=default.target`)|
+|`17.022609`|`pam_oo7.so auto_start` — the **next module in the same stack** — connects `/run/user/1000/oo7-pam.sock`|
+|`17.022621`|`Socket not found, starting login helper`|
+|`17.022960`|`oo7-daemon-login` forked|
+|`17.023235`|`Successfully sent secret to oo7 daemon for user: lily` — **false**|
+|~`17.060`|daemon's one-shot connect to the helper's socket fails, silently|
+|`17.060742`|daemon binds `oo7-pam.sock` — 38 ms after `pam_oo7` gave up|
+|`17.062261`|`Setting up collection 'login'` — locked, and stays locked|
+
+**Neither side retries, and the failure is silent on both.**
+
+- `pam/src/socket.rs`: `Err(e) if auto_start && e.kind() == NotFound => { start_login_helper(…)?; return Ok(()) }`. Fire-and-forget — it then reports success to PAM whether or not anything ever collects the secret.
+- `server/src/main.rs`: `read_secret_from_login_helper()` runs **once**, inside `inner_main` ahead of `Service::run`. Its failure arm is `Err(_) => return None` — no log, no retry. Absence of `Connected to login helper at …` in the daemon's log is the only trace.
+- `server/src/login.rs`: the helper binds `/run/user/<uid>/oo7-daemon-login.sock` and polls for `HELPER_TIMEOUT_SECS = 120`, then logs `Timed out after 120s, no daemon connected` and exits 0. **That log never reaches the journal** — the helper is `execv`'d from greetd's PAM child with stderr discarded, so the process leaves no trace at all. Do not conclude from a silent journal that the helper never ran.
+
+So the secret is handed to a helper the daemon has already stopped looking for.
+
+**This is not intermittent, it only looks that way.** `Socket not found, starting login helper`
+appears on every fresh-boot login from 2026-08-14 onward. On the same machine the daemon logged
+`pam_listener: Received unlock request for user: lily` exactly twice across four weeks of boots
+— both times on re-logins into a boot where `user@1000` still lingered, so `oo7-pam.sock`
+already existed and `pam_oo7` took the direct path (`Connected to daemon socket`, no helper, no
+race). **Same-boot re-logins work; first login after a boot never does.**
+
+Builds before 2026-08-14 had a fallback that worked: `Socket not found, attempting to start
+daemon` → poll → `Connected to daemon socket` ~100 ms later. Upstream replaced that
+start-and-wait with the fire-and-forget helper; that is the regression.
+
+**Triage in one command** — check the *receiver's* log, never `pam_oo7`'s success claim:
+
+```shell
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/login \
+  org.freedesktop.Secret.Collection Locked          # b true  => never unlocked
+journalctl --user -b -u oo7-daemon.service | grep pam_listener
+```
+
+`PAM listener started on …` alone means no secret ever arrived. A working login also shows
+`Received unlock request for user:` and `Unlocked collection:`.
+
+**Do not "fix" this by restarting the daemon.** `systemctl --user restart oo7-daemon` cannot
+help: there is no secret left anywhere to pick up, and per oo7#506 a restart drops unlocked
+state anyway. Mid-session recovery is the interactive prompter only.
+
+Ordering `pam_oo7` **before** `pam_systemd` is not a fix either: `/run/user/<uid>` does not
+exist until logind registers the session, so the helper would have nowhere to bind.
 
 ## oo7's collection path: `Login` on 0.6.0, `login` from 0.7.0.alpha
 
@@ -499,10 +572,15 @@ CLI prompter failed: NameHasNoOwner: Name "org.freedesktop.secrets.CliPrompter" 
 krytis ships only oo7's `server/` and `pam/` sub-projects, not `cli/`, so nothing ever owns
 that name — picking `Cli` is always fatal here, never merely suboptimal.
 
-It cannot be dodged by starting the daemon later: `pam_oo7.so auto_start` runs in the PAM
-session phase and the daemon must already exist to take the login secret from the transient
-`oo7-daemon-login` helper, whose socket is gone by mid-session. Delaying the unit trades a
-prompter bug for the loss of login auto-unlock.
+The old text here claimed this could not be dodged by starting the daemon later, "because the
+daemon must already exist to take the login secret from the transient `oo7-daemon-login`
+helper." **That is backwards, corrected 2026-09-10.** The daemon connects to the *helper*, once,
+at its own startup (`server/src/main.rs`, `read_secret_from_login_helper()` ahead of
+`Service::run`), and the helper holds the secret for 120 s (`server/src/login.rs`,
+`HELPER_TIMEOUT_SECS`). A *modest* delay on `oo7-daemon.service` — just enough to let the helper
+bind — therefore costs nothing and is one of the candidate fixes for the race in § Login
+auto-unlock is lost to a race … above. Only a delay past 120 s would actually lose the login
+secret.
 
 **oo7 has now got this wrong twice, in two different ways, and krytis has to patch both.**
 
