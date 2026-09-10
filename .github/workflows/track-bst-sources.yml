@@ -67,7 +67,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -165,7 +165,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -263,7 +263,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -364,7 +364,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -458,7 +458,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -552,7 +552,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -646,7 +646,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -742,7 +742,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -945,7 +945,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1087,7 +1087,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1145,7 +1145,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1239,7 +1239,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1331,7 +1331,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1423,7 +1423,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1520,7 +1520,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1617,7 +1617,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1715,7 +1715,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1812,7 +1812,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -1906,7 +1906,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -2000,7 +2000,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -2078,7 +2078,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -2172,7 +2172,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -2266,7 +2266,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
@@ -2378,7 +2378,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.TRACKING_APP_ID }}
+          client-id: ${{ vars.TRACKING_APP_CLIENT_ID }}
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise

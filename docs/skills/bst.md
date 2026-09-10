@@ -1210,6 +1210,8 @@ Only the PR-opening step uses the App token. Every other `secrets.GITHUB_TOKEN` 
 
 App ID and private key: `TRACKING_APP_ID` / `TRACKING_APP_PRIVATE_KEY` repo secrets. Rotating the key: generate a new one on the App's settings page, `gh secret set TRACKING_APP_PRIVATE_KEY < new-key.pem`, then revoke the old key from the App settings page — installation tokens are minted fresh per run, so there's no in-flight token to invalidate.
 
+`actions/create-github-app-token` deprecated its `app-id` input in v3.1.0 in favor of `client-id` (every job logged `##[warning]Input 'app-id' has been deprecated` until this was caught and fixed). The two values are different credentials, not a rename: `app-id` is the numeric App ID (e.g. `4895119`), `client-id` is the App's OAuth-style client ID (`Iv23…`-prefixed) from the same settings page. `client-id` is public — visible to anyone who can see the App's settings — so it's a repo **variable** (`vars.TRACKING_APP_CLIENT_ID`), not a secret; `private-key` is unaffected and stays a secret. Found the App's `client_id` without touching its settings page at all: `gh api /orgs/starlit-os/installations --jq '.installations[] | {app_slug, app_id, client_id}'` lists every App installed on the org, including `krytis-tracking-bot`'s — no admin UI click-through needed, and it works for any App already installed, not just ones you administer.
+
 ### Temporary fork pins for tarball-pinned elements
 
 When a `kind: tar` element needs a fix that isn't upstream yet, point the source at a fork branch's archive tarball instead of waiting on a PR merge — same `github_files:<owner>/<repo>/archive/<sha>.tar.gz` shape, just a different owner:
