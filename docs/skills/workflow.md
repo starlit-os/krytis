@@ -182,6 +182,14 @@ mise run boot-test --reuse-disk /var/tmp/krytis-test.raw
 
 The same root requirement applies to `mise run chunkify` and to `mise/tasks/load-image-root` (which `generate-disk` calls to copy the image into the root podman store, invisible to rootless podman).
 
+## Skip `mise lint`/`boot-test` When the Diff Can't Touch the Image
+
+AGENTS.md § Verification reads as unconditional — "every PR must confirm `mise lint` passed and the image booted" — but both are `Containerfile`-driven, `podman build`-based checks (see `docs/skills/mise.md` § `mise lint` is a real multi-stage `podman build`). They provide zero signal for a PR that touches no image-relevant path: no `.bst` element, no `Containerfile`, no `files/` content baked into the image, no mise task that feeds `load-image`. A `.github/workflows/*.yml` or `docs/**` change cannot change what `podman build -f Containerfile .` produces — running a multi-minute (or, per `mise.md`, multi-hundred-second) full image rebuild against it validates unrelated surface, not the diff under review.
+
+Confirmed 2026-09-10 on #793 (issue #656, a `track-bst-sources.yml` GitHub-App-token change plus a `docs/skills/bst.md` addition, no `.bst`/`Containerfile` touched): started `mise run lint` out of habit, was stopped mid-run — the meaningful check for that diff was already green as the PR's own "Static gates" CI job (workflow YAML/schema validation), which returns in seconds instead of minutes.
+
+**Scope the verification to what the diff can affect.** For an image-affecting PR (any `.bst` element, `Containerfile`, `files/`, or image-feeding mise task), the gate above still applies in full — don't use this section to skip it. For a PR that is provably confined to workflow YAML, docs, or CI-only scripts, cite the relevant CI job (or a targeted command — `mise run docs-links`, `actionlint`-equivalent static gate) instead of reflexively reaching for `mise lint`/`boot-test`.
+
 ## Stacked PRs
 
 Stack when the next piece of work needs a file state that only exists in an open PR — a prerequisite (#24 → #25) or the same lines of one config (#26 → #27). Base the child on the parent branch and say so in the body, so the reviewer knows the order:
