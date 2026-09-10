@@ -139,15 +139,29 @@ fi
 
 # dbx is enrolled from the same directory and is easy to lose silently: nothing
 # fails if it is absent, the machine just quietly trusts every binary Microsoft
-# has ever revoked (#446). Assert it landed, and that it is not an empty list.
+# has ever revoked (#446). #757: a bare size floor is not "complete", only
+# "non-empty" — the #755 union-split regression this guard exists to catch drops
+# 154 of 445 hashes and still clears >=100 bytes by two orders of magnitude (291
+# hashes is still ~14KB). Assert the enrolled blob is exactly what the repo says
+# it should be: sign-efi-sig-list wraps dbx.esl's bytes as the payload verbatim
+# (no re-sort, no dedupe), so a byte-exact match proves entry-exact too — no
+# firmware-side entry count needed, and it also catches a bad merge, a
+# hand-edited dbx.esl, or a Containerfile change that signs the wrong file
+# (nothing else downstream would).
 if [ -f "${ESP}/loader/keys/auto/dbx.auth" ]; then
     DBX_SIZE=$(sed -n 's/^ *dbx *: blob: \([0-9]*\) bytes.*/\1/p' <<<"${VARS_DUMP}" | head -1)
-    if [ -z "${DBX_SIZE}" ] || [ "${DBX_SIZE}" -lt 100 ]; then
-        echo "FAIL: the image ships dbx.auth but the firmware ended up with dbx=${DBX_SIZE:-absent}." >&2
-        echo "      Secure Boot is on with no revocations, so every revoked Microsoft-signed" >&2
-        echo "      binary still verifies. See #446." >&2
+    DBX_ESL="files/microsoft-uefi-certs/dbx.esl"
+    EXPECTED_DBX_SIZE=$(wc -c < "${DBX_ESL}")
+    EXPECTED_DBX_COUNT=$(./scripts/parse-efi-auth.py --count-esl "${DBX_ESL}")
+    if [ -z "${DBX_SIZE}" ] || [ "${DBX_SIZE}" != "${EXPECTED_DBX_SIZE}" ]; then
+        echo "FAIL: the image ships dbx.auth but the firmware enrolled dbx=${DBX_SIZE:-absent} bytes," >&2
+        echo "      while ${DBX_ESL} (${EXPECTED_DBX_COUNT} entries) says it should be" >&2
+        echo "      ${EXPECTED_DBX_SIZE} bytes. A smaller blob revokes fewer binaries than the repo" >&2
+        echo "      intends — the exact #755 union-split regression this guard exists to catch." >&2
+        echo "      See #446, #755, #757." >&2
         exit 1
     fi
+    echo "    dbx matches ${DBX_ESL}: ${DBX_SIZE} bytes, ${EXPECTED_DBX_COUNT} revoked entries"
 fi
 
 if ! grep -q 'successfully enrolled' "${WORKDIR}/serial.log"; then
