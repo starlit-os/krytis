@@ -207,6 +207,15 @@ any new `uses:` line:** grep the rest of `.github/workflows/` for the same
 in the PR description and ask the user to confirm/add it — do not assume
 "it's a well-known action" is the same as "it's allowlisted."
 
+**Hit a second time in PR #793 (issue #656), post-merge this time — the checklist above was skipped, not just missed by oversight.** `actions/create-github-app-token` was genuinely new to `.github/workflows/track-bst-sources.yml` (0 prior uses in the repo), landed in a plan (#710) and PR (#793) that never called out the allowlist question, and merged clean — `Static gates` doesn't run `actionlint` or touch workflow policy at all (see § SHA pinning above), so nothing in CI catches this before merge. The break only surfaces on the next real dispatch, as `startup_failure` with **zero jobs created** — no job logs, no check-run for the workflow, `gh api .../actions/runs/<id>/logs` 404s. The only place the actual reason appears is the run's web UI **Annotations** panel, reachable by opening `https://github.com/<org>/<repo>/actions/runs/<id>` in a real browser (`gh run view`/`gh api` surface nothing beyond the generic `startup_failure` conclusion):
+
+```
+The action <owner>/<repo>@<sha> is not allowed in <org>/<repo> because all actions
+must be from a repository owned by <org> or match one of the patterns: <allowlist>.
+```
+
+Fix is entirely org-side (Settings → Actions → General → Allow select actions, on the org, not the repo) and needs an org admin — confirmed via `gh api orgs/<org>/actions/permissions/selected-actions` returning 403 even from an authenticated `gh` session. **Since nothing in CI catches this before merge, do not treat a clean `Static gates` run as proof a new third-party action will actually execute** — grep for prior use and ask before merging, the same discipline #689 already called for, now with a second confirmed cost of skipping it.
+
 ### `remove-unwanted-software` → `free-disk-space` migration (#703)
 
 `ublue-os/remove-unwanted-software` had no push since 2025-10-10 and no `v10`
