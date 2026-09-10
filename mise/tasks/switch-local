@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#MISE description="Switch this machine's bootc deployment to a local build (auto-seals first if currently UKI-booted)"
+#USAGE flag "--force" help="Re-copy the image into the root store even if it already matches (see load-image-root)"
+
+set -euo pipefail
+
+# A UKI-booted (sealed) system cannot cleanly `bootc switch` to a non-UKI
+# image. localhost/krytis:latest (from `mise build`) has no UKI at all --
+# see docs/skills/secure-boot.md "no signed systemd-boot and no UKI at all" --
+# so it needs a traditional kernel+initrd+options BLS entry, while a sealed
+# system's existing entries are UKI-only (Type #2). bootc's "Setting up BLS
+# boot" step, inspecting the current ESP layout to perform the switch, finds
+# that shape mismatch and fails with "Found NonEFI config" rather than
+# writing a usable entry. Root-caused live on this exact class of machine —
+# see docs/skills/bootc-vm.md § local bootc switch on a UKI-booted machine.
+#
+# Fix: detect which shape the running system already has, and switch to an
+# image with the *same* shape. `localhost/krytis:sealed` (mise run seal-uki)
+# is itself UKI-only, so a UKI-booted system switching to it hits no mismatch.
+#
+# Detection: `bootctl status`'s "Measured UKI: yes" line. This needs no root
+# and no mounted ESP (unlike checking for /boot/EFI/Linux/*.efi on the running
+# system, which generate-disk's own UKI check does against a *candidate
+# image* via `podman run`, not the live system) -- "Measured UKI" is derived
+# from the running kernel/EFI variables, set by systemd-stub only when the
+# current boot actually came from a UKI. Confirmed live: also cross-checked
+# against `/sys/firmware/efi/efivars/StubInfo-4a67b082-...` (systemd's own
+# EFI vendor GUID) being present only on a UKI boot.
+echo "==> Checking whether this machine is currently UKI-booted..."
+IS_UKI_BOOT=no
+if bootctl status 2>/dev/null | grep -q '^ *Measured UKI: yes$'; then
+    IS_UKI_BOOT=yes
+fi
+
+if [ "${IS_UKI_BOOT}" = "yes" ]; then
+    echo "==> UKI-booted (sealed) -- localhost/krytis:latest has no UKI and would hit"
+    echo "    bootc's \"Found NonEFI config\" on switch. Sealing first."
+
+    # Fail fast and explicitly here, before touching podman/bootc at all, if
+    # the signing keys/certs aren't present. seal-uki itself will attempt to
+    # auto-pull a *missing* db.key via `mise run pull-keys` -- deliberately
+    # not relied on here: that can block on interactive Proton Pass auth mid
+    # switch, and it only checks db.key, not the other five files. This task
+    # wants a single, immediate, unambiguous failure naming every missing
+    # file, not a partial auto-pull attempt or a deep podman --secret error.
+    MISSING_KEYS=()
+    for f in PK.key PK.crt KEK.key KEK.crt db.key db.crt; do
+        [ -s "files/boot-keys/${f}" ] || MISSING_KEYS+=("${f}")
+    done
+    if [ "${#MISSING_KEYS[@]}" -gt 0 ]; then
+        echo "ERROR: sealing needs signing keys/certs that aren't loaded:" >&2
+        printf '  files/boot-keys/%s\n' "${MISSING_KEYS[@]}" >&2
+        echo "       Run 'mise run pull-keys' first." >&2
+        exit 1
+    fi
+
+    echo "==> [1/2] Sealing localhost/krytis:sealed..."
+    "$(dirname "$0")/seal-uki"
+
+    # seal-uki has its own internal checks (assert_esl, verify-composefs-digest)
+    # and runs under set -euo pipefail, so a failure there already aborts this
+    # script with its own exit code -- this is a final belt-and-braces check
+    # that the tag it's supposed to have produced actually exists, so a
+    # switch never proceeds against a stale or partially-built image.
+    if ! podman image inspect localhost/krytis:sealed >/dev/null 2>&1; then
+        echo "ERROR: seal-uki did not produce localhost/krytis:sealed." >&2
+        exit 1
+    fi
+
+    IMAGE="localhost/krytis:sealed"
+else
+    echo "==> Not UKI-booted -- switching to localhost/krytis:latest directly."
+
+    IMAGE="localhost/krytis:latest"
+    if ! podman image inspect "${IMAGE}" >/dev/null 2>&1; then
+        echo "ERROR: ${IMAGE} not found in the rootless podman store." >&2
+        echo "       Build it first with 'mise run build'." >&2
+        exit 1
+    fi
+fi
+
+echo "==> [2/2] Copying ${IMAGE} to the root podman store..."
+FORCE_ARGS=()
+[ "${usage_force:-}" = "true" ] && FORCE_ARGS=(--force)
+"$(dirname "$0")/load-image-root" --image "${IMAGE}" "${FORCE_ARGS[@]}"
+
+echo "==> Switching to ${IMAGE}..."
+sudo bootc switch --transport containers-storage "${IMAGE}"
+
+echo "==> Done. Reboot to apply: sudo systemctl reboot"

@@ -858,6 +858,48 @@ Invalid splitstream content type
 
 `--format oci-archive` preserves the OCI media types and resolves this.
 
+## `bootc switch` from a UKI-booted (sealed) system to a non-UKI image fails: "Found NonEFI config"
+
+**Reproduced live on real hardware, 2026-09-10.** `sudo bootc switch --transport
+containers-storage localhost/krytis:latest` on a machine booted from the sealed image
+failed:
+
+```
+error: Switching: Composefs Switching: Performing Upgrade Operation: Setting up BLS boot: Found NonEFI config
+```
+
+**Root cause: boot-entry shape mismatch, not signing/measurement per se.**
+`localhost/krytis:latest` (from `mise build`) has no UKI at all — see § `podman save`
+above's neighbor, and `docs/skills/secure-boot.md`: "no signed systemd-boot and no UKI
+at all (`/boot/EFI/Linux/krytis.efi` exists only in the sealed image)". It needs a
+traditional kernel+initrd+options (BLS Type #1) entry. A UKI-booted system's *existing*
+entries are UKI-only (Type #2, no separate mutable options line). `bootc`'s "Setting up
+BLS boot" step, inspecting the current ESP layout while performing the switch, finds
+that shape where it expects the traditional one, doesn't recognize it, and bails. This
+is the same underlying class of problem `docs/skills/secure-boot.md`'s § *A sealed UKI's
+frozen cmdline breaks every installer that expects to inject kargs* already documents for
+a different symptom (#473) — anything that assumes a mutable, separately-editable BLS
+entry breaks against a UKI, including switching away from one to a non-UKI image.
+
+**Ruled out along the way:** the ESP not being mounted on the machine at the time
+(`bootctl status`: "Couldn't find EFI system partition"; `boot.mount`/`boot.automount`
+units `not-found`) looked like a strong candidate but isn't the cause here — confirmed
+`LoaderDevicePartUUID` correctly identifies the ESP partition (`udevadm info` on the
+partition matches exactly), ruling out a missing/wrong EFI variable. Whether the ESP
+staying unmounted at runtime is itself expected behavior for a UKI-only boot (the ESP is
+management-only once the UKI is loaded by firmware) or a separate bug was not resolved —
+worth its own investigation if `bootc switch`/`upgrade` still can't write to `/boot` after
+matching the image shape below.
+
+**Fix: switch to an image with the same boot-entry shape as what's currently running.**
+`mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s
+`Measured UKI: yes` line (needs no root, no mounted ESP — derived from EFI variables set
+by systemd-stub at boot, unlike checking for `/boot/EFI/Linux/*.efi` on a *candidate
+image*, which is what `generate-disk`'s own UKI check does, via `podman run` against the
+image rather than the live system) and seals first (`mise run seal-uki` →
+`localhost/krytis:sealed`, itself UKI-only) before switching, instead of switching to
+`:latest` directly. A non-UKI-booted system switches to `:latest` unchanged.
+
 ## dracut files belong in the bootc element, not initramfs element
 
 *Source: zirconium-hawaii `928fdf8` — `fix(initramfs): put dracut files into bootc element`*
