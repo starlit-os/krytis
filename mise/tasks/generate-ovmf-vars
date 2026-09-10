@@ -62,9 +62,36 @@ if IMG_DBX=$(mktemp) && podman create --name "krytis-dbx-$$" "${SEALED_TAG}" tru
 fi
 if [ -z "${DBX_SRC}" ] && [ -f "${MS_CERTS_DIR}/dbx.bin" ]; then
     DBX_SRC="${MS_CERTS_DIR}/dbx.bin"
-    echo "WARNING: ${SEALED_TAG} unavailable — falling back to upstream dbx.bin, which since" >&2
-    echo "         #502 is NARROWER than what the image enrols (no X509 CA revocations)." >&2
-    echo "         boot-test --secure will trust binaries a real enrolled machine refuses." >&2
+    # #757: the gap used to be "2 certs" (#502) and the warning said so verbatim.
+    # Since #755's union split, dbx.bin (upstream, Microsoft-KEK-signed) is a strict
+    # subset of dbx.esl (union payload, what the image actually enrols) — 154 hashes
+    # narrower on top of the 2 certs. Compute the delta instead of re-hardcoding a
+    # number that will go stale again the next time either file moves: strip dbx.bin's
+    # EFI_VARIABLE_AUTHENTICATION_2 header to get a bare ESL, then --count-esl both.
+    DBX_ESL_COUNT="" DBX_BIN_COUNT=""
+    if [ -f "${MS_CERTS_DIR}/dbx.esl" ]; then
+        DBX_ESL_COUNT=$(./scripts/parse-efi-auth.py --count-esl "${MS_CERTS_DIR}/dbx.esl" 2>/dev/null) || DBX_ESL_COUNT=""
+    fi
+    DBX_BIN_PAYLOAD=$(mktemp)
+    if python3 -c '
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+open(sys.argv[2], "wb").write(d[16 + struct.unpack_from("<I", d, 16)[0]:])
+' "${MS_CERTS_DIR}/dbx.bin" "${DBX_BIN_PAYLOAD}" 2>/dev/null; then
+        DBX_BIN_COUNT=$(./scripts/parse-efi-auth.py --count-esl "${DBX_BIN_PAYLOAD}" 2>/dev/null) || DBX_BIN_COUNT=""
+    fi
+    rm -f "${DBX_BIN_PAYLOAD}"
+    if [ -n "${DBX_ESL_COUNT}" ] && [ -n "${DBX_BIN_COUNT}" ] && [ "${DBX_ESL_COUNT}" -gt "${DBX_BIN_COUNT}" ]; then
+        echo "WARNING: ${SEALED_TAG} unavailable — falling back to upstream dbx.bin (${DBX_BIN_COUNT}" >&2
+        echo "         revoked hashes), which is $((DBX_ESL_COUNT - DBX_BIN_COUNT)) entries NARROWER than" >&2
+        echo "         ${MS_CERTS_DIR}/dbx.esl (${DBX_ESL_COUNT}), what the image actually enrols (#755)." >&2
+        echo "         boot-test --secure will trust binaries a real enrolled machine refuses." >&2
+    else
+        echo "WARNING: ${SEALED_TAG} unavailable — falling back to upstream dbx.bin, which is narrower" >&2
+        echo "         than what the image enrols (could not compute the exact delta — run" >&2
+        echo "         'mise run seal-uki' for the accurate ${SEALED_TAG}-sourced dbx instead)." >&2
+        echo "         boot-test --secure will trust binaries a real enrolled machine refuses." >&2
+    fi
 fi
 if [ -n "${DBX_SRC}" ]; then
     DBX_ARGS=(--set-dbx "${DBX_SRC}")

@@ -886,10 +886,23 @@ work unchanged, since 48 > 16.
 
 
 **systemd-boot does enrol `dbx` from `loader/keys/auto`** — verified, not assumed, and
-the reason `enroll-test` now asserts it. Post-enrollment the varstore shows
-`dbx: blob: 21292 bytes` beside `db: blob: 4353 bytes`. A missing `dbx` fails nothing on
-its own; the machine just quietly trusts every binary Microsoft has revoked, which is
-why the assertion exists rather than a printed line someone might skim past.
+the reason `enroll-test` now asserts it. A missing `dbx` fails nothing on its own; the
+machine just quietly trusts every binary Microsoft has revoked, which is why the
+assertion exists rather than a printed line someone might skim past.
+
+
+**#757 tightened that assertion from a byte-count floor to a byte-exact match.**
+`>=100 bytes` is "non-empty", not "complete": the #755 union-split regression this
+guard exists to catch — dropping 154 of 445 hashes — still leaves ~14KB, two orders of
+magnitude past the floor. `sign-efi-sig-list` wraps its input ESL as the payload
+verbatim (no re-sort, no dedupe), so the enrolled `dbx` blob is provably byte-identical
+to `files/microsoft-uefi-certs/dbx.esl` when nothing has gone wrong — `enroll-test` now
+asserts exactly that (23304 bytes, 447 entries as of #755). That also catches drift no
+other check would: a bad merge, a hand-edited `dbx.esl`, or a Containerfile change that
+signs the wrong file. `generate-ovmf-vars`'s upstream-`dbx.bin`-fallback warning was
+hardened the same way — it now runs `--count-esl` on both files and prints the live
+delta instead of a number hardcoded at #502 (`2` certificates) that had silently gone
+two orders of magnitude stale by the time #755 shrank `dbx.bin` by another 154 hashes.
 
 
 Staleness is the live hazard: Microsoft adds revocations on their own schedule.
