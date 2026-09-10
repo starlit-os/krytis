@@ -34,6 +34,7 @@ mise generate-disk            # bootc install to-disk → bootable.raw
 mise boot-vm                  # QEMU boot (native KVM or qemux/qemu-docker)
 mise convert-to-qcow2         # raw → qcow2 for GNOME Boxes / virt-manager
 mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot send Ctrl+Alt+F5)
+mise switch-local             # bootc switch THIS machine to the local build (auto-seals if UKI-booted)
 ```
 
 - `include/image-version.yml` is **gitignored** — generated at build time, never committed.
