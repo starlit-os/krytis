@@ -39,6 +39,25 @@ config:
   install-commands:
   - DESTDIR=%{install-root} ninja -C server/_build install
   - DESTDIR=%{install-root} ninja -C pam/_build install
+  - |
+    # krytis#806: pam_oo7.so auto_start spawns the transient oo7-daemon-login
+    # helper from the same PAM session stack that starts oo7-daemon.service,
+    # one module after pam_systemd.so — and the daemon reads the helper's
+    # socket exactly once at startup. Whichever process binds second loses,
+    # and the login secret is dropped with no error logged on either side.
+    #
+    # Belt and braces with patches/oo7/login-helper-connect-retry.patch. The
+    # patch carries the fix inside the daemon and is what would go upstream;
+    # this drop-in keeps the ordering guarantee if an oo7 re-pin ever drops the
+    # patch. Both budgets are 500 ms, so the worst case — no helper coming, as
+    # on a manual `systemctl --user restart oo7-daemon` — is 1 s of startup
+    # delay on a unit nothing blocks on.
+    install -dm755 \
+      "%{install-root}%{indep-libdir}/systemd/user/oo7-daemon.service.d"
+    cat > "%{install-root}%{indep-libdir}/systemd/user/oo7-daemon.service.d/10-krytis-login-helper-wait.conf" <<'EOF'
+    [Service]
+    ExecStartPre=/usr/bin/sh -c 'i=0; while [ ! -S %t/oo7-daemon-login.sock ] && [ $i -lt 50 ]; do sleep 0.01; i=$((i+1)); done; exit 0'
+    EOF
 
 sources:
 - kind: git_repo
@@ -60,6 +79,9 @@ sources:
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
   ref: v0.6.0-alpha-253-g3b9a14b35ae49e65af8af7ee2cbc80d984e5012b
+
+- kind: patch
+  path: patches/oo7/login-helper-connect-retry.patch
 
 - kind: cargo2
   url: crates:crates

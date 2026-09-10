@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+#MISE description="Assert oo7-daemon still collects the login secret when it wins the startup race (krytis#806)"
+#USAGE flag "--artifact <dir>" help="Directory holding an already-checked-out desktop/oo7.bst artifact (default: check out a fresh one)"
+#USAGE flag "--keep" help="Keep the scratch directory and print its path"
+
+# Guards the bug that leaves the login collection locked for an entire session
+# after every fresh-boot login: oo7-daemon reading the transient
+# oo7-daemon-login helper's socket before the helper has bound it.
+#
+# pam_oo7.so auto_start spawns the helper from the same PAM session stack that
+# starts oo7-daemon.service, one module after pam_systemd.so, so the two race by
+# a few tens of milliseconds. Upstream reads the helper socket exactly once, in
+# read_secret_from_login_helper() ahead of Service::run, with `Err(_) => return
+# None` — no retry and no log. Whichever binds second loses and the secret is
+# dropped silently, while pam_oo7 reports success regardless.
+#
+# This is a gate rather than a one-off check because the fix lives in
+# patches/oo7/login-helper-connect-retry.patch, which an oo7 re-pin can silently
+# drop, and because the symptom is invisible: no error is logged anywhere, and a
+# same-boot re-login masks it entirely (the daemon socket already exists then,
+# so the helper path is never taken).
+#
+# The test makes the daemon *win* the race deliberately — it starts first, and
+# the helper appears 150 ms later. That is well outside a single connect attempt
+# and well inside the patch's 500 ms budget, so an unpatched binary fails and a
+# patched one passes.
+#
+# A pass is a positive observation from the receiver's own log ("Received login
+# secret from helper"), never pam_oo7's success claim, which is emitted whether
+# or not anything collected the secret. See docs/skills/pam.md § Login
+# auto-unlock is lost to a race, and krytis#806.
+#
+# Isolation: the daemon under test runs on a private D-Bus session with its own
+# XDG_DATA_HOME and its own OO7_PAM_SOCKET, so it never takes
+# org.freedesktop.secrets on the real session bus and cannot touch or lock the
+# caller's live login collection — which matters, because a locked collection
+# reads back as "no such secret" for the rest of the session (krytis#585).
+# OO7_PAM_SOCKET is not optional here: without it the daemon binds the real
+# /run/user/<uid>/oo7-pam.sock, unlinking the live daemon's listener and
+# breaking PAM handoff for the rest of the boot.
+#
+# The rendezvous socket is the one thing that cannot be redirected: both
+# binaries hardcode /run/user/<uid>/oo7-daemon-login.sock with no env override.
+# The test refuses to run if one already exists, and removes its own on exit.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+ARTIFACT="${usage_artifact:-}"
+KEEP="${usage_keep:-false}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --artifact) ARTIFACT="$2"; shift 2 ;;
+        --keep) KEEP=true; shift ;;
+        *) shift ;;
+    esac
+done
+
+HELPER_SOCKET="/run/user/$(id -u)/oo7-daemon-login.sock"
+if [ -e "$HELPER_SOCKET" ]; then
+    echo "==> SKIPPED: $HELPER_SOCKET already exists — a real login helper is live."
+    echo "    It self-removes within 120s of login; re-run after that."
+    exit 0
+fi
+
+SCRATCH="$(mktemp -d /var/tmp/oo7-login-race-test.XXXXXX)"
+cleanup() {
+    rm -f "$HELPER_SOCKET"
+    if [ "$KEEP" = "true" ]; then
+        echo "==> scratch kept at $SCRATCH"
+    else
+        rm -rf "$SCRATCH"
+    fi
+}
+trap cleanup EXIT
+
+if [ -z "$ARTIFACT" ]; then
+    ARTIFACT="$SCRATCH/artifact"
+    echo "==> Checking out desktop/oo7.bst..."
+    mise run bst artifact checkout desktop/oo7.bst --directory "$ARTIFACT" >/dev/null || {
+        echo "==> FAILED to check out desktop/oo7.bst — build it first."
+        exit 1
+    }
+fi
+
+DAEMON="$ARTIFACT/usr/libexec/oo7-daemon"
+HELPER="$ARTIFACT/usr/libexec/oo7-daemon-login"
+DROPIN="$ARTIFACT/usr/lib/systemd/user/oo7-daemon.service.d/10-krytis-login-helper-wait.conf"
+
+fail=0
+
+for bin in "$DAEMON" "$HELPER"; do
+    if [ ! -x "$bin" ]; then
+        echo "==> FAILED: no executable at $bin"
+        exit 1
+    fi
+done
+
+# The drop-in is the second half of the fix (ordering at the unit level). It is
+# independent of the patch on purpose, so assert it separately.
+if grep -q 'ExecStartPre' "$DROPIN" 2>/dev/null; then
+    echo "==> Drop-in present: $(basename "$DROPIN")"
+else
+    echo "==> FAIL: no ExecStartPre drop-in at $DROPIN"
+    fail=1
+fi
+
+export XDG_DATA_HOME="$SCRATCH/data"
+export OO7_PAM_SOCKET="$SCRATCH/run/oo7-pam.sock"
+mkdir -p "$XDG_DATA_HOME" "$SCRATCH/run"
+
+export DAEMON HELPER SCRATCH
+dbus-run-session -- bash -c '
+    RUST_LOG=debug "$DAEMON" >"$SCRATCH/daemon.log" 2>&1 &
+    daemon_pid=$!
+
+    # Deliberately late: long enough that a single connect attempt has already
+    # failed, short enough to land inside the retry budget.
+    #
+    # Backgrounded because the helper blocks for its full 120 s
+    # HELPER_TIMEOUT_SECS when no daemon collects the secret — which is exactly
+    # the failing case this test is here to catch, and there is no reason to
+    # wait it out.
+    sleep 0.15
+    printf krytis-race-test | "$HELPER" >"$SCRATCH/helper.log" 2>&1 &
+    helper_pid=$!
+
+    # Poll the property, not the bus name: the daemon owns
+    # org.freedesktop.secrets before Service::run has finished setting the
+    # login collection up, so a name-only wait reads back "Unknown object".
+    for _ in $(seq 100); do
+        busctl --user get-property org.freedesktop.secrets \
+            /org/freedesktop/secrets/collection/login \
+            org.freedesktop.Secret.Collection Locked >"$SCRATCH/locked.log" 2>&1
+        case "$(cat "$SCRATCH/locked.log")" in b\ *) break ;; esac
+        sleep 0.1
+    done
+
+    kill "$daemon_pid" 2>/dev/null
+    wait "$daemon_pid" 2>/dev/null
+    kill "$helper_pid" 2>/dev/null
+'
+
+echo "==> Daemon log (login-helper lines):"
+grep -iE 'login helper|login secret|pam' "$SCRATCH/daemon.log" | sed 's/^/    /' | tail -10
+
+if grep -q 'Received login secret from helper' "$SCRATCH/daemon.log"; then
+    echo "==> PASS: daemon collected the secret despite winning the race"
+else
+    echo "==> FAIL: daemon never received the login secret (krytis#806)"
+    echo "    helper log:"
+    sed 's/^/      /' "$SCRATCH/helper.log" | tail -5
+    fail=1
+fi
+
+# End-to-end consequence of the handoff: a secret that arrives unlocks the
+# collection, one that is dropped leaves it locked for the whole session.
+locked="$(tr -d '\n' <"$SCRATCH/locked.log")"
+echo "==> login collection Locked = ${locked:-<unreadable>}"
+if [ "$locked" != "b false" ]; then
+    echo "==> FAIL: login collection did not come up unlocked"
+    fail=1
+fi
+
+[ "$fail" -eq 0 ] && echo "==> oo7-login-race-test passed."
+exit "$fail"

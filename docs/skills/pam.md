@@ -472,6 +472,63 @@ state anyway. Mid-session recovery is the interactive prompter only.
 Ordering `pam_oo7` **before** `pam_systemd` is not a fix either: `/run/user/<uid>` does not
 exist until logind registers the session, so the helper would have nowhere to bind.
 
+### The fix krytis ships (#806)
+
+Two halves, deliberately independent, because either can be lost on its own:
+
+- **`patches/oo7/login-helper-connect-retry.patch`** — replaces the daemon's single connect
+  with a bounded 500 ms retry (`connect_to_login_helper`), and logs the give-up at debug
+  instead of swallowing it. This is the half that would go upstream; it is carried downstream
+  first to verify in real use (Upstream Gate). If it stops applying after an oo7 re-pin, check
+  whether upstream has grown its own retry before re-basing it.
+- **`oo7-daemon.service.d/10-krytis-login-helper-wait.conf`**, installed by
+  `elements/desktop/oo7.bst` — an `ExecStartPre` that waits up to 500 ms for
+  `%t/oo7-daemon-login.sock`. Ordering at the unit level, so the guarantee survives an oo7
+  bump that silently drops the patch.
+
+500 ms is an order of magnitude more than the observed 38 ms skew. The two budgets stack only
+when no helper is coming at all — a manual `systemctl --user restart oo7-daemon` pays up to 1 s
+before the bus name appears. Nothing blocks on that unit, and the login path pays neither,
+because the helper binds within tens of milliseconds.
+
+### `mise run oo7-login-race-test` gates it
+
+The symptom is invisible — no error is logged on either side, and a same-boot re-login masks
+it entirely — so this is a task on the built artifact, not an investigation to redo. It makes
+the daemon *win* the race deliberately: the daemon starts first, the helper appears 150 ms
+later. That is well outside a single connect attempt and well inside the 500 ms budget.
+
+Unpatched artifact:
+
+```
+==> FAIL: daemon never received the login secret (krytis#806)
+    helper log:
+      INFO oo7_daemon_login: Listening on /run/user/1000/oo7-daemon-login.sock
+      INFO oo7_daemon_login: Timed out after 120s, no daemon connected
+==> login collection Locked = b true
+```
+
+Patched artifact:
+
+```
+    INFO oo7_daemon: Connected to login helper at /run/user/1000/oo7-daemon-login.sock
+    INFO oo7_daemon: Received login secret from helper
+==> PASS: daemon collected the secret despite winning the race
+==> login collection Locked = b false
+==> oo7-login-race-test passed.
+```
+
+Two traps the task had to work around, both worth knowing before writing anything similar:
+
+- **`OO7_PAM_SOCKET` is mandatory for isolation.** Without it the daemon under test binds the
+  real `/run/user/<uid>/oo7-pam.sock`, unlinking the live daemon's listener and breaking PAM
+  handoff for the rest of the boot. `XDG_DATA_HOME` alone is not enough. The rendezvous socket
+  `oo7-daemon-login.sock` has no such override — both binaries hardcode it — so the task
+  refuses to run when one already exists and removes its own on exit.
+- **Waiting for the bus name is too early.** The daemon owns `org.freedesktop.secrets` before
+  `Service::run` has set the login collection up, so a name-only wait reads back
+  `Unknown object '/org/freedesktop/secrets/collection/login'`. Poll the property itself.
+
 ## oo7's collection path: `Login` on 0.6.0, `login` from 0.7.0.alpha
 
 **Version-specific — check before hardcoding either.** On **0.6.0** oo7 derived the collection
