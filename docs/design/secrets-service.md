@@ -99,10 +99,11 @@ oo7 + noctalia's native prompter now, carrying two known defects and two workaro
 
 | Accepted | Consequence | Workaround in tree | Exit condition |
 |---|---|---|---|
-| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked | upstream reports locked items from `SearchItems` |
+| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | upstream reports locked items from `SearchItems` |
 | ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
 | **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
+| **#806** — the login secret is lost to a startup race | `pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers | `patches/oo7/login-helper-connect-retry.patch` (500 ms retry in the daemon) plus an `ExecStartPre` drop-in on `oo7-daemon.service`; gated by `mise run oo7-login-race-test` | upstream grows its own retry — the patch is carried downstream first to verify in real use |
 
 **The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
 *usual* way the collection ends up locked, not the only one. A mid-session

@@ -57,6 +57,31 @@ mise trust
 
 Required before any `mise run` command. Every new worktree directory starts untrusted; forgetting this blocks all task execution.
 
+### `git worktree move` after any `mise run` breaks the venv
+
+`[deps.uv]` in `mise.toml` creates `.venv/` on the first `mise run` in a worktree, and uv writes
+**absolute** shebangs into every console script. Move the worktree afterwards — the usual reason
+being that work started with no issue and an issue was filed later, so the path has to be
+renamed to the `gh<number>-<slug>` form — and `.venv/bin/*` still points at the old directory.
+
+The failure names the wrong thing. `mise run bst …` reports:
+
+```
+error: Failed to spawn: `bst`
+  Caused by: No such file or directory (os error 2)
+```
+
+`bst` is right there in `.venv/bin/`, and `mise deps` says everything is up to date — it checks
+for `.venv/`, not for a working interpreter. The missing file is the *shebang's* python:
+
+```shell
+head -1 .venv/bin/bst   # points at the pre-move path
+rm -rf .venv && mise deps
+```
+
+File the issue before creating the worktree and this never comes up. Once the venv exists,
+recreating it is the only fix — nothing rewrites those shebangs in place.
+
 ## Slug Derivation
 
 Issue title → lowercase → spaces and non-alphanumeric chars → hyphens → consecutive hyphens collapsed → leading/trailing hyphens stripped.

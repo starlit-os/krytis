@@ -1,0 +1,96 @@
+# krytis#806: the login secret is dropped by a race between oo7-daemon and the
+# transient oo7-daemon-login helper, so the login collection stays locked for
+# the whole session after every fresh-boot login.
+#
+# pam_systemd.so registers the session, the user manager starts
+# oo7-daemon.service (WantedBy=default.target), and the very next module in the
+# same PAM stack -- pam_oo7.so auto_start -- probes /run/user/<uid>/oo7-pam.sock.
+# The daemon has not bound it yet, so pam_oo7 takes its fallback path and forks
+# oo7-daemon-login, which binds /run/user/<uid>/oo7-daemon-login.sock and holds
+# the secret for HELPER_TIMEOUT_SECS = 120.
+#
+# The daemon then loses the reverse race. read_secret_from_login_helper() runs
+# exactly once, inside inner_main ahead of Service::run, and its failure arm is
+# `Err(_) => return None` -- no retry, no log. Measured on hardware 2026-09-10:
+# the daemon's connect attempt landed ~37 ms before the helper had bound.
+#
+# Neither side retries, and both report success, so nothing surfaces as an
+# error: pam_oo7 logs "Successfully sent secret to oo7 daemon" unconditionally,
+# and the helper's own "Timed out after 120s" never reaches the journal because
+# it is execv'd from greetd's PAM child with stderr discarded.
+#
+# Fix: give the daemon a bounded 500 ms retry window instead of a single
+# attempt. That is an order of magnitude more than the observed skew, and it is
+# paid only when no helper is coming (a manual `systemctl --user restart`), not
+# on the login path, where the helper appears within tens of milliseconds.
+#
+# Not yet submitted upstream (Upstream Gate) -- carried downstream to verify in
+# real use first. If this stops applying after an oo7 bump, check whether
+# upstream has grown its own retry before re-basing it.
+--- a/server/src/main.rs
++++ b/server/src/main.rs
+@@ -18,8 +18,9 @@
+ use std::{
+     io::{IoSliceMut, IsTerminal, Read},
+     mem::MaybeUninit,
+-    path::PathBuf,
++    path::{Path, PathBuf},
+     sync::LazyLock,
++    time::{Duration, Instant},
+ };
+ 
+ use clap::Parser;
+@@ -34,6 +35,12 @@
+     let uid = rustix::process::getuid().as_raw();
+     PathBuf::from(format!("/run/user/{uid}/oo7-daemon-login.sock"))
+ });
++
++/// How long to wait for `oo7-daemon-login` to bind its socket before giving up.
++const LOGIN_HELPER_WAIT: Duration = Duration::from_millis(500);
++
++/// Interval between connect attempts while waiting for the helper.
++const LOGIN_HELPER_POLL: Duration = Duration::from_millis(10);
+ 
+ #[derive(Parser)]
+ #[command(version, about, long_about = None)]
+@@ -55,13 +62,36 @@
+     is_verbose: bool,
+ }
+ 
++/// Bounded wait for the transient `oo7-daemon-login` helper to bind its socket.
++///
++/// `pam_oo7.so auto_start` spawns the helper from the same PAM session stack
++/// that starts this daemon, one module after `pam_systemd.so`, so the two race
++/// by a few tens of milliseconds and either can win. A single connect attempt
++/// silently drops the login secret whenever the daemon wins, leaving the login
++/// collection locked for the whole session with no error logged anywhere.
++fn connect_to_login_helper(socket_path: &Path) -> Option<std::os::unix::net::UnixStream> {
++    let deadline = Instant::now() + LOGIN_HELPER_WAIT;
++
++    loop {
++        match std::os::unix::net::UnixStream::connect(socket_path) {
++            Ok(stream) => return Some(stream),
++            Err(e) if Instant::now() >= deadline => {
++                tracing::debug!(
++                    "No login helper at {} after {} ms: {e}",
++                    socket_path.display(),
++                    LOGIN_HELPER_WAIT.as_millis(),
++                );
++                return None;
++            }
++            Err(_) => std::thread::sleep(LOGIN_HELPER_POLL),
++        }
++    }
++}
++
+ fn read_secret_from_login_helper() -> Option<oo7::Secret> {
+     let socket_path = &*LOGIN_HELPER_SOCKET;
+ 
+-    let stream = match std::os::unix::net::UnixStream::connect(socket_path) {
+-        Ok(s) => s,
+-        Err(_) => return None,
+-    };
++    let stream = connect_to_login_helper(socket_path)?;
+ 
+     tracing::info!("Connected to login helper at {}", socket_path.display());
+ 
