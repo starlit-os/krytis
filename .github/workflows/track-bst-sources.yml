@@ -63,6 +63,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -102,7 +109,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -154,6 +161,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -189,7 +203,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -245,6 +259,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -278,7 +299,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_CNT="${{ steps.current.outputs.count }}"
           NEW_CNT="${{ steps.new.outputs.count }}"
@@ -339,6 +360,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -374,7 +402,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -426,6 +454,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -461,7 +496,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -513,6 +548,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -548,7 +590,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -600,6 +642,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -635,7 +684,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -689,6 +738,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -724,7 +780,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -885,6 +941,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -924,7 +987,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH="${{ matrix.branch }}"
           BASE_TITLE="${{ matrix.title }}"
@@ -1020,6 +1083,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1036,7 +1106,7 @@ jobs:
       - name: Create or update PR
         if: github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git diff --quiet && { echo "No junction updates"; exit 0; }
 
@@ -1070,6 +1140,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
@@ -1106,7 +1183,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1158,6 +1235,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1191,7 +1275,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1243,6 +1327,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1276,7 +1367,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1328,6 +1419,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1363,7 +1461,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1418,6 +1516,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1453,7 +1558,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1508,6 +1613,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1547,7 +1659,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_SHA="${{ steps.current.outputs.short }}"
           NEW_SHA="${{ steps.new.outputs.short }}"
@@ -1599,6 +1711,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1637,7 +1756,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1689,6 +1808,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1724,7 +1850,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1776,6 +1902,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1811,7 +1944,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -1863,6 +1996,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1890,7 +2030,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH="auto/track-chunkah"
           TITLE="chore(deps): update chunkah digest"
@@ -1934,6 +2074,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -1969,7 +2116,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -2021,6 +2168,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -2056,7 +2210,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -2108,6 +2262,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -2143,7 +2304,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
@@ -2213,6 +2374,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate tracking bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.TRACKING_APP_ID }}
+          private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
+
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -2242,7 +2410,7 @@ jobs:
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           ELEMENT="${{ steps.elem.outputs.path }}"
           BRANCH="auto/track-${{ matrix.name }}"
