@@ -10,40 +10,157 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 | `noctalia-greeter-compositor` | `desktop/noctalia-greeter.bst` | wlroots compositor run by greetd |
 | `noctalia-greeter` | `desktop/noctalia-greeter.bst` | Wayland client (UI) spawned by the compositor |
 | `niri` | `desktop/niri.bst` | User session compositor (Rust/smithay, not wlroots) |
+| `umbriel` | `desktop/umbriel.bst` | Second, opt-in user session compositor (C++/wlroots) — see below |
+| `xdg-desktop-portal-umbriel` | `desktop/xdg-desktop-portal-umbriel.bst` | Screencast/Screenshot portal backend for umbriel |
 | `wlroots.so` | `desktop/wlroots.bst` | Shared by noctalia-greeter-compositor |
 
 Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-config.bst`.
-## Alternative compositor: umbriel (planned, #774/#775)
+## Alternative compositor: umbriel (#774/#775)
 
 `noctalia-dev/umbriel` — wlroots-based (C++23), scrolling/dwindle/master
 layouts, built by the same team as `desktop/noctalia.bst` and described
 upstream as "Noctalia's compositor side". Decision (#774): **additive**,
 not a niri replacement — ships as a second selectable greetd session
 (`umbriel.desktop` next to `niri.desktop`), niri stays the default.
-Implementation tracked in #775.
 
 Dependency overlap with the existing niri/noctalia stack is unusually high:
 `desktop/wlroots.bst` is already pinned to `0.20.2`, inside umbriel's
 required `wlroots-0.20 >=0.20.1,<0.21.0` range, and
-`desktop/xwayland-satellite.bst` (X11 app support) is already packaged for
-niri. The only genuinely new packaging surface is
-`xdg-desktop-portal-umbriel` (screencast/screenshot portal backend — no
-existing element anywhere). umbriel's own scene-graph fork (`umbrielfx`,
-a SceneFX hard fork) builds in-tree as a static archive via
-`subdir('umbrielfx')` in `meson.build` — unlike niri, no separate
-cargo-vendoring step is needed.
+`desktop/xwayland-satellite.bst` (X11 app support, PATH lookup at runtime —
+not a build/link dependency) is already packaged for niri. umbriel's own
+scene-graph fork (`umbrielfx`, a SceneFX hard fork) builds in-tree as a
+static archive via `subdir('umbrielfx')` in `meson.build` — unlike niri, no
+separate cargo-vendoring step is needed. The one genuinely new packaging
+surface was `xdg-desktop-portal-umbriel` (screencast/screenshot portal
+backend) — no existing element anywhere provided this.
 
-**Config format differs from niri**: umbriel uses TOML
-(`~/.config/umbriel/config.toml`, falling back to
-`<datadir>/umbriel/config.toml`), not niri's KDL — a
-`config/umbriel-config.bst` element is not a reuse of `config/niri-config.bst`,
-it is a parallel element with its own format.
+### umbrielfx has a hard, non-optional `dependency('egl')`/`dependency('glesv2')` — no epoxy fallback
 
-**Tracking caveat**: as of the #774 investigation, `noctalia-dev/umbriel` has
-no tags/releases yet, so it cannot use the `track: v*` pattern
-`noctalia.bst`/`noctalia-greeter.bst` use. Use `kind: git_repo`,
-`track: refs/heads/main` (same branch-tracking pattern as `desktop/stb.bst`
-below) until upstream cuts a first release, then switch to `track: v*`.
+This is the load-bearing discovery of #775, and the reason umbriel took real
+investigation rather than a straight copy of `desktop/noctalia-greeter.bst`'s
+pattern. `desktop/noctalia-greeter.bst`'s own compositor code hits the exact
+same "fdsdk mesa doesn't expose `egl.pc`/`glesv2.pc`" gap (see `bst.md`) but
+works around it in its *own* `meson.build`:
+
+```meson
+egl_dep = dependency('egl', required: false)
+gles2_dep = dependency('glesv2', required: false)
+if not egl_dep.found()
+  egl_dep = dependency('epoxy')
+endif
+if not gles2_dep.found()
+  gles2_dep = dependency('epoxy')
+endif
+```
+
+`umbrielfx/meson.build` has no such fallback — `dependency('egl')`,
+`dependency('gbm')`, and `dependency('glesv2')` are called directly, required
+by default, with zero optionality. Reading `bst.md`'s existing "fdsdk mesa
+doesn't expose `egl.pc`/`glesv2.pc`" note and stopping there would wrongly
+conclude umbriel can't be packaged at all. The actual fix, found by cloning
+the pinned `freedesktop-sdk` ref locally and grepping its own element tree
+(`elements/components/mesa-headers.bst`) rather than trusting the letter of an
+existing doc note: `freedesktop-sdk.bst:components/mesa-headers.bst` exists
+specifically to regenerate `egl.pc`/`glesv2.pc`/`gl.pc` (standard
+`%{libdir}/pkgconfig`, *not* mesa's namespaced `GL/default` split) plus the
+matching `EGL/`/`GLES2/`/`GLES3/`/`KHR/` headers — `components/libglvnd.bst`
+deliberately `rm`s those three `.pc` files from its own install, and
+`mesa-headers.bst` is the fdsdk-provided element that puts them back. It's
+normally only reached as a `build-depends` of other components (`libepoxy`,
+`gstreamer-plugins-base`, `sdl2-compat`, `sdl3`, `v4l-utils`) — `build-depends`
+never propagates to a downstream consumer's own sandbox, so anything that
+`dependency('egl')`s directly (like umbriel) must declare it itself. The
+actual runtime `libEGL.so.1`/`libGLESv2.so.2` still come from
+`components/libglvnd.bst` separately (`mesa-headers.bst` ships no `.so` of
+its own) — declared in `desktop/umbriel.bst`'s `depends:`.
+
+`gbm.pc`/`libdrm.pc` are unaffected by this (mesa's own `GL/default`
+namespace does ship them) — `desktop/umbriel.bst` uses the same
+`extensions/mesa/mesa.bst` + `extensions/mesa/libdrm.bst` +
+`prepend-mesa-env` PKG_CONFIG_PATH pattern as `desktop/wlroots.bst` and
+`desktop/noctalia-greeter.bst` for those.
+
+If a *future* wlroots-based element hits the same "hard `dependency('egl')`/
+`dependency('glesv2')`, no epoxy fallback" wall, this is the fix — add
+`freedesktop-sdk.bst:components/mesa-headers.bst` to `build-depends`, not a
+hand-rolled `.pc` file, and not "give up, can't be packaged."
+
+### Transitive `depends:` resolution — and where it stops
+
+`desktop/umbriel.bst` links `libwlroots.so` directly (unlike niri, which
+reimplements the compositor protocol in Rust/smithay and doesn't depend on
+`desktop/wlroots.bst` at all). BuildStream stages an element's `depends:`
+*and that dependency's own `depends:`, recursively* into the consuming
+element's build sandbox — so `libinput` (`>=1.23`), `libseat`, `pixman`
+(`>=0.43.0`), and `wayland-server` (`>=1.24`) all resolve for
+`desktop/umbriel.bst` transitively through `desktop/wlroots.bst`'s own
+`depends:`, with no explicit re-declaration needed (same as
+`desktop/noctalia-greeter.bst`, which also depends on `wlroots.bst` and also
+doesn't re-list `libinput.bst` despite its own compositor code calling
+`dependency('libinput')` directly).
+
+**This does not extend to `build-depends:`.** `extensions/mesa/libdrm.bst`
+is one of `desktop/wlroots.bst`'s *build*-depends (needed only inside
+wlroots's own build sandbox, for its own `libdrm.pc` lookup) — it never
+propagates anywhere, so `desktop/umbriel.bst` and
+`desktop/noctalia-greeter.bst` both have to re-declare it directly, even
+though both also depend on `wlroots.bst`. Check *which* dependency list an
+upstream `dependency()` call resolved through before assuming "it's already
+in the graph somewhere" is enough — `depends:` recurses, `build-depends:`
+does not.
+
+xkbcommon and cairo/pango do **not** resolve transitively either —
+`wlroots.bst` only `build-depends` on `libxkbcommon.bst` and never touches
+cairo/pango at all — so `desktop/umbriel.bst` declares
+`components/libxkbcommon.bst`, `components/cairo.bst`, and
+`components/pango.bst` directly in its own `depends:`, matching
+`desktop/noctalia-greeter.bst`'s identical direct declarations.
+
+### Config: umbriel already ships a complete, Noctalia-integrated default — the seed only needed two edits
+
+Unlike niri (which ships no usable default binds/config at all), umbriel's
+own `examples/config.toml` is a complete, working default that the upstream
+team explicitly designed to pair with Noctalia — it already has window rules
+matching `dev.noctalia.Noctalia` and `dev.noctalia.UmbrielSharePicker`, and a
+layer rule blurring every `noctalia-*` namespaced layer-shell surface
+(panels, launcher, notifications, OSD). `desktop/umbriel.bst`'s own
+`meson.build` already installs this file verbatim to
+`<datadir>/umbriel/config.toml` (tier 3 of umbriel's 4-tier config lookup —
+see `PACKAGING.md`'s "Configuration lookup" section) — no seed-service
+pattern needed (config lookup gracefully falls back to it, unlike
+`noctalia-greeter`'s mutable `/var` `greeter.toml`, which needs
+`config/greeter-config-seed.bst`'s oneshot-unit pattern).
+
+`config/umbriel-config.bst` ships the **same** file one tier higher, at
+`/etc/xdg/umbriel/config.toml` (`$XDG_CONFIG_DIRS`, tier 2), with exactly two
+krytis-specific edits (see `files/umbriel/config.toml`'s header comment for
+the full rationale):
+
+1. `autostart = ["noctalia"]` (upstream ships `autostart = []` — without
+   this, noctalia-shell never launches under umbriel, and the panel/
+   launcher/lock-screen acceptance criteria in #775 cannot pass).
+2. `"Mod+Return" = "spawn:ghostty"` (upstream's example binds `kitty`, which
+   krytis does not package; krytis ships ghostty — `desktop/ghostty.bst`).
+
+**Config lookup is first-match, not merged across tiers** — shipping only a
+`[general]` fragment at `/etc/xdg/umbriel/config.toml` would silently drop
+every other upstream default (blur, shadows, animations, all the Noctalia
+window/layer rules) rather than layering on top of them, since umbriel stops
+at the first existing file in its lookup chain. The full file has to be
+duplicated with the two edits, not diffed down to a fragment.
+
+**No `config/xdg-portals.bst`-style routing file needed for umbriel** — unlike
+niri (which isn't a portal implementation itself and needed a hand-authored
+`niri.portal` routing file), `xdg-desktop-portal-umbriel` ships its own valid
+`umbriel-portals.conf` (`default=umbriel;gtk`) automatically via its own
+`meson.build`.
+
+**Tracking caveat**: as of #774/#775, neither `noctalia-dev/umbriel` nor
+`noctalia-dev/xdg-desktop-portal-umbriel` has tags/releases (checked
+independently — the portal is a separate, younger repo). Both use
+`kind: git_repo`, `track: refs/heads/main` (same branch-tracking pattern as
+`desktop/stb.bst` below) until upstream cuts a first release each, then
+switch to `track: v*`.
 
 ## noctalia-greeter source and config
 

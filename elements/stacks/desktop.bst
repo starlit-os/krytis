@@ -1,7 +1,7 @@
 kind: stack
 
 # Desktop session stack.
-# Provides: niri compositor + greetd login manager + noctalia shell + XDG portals + oo7 secrets.
+# Provides: niri + umbriel compositors + greetd login manager + noctalia shell + XDG portals + oo7 secrets.
 # Plug into oci/krytis/stack.bst alongside base-system and bootc.
 depends:
   # ── GPU / Mesa ─────────────────────────────────────────────────────────
@@ -21,6 +21,10 @@ depends:
 
   # ── Compositor ─────────────────────────────────────────────────────────
   - desktop/niri.bst
+  # Umbriel: second, opt-in Wayland session alongside niri (design: #774,
+  # additive/opt-in). niri stays the default; the greeter's session picker
+  # offers both. See docs/skills/desktop.md's Umbriel section.
+  - desktop/umbriel.bst
 
   # ── Shell ───────────────────────────────────────────────────────────────
   - desktop/noctalia.bst
@@ -43,6 +47,10 @@ depends:
   # xdg-desktop-portal (base daemon) is pulled in transitively.
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gnome.bst
+  # Umbriel's own Screencast/Screenshot portal backend -- upstream ships its
+  # own umbriel-portals.conf routing (default=umbriel;gtk), no krytis-side
+  # routing element needed (unlike niri, below).
+  - desktop/xdg-desktop-portal-umbriel.bst
   # niri.portal: routes portal interface requests to gnome/gtk backends
   # when XDG_CURRENT_DESKTOP=niri; without this file xdg-desktop-portal
   # cannot resolve the correct backend and default app lookups fail.
@@ -207,6 +215,7 @@ depends:
 
   # ── Config ─────────────────────────────────────────────────────────────
   - config/niri-config.bst
+  - config/umbriel-config.bst
   - config/niri-skel.bst
   - config/noctalia-skel.bst
   - config/noctalia-assets.bst
