@@ -5,8 +5,8 @@ on:
     - cron: '0 6 * * 1-5'
   workflow_dispatch:
     inputs:
-      force_self_hosted:
-        description: 'Run on the self-hosted runner instead of Blacksmith'
+      force_blacksmith:
+        description: 'Run on Blacksmith instead of the always-on VPS runner (maintenance/outage fallback)'
         type: boolean
         default: false
 
@@ -18,11 +18,20 @@ concurrency:
 
 jobs:
   warm-cache:
-    # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
-    # runner (VM_CPUS=4) to keep bow's cache-key shape aligned, prime the
-    # cache for a heavy element update, or debug on the real hardware.
-    # max-jobs stays pinned to 4 either way — see the comment below.
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_self_hosted) && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-8vcpu-ubuntu-2404' }}
+    # Defaults to the always-on Debian VPS runner (issue #794) — an
+    # unattended cron job needs an unattended runner, unlike the local
+    # container runner (mise runner:*) it replaced here, which is mostly off.
+    # workflow_dispatch can force Blacksmith as the manual fallback for VPS
+    # maintenance or an outage (inverts the old Blacksmith-default/
+    # self-hosted-opt-in direction). max-jobs is sized to whatever runner
+    # actually runs the build (nproc) — see the comment further down.
+    #
+    # Targets the 'krytis-vps' label specifically, not the bare
+    # [self-hosted, linux, x64] the local container runner also registers
+    # under (mise.toml RUNNER_LABELS) — the two would otherwise be
+    # indistinguishable to this ternary whenever both happened to be online,
+    # making routing nondeterministic. See docs/skills/ci-runner.md § Always-on VPS runner.
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 'blacksmith-8vcpu-ubuntu-2404' || fromJSON('["self-hosted","linux","x64","krytis-vps"]') }}
     timeout-minutes: 360
     steps:
       - name: Checkout repository
@@ -66,7 +75,7 @@ jobs:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
         run: |
           mkdir -p ~/.config
-          cat > ~/.config/buildstream.conf <<'EOF'
+          cat > ~/.config/buildstream.conf <<EOF
           scheduler:
             fetchers: 10
             builders: 4
@@ -78,17 +87,27 @@ jobs:
           cache:
             quota: 50G
           build:
-            # Pinned (not auto-detected) purely for reproducible local build
-            # parallelism across runners of different core counts. Does NOT
-            # affect cache-key matching: max-jobs's runtime env vars
+            # nproc, not a fixed pin: max-jobs's runtime env vars
             # (MAKEFLAGS/JOBS for autotools/meson, LTOJOBS for freedesktop-sdk's
             # own meson-conf.yml) are all explicitly excluded from the cache
             # key via environment-nocache — verified against the pinned
             # freedesktop-sdk ref and the upstream buildstream_plugins package
             # (see docs/skills/ci-runner.md § max-jobs does NOT affect cache
-            # keys). An earlier version of this comment claimed the opposite
-            # and was wrong — corrected 2026-07-29.
-            max-jobs: 4
+            # keys) — so unlike scheduler.builders (left fixed: more concurrent
+            # element sandboxes raises peak RAM, unverified against this box's
+            # 12G with no representative fully-uncached run to measure against
+            # yet), there's no cache-reproducibility cost to sizing this to
+            # whatever runner actually runs the build. A single element's
+            # compile is the common case in a long, mostly-sequential
+            # freedesktop-sdk dependency chain — that's real, otherwise-idle
+            # parallelism on a 6-vCPU VPS (or Blacksmith's 8) that a hardcoded
+            # 4 (sized for the old 4-vCPU local runner) left on the table.
+            # Previously pinned at a fixed 4 "for reproducible parallelism
+            # across runners" — that reasoning already didn't hold once the
+            # cache-key exclusion above was verified (2026-07-29); issue #794
+            # replacing this job's only scheduled runner with a differently-
+            # sized box removed the last reason to keep it fixed.
+            max-jobs: $(nproc)
           EOF
 
           # Wire krytis's bow Buildbarn cache into user config (#340). Not

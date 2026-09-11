@@ -85,6 +85,127 @@ the check surfaces the problem clearly, it doesn't auto-run `sudo` on the
 user's behalf. First hit and root-caused in #703 (`docs/plans/done/2026-09-03-migrate-free-disk-space.md`
 Task 7), where it blocked a local `renovate-check --dry-run` verification.
 
+## Always-on VPS Runner (issue #794)
+
+A second, distinct self-hosted runner: a dedicated, always-on Debian 13
+(trixie) Contabo Cloud VPS 6 (6 vCPU/12 GB/200 GB), registered under the
+name `krytis-vps`. It exists to take `cache-warm.yml`'s scheduled cron run
+off Blacksmith — a `schedule`-triggered workflow can never satisfy a
+`workflow_dispatch`-only opt-in condition, so that job was architecturally
+stuck paying Blacksmith overage no matter how much manually-dispatched work
+got routed to the local container runner by hand. See the issue for the
+full cost/sizing rationale.
+
+### Host-native, not a container — the local runner's design doesn't apply here
+
+`Containerfile.runner`'s privileged-Podman-container design exists
+specifically to isolate the runner on a **shared local dev workstation**.
+This VPS has no other tenant — the VM itself is the isolation boundary — so
+the runner is installed directly on the host (`/opt/actions-runner`,
+`RUNNER_ALLOW_RUNASROOT=1`, supervised by the binary's own `svc.sh`-generated
+systemd unit) rather than containerized. No `--privileged` flag, no podman
+run wrapper, nothing analogous to `mise runner:start`/`stop` for the
+container lifecycle — this is a persistent host service, closer in shape to
+the Buildbarn Quadlet precedent (always up, restarts with the box) than to
+the local runner's manually start/stop container.
+
+Managed via `mise runner-vps:{install,register,deregister,status}`
+(`mise/tasks/runner-vps/`, provisioning script in `files/runner-vps/provision.sh`).
+`install` is idempotent and re-runnable (apt install + binary download are
+both guarded); `register`/`deregister` call the GitHub API directly, same
+pattern as `runner:start`/`stop`.
+
+### Debian, not Ubuntu — sidesteps an AppArmor default that doesn't apply here
+
+`kernel.apparmor_restrict_unprivileged_userns` (the sysctl `runner/start`
+warns about, and `cache-warm.yml`'s "Enable unprivileged user namespaces"
+step unconditionally flips for the Blacksmith/Ubuntu fallback path) is an
+**Ubuntu-specific** AppArmor default, not a general Linux one. Confirmed
+absent on this box: `/proc/sys/kernel/apparmor_restrict_unprivileged_userns`
+doesn't exist at all on Debian 13, and `kernel.unprivileged_userns_clone=1`
+(the more fundamental gate, historically 0 on some Debian configs) is
+already enabled by default — bubblewrap works with zero sysctl changes.
+
+### The PAT never lives on the VPS
+
+`register`/`deregister` mint the GitHub registration/removal token from the
+**operator's already-authenticated local `gh` session**, then SSH only that
+short-lived (1h), single-use token to the box to feed `config.sh`. The
+fine-grained Administration:Read-and-Write PAT itself never has to be
+stored on this always-reachable external host — an improvement over the
+local container runner's design (which does store that PAT there, as a
+podman secret, but that box is a mostly-off local workstation, a smaller
+exposure window than an always-on VPS). `RUNNER_VPS_HOST`/`RUNNER_VPS_SSH_KEY`
+are operator-supplied in `.mise.local.toml` (gitignored) — the address of
+externally-reachable infra doesn't belong committed to a public repo:
+
+```toml
+[env]
+RUNNER_VPS_HOST = "root@<vps-ip>"
+```
+
+SSH access is a per-host FIDO2 resident key following the convention in
+`docs/skills/fido2.md` (`id_ed25519_sk_rk_<HostName>`), not a password —
+root password SSH is disabled on this box (see `docs/skills/fido2.md` §
+Remote host SSH login for the cloud-init `ssh_pwauth` gotcha hit doing that).
+
+### Distinct label — avoids nondeterministic routing against the local runner
+
+The local container runner and this VPS runner both satisfy
+`runs-on: [self-hosted, linux, x64]` if given identical labels — GitHub
+would then pick whichever happens to be online with no way to target one
+specifically. `RUNNER_VPS_LABELS` (`mise.toml`) adds a distinct `krytis-vps`
+label; `cache-warm.yml`'s `runs-on` targets
+`["self-hosted","linux","x64","krytis-vps"]` specifically, so it always
+lands on this box regardless of whether the local container runner also
+happens to be up. `force_blacksmith` (workflow_dispatch input) is the
+manual fallback for VPS maintenance or an outage — inverts the previous
+`force_self_hosted` direction, since self-hosted is now the *default*, not
+the opt-in.
+
+### podman is installed but deliberately not version-pinned
+
+Issue #794 proposed pinning podman to 4.9.3 — "the version that actually
+built and boot-tested every shipped sealed image (#524/#527)". That premise
+was already superseded before this runner existed: the 2026-08-12
+composefs-digest verification
+(`docs/plans/done/2026-08-12-verify-baked-composefs-digest.md`) found 4.9.3
+and 5.8.2 both produce byte-identical, correctly-booting sealed images once
+`verify-composefs-digest` checks the digest directly, and #527 already
+reverted the `podman >= 5` assertion #524 had added on that now-disproven
+premise. `provision.sh` installs whatever Debian trixie's apt carries
+(5.4.2 as of setup). Moot either way today: `cache-warm.yml` — the only
+workflow this box runs — never invokes podman; it was installed for parity
+against a possible future `publish.yml` migration, which issue #794
+explicitly leaves out of scope.
+
+### `build.max-jobs` sized to `nproc`, not hardcoded — `scheduler.builders` left alone
+
+Same underutilization problem podman's version pin had (see above): the
+workflow's `max-jobs: 4` in `~/.config/buildstream.conf` predated this
+runner and was sized for the old 4-vCPU local box, leaving 2 of this VPS's
+6 cores idle on every single-element compile — the common case in a long,
+mostly-sequential freedesktop-sdk dependency chain, since most of the graph
+doesn't have enough independent elements to keep `scheduler.builders`
+concurrency busy. Changed to `max-jobs: $(nproc)`, computed inside the
+(now-unquoted) heredoc at runtime — 6 on this VPS, 8 on the Blacksmith
+fallback. No cache-key cost: this whole change was only safe to make
+*because* `max-jobs`'s runtime env vars are already excluded from the
+cache key (see the comment on the setting itself).
+
+**`scheduler.builders` (concurrent element builds) was deliberately left at
+4**, unlike `max-jobs`. More concurrent builders means more concurrent
+sandboxes, each running its own toolchain — real peak-RAM risk on a 12G
+box that hasn't been observed under a representative load yet. The
+`workflow_dispatch` verification run for this issue landed almost entirely
+cache hits from bow (the point of the feature), so `top`/`free` during it
+showed ~92% idle CPU and >10G free RAM — real, but not evidence either way
+for a heavy from-scratch build, which is the case that would actually
+stress concurrent-builder RAM. Bump this only after watching a real cold
+build's memory headroom (`free -h` during `Build image`), not from an
+idle-cache sample — the same "monitor before assuming" posture issue #794
+itself already calls for on the CAS quota (item 5).
+
 ---
 
 ## BST Cache in CI

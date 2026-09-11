@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#MISE description="Register the always-on Debian CI VPS runner against starlit-os/krytis and start its systemd service (issue #794)"
+
+set -euo pipefail
+
+: "${RUNNER_VPS_HOST:?Set RUNNER_VPS_HOST (e.g. root@203.0.113.10) in .mise.local.toml [env] — see docs/skills/ci-runner.md § Always-on VPS runner}"
+SSH_KEY="${RUNNER_VPS_SSH_KEY:-${HOME}/.ssh/id_ed25519_sk_rk_KrytisBuild}"
+RUNNER_HOME="/opt/actions-runner"
+
+ssh_vps() {
+    env -u SSH_AUTH_SOCK ssh -i "${SSH_KEY}" -o IdentitiesOnly=yes -o IdentityAgent=none "${RUNNER_VPS_HOST}" "$@"
+}
+
+# Same stale-offline-registration cleanup as mise/tasks/runner/start.
+STALE_ID=$(gh api repos/starlit-os/krytis/actions/runners --jq \
+    ".runners[] | select(.name == \"${RUNNER_VPS_NAME}\" and .status == \"offline\") | .id")
+if [ -n "${STALE_ID}" ]; then
+    echo "==> Removing stale offline runner '${RUNNER_VPS_NAME}' (id=${STALE_ID})..."
+    gh api -X DELETE "repos/starlit-os/krytis/actions/runners/${STALE_ID}"
+fi
+
+# Minted here (an already gh-authenticated operator machine), not on the VPS:
+# the long-lived Administration:Read-and-Write PAT this call needs never has
+# to be stored on the always-on, externally-reachable box. Only this
+# short-lived (1h), single-use registration token crosses the wire to it.
+echo "==> Fetching registration token..."
+RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registration-token --jq .token)
+
+echo "==> Configuring runner '${RUNNER_VPS_NAME}' on ${RUNNER_VPS_HOST}..."
+ssh_vps "cd ${RUNNER_HOME} && RUNNER_ALLOW_RUNASROOT=1 ./config.sh \
+    --url https://github.com/starlit-os/krytis \
+    --token '${RUNNER_TOKEN}' \
+    --name '${RUNNER_VPS_NAME}' \
+    --labels '${RUNNER_VPS_LABELS}' \
+    --work _work \
+    --unattended \
+    --replace"
+
+echo "==> Installing and starting the systemd service..."
+ssh_vps "cd ${RUNNER_HOME} && ./svc.sh install && ./svc.sh start"
+
+echo "==> Done. Check with 'mise runner-vps:status'."
