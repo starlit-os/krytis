@@ -91,3 +91,16 @@ RUNNER_IMAGE = { default = "localhost/krytis-runner:latest" }
 RUNNER_VERSION = { default = "2.337.0" }
 RUNNER_NAME = { default = "krytis-local" }
 RUNNER_LABELS = { default = "self-hosted,linux,x64" }
+# Always-on Debian CI VPS runner (issue #794) — mise/tasks/runner-vps/*.
+# RUNNER_VPS_HOST has no default on purpose: it names externally-reachable
+# infra, so it's operator-supplied in .mise.local.toml (gitignored, per the
+# existing docs/skills/mise.md § .mise.local.toml convention), e.g.:
+#   [env]
+#   RUNNER_VPS_HOST = "root@203.0.113.10"
+RUNNER_VPS_NAME = { default = "krytis-vps" }
+# Distinct from RUNNER_LABELS ("self-hosted,linux,x64", above) on purpose:
+# the local container runner and this VPS runner would otherwise register
+# under identical labels, making `runs-on: [self-hosted, linux, x64]`
+# nondeterministic between the two whenever both happen to be online. The
+# extra `krytis-vps` label lets cache-warm.yml target this box specifically.
+RUNNER_VPS_LABELS = { default = "self-hosted,linux,x64,krytis-vps" }
