@@ -1545,6 +1545,158 @@ it reachable. See § dmem_protect is a no-op, and `Delegate=` cannot fix it (#26
 for the full evidence; don't propose a `Delegate=+dmem` drop-in, it is rejected at parse
 time.
 
+## ananicy-cpp (process-class nice/ionice daemon)
+
+`elements/desktop/ananicy-cpp.bst`. Upstream:
+https://gitlab.com/ananicy-cpp/ananicy-cpp — **GitLab, not GitHub**; there is no
+`github.com/ananicy-cpp/ananicy-cpp` (404s). Complementary to falcond above: falcond
+only acts during an active game session, ananicy-cpp is always-on general process
+classification (browsers, compilers, background daemons) via nice/ionice/sched-class/
+`oom_score_adj` rules. No daemon-level overlap between the two. Closes #222.
+
+**AUR-vs-`extra` trap.** The AUR `ananicy-cpp` page (maintainer Antoine Viallon) is
+stale/orphaned, still pinned at `v1.1.1`, long after the package graduated into Arch's
+official `extra` repo at `1.2.0-1` (built 2026-03-27). Check
+`archlinux.org/packages/extra/x86_64/ananicy-cpp/` and the packaging PKGBUILD at
+`gitlab.archlinux.org/archlinux/packaging/packages/ananicy-cpp` before trusting an AUR
+page's pinned version or build flags as current — this generalizes beyond ananicy-cpp:
+any package that graduates from AUR into `extra`/`community` leaves its AUR page
+orphaned indefinitely, it does not redirect or get marked stale automatically.
+
+**`fmtlib.bst` vs `fmt.bst` naming trap.** fdsdk ships fmt as
+`freedesktop-sdk.bst:components/fmtlib.bst` (added 25.08.0) — the component is
+literally named `fmtlib.bst`, not `fmt.bst`. Grepping for `fmt.bst` and finding nothing
+leads to the wrong conclusion that fmt isn't shipped at all. Real runtime `.so`
+(`libfmt.so`), so it's a `depends`, not `build-depends`, same trap documented for
+`tomlplusplus` elsewhere in this file.
+
+**`desktop/spdlog.bst` and `desktop/pcre2.bst` are both absent from fdsdk entirely** —
+confirmed by paginating the full `elements/components/` tree via the GitLab API rather
+than trusting web search (which came up empty/unreliable for both): spdlog is missing
+alphabetically between `swig.bst` and `systemd-hwdb-maybe.bst`; pcre2 is missing
+between `pciutils.bst` and `pcsc-lite.bst`. Both vendored here the same way
+`desktop/nlohmann-json.bst`/`desktop/stb.bst` vendor other fdsdk gaps — `find_package`-
+friendly shared-lib CMake config, `USE_EXTERNAL_*=ON`/`SPDLOG_FMT_EXTERNAL=ON` passed
+from `ananicy-cpp.bst` so there is exactly one fmt runtime in the image, not spdlog's
+own bundled fmt fork.
+
+**Process-detection backend is netlink, not BPF — a deliberate divergence from the
+official Arch/CachyOS packaging.** ananicy-cpp supports two mutually exclusive
+backends selected by `-DUSE_BPF_PROC_IMPL`. The Arch `extra` PKGBUILD uses BPF
+(`-DUSE_BPF_PROC_IMPL=ON`, pulls `libbpf` via CPM, compiles a BPF C skeleton with
+`clang -target bpf` against a per-arch vendored `vmlinux.h`) — substantially heavier
+build graph than anything else in `desktop/`. netlink (the default when
+`USE_BPF_PROC_IMPL` is simply omitted — undefined CMake cache vars are falsy) uses a
+plain `NETLINK_CONNECTOR` proc socket, zero extra build deps, and is functionally
+complete per upstream's own "What works" README checklist (backend-agnostic). krytis
+picks netlink on purpose — boring, no libbpf/clang/CO-RE surface to maintain, no CPM
+network-fetch path to audit. Recorded in the element header, same way
+`desktop/scx-scheds.bst` records its version-pin rationale.
+
+**Config paths are hardcoded, not discoverable at runtime.** `src/main.cpp` defaults
+to `/etc/ananicy.d` (`ANANICY_CPP_CONFDIR` override) and `/etc/ananicy.d/ananicy.conf`
+(`ANANICY_CPP_CONF` override). `src/config.cpp` **writes** a generated default
+`ananicy.conf` to `ANANICY_CPP_CONF` if absent — that path must be runtime-writable.
+`src/rules.cpp` only **reads** from `ANANICY_CPP_CONFDIR` (no write calls) — read-only
+`/usr/share` is fine. Same split as falcond's `/usr/share` (read-only) + `/var/lib`
+(writable), but via the unit's `Environment=` (patched post-install with `sed`) since
+ananicy-cpp doesn't expose these as CMake `-D` options the way falcond exposes
+`-Duser-profiles-dir`:
+- `ANANICY_CPP_CONFDIR=/usr/share/ananicy.d` (baked-in CachyOS rules, read-only)
+- `ANANICY_CPP_CONF=/var/lib/ananicy-cpp/ananicy.conf` (auto-generated on first boot,
+  `tmpfiles.d` creates the state dir)
+
+CachyOS's own `ananicy.conf` (global settings tuning) is deliberately **not**
+vendored — only the process rules (`00-cgroups.cgroups`, `00-types.types`,
+`00-default/`). The binary generates krytis's own default on first boot rather than
+silently adopting CachyOS-specific global tuning decisions.
+
+**Upstream's own unit already ships real systemd hardening — verify by building and
+checking, don't trust a web search.** The plan that preceded this element claimed
+(sourced from a web search of third-party docs, not the actual unit file) that
+ananicy-cpp ships unhardened and runs as unrestricted root, matching falcond's
+posture. That was wrong: `bst artifact checkout` of the actual built element shows
+v1.2.0's `ananicy-cpp.service` carries a real, scoped `CapabilityBoundingSet=`
+(`CAP_SYS_NICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
+CAP_DAC_OVERRIDE` — not full root), plus `ProtectSystem=full`, `ProtectHome=yes`,
+`PrivateDevices=yes`, `NoNewPrivileges=yes`, `MemoryDenyWriteExecute=yes`, and a
+`MemoryHigh=`/`MemoryMax=` cgroup limit. krytis's `install-commands` only append two
+`Environment=` lines after `[Service]` (via `sed`) — they land after all of the
+above, so nothing here strips or weakens it. No hardening gap to close, and no
+parity claim with falcond holds either way. Corrected in the #222 vuln-exposure
+check follow-up; the earlier claim is preserved as a lesson, not repeated.
+
+**pcre2 is not a real fdsdk gap — it's shipped under `bootstrap/`, not
+`components/`.** The original plan vendored `desktop/pcre2.bst` on the strength of
+"absent from `elements/components/`" alone. fdsdk ships pcre2 as
+`freedesktop-sdk.bst:bootstrap/pcre2.bst` (autotools, JIT-enabled, pinned
+`pcre2-10.47` with its own `exclude: ['*-RC*']` — the same RC-exclusion trap
+documented in `docs/skills/bst.md` § excluding a bad tag, discovered independently
+here before finding fdsdk already does it) — pulled into literally every image via
+`runtime-gnu.bst` → `bootstrap/grep.bst` (`grep -P`). A second vendored pcre2
+collides at build time ("not permitted to overlap", every header/`.so`/man page) —
+caught by actually building the element, not by `mise validate` (which only resolves
+the graph, it doesn't stage a sandbox). **Check `elements/bootstrap/` as well as
+`elements/components/` before concluding fdsdk doesn't ship something.** Depend on
+the existing bootstrap element directly instead (`core/openssh.bst`'s
+`bootstrap/libxcrypt.bst` dependency is the existing precedent for this). The
+vulnerable 10.47 pin this surfaced is tracked separately — issue #812, not fixed by
+this element since it isn't this element's dependency to control.
+
+**`sed` needs an explicit `bootstrap/sed.bst` build-depend — it isn't in
+`runtime-gnu.bst`.** `runtime-gnu.bst` = `runtime-minimal.bst` (glibc, symlinks,
+gcc-libs, utf-locale) + `bash` + `coreutils`. `sed` is its own separate GNU package,
+not part of coreutils, and nothing in this element's dependency chain happens to
+pull it in transitively otherwise (unlike `grep`, which rides in via `libselinux`).
+`overrides/systemd-base.bst` already carries this same explicit
+`bootstrap/sed.bst` build-depend for the same reason — check what a `sed`/`awk`/
+`grep`/`diffutils` call in `install-commands` actually needs before assuming
+`runtime-gnu.bst` covers it.
+
+**Overriding `config: install-commands:` on a `kind: cmake` element replaces the
+plugin's real install step — `%{install-extra}` does not restore it.**
+`%{install-extra}` is not "re-run the default install commands"; it's fdsdk's
+license-file harvester (`include/install-extra.yml`), auto-appended by a
+project-wide `elements: cmake: config: install-commands: (>):` override *after*
+whatever list an element defines — every plain `kind: cmake` element in this repo
+gets it for free without ever writing `%{install-extra}` itself. The real cmake
+install invocation is the `%{make-install}` variable
+(`env DESTDIR="%{install-root}" cmake --build %{build-dir} --target install`).
+Writing `'%{install-extra}'` as if it were that step is a silent no-op — the build
+and link succeed, `install-commands` "succeeds", and the element caches a
+near-empty artifact with no compile-time signal that anything is wrong; only
+checking out the artifact (or the next consumer failing to find the binary) catches
+it. Any `kind: cmake`/`autotools`/`meson` element that overrides `install-commands`
+to inject a post-install step (patching a file the build produces, as here) must
+include `%{make-install}` (or the buildsystem's equivalent) explicitly, run before
+the custom step that depends on its output — and should *not* also add
+`%{install-extra}` itself, since fdsdk already appends it project-wide for these
+plugin kinds. `kind: manual` is the one case that genuinely needs the elements in
+this file to write `'%{install-extra}'` themselves — it's absent from
+`install-extra.yml`'s auto-append list.
+
+**Two `git_repo` sources in one element, tracked together.** `ananicy-cpp.bst` carries
+both the daemon source (`gitlab:ananicy-cpp/ananicy-cpp.git`, `track: v*`) and CachyOS's
+rule set (`github:CachyOS/ananicy-rules.git`, `track: '*.*.*'`, real GitHub releases —
+unlike `PikaOS-Linux/falcond-profiles`, no bespoke commit-SHA tracker needed). A single
+`bst source track desktop/ananicy-cpp.bst` call updates both `ref:` fields in one PR —
+no second mise task. Known quirk: `.github/workflows/track-bst-sources.yml`'s PR-body
+step derives `UPSTREAM_SLUG` from the first line matching `url:\s+github:`, which finds
+the CachyOS rules source, not the GitLab-hosted daemon — the generated PR body's
+"Source"/"Compare" links describe the rules update, not the daemon update, whenever
+both bump together. Cosmetic only; the actual `ref:` resolution for both sources is
+correct regardless.
+
+### Verification
+
+`systemctl is-active ananicy-cpp` (expect `active`), unit preset-enabled by
+`71-krytis-ananicy-cpp.preset`. Confirm rules actually loaded, not just "service is
+running" — mirrors the falcond `LOADED_PROFILES` lesson above:
+`journalctl -u ananicy-cpp -b` should show rule/type file load counts from
+`/usr/share/ananicy.d`. Confirm `/var/lib/ananicy-cpp/ananicy.conf` gets
+auto-generated on first start — proves the writable-state-dir `Environment=` override
+took effect, not upstream's compiled-in `/etc` default.
+
 ## scx_loader (sched-ext D-Bus scheduler loader)
 
 `elements/desktop/scx-loader.bst`. Source: https://github.com/sched-ext/scx-loader

@@ -56,7 +56,7 @@ root.** `mise bst build elements/desktop/equibop.bst` fails with `Could not find
 | `%{indep-libdir}` | `/usr/lib` | Use for systemd units, presets, sysusers, tmpfiles |
 | `%{datadir}` | `/usr/share` | |
 | `%{sysconfdir}` | `/etc` | Avoid — prefer `/usr/lib` paths for image content |
-| `%{install-extra}` | Empty hook | Convention: always end install-commands with this |
+| `%{install-extra}` | fdsdk's license-file harvester (`include/install-extra.yml`), **not** a re-invocation of the plugin's real install step | For `cmake`/`autotools`/`make`/`makemaker`/`meson`/`pyproject`, fdsdk auto-appends it project-wide after whatever `install-commands` an element defines — don't add it yourself for those kinds. `kind: manual` is the one case that needs it written explicitly (absent from that auto-append list). See § Overriding `install-commands` on a buildsystem element below |
 | `%{go-arch}` | `amd64`/`arm64` | Defined in project.conf per-arch |
 | `%{arch}` | `x86_64`/`aarch64` | Raw architecture name |
 
@@ -186,7 +186,50 @@ resolved command with `bst show --deps none --format '%{config}'`.
 | `(@):` | Include a YAML file |
 | `(?):` | Conditional block (evaluates options like `arch`) |
 
-Always end `install-commands` with `- "%{install-extra}"`.
+Always end a `kind: manual` element's `install-commands` with `- "%{install-extra}"`
+— that plugin kind has no default install step and no auto-append (see below), so
+this is the only way it gets the license-harvest step at all.
+
+## Overriding `install-commands` on a buildsystem element replaces the real install step
+
+*Discovered implementing #222's `desktop/ananicy-cpp.bst` — the build/link succeeded
+and `install-commands` "succeeded" while silently producing a near-empty artifact.*
+
+`%{install-extra}` is fdsdk's license-file harvester (`include/install-extra.yml`),
+not a re-invocation of a buildsystem plugin's real install step. For `cmake`,
+`autotools`, `make`, `makemaker`, `meson`, and `pyproject`, fdsdk's project-wide
+`elements: <kind>: config: install-commands: (>): ["%{install-extra}"]` override
+auto-appends it *after* whatever `install-commands` list an element ends up with —
+every plain element of these kinds gets it for free without ever writing
+`%{install-extra}` itself (check `desktop/nlohmann-json.bst`, `desktop/spdlog.bst`:
+neither has a `config:` block, neither mentions it).
+
+Overriding `config: install-commands:` on one of these kinds **replaces** the
+plugin's own default entirely — for `cmake` that default is the `%{make-install}`
+variable (`env DESTDIR="%{install-root}" cmake --build %{build-dir} --target
+install`), not `%{install-extra}`. Writing `- '%{install-extra}'` where you meant
+"now actually install it" is a silent no-op: the configure/build commands still run
+and succeed, `install-commands` "succeeds", and the cached artifact ships whatever
+partial content your own custom commands happened to produce — no compile error,
+no BST warning. Only checking out the artifact (or a downstream consumer failing to
+find the binary) surfaces it.
+
+If a custom `install-commands` override needs to post-process a file the build
+produces (e.g. `sed`-patching a systemd unit the plugin's own install step writes),
+include the buildsystem's real install variable explicitly and run it **first**:
+
+```yaml
+config:
+  install-commands:
+  - |
+    %{make-install}
+  - |
+    sed -i '...' "%{install-root}%{indep-libdir}/systemd/system/foo.service"
+```
+
+Do not also add `%{install-extra}` to this list — fdsdk appends it project-wide
+regardless, and re-adding it just re-runs the (idempotent, harmless, but confusing)
+license harvest a second time.
 
 
 ## `kind: manual` sandbox commands need `runtime-gnu.bst`, not bare `runtime-minimal.bst`
