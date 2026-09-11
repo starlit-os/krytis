@@ -363,7 +363,8 @@ Also add `ananicy-cpp`, `spdlog`, and `pcre2` to the
 `workflow_dispatch.inputs.group.options` list near the top of the file (satisfies
 AGENTS.md's Update Path Gate option (a) — no new mise task needed).
 
-## `docs/skills/bst.md`
+## `docs/skills/desktop.md` (not `bst.md` — that's where falcond's own section
+## actually lives)
 
 Add a `## ananicy-cpp (process-class nice/ionice daemon)` section near the existing
 `## falcond (PikaOS gaming performance daemon)` section, covering (per the
@@ -373,9 +374,18 @@ follow-up):
 - The `fmtlib.bst` vs `fmt.bst` naming trap (component is literally named
   `fmtlib.bst` in fdsdk — easy to grep for the wrong name and conclude fmt isn't
   shipped).
-- spdlog and pcre2 both absent from fdsdk entirely — where this was verified
-  (paginated the full `elements/components/` tree via the GitLab API rather than
-  trusting web search, which came up empty/unreliable for both).
+- spdlog is absent from fdsdk entirely (verified: paginated the full
+  `elements/components/` tree via the GitLab API). **pcre2 is not** — this plan's
+  original claim was wrong. fdsdk ships it under `elements/bootstrap/pcre2.bst`
+  (autotools, JIT-enabled, `pcre2-10.47` pinned with its own `exclude: ['*-RC*']`),
+  a subtree this plan's research never checked. Discovered only by actually building
+  the element: `desktop/pcre2.bst` collided with `bootstrap/pcre2.bst` at every
+  installed path ("not permitted to overlap"), something `mise validate` alone never
+  catches (it resolves the graph, it doesn't stage a sandbox). Implemented as a
+  direct dependency on the existing bootstrap element instead — see
+  `docs/skills/desktop.md`'s ananicy-cpp section for the full correction and
+  `docs/skills/bst.md`'s new "Overriding install-commands on a buildsystem element"
+  section for the related `%{install-extra}` trap this also surfaced.
 - The AUR-vs-`extra` trap: a stale/orphaned AUR page can keep describing an older
   release long after a package graduates into Arch's official repos (ananicy-cpp:
   AUR pinned at v1.1.1, `extra` at 1.2.0-1) — check `archlinux.org/packages/` and the
@@ -388,29 +398,60 @@ follow-up):
   tree — same shape as falcond's `/usr/share` + `/var/lib` split, but via env vars
   instead of compiled-in `-D` paths since ananicy-cpp doesn't expose that as a CMake
   option the way falcond exposes `-Duser-profiles-dir`.
+- **Also wrong in this plan's original pass**: the claim that upstream ships
+  ananicy-cpp's unit unhardened, same posture as falcond. It doesn't — v1.2.0's own
+  unit carries a real `CapabilityBoundingSet=`, `ProtectSystem=full`, and more; see
+  `docs/skills/desktop.md` for the verified detail. Sourced from a web search of
+  third-party docs at plan-writing time, not the actual unit file — a lesson in
+  itself: check the artifact, not a search result, before asserting a security
+  posture.
 
-## Verification (no live build available in this planning pass)
+## Verification (real output, 2026-09-11 implementation pass)
 
-1. `mise validate` — full element graph resolves (catches typos/missing deps before
-   any network fetch).
-2. `mise bst source track desktop/spdlog.bst desktop/ananicy-cpp.bst` — resolves both
-   placeholder `ref:` fields for real; commit whatever it produces verbatim.
-3. `mise bst build desktop/spdlog.bst` then `mise bst build desktop/ananicy-cpp.bst` —
-   first real signal on the `find_package(fmt)`/`find_package(spdlog)` chain.
-4. `mise bst build elements/stacks/desktop.bst` (or full `mise build`) — confirms no
-   conflict with the existing `falcond`/`scx-loader`/`power-profiles-daemon` block.
-5. `mise boot-test` — boot the image, `systemctl status ananicy-cpp.service` (expect
-   `active (running)`, unit preset-enabled), confirm it picked up
-   `/usr/share/ananicy.d`'s CachyOS rules (`journalctl -u ananicy-cpp -b` should show
-   rule/type file load counts, mirroring the falcond `LOADED_PROFILES` lesson — verify
-   the daemon actually loaded rules, don't stop at "service is running").
-6. Confirm `/var/lib/ananicy-cpp/ananicy.conf` gets auto-generated on first start (proves
-   the writable-state-dir override took effect, not the compiled-in `/etc` default).
+1. `mise validate` — passed, exit 0, full graph including the new elements resolves.
+2. `mise bst source track desktop/spdlog.bst desktop/pcre2.bst desktop/ananicy-cpp.bst`
+   — resolved `spdlog` to `v1.17.0-0-g79524ddd...`, `ananicy-cpp` to
+   `v1.2.0-0-gcf5ac2eb...` + CachyOS rules `1.1.49-0-g03ef03fb...`. `desktop/pcre2.bst`
+   was later deleted entirely (see correction above) — its first tracking attempt is
+   itself a finding worth keeping: `track: pcre2-*` resolved to the pre-release
+   `pcre2-10.48-RC1` over the final `pcre2-10.48`, requiring an `exclude:
+   ['pcre2-10.48-RC1']` to fix (before the element was deleted as redundant) — the
+   exact same RC-exclusion trap fdsdk's own `bootstrap/pcre2.bst` already carries.
+3. `mise bst build desktop/spdlog.bst desktop/pcre2.bst` (before the pcre2 deletion)
+   — both built successfully; confirmed `find_package(fmt CONFIG REQUIRED)` resolves
+   against `fmtlib.bst`'s installed `FmtConfig.cmake`, the one link this plan flagged
+   as unverified.
+4. `mise bst build desktop/ananicy-cpp.bst` — failed three times before succeeding,
+   each failure a real finding, not a flake: (a) `desktop/pcre2.bst` vs
+   `bootstrap/pcre2.bst` overlap (fixed by deleting the vendored element); (b) v1.2.0
+   missing `<cstring>`/`<cstdint>`/`<unistd.h>` includes under fdsdk's GCC 16.2.0
+   (fixed by cherry-picking upstream's own fix commit `77866526` as
+   `patches/ananicy-cpp/glibc-2.42-missing-headers.patch`); (c) `sed: command not
+   found` then a `%{install-extra}` no-op that silently skipped the real
+   `cmake --install` step (fixed: added `bootstrap/sed.bst` to `build-depends`, and
+   replaced the `%{install-extra}` line with the actual `%{make-install}` variable,
+   run before the `sed`-based `Environment=` patch that depends on its output).
+   Final build: SUCCESS. `bst artifact checkout` confirmed the installed unit,
+   preset, tmpfiles fragment, and CachyOS rules tree all match what this plan
+   specified.
+5. `mise bst build stacks/desktop.bst` — SUCCESS, confirms no overlap conflict with
+   the existing `falcond`/`scx-loader`/`power-profiles-daemon` block or anything else
+   in the full desktop dependency closure.
+6. `mise run lint` and full `mise run build` (load-image + lint) — SUCCESS.
+   `bootc container lint`: 14 checks passed, 1 skipped. Full OCI image assembled
+   (`oci/krytis/image.bst`), composed 232115/236211 files across the runtime/
+   filesystem splits with no overlap errors, tagged `localhost/krytis:latest`.
+7. `mise boot-test` — **PASSED** (run by a human with sudo access on the built
+   image; the privileged `bootc install to-disk --via-loopback` step needs
+   `CAP_SYS_ADMIN` in the initial user namespace, unavailable to the implementing
+   agent in an unattended session).
 
 ## Skill-improvement mandate compliance
 
-The `docs/skills/bst.md` update above must land in the **same commit** as
-`elements/desktop/ananicy-cpp.bst` / `elements/desktop/spdlog.bst`, per AGENTS.md — do
-not defer it to a follow-up. Archive this plan to `docs/plans/done/` in the same PR that
-merges the implementation, with the verification section filled in with real command
-output (not left as this pass's "no live build available" placeholder).
+The `docs/skills/desktop.md` update above landed in the same commit as
+`elements/desktop/ananicy-cpp.bst`/`elements/desktop/spdlog.bst`, per AGENTS.md.
+`docs/skills/bst.md` also gained a new section ("Overriding `install-commands` on a
+buildsystem element replaces the real install step") and a corrected
+`%{install-extra}` table entry, both from lessons this implementation pass
+surfaced. This plan is archived to `docs/plans/done/` in the same PR that carries
+the implementation, per its own instruction above.
