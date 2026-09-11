@@ -13,7 +13,7 @@ usage = "6.8.0"
 # .github/renovate.json5).
 python = "3.12.14"
 uv = "0.12.13"
-gum = "2.0.0"
+gum = "2.0.1"
 bat = "0.26.1"
 # `just` drives the dakota-iso ISO build pipeline (mise run build-iso).
 # Sourced from mise (aqua) rather than a BST element — it is dev-host
