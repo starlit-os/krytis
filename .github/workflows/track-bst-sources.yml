@@ -46,6 +46,8 @@ on:
           - equibop
           - tarball
           - libqalculate
+          - ananicy-cpp
+          - spdlog
 
 permissions: read-all
 
@@ -836,6 +838,8 @@ jobs:
       github.event.inputs.group == 'stb' ||
       github.event.inputs.group == 'kmscon' ||
       github.event.inputs.group == 'libtsm' ||
+      github.event.inputs.group == 'ananicy-cpp' ||
+      github.event.inputs.group == 'spdlog' ||
       github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -946,6 +950,14 @@ jobs:
             element: desktop/libtsm.bst
             branch: auto/track-libtsm
             title: "chore(deps): update libtsm"
+          - group: ananicy-cpp
+            element: desktop/ananicy-cpp.bst
+            branch: auto/track-ananicy-cpp
+            title: "chore(deps): update ananicy-cpp"
+          - group: spdlog
+            element: desktop/spdlog.bst
+            branch: auto/track-spdlog
+            title: "chore(deps): update spdlog"
 
     steps:
       - name: Checkout repository

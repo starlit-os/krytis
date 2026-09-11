@@ -207,6 +207,11 @@ depends:
   # gap without opting the system into a scheduler swap by default — that
   # remains a deliberate follow-up decision, not an oversight. Closes #590.
   - desktop/scx-scheds.bst
+  # ananicy-cpp: always-on process-class nice/ionice/sched rules (browsers, compilers,
+  # background daemons). Complementary to falcond (falcond only acts during an active
+  # game session) — no daemon-level overlap. Ships the CachyOS community rule set.
+  # Closes #222.
+  - desktop/ananicy-cpp.bst
 
   # ── Apps ───────────────────────────────────────────────────────────────
   # All pre-built desktop apps are grouped in desktop-apps to keep this file
