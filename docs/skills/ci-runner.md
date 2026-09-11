@@ -179,6 +179,33 @@ workflow this box runs — never invokes podman; it was installed for parity
 against a possible future `publish.yml` migration, which issue #794
 explicitly leaves out of scope.
 
+### `build.max-jobs` sized to `nproc`, not hardcoded — `scheduler.builders` left alone
+
+Same underutilization problem podman's version pin had (see above): the
+workflow's `max-jobs: 4` in `~/.config/buildstream.conf` predated this
+runner and was sized for the old 4-vCPU local box, leaving 2 of this VPS's
+6 cores idle on every single-element compile — the common case in a long,
+mostly-sequential freedesktop-sdk dependency chain, since most of the graph
+doesn't have enough independent elements to keep `scheduler.builders`
+concurrency busy. Changed to `max-jobs: $(nproc)`, computed inside the
+(now-unquoted) heredoc at runtime — 6 on this VPS, 8 on the Blacksmith
+fallback. No cache-key cost: this whole change was only safe to make
+*because* `max-jobs`'s runtime env vars are already excluded from the
+cache key (see the comment on the setting itself).
+
+**`scheduler.builders` (concurrent element builds) was deliberately left at
+4**, unlike `max-jobs`. More concurrent builders means more concurrent
+sandboxes, each running its own toolchain — real peak-RAM risk on a 12G
+box that hasn't been observed under a representative load yet. The
+`workflow_dispatch` verification run for this issue landed almost entirely
+cache hits from bow (the point of the feature), so `top`/`free` during it
+showed ~92% idle CPU and >10G free RAM — real, but not evidence either way
+for a heavy from-scratch build, which is the case that would actually
+stress concurrent-builder RAM. Bump this only after watching a real cold
+build's memory headroom (`free -h` during `Build image`), not from an
+idle-cache sample — the same "monitor before assuming" posture issue #794
+itself already calls for on the CAS quota (item 5).
+
 ---
 
 ## BST Cache in CI
