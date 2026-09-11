@@ -288,6 +288,41 @@ Notes for whoever implements this:
   actually resolves against `fmtlib.bst`'s installed `FmtConfig.cmake` inside the BST
   sandbox before assuming it Just Works — this is the one link in the chain not
   directly verified this session (read the recipe, not a live build).
+- **Vulnerability check (performed 2026-09-11, before any element existed — verified
+  against NVD directly, not vuldb/search-engine noise):**
+  - `pcre2`: four CVEs published *the same day* as this check — CVE-2026-89157
+    (medium, 32-bit-only), CVE-2026-89158 (medium, 32-bit-only), CVE-2026-89160 (low,
+    all platforms), CVE-2026-89161 (**high 7.4**, `pcre2_jit_match` incorrect-free,
+    all platforms) — all fixed in `pcre2-10.48`, tagged the same day. krytis is
+    x86_64-only so the two 32-bit-only ones don't apply regardless, but this means
+    the `track: pcre2-*` glob landed on the fix by pure timing luck. **Before
+    merging, confirm the `mise bst source track` output actually resolved to
+    `pcre2-10.48` or newer** — don't trust a cached/stale `10.47` resolution from a
+    tracker run that predates today.
+  - `spdlog`: one real CVE, CVE-2025-6140 (low, local resource exhaustion via a
+    crafted log-pattern string in `scoped_padder`), fixed in v1.15.2; latest tag is
+    v1.17.0 so `track: v*` lands well past it. (Two other "spdlog CVEs" a web search
+    surfaced — CVE-2023-39319 "XSS", CVE-2022-27664 "HTTP/2 DoS" — are false
+    attributions confirmed via NVD to actually be Go stdlib `net/http`/`html/template`
+    CVEs unrelated to `gabime/spdlog`; disregard if they resurface.)
+  - `ananicy-cpp` and `CachyOS/ananicy-rules`: no GHSA/CVE or security advisories on
+    file for either (GitLab's advisory UI and CachyOS's GitHub advisories page both
+    checked empty).
+  - `fmtlib.bst`: this plan is krytis's *first* consumer (grepped — no existing
+    element depends on it), so it's a genuinely new `.so` in the image. Only
+    advisories on file are CVE-2018-1000052 (fixed in 4.1.0, fdsdk ships far newer)
+    and a Nov-2025 macOS-only command-injection GHSA — neither applies here.
+  - Design-level, not a CVE: ananicy-cpp runs as root with no capability drop
+    possible (cgroup placement has no dedicated capability) and this plan's
+    `install-commands` don't add `CapabilityBoundingSet=`/`ProtectSystem=` hardening
+    on top of upstream's unit. Same shape as the existing `desktop/falcond.bst` (also
+    unhardened root daemon) — not a regression this plan introduces, but it is a
+    second always-on root daemon of that class entering the image.
+  - Once this lands and a real `mise run vuln-scan` exists against it, `pcre2` and
+    `spdlog` will be purl-less native packages in the SBOM (same shape as
+    `nlohmann-json`) — expect to run the `vuln-scan-triage` skill against them for
+    `stock-matcher` cross-ecosystem false positives; don't pre-emptively add
+    `.grype.yaml` entries now against a plan that hasn't been built.
 
 ## `elements/stacks/desktop.bst`
 
