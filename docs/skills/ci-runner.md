@@ -206,6 +206,48 @@ build's memory headroom (`free -h` during `Build image`), not from an
 idle-cache sample — the same "monitor before assuming" posture issue #794
 itself already calls for on the CAS quota (item 5).
 
+## Scheduled Workflow Cron Delay
+
+`cache-warm.yml` and `track-bst-sources.yml` were both `cron: '0 6 * * ...'`
+— same trigger minute, no relation to each other otherwise (different
+jobs, different runners, `track-bst-sources.yml` runs on GitHub-hosted
+`ubuntu-24.04` with no self-hosted/concurrency-group involvement at all).
+Investigated 2026-09-11 after their actual fire times (`created_at` on the
+`schedule`-event run) looked "inconsistent." They weren't inconsistent —
+they were **delayed, in lockstep, by a growing amount**:
+
+```
+2026-09-11  cache-warm 10:08:17   track-bst-sources 10:08:58
+2026-09-10  cache-warm 10:11:17   track-bst-sources 10:11:42
+2026-09-09  cache-warm 10:17:37   track-bst-sources 10:18:16
+2026-09-08  cache-warm 10:13:18   track-bst-sources 10:13:38
+2026-09-07  cache-warm 10:56:19   track-bst-sources 10:57:03
+```
+
+Both workflows landing within ~40 seconds of each other, every single day,
+rules out anything in either workflow's own config (concurrency group,
+runner assignment, job steps) — the delay is upstream of all of that, at
+GitHub's own scheduler. The gap from the intended `06:00 UTC` grew over
+several weeks rather than staying constant noise: ~20–30min in mid-August,
+~1–2h by late August, a consistent ~4–5h by September. GitHub's own docs
+acknowledge scheduled workflows can be delayed under load and specifically
+call out the top of the hour (`:00`) as worst — every cron everywhere piles
+up there — but a *sustained* multi-hour daily delay is well beyond the
+"occasional few minutes" their docs describe; this reads as scheduler
+backlog specific to this repo/account, not routine jitter.
+
+**Fix applied:** moved both off `:00` to arbitrary non-round minutes
+(`track-bst-sources.yml` → `13 5 * * *`, `cache-warm.yml` → `41 6 * * 1-5`,
+~90min apart so tracking PRs have a window to land before cache-warm builds
+— see each file's own cron comment). This addresses the documented
+top-of-hour contention factor; it will not necessarily fix a genuine
+account-level scheduler backlog if that's the real cause. Check
+`gh api repos/starlit-os/krytis/actions/workflows/<file>/runs --paginate -q
+'.workflow_runs[] | select(.event=="schedule") | .created_at'` again after
+a couple of weeks — if delay from the new trigger times is still growing,
+top-of-hour contention wasn't the (whole) story and it's worth a GitHub
+support ticket instead of another cron-minute shuffle.
+
 ---
 
 ## BST Cache in CI
