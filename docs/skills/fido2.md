@@ -1,6 +1,6 @@
 # FIDO2 Skills
 
-## One key, three enrollments — know which consumer you are talking to
+## One key, four enrollments — know which consumer you are talking to
 
 A single security key has to be enrolled separately for each consumer, because each uses its own relying-party ID and its own credential store. Enrolling one does nothing for the others:
 
@@ -9,8 +9,9 @@ A single security key has to be enrolled separately for each consumer, because e
 | LUKS boot unlock | `mise fido2:enroll-luks` → `systemd-cryptenroll --fido2-device=auto` | `io.systemd.cryptsetup` | LUKS2 header token slot |
 | sudo / polkit / non-homed login | `mise fido2:enroll` → `pamu2fcfg` | `pam://$(hostname)` | `~/.config/Yubico/u2f_keys` |
 | git commit / tag signing | `mise fido2:enroll-signing` → `ssh-keygen -t ed25519-sk -O resident` | `ssh:Signing` | token resident slot + `~/.ssh/id_ed25519_sk_rk_Signing{,.pub}` |
+| remote host SSH login (e.g. a VPS) | `ssh-keygen -t ed25519-sk -O resident` (manual, no mise task) | `ssh:<HostName>` | token resident slot + `~/.ssh/id_ed25519_sk_rk_<HostName>{,.pub}` |
 
-**A fourth row — systemd-homed login (`homectl update <user> --fido2-device=auto`, rp_id `io.systemd.home`) — existed from #411 and was retired by #759/#532.** systemd-homed always tries an enrolled login credential first and prompts for its PIN before ever checking the key is plugged in (the PIN requirement comes from static enrollment metadata, checked before any libfido2 device enumeration — see `docs/skills/pam.md` § #759/#532), and a successful FIDO2-only homed login skips `pam_unix` entirely, leaving the login keyring's `PAM_AUTHTOK` unset and the collection locked. `mise fido2:enroll` no longer creates this credential and actively removes any it finds on a homed user's record. **A homed user's login is password-only now, full stop** — pam_u2f still cannot serve homed login either way (below), so there is no FIDO2 login path for homed users at all. Their sudo/polkit factor is unaffected: it's the pam_u2f row above, a separate credential store the home being unmounted doesn't touch.
+**A fifth row — systemd-homed login (`homectl update <user> --fido2-device=auto`, rp_id `io.systemd.home`) — existed from #411 and was retired by #759/#532.** systemd-homed always tries an enrolled login credential first and prompts for its PIN before ever checking the key is plugged in (the PIN requirement comes from static enrollment metadata, checked before any libfido2 device enumeration — see `docs/skills/pam.md` § #759/#532), and a successful FIDO2-only homed login skips `pam_unix` entirely, leaving the login keyring's `PAM_AUTHTOK` unset and the collection locked. `mise fido2:enroll` no longer creates this credential and actively removes any it finds on a homed user's record. **A homed user's login is password-only now, full stop** — pam_u2f still ca…
 
 `mise fido2:enroll` detects a homed user only to decide whether to run the cleanup step above; both homed and classic users get the same single pam_u2f enrollment afterward. `mise fido2:enroll-signing` (#678) covers the signing row — see below. Unlike the other two image-side tasks, it is a **repo dev task** (`mise/tasks/fido2/enroll-signing`, run from a krytis checkout on a contributor's own machine), not image content: it writes to the invoking user's own global git config, which has no meaning on a deployed OS image the way LUKS/pam_u2f enrollment does. Detection is auth-free — `homectl list` maps to the `ListHomes` D-Bus method, which has no polkit action, so it never prompts:
 
@@ -83,6 +84,76 @@ env -u SSH_AUTH_SOCK ssh-keygen -Y sign -n git -f ~/.ssh/id_ed25519_sk_rk_Signin
 ```
 
 For getting GitHub to render such a commit as **Verified**, see `docs/skills/workflow.md` § Getting a Commit Signature to Show "Verified" on GitHub.
+
+## Remote host SSH login with a resident key — same convention, different failure modes
+
+Same mechanism as the signing row, pointed at a new host instead of git: generate with
+the same command, naming the credential after the host instead of `Signing`
+(`-O application=ssh:<HostName> -C ssh:<HostName> -f ~/.ssh/id_ed25519_sk_rk_<HostName>`),
+then append the `.pub` to the remote's `~/.ssh/authorized_keys` over the box's existing
+access (password, or another key) before touching auth config. No git wiring — this
+credential authenticates `ssh`/`sshd`, it never signs anything.
+
+### An agent driving plain `ssh` over a non-PTY shell gets a misleading error, not a touch prompt
+
+The enrollment-time constraint above ("an agent cannot type the PIN") applies to every
+`ssh`/`ssh-keygen` invocation against a resident sk key, not just `-O resident`
+generation — including ordinary login. Run `ssh -i id_ed25519_sk_rk_<Name> ...` from a
+plain subprocess with no controlling tty and it does not hang waiting for touch the way
+a real terminal would; it fails fast with
+`sign_and_send_pubkey: signing failed for ED25519-SK "...": incorrect passphrase supplied
+to decrypt private key` — a confusing message for a key generated with `-N ""` (no
+passphrase to get wrong). Route the command through an actual PTY instead (this repo's
+harness: `hub start` with `pty: true`) so libfido2's touch/PIN prompt has somewhere to
+go, then have the human touch the key while the process is `running`.
+
+### gcr's ssh-agent intercepts authentication too, not just signing
+
+`docs/skills/fido2.md`'s signing section documents gcr auto-advertising sk keys it
+can't actually sign with. The same interception happens for authentication: a plain
+`ssh -i id_ed25519_sk_rk_<Name> host` can route through `/run/user/1000/gcr/ssh` via
+`SSH_AUTH_SOCK` and fail with `agent refused operation`. Fix is the same shape as the
+signing fix — bypass the agent on the `ssh` invocation itself with
+`-o IdentityAgent=none` (or `env -u SSH_AUTH_SOCK`), not just on `ssh-keygen -Y sign`.
+
+### A touch-only credential can still spuriously prompt for PIN mid-authentication
+
+Observed setting up `id_ed25519_sk_rk_KrytisBuild` (2026-09-11): a credential generated
+*without* `-O verify-required` (touch-only, matching the signing convention) still
+occasionally showed `Enter PIN for ED25519-SK key ...` during `ssh` authentication,
+not just `Confirm user presence`. Root cause unconfirmed, but it correlated with the
+touch arriving late relative to the first challenge — retrying the same `ssh` command
+with the toucher already poised consistently skipped the PIN prompt and went straight
+to `Confirm user presence` → `User presence confirmed`. Don't feed a PIN into an
+unexpected prompt like this; cancel and retry with faster touch instead.
+
+### Disabling root password SSH on a cloud-init VPS: the `sshd_config.d` drop-in wins, silently
+
+Debian/Ubuntu cloud images ship `/etc/cloud/cloud.cfg.d/*-ssh.cfg` with `ssh_pwauth: 1`,
+which cloud-init renders into `/etc/ssh/sshd_config.d/50-cloud-init.conf` containing
+`PasswordAuthentication yes`. `sshd_config`'s `Include /etc/ssh/sshd_config.d/*.conf`
+line sits near the *top* of the file, and sshd keeps the *first* value it sees for each
+keyword — so that drop-in's `yes` silently wins over a `PasswordAuthentication no`
+declared later in the same main file. `sshd -T | grep passwordauth` reporting `yes`
+despite the main config plainly saying `no` is the tell; grepping only the main file for
+the setting you expect is not enough on a cloud-init box. Fix both ends, not just one:
+
+```bash
+# 1. The live drop-in, so it takes effect now:
+sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' \
+  /etc/ssh/sshd_config.d/50-cloud-init.conf
+# 2. The source, so a future cloud-init run doesn't regenerate the permissive drop-in:
+sed -i 's/^ssh_pwauth: 1/ssh_pwauth: 0/' /etc/cloud/cloud.cfg.d/99-ssh.cfg
+sshd -t && systemctl restart ssh
+```
+
+Also tighten `PermitRootLogin yes` to `PermitRootLogin prohibit-password` in the main
+`sshd_config` while in there — `sshd -T` normalizes and reports it back as
+`permitrootlogin without-password`, same setting. Verify from an angle that doesn't trust
+the config file at all: after restarting, confirm a *fresh* key-based session still
+works, then confirm a password attempt (`ssh -o PreferredAuthentications=password`)
+gets `Permission denied (publickey)` — the server not even offering `password` as a method
+is the proof the drop-in fix landed, not just the file edit.
 
 ### A dead `hidraw` node produces the same symptoms as the gcr-agent problem — check device ACL first
 
