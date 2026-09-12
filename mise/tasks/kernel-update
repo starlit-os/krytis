@@ -41,20 +41,50 @@ PKGREL="${VERSION_FULL##*-}"
 
 echo "==> Found: ${FILENAME}"
 echo "    version=${PKGVER}  pkgrel=${PKGREL}"
-echo "    sha256=${SHA256}"
+echo "    db sha256=${SHA256}"
 
 CURRENT_VER=$(awk '/^  version:/{gsub(/"/, "", $2); print $2}' "${ELEMENT}")
 CURRENT_REL=$(awk '/^  pkgrel:/{gsub(/"/, "", $2); print $2}' "${ELEMENT}")
+CURRENT_REF=$(awk '/^  ref:/{print $2}' "${ELEMENT}")
 
-if [ "${PKGVER}" = "${CURRENT_VER}" ] && [ "${PKGREL}" = "${CURRENT_REL}" ]; then
-  echo "==> Already up to date (${PKGVER}-${PKGREL})"
-  exit 0
+# The database's SHA256SUM is not trustworthy on its own. CachyOS rebuilds a
+# package **in place** — same pkgver-pkgrel, new content — and the .db can
+# keep advertising the superseded hash afterwards. On 2026-09-12 the db said
+# a4a2ffea... while both cdn77 and mirror.cachyos.org served fe432d84...,
+# which is what BuildStream actually downloads and checksums; cache-warm run
+# 34704347353 died on the mismatch 20 minutes into the build. So pin what the
+# mirror really serves, not what it claims to serve.
+echo "==> Downloading artifact to verify its checksum..."
+curl -sSL "${CACHYOS_MIRROR}/${FILENAME}" -o "${TMPDIR}/${FILENAME}"
+REAL_SHA=$(sha256sum "${TMPDIR}/${FILENAME}" | cut -d' ' -f1)
+
+if [ "${REAL_SHA}" != "${SHA256}" ]; then
+    echo "    WARNING: database SHA256SUM disagrees with the artifact it points at."
+    echo "             db:       ${SHA256}"
+    echo "             artifact: ${REAL_SHA}"
+    echo "             Pinning the artifact's real checksum."
+fi
+echo "    real sha256=${REAL_SHA}"
+
+# Version alone is not a staleness signal: an in-place rebuild keeps
+# pkgver-pkgrel identical and changes only the content, so the ref has to be
+# compared too or this task reports "already up to date" against a pin that
+# can no longer be fetched — exactly the state that broke the build.
+if [ "${PKGVER}" = "${CURRENT_VER}" ] && [ "${PKGREL}" = "${CURRENT_REL}" ] \
+   && [ "${REAL_SHA}" = "${CURRENT_REF}" ]; then
+    echo "==> Already up to date (${PKGVER}-${PKGREL}, ref matches)"
+    exit 0
 fi
 
-echo "==> Updating ${ELEMENT}: ${CURRENT_VER}-${CURRENT_REL} → ${PKGVER}-${PKGREL}"
+if [ "${PKGVER}" = "${CURRENT_VER}" ] && [ "${PKGREL}" = "${CURRENT_REL}" ]; then
+    echo "==> ${PKGVER}-${PKGREL} was rebuilt in place — re-pinning ref only"
+    echo "    ${CURRENT_REF} → ${REAL_SHA}"
+else
+    echo "==> Updating ${ELEMENT}: ${CURRENT_VER}-${CURRENT_REL} → ${PKGVER}-${PKGREL}"
+fi
 
 sed -i "s|  version: \".*\"|  version: \"${PKGVER}\"|" "${ELEMENT}"
 sed -i "s|  pkgrel: \".*\"|  pkgrel: \"${PKGREL}\"|" "${ELEMENT}"
-sed -i "s|  ref: .*|  ref: ${SHA256}|" "${ELEMENT}"
+sed -i "s|  ref: .*|  ref: ${REAL_SHA}|" "${ELEMENT}"
 
 echo "==> Done. Run 'mise run validate' to verify."
