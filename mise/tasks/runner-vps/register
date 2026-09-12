@@ -3,40 +3,72 @@
 
 set -euo pipefail
 
-: "${RUNNER_VPS_HOST:?Set RUNNER_VPS_HOST (e.g. root@203.0.113.10) in .mise.local.toml [env] — see docs/skills/ci-runner.md § Always-on VPS runner}"
-SSH_KEY="${RUNNER_VPS_SSH_KEY:-${HOME}/.ssh/id_ed25519_sk_rk_KrytisBuild}"
+# Resolves RUNNER_VPS_HOST (env, else the Krytis vault) and defines ssh_vps.
+. scripts/runner-vps-host.sh
 RUNNER_HOME="/opt/actions-runner"
 
-ssh_vps() {
-    env -u SSH_AUTH_SOCK ssh -i "${SSH_KEY}" -o IdentitiesOnly=yes -o IdentityAgent=none "${RUNNER_VPS_HOST}" "$@"
-}
+# config.sh refuses outright ("Cannot configure the runner because it is
+# already configured") when .runner exists — --replace only covers a
+# same-named registration on GitHub's side, not local state. So this task
+# used to be a one-shot that could never be re-run on a live box, which is
+# the wrong shape for the thing you reach for to bring a runner back. Splitting
+# it makes the common case — box already configured, just needs its service
+# and drop-in re-asserted — a no-op rather than an error. Re-key by running
+# 'mise runner-vps:deregister' first.
+if ssh_vps "test -f ${RUNNER_HOME}/.runner"; then
+    echo "==> Runner already configured on ${RUNNER_VPS_HOST} — reusing its registration."
+else
+    # Same stale-offline-registration cleanup as mise/tasks/runner/start.
+    STALE_ID=$(gh api repos/starlit-os/krytis/actions/runners --jq \
+        ".runners[] | select(.name == \"${RUNNER_VPS_NAME}\" and .status == \"offline\") | .id")
+    if [ -n "${STALE_ID}" ]; then
+        echo "==> Removing stale offline runner '${RUNNER_VPS_NAME}' (id=${STALE_ID})..."
+        gh api -X DELETE "repos/starlit-os/krytis/actions/runners/${STALE_ID}"
+    fi
 
-# Same stale-offline-registration cleanup as mise/tasks/runner/start.
-STALE_ID=$(gh api repos/starlit-os/krytis/actions/runners --jq \
-    ".runners[] | select(.name == \"${RUNNER_VPS_NAME}\" and .status == \"offline\") | .id")
-if [ -n "${STALE_ID}" ]; then
-    echo "==> Removing stale offline runner '${RUNNER_VPS_NAME}' (id=${STALE_ID})..."
-    gh api -X DELETE "repos/starlit-os/krytis/actions/runners/${STALE_ID}"
+    # Minted here (an already gh-authenticated operator machine), not on the VPS:
+    # the long-lived Administration:Read-and-Write PAT this call needs never has
+    # to be stored on the always-on, externally-reachable box. Only this
+    # short-lived (1h), single-use registration token crosses the wire to it.
+    echo "==> Fetching registration token..."
+    RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registration-token --jq .token)
+
+    echo "==> Configuring runner '${RUNNER_VPS_NAME}' on ${RUNNER_VPS_HOST}..."
+    ssh_vps "cd ${RUNNER_HOME} && RUNNER_ALLOW_RUNASROOT=1 ./config.sh \
+        --url https://github.com/starlit-os/krytis \
+        --token '${RUNNER_TOKEN}' \
+        --name '${RUNNER_VPS_NAME}' \
+        --labels '${RUNNER_VPS_LABELS}' \
+        --work _work \
+        --unattended \
+        --replace"
 fi
 
-# Minted here (an already gh-authenticated operator machine), not on the VPS:
-# the long-lived Administration:Read-and-Write PAT this call needs never has
-# to be stored on the always-on, externally-reachable box. Only this
-# short-lived (1h), single-use registration token crosses the wire to it.
-echo "==> Fetching registration token..."
-RUNNER_TOKEN=$(gh api -X POST repos/starlit-os/krytis/actions/runners/registration-token --jq .token)
+# svc.sh install is likewise a one-shot: it fails once the unit file exists.
+echo "==> Installing the systemd service..."
+ssh_vps "ls /etc/systemd/system/actions.runner.*.service >/dev/null 2>&1 \
+    || (cd ${RUNNER_HOME} && ./svc.sh install)"
 
-echo "==> Configuring runner '${RUNNER_VPS_NAME}' on ${RUNNER_VPS_HOST}..."
-ssh_vps "cd ${RUNNER_HOME} && RUNNER_ALLOW_RUNASROOT=1 ./config.sh \
-    --url https://github.com/starlit-os/krytis \
-    --token '${RUNNER_TOKEN}' \
-    --name '${RUNNER_VPS_NAME}' \
-    --labels '${RUNNER_VPS_LABELS}' \
-    --work _work \
-    --unattended \
-    --replace"
+# svc.sh's generated unit carries no Restart= at all and inherits systemd's
+# default OOMPolicy=stop, so one OOM-killed compiler took the whole runner
+# down and left it down: 2026-09-11's kill went unnoticed for 18h, during
+# which every dispatch sat queued against an offline runner (the box itself
+# was up and reachable the entire time). A build that outruns RAM should
+# fail its job, not decommission the runner.
+ssh_vps "set -e
+    UNIT=\$(cd /etc/systemd/system && ls actions.runner.*.service | head -1)
+    mkdir -p /etc/systemd/system/\${UNIT}.d
+    cat > /etc/systemd/system/\${UNIT}.d/10-krytis-oom.conf <<'CONF'
+[Service]
+# A child hitting the OOM killer must not stop the unit (systemd's default).
+OOMPolicy=continue
+# And if the listener does die for any other reason, come back unattended.
+Restart=always
+RestartSec=30
+CONF
+    systemctl daemon-reload"
 
-echo "==> Installing and starting the systemd service..."
-ssh_vps "cd ${RUNNER_HOME} && ./svc.sh install && ./svc.sh start"
+echo "==> Starting the systemd service..."
+ssh_vps "cd ${RUNNER_HOME} && ./svc.sh start"
 
 echo "==> Done. Check with 'mise runner-vps:status'."

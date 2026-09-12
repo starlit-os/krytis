@@ -41,6 +41,39 @@ apt-get install -y -qq --no-install-recommends \
     sudo \
     podman
 
+# Swap: Contabo's Debian image ships none at all, which turns any RAM spike
+# into an immediate kernel OOM kill rather than a slowdown. That is not
+# hypothetical — the runner unit was OOM-killed twice inside 24h (2026-09-11
+# 11.4G peak, 2026-09-12 11.1G peak, both against 11GiB total), taking the
+# runner offline for 18h the first time. cache-warm.yml now bounds build
+# concurrency to fit in RAM; this is the backstop for whatever that estimate
+# misses. Sized at 8G — the box has ~130G free and swap it never touches
+# costs nothing. Idempotent: re-running install must not corrupt live swap.
+SWAPFILE=/swapfile
+if ! swapon --show=NAME --noheadings 2>/dev/null | grep -qx "${SWAPFILE}"; then
+    if [ ! -f "${SWAPFILE}" ]; then
+        echo "==> Creating 8G ${SWAPFILE}..."
+        fallocate -l 8G "${SWAPFILE}"
+        chmod 600 "${SWAPFILE}"
+        mkswap "${SWAPFILE}" >/dev/null
+    fi
+    echo "==> Enabling ${SWAPFILE}..."
+    swapon "${SWAPFILE}"
+else
+    echo "==> ${SWAPFILE} already active — skipping."
+fi
+if ! grep -qs "^${SWAPFILE}[[:space:]]" /etc/fstab; then
+    echo "${SWAPFILE} none swap sw 0 0" >> /etc/fstab
+fi
+
+# Swap is emergency headroom for a build box, not a paging tier to live in:
+# the default swappiness of 60 would push a long build's working set out to
+# disk and slow every run down. 10 keeps it reserved for real pressure.
+if [ "$(cat /proc/sys/vm/swappiness)" != "10" ]; then
+    echo 'vm.swappiness=10' > /etc/sysctl.d/99-krytis-runner-swappiness.conf
+    sysctl -q -w vm.swappiness=10
+fi
+
 mkdir -p "${RUNNER_HOME}"
 cd "${RUNNER_HOME}"
 

@@ -30,8 +30,8 @@ jobs:
     # container runner (mise runner:*) it replaced here, which is mostly off.
     # workflow_dispatch can force Blacksmith as the manual fallback for VPS
     # maintenance or an outage (inverts the old Blacksmith-default/
-    # self-hosted-opt-in direction). max-jobs is sized to whatever runner
-    # actually runs the build (nproc) — see the comment further down.
+    # self-hosted-opt-in direction). Build concurrency is derived from the
+    # runner's cores AND its RAM — see the comment further down.
     #
     # Targets the 'krytis-vps' label specifically, not the bare
     # [self-hosted, linux, x64] the local container runner also registers
@@ -82,10 +82,31 @@ jobs:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
         run: |
           mkdir -p ~/.config
+          # Total concurrent compile processes = builders x max-jobs, and that
+          # product — not max-jobs alone — is what has to fit in the runner's
+          # RAM. Sizing max-jobs to $(nproc) (d5bf7f6) while leaving builders
+          # at 4 asked the 6-vCPU/11GiB VPS for up to 24 of them and OOM-killed
+          # the runner twice inside 24h (11.4G and 11.1G peaks against 11GiB
+          # with no swap, 2026-09-11/12 — see docs/skills/ci-runner.md
+          # § The VPS runner OOMs). cc1plus peaked at 1.5G RSS in the kill
+          # log, so budget 2 GiB per slot and never exceed one slot per core:
+          CORES=$(nproc)
+          MEM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+          SLOTS=$(( MEM_GB / 2 ))
+          [ "${SLOTS}" -gt "${CORES}" ] && SLOTS=${CORES}
+          [ "${SLOTS}" -lt 1 ] && SLOTS=1
+          # 2 builders keeps the scheduler able to overlap a slow element with
+          # a fast one (the dependency chain is mostly sequential, so more than
+          # that buys little) while halving the per-element job count.
+          BUILDERS=2
+          [ "${BUILDERS}" -gt "${SLOTS}" ] && BUILDERS=${SLOTS}
+          MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))
+          echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS} (<=${SLOTS} concurrent compilers)"
+
           cat > ~/.config/buildstream.conf <<EOF
           scheduler:
             fetchers: 10
-            builders: 4
+            builders: ${BUILDERS}
             pushers: 5
             network-retries: 3
           logging:
@@ -94,27 +115,16 @@ jobs:
           cache:
             quota: 50G
           build:
-            # nproc, not a fixed pin: max-jobs's runtime env vars
-            # (MAKEFLAGS/JOBS for autotools/meson, LTOJOBS for freedesktop-sdk's
-            # own meson-conf.yml) are all explicitly excluded from the cache
-            # key via environment-nocache — verified against the pinned
-            # freedesktop-sdk ref and the upstream buildstream_plugins package
-            # (see docs/skills/ci-runner.md § max-jobs does NOT affect cache
-            # keys) — so unlike scheduler.builders (left fixed: more concurrent
-            # element sandboxes raises peak RAM, unverified against this box's
-            # 12G with no representative fully-uncached run to measure against
-            # yet), there's no cache-reproducibility cost to sizing this to
-            # whatever runner actually runs the build. A single element's
-            # compile is the common case in a long, mostly-sequential
-            # freedesktop-sdk dependency chain — that's real, otherwise-idle
-            # parallelism on a 6-vCPU VPS (or Blacksmith's 8) that a hardcoded
-            # 4 (sized for the old 4-vCPU local runner) left on the table.
-            # Previously pinned at a fixed 4 "for reproducible parallelism
-            # across runners" — that reasoning already didn't hold once the
-            # cache-key exclusion above was verified (2026-07-29); issue #794
-            # replacing this job's only scheduled runner with a differently-
-            # sized box removed the last reason to keep it fixed.
-            max-jobs: $(nproc)
+            # max-jobs's runtime env vars (MAKEFLAGS/JOBS for autotools/meson,
+            # LTOJOBS for freedesktop-sdk's own meson-conf.yml) are all
+            # explicitly excluded from the cache key via environment-nocache —
+            # verified against the pinned freedesktop-sdk ref and the upstream
+            # buildstream_plugins package (see docs/skills/ci-runner.md
+            # § max-jobs does NOT affect cache keys) — so sizing this per
+            # runner costs nothing in cache reproducibility. What it does cost
+            # is RAM, which is why it is derived above rather than set to
+            # $(nproc) outright.
+            max-jobs: ${MAX_JOBS}
           EOF
 
           # Wire krytis's bow Buildbarn cache into user config (#340). Not

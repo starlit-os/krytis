@@ -3,17 +3,12 @@
 
 set -euo pipefail
 
-: "${RUNNER_VPS_HOST:?Set RUNNER_VPS_HOST (e.g. root@203.0.113.10) in .mise.local.toml [env] — see docs/skills/ci-runner.md § Always-on VPS runner}"
-SSH_KEY="${RUNNER_VPS_SSH_KEY:-${HOME}/.ssh/id_ed25519_sk_rk_KrytisBuild}"
+# Resolves RUNNER_VPS_HOST (env, else the Krytis vault) and defines ssh_vps/scp_vps.
+. scripts/runner-vps-host.sh
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../files/runner-vps" && pwd)/provision.sh"
 
-ssh_vps() {
-    env -u SSH_AUTH_SOCK ssh -i "${SSH_KEY}" -o IdentitiesOnly=yes -o IdentityAgent=none "${RUNNER_VPS_HOST}" "$@"
-}
-
 echo "==> Copying provisioning script to ${RUNNER_VPS_HOST}..."
-env -u SSH_AUTH_SOCK scp -i "${SSH_KEY}" -o IdentitiesOnly=yes -o IdentityAgent=none \
-    "${SCRIPT}" "${RUNNER_VPS_HOST}:/tmp/provision-runner.sh"
+scp_vps "${SCRIPT}" "${RUNNER_VPS_HOST}:/tmp/provision-runner.sh"
 
 echo "==> Running provisioning script (RUNNER_VERSION=${RUNNER_VERSION})..."
 ssh_vps "chmod +x /tmp/provision-runner.sh && /tmp/provision-runner.sh '${RUNNER_VERSION}' && rm -f /tmp/provision-runner.sh"
