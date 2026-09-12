@@ -251,6 +251,39 @@ emergency headroom rather than a paging tier a long build lives in). This is
 a backstop for whatever the concurrency estimate above misses, not a
 substitute for it.
 
+**`free-disk-space` would have silently undone this.** The `Maximize build
+space` step (`hastd/free-disk-space`) runs `swapoff -a && rm -f
+/mnt/swapfile` — correct for a throwaway GitHub-hosted VM reclaiming its
+preallocated swap, catastrophic on a persistent box whose swap is deliberate
+OOM headroom: it would disable the backstop at the start of every single
+run. Its path deletions are equally pointless here (124G free of 197G). The
+step is now gated to the Blacksmith branch of the `runs-on` ternary, using
+the same expression so the two can't drift.
+
+**Generalisable:** any action whose job is "reclaim space on a disposable
+runner" needs a second look before it runs on a persistent one. It is
+written on the assumption that nothing on the box outlives the job.
+
+### A killed build leaves FUSE mounts that break every later `df`
+
+`buildbox-fuse` mounts under `~/.cache/buildstream/cas/staging/` do not
+survive their server being killed, but the *mountpoints* do. Afterwards any
+`df` traversing them exits 1:
+
+```
+df: /root/.cache/buildstream/cas/staging/cas-tmpdir0Z2arA: Transport endpoint is not connected
+```
+
+That is enough to fail a step outright — run 34696760836 died in
+`Maximize build space` (which runs `df -h`) before it ever reached the
+build, with four such mounts left by the previous OOM kill. On an ephemeral
+runner this is invisible; on this box it persists until something unmounts
+it, and now that `OOMPolicy=continue` keeps the runner alive across a kill,
+the residue is *guaranteed* to reach the next job. `cache-warm.yml` has a
+self-hosted-only `Clear stale FUSE mounts` step that `stat`s each
+buildstream FUSE mountpoint and `fusermount -u`s (falling back to
+`umount -l`) the dead ones.
+
 ### `register` is re-runnable
 
 It used to be a strict one-shot — `config.sh` refuses with

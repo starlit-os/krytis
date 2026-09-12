@@ -44,7 +44,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # The persistent VPS accumulates state between jobs that an ephemeral
+      # runner never would. Condition mirrors the runs-on ternary above
+      # deliberately: same expression, same two hosts.
+      - name: Clear stale FUSE mounts (self-hosted)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) }}
+        run: |
+          # buildbox-fuse mounts under the CAS outlive a killed build: an
+          # OOM-killed (or cancelled) job leaves the mountpoint present but
+          # its server gone, and every later `df` on this persistent box then
+          # exits 1 with "Transport endpoint is not connected" — which is
+          # exactly how run 34696760836 failed before reaching the build.
+          # Now that OOMPolicy=continue keeps the runner alive across a kill,
+          # this residue is guaranteed to survive into the next job.
+          STALE=0
+          for m in $(awk '$2 ~ /buildstream/ && $3 ~ /fuse/ {print $2}' /proc/self/mounts); do
+            if ! timeout 5 stat "${m}" >/dev/null 2>&1; then
+              echo "Unmounting stale FUSE mount: ${m}"
+              fusermount -u "${m}" 2>/dev/null || umount -l "${m}" 2>/dev/null || true
+              STALE=$((STALE + 1))
+            fi
+          done
+          echo "==> Cleared ${STALE} stale FUSE mount(s)."
+
       - name: Maximize build space
+        # Blacksmith only. This action is built for a throwaway GitHub-hosted
+        # runner: it deletes system paths to reclaim space and runs
+        # `swapoff -a && rm -f /mnt/swapfile`. On the persistent VPS the first
+        # is pointless (124G free of 197G) and the second actively disables
+        # the swap provision.sh adds as OOM headroom — undoing, at the start
+        # of every run, the backstop this workflow now depends on.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.force_blacksmith }}
         # ublue-os/remove-unwanted-software has had no push since 2025-10-10
         # and no v10 tag was ever cut, breaking Renovate's github-tags lookup
         # (#703). hastd/free-disk-space is properly tagged, actively
