@@ -1,7 +1,7 @@
 [providers.protonpass]
 type = "proton-pass"
 vault = "Krytis"
-agent_reason = "krytis secure boot key + buildbarn cache token retrieval"
+agent_reason = "krytis secure boot key + buildbarn cache token + CI VPS host retrieval"
 
 [secrets]
 PK_KEY  = { provider = "protonpass", value = "Secure Boot Keys/PK.key" }
@@ -12,3 +12,10 @@ DB_KEY  = { provider = "protonpass", value = "Secure Boot Keys/db.key" }
 DB_CRT  = { provider = "protonpass", value = "Secure Boot Keys/db.crt" }
 BUILDBARN_PULL_TOKEN = { provider = "protonpass", value = "Buildbarn/pull-token" }
 BUILDBARN_PUSH_TOKEN = { provider = "protonpass", value = "Buildbarn/push-token" }
+# Always-on Debian CI VPS runner (#794). The vault item holds the host as two
+# separate fields ("Username", "IP Address"); scripts/runner-vps-host.sh joins
+# them into RUNNER_VPS_HOST. Kept as references rather than a .mise.local.toml
+# entry so a fresh checkout on any operator machine can reach the box without
+# hand-copying an address — see docs/skills/ci-runner.md § Always-on VPS runner.
+RUNNER_VPS_USER = { provider = "protonpass", value = "Krytis Build VPS/Username" }
+RUNNER_VPS_IP   = { provider = "protonpass", value = "Krytis Build VPS/IP Address" }

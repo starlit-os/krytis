@@ -135,14 +135,21 @@ fine-grained Administration:Read-and-Write PAT itself never has to be
 stored on this always-reachable external host — an improvement over the
 local container runner's design (which does store that PAT there, as a
 podman secret, but that box is a mostly-off local workstation, a smaller
-exposure window than an always-on VPS). `RUNNER_VPS_HOST`/`RUNNER_VPS_SSH_KEY`
-are operator-supplied in `.mise.local.toml` (gitignored) — the address of
-externally-reachable infra doesn't belong committed to a public repo:
+exposure window than an always-on VPS).
 
-```toml
-[env]
-RUNNER_VPS_HOST = "root@<vps-ip>"
-```
+`RUNNER_VPS_HOST`/`RUNNER_VPS_SSH_KEY`
+are resolved by `scripts/runner-vps-host.sh`, which every `runner-vps` task
+sources. Resolution order: `RUNNER_VPS_HOST` already in the environment
+(`.mise.local.toml`, or an ad-hoc override), else **fnox**, joining the
+`Krytis` vault item "Krytis Build VPS"'s `Username` and `IP Address` fields
+(`fnox.toml`'s `RUNNER_VPS_USER`/`RUNNER_VPS_IP`). The address of
+externally-reachable infra still doesn't belong committed to a public repo —
+but `.mise.local.toml` alone made every `runner-vps` task unrunnable on any
+machine where that gitignored file had never been hand-populated, which is
+exactly how the 2026-09-12 outage below stayed undiagnosed while the box was
+up and reachable the whole time. The vault already held the address; nothing
+in the checkout knew how to ask. fnox has no template provider, so the join
+happens in the script rather than vault-side.
 
 SSH access is a per-host FIDO2 resident key following the convention in
 `docs/skills/fido2.md` (`id_ed25519_sk_rk_<HostName>`), not a password —
@@ -179,32 +186,115 @@ workflow this box runs — never invokes podman; it was installed for parity
 against a possible future `publish.yml` migration, which issue #794
 explicitly leaves out of scope.
 
-### `build.max-jobs` sized to `nproc`, not hardcoded — `scheduler.builders` left alone
+### Build concurrency is `builders` x `max-jobs` — size the product, not either half
 
-Same underutilization problem podman's version pin had (see above): the
-workflow's `max-jobs: 4` in `~/.config/buildstream.conf` predated this
-runner and was sized for the old 4-vCPU local box, leaving 2 of this VPS's
-6 cores idle on every single-element compile — the common case in a long,
-mostly-sequential freedesktop-sdk dependency chain, since most of the graph
-doesn't have enough independent elements to keep `scheduler.builders`
-concurrency busy. Changed to `max-jobs: $(nproc)`, computed inside the
-(now-unquoted) heredoc at runtime — 6 on this VPS, 8 on the Blacksmith
-fallback. No cache-key cost: this whole change was only safe to make
-*because* `max-jobs`'s runtime env vars are already excluded from the
-cache key (see the comment on the setting itself).
+`max-jobs` was raised from a hardcoded 4 to `$(nproc)` (d5bf7f6, 2026-09-11)
+to stop leaving cores idle on single-element compiles, while
+`scheduler.builders` was deliberately left at 4 pending "a representative
+load to measure against." That load arrived the same day and the answer was
+unambiguous: **4 builders x 6 jobs = up to 24 concurrent compilers on a
+6-vCPU/11GiB box**, and the runner was OOM-killed twice inside 24h.
 
-**`scheduler.builders` (concurrent element builds) was deliberately left at
-4**, unlike `max-jobs`. More concurrent builders means more concurrent
-sandboxes, each running its own toolchain — real peak-RAM risk on a 12G
-box that hasn't been observed under a representative load yet. The
-`workflow_dispatch` verification run for this issue landed almost entirely
-cache hits from bow (the point of the feature), so `top`/`free` during it
-showed ~92% idle CPU and >10G free RAM — real, but not evidence either way
-for a heavy from-scratch build, which is the case that would actually
-stress concurrent-builder RAM. Bump this only after watching a real cold
-build's memory headroom (`free -h` during `Build image`), not from an
-idle-cache sample — the same "monitor before assuming" posture issue #794
-itself already calls for on the CAS quota (item 5).
+```
+Sep 11 21:24:18  actions.runner...service: Failed with result 'oom-kill'.
+                 Consumed 14h 6min CPU time, 11.4G memory peak.
+Sep 12 14:55:14  actions.runner...service: Failed with result 'oom-kill'.
+                 Consumed 27min CPU time, 11.1G memory peak.
+kernel: oom-kill:...task=cc1plus...  Killed process 7960 (cc1plus) anon-rss:1541128kB
+```
+
+Neither knob is wrong on its own — their *product* is what has to fit in
+RAM, and nothing was bounding it. `cache-warm.yml` now derives both from the
+runner it lands on: one slot per core, one slot per 2 GiB of RAM (cc1plus
+peaked at 1.5G RSS in the kill log), whichever is lower; `builders` fixed at
+2 so the scheduler can still overlap a slow element with a fast one; and
+`max-jobs` = slots / builders. That yields **2 x 3 = 6** on the VPS (was 24)
+and **2 x 4 = 8** on the Blacksmith fallback (was 32).
+
+No cache-key cost, then or now: `max-jobs`'s runtime env vars are excluded
+from the cache key (see § `max-jobs` does NOT affect cache keys), which is
+what made per-runner sizing safe in the first place.
+
+**The generalisable lesson: an idle-cache verification run proves nothing
+about RAM.** #794's verification run landed almost entirely bow cache hits,
+showed >10G free, and was correctly identified in this file as "not evidence
+either way" — but the sizing change shipped anyway. When a knob's risk is
+peak RAM, the run that clears it has to actually compile.
+
+### An OOM must not decommission the runner
+
+`svc.sh install`'s generated unit carries **no `Restart=` at all** and
+inherits systemd's default `OOMPolicy=stop`. So one OOM-killed compiler
+stopped the whole unit, the runner went offline, and nothing brought it
+back: the 2026-09-11 kill went unnoticed for **18 hours**, during which
+every dispatch sat queued against an offline runner while the box itself was
+up, healthy and reachable. The failure also reads misleadingly in the job
+log — GitHub reports it as
+`The runner has received a shutdown signal`, which looks like a manual
+stop or a provider reboot, not an OOM. `journalctl -u actions.runner.*` on
+the box is the ground truth; `systemctl show -p OOMPolicy -p Restart` is
+how to check the drop-in is in effect.
+
+`mise runner-vps:register` now writes
+`/etc/systemd/system/<unit>.d/10-krytis-oom.conf` with
+`OOMPolicy=continue` + `Restart=always` + `RestartSec=30`, so a build that
+outruns RAM fails its own job and leaves the runner listening. Both
+properties are consulted at event time, so `daemon-reload` alone applies
+them — no restart of a live runner needed.
+
+### The box ships with no swap
+
+Contabo's Debian image has **zero swap**, which is what turned a RAM spike
+into an immediate kill rather than a slowdown. `provision.sh` now creates an
+idempotent 8G `/swapfile` (fstab entry + `vm.swappiness=10`, so it stays
+emergency headroom rather than a paging tier a long build lives in). This is
+a backstop for whatever the concurrency estimate above misses, not a
+substitute for it.
+
+**`free-disk-space` would have silently undone this.** The `Maximize build
+space` step (`hastd/free-disk-space`) runs `swapoff -a && rm -f
+/mnt/swapfile` — correct for a throwaway GitHub-hosted VM reclaiming its
+preallocated swap, catastrophic on a persistent box whose swap is deliberate
+OOM headroom: it would disable the backstop at the start of every single
+run. Its path deletions are equally pointless here (124G free of 197G). The
+step is now gated to the Blacksmith branch of the `runs-on` ternary, using
+the same expression so the two can't drift.
+
+**Generalisable:** any action whose job is "reclaim space on a disposable
+runner" needs a second look before it runs on a persistent one. It is
+written on the assumption that nothing on the box outlives the job.
+
+### A killed build leaves FUSE mounts that break every later `df`
+
+`buildbox-fuse` mounts under `~/.cache/buildstream/cas/staging/` do not
+survive their server being killed, but the *mountpoints* do. Afterwards any
+`df` traversing them exits 1:
+
+```
+df: /root/.cache/buildstream/cas/staging/cas-tmpdir0Z2arA: Transport endpoint is not connected
+```
+
+That is enough to fail a step outright — run 34696760836 died in
+`Maximize build space` (which runs `df -h`) before it ever reached the
+build, with four such mounts left by the previous OOM kill. On an ephemeral
+runner this is invisible; on this box it persists until something unmounts
+it, and now that `OOMPolicy=continue` keeps the runner alive across a kill,
+the residue is *guaranteed* to reach the next job. `cache-warm.yml` has a
+self-hosted-only `Clear stale FUSE mounts` step that `stat`s each
+buildstream FUSE mountpoint and `fusermount -u`s (falling back to
+`umount -l`) the dead ones.
+
+### `register` is re-runnable
+
+It used to be a strict one-shot — `config.sh` refuses with
+`Cannot configure the runner because it is already configured` when
+`.runner` exists (`--replace` only covers a same-named registration on
+GitHub's side, not local state), and `svc.sh install` fails once the unit
+file exists. That is the wrong shape for the task you reach for to bring a
+runner back. It now skips `config.sh` when the box is already configured and
+skips `svc.sh install` when the unit exists, so re-running it just
+re-asserts the service and the drop-in. Re-key by running
+`mise runner-vps:deregister` first.
 
 ## Scheduled Workflow Cron Delay
 
