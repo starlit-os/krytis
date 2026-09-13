@@ -299,6 +299,28 @@ decide anything?" If it only reports, it must not be able to fail the job.
 Two separate runs (34696760836, 34723320921) were lost to a `df` that
 nobody intended as a gate.
 
+**`stat` is not a liveness probe for a FUSE mount — `stat -f` is.** The
+sweep's first version tested each mountpoint with `stat` and reported
+`Cleared 0` on run 34746389718 while `df` failed on a mount listed right
+there in `/proc/self/mounts`:
+
+```
+$ stat  /root/.cache/buildstream/cas/staging/cas-tmpdirGx614d   # succeeds
+  File: ...  Size: 3840   directory
+$ df -h
+df: /root/.cache/buildstream/cas/staging/cas-tmpdirGx614d: Transport endpoint is not connected
+```
+
+A dead FUSE mount still answers `stat()` from the dentry cache; only
+`statfs()` — what `df` calls, and what `stat -f` exposes — returns
+ENOTCONN. The earlier run where the sweep *did* clear a mount was luck:
+that dentry had been evicted. Use `stat -f`.
+
+Related: **`fusermount` is not installed on the VPS.** Debian only ships it
+with the `fuse` package, and buildbox-fuse carries its own binary, so
+`fusermount -u` always failed and only the `umount -l` fallback ever ran.
+The order is now reversed so the working call is tried first.
+
 ### `register` is re-runnable
 
 It used to be a strict one-shot — `config.sh` refuses with
