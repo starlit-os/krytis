@@ -3,13 +3,9 @@
 
 set -euo pipefail
 
-: "${RUNNER_VPS_HOST:?Set RUNNER_VPS_HOST (e.g. root@203.0.113.10) in .mise.local.toml [env] — see docs/skills/ci-runner.md § Always-on VPS runner}"
-SSH_KEY="${RUNNER_VPS_SSH_KEY:-${HOME}/.ssh/id_ed25519_sk_rk_KrytisBuild}"
+# Resolves RUNNER_VPS_HOST (env, else the Krytis vault) and defines ssh_vps.
+. scripts/runner-vps-host.sh
 RUNNER_HOME="/opt/actions-runner"
-
-ssh_vps() {
-    env -u SSH_AUTH_SOCK ssh -i "${SSH_KEY}" -o IdentitiesOnly=yes -o IdentityAgent=none "${RUNNER_VPS_HOST}" "$@"
-}
 
 # Deregister via the API directly (same as mise/tasks/runner/stop) rather
 # than `config.sh remove --token <removal-token>` on the box — one fewer
