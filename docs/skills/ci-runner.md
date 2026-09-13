@@ -284,6 +284,21 @@ self-hosted-only `Clear stale FUSE mounts` step that `stat`s each
 buildstream FUSE mountpoint and `fusermount -u`s (falling back to
 `umount -l`) the dead ones.
 
+**But cleaning up at job start is not sufficient, and that was the more
+useful finding.** Run 34723320921 cleared one stale mount at 22:39:16 and
+then died at 22:39:49 on a *different* one that had gone stale in between,
+created by a step that ran after the cleanup. The mounts are transient by
+nature, so there is no moment at which "all stale mounts are gone" is a
+durable fact. The actual defect was that a **diagnostic** step could fail
+the job at all: `Print disk usage before build` is there to print numbers,
+and it was deciding whether the build ran. Both disk-usage steps now use
+`df -h -x fuse || true`, which skips FUSE mounts entirely and cannot fail.
+
+**Generalisable:** on a persistent runner, ask of every step "does this
+decide anything?" If it only reports, it must not be able to fail the job.
+Two separate runs (34696760836, 34723320921) were lost to a `df` that
+nobody intended as a gate.
+
 ### `register` is re-runnable
 
 It used to be a strict one-shot — `config.sh` refuses with

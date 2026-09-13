@@ -223,8 +223,16 @@ jobs:
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
+      # -x fuse: buildbox-fuse staging mounts whose server has exited make a
+      # plain `df` exit 1 ("Transport endpoint is not connected") and, on a
+      # persistent runner, that killed two jobs outright — 34696760836 before
+      # the build and 34723320921 after it. A *diagnostic* step must never
+      # decide whether the build runs. The `|| true` is belt-and-braces: a
+      # mount can go stale between df reading /proc/self/mounts and statfs-ing
+      # it, and the number worth printing is the real filesystem's, which -x
+      # already isolates.
       - name: Print disk usage before build
-        run: df -h
+        run: df -h -x fuse || true
 
       - name: Build image
         run: |
@@ -246,8 +254,8 @@ jobs:
       - name: Print disk usage after build
         if: always()
         run: |
-          df -h
-          du -sh ~/.cache/buildstream
+          df -h -x fuse || true
+          du -sh ~/.cache/buildstream 2>/dev/null || true
 
       - name: Report cached elements
         if: always()
