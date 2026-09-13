@@ -2051,7 +2051,28 @@ mise run kernel-update    # parses cachyos-v3.db, rewrites version/pkgrel/ref in
 mise run validate         # confirm graph still resolves
 ```
 
-The `kernel-update` task downloads `cachyos-v3.db` (pacman package database), extracts `linux-cachyos*/desc`, and patches `elements/core/linux-cachyos.bst` with the new version, pkgrel, and SHA256.
+The `kernel-update` task downloads `cachyos-v3.db` (pacman package database), extracts `linux-cachyos*/desc`, downloads the artifact itself to checksum it, and patches `elements/core/linux-cachyos.bst` with the new version, pkgrel, and SHA256.
+
+### CachyOS rebuilds packages in place, and its `.db` lies about the checksum
+
+`linux-cachyos-7.2.4-3` was tracked and merged on 2026-09-12 at 09:14 (#826) with the `SHA256SUM` its `cachyos-v3.db` advertised. Twenty minutes into cache-warm run 34704347353 the fetch failed:
+
+```
+File downloaded from .../linux-cachyos-7.2.4-3-x86_64_v3.pkg.tar.zst has sha256sum
+'fe432d84...', not 'a4a2ffea...'!
+```
+
+Two independent upstream behaviours combine here, and both break naive version-based tracking:
+
+1. **Same pkgver-pkgrel, new content.** CachyOS rebuilds a package in place rather than bumping `pkgrel`. `7.2.4-3` was re-uploaded (`last-modified: Sat, 12 Sep 2026 03:04:17 GMT`) well after it was first pinned.
+2. **The `.db` keeps advertising the superseded hash.** Verified against two mirrors — `cdn77.cachyos.org` and `mirror.cachyos.org` both serve `fe432d84...`, while the database still said `a4a2ffea...` hours later. The database is not a reliable source for the checksum; only the artifact is.
+
+Consequences for `kernel-update`, both now fixed:
+
+- It compared **version only**, so an in-place rebuild reported `Already up to date` against a pin that could no longer be fetched. It now compares the `ref` too.
+- It pinned the **database's** `SHA256SUM`. It now downloads the artifact, hashes it, warns loudly when the two disagree, and pins what the mirror actually serves.
+
+**The general rule for `kind: remote` sources: pin what the server sends, not what its index claims it will send.** Any upstream that rebuilds in place defeats a version-equality staleness check — the content hash is the only honest signal. Worth checking wherever a `*-update` task derives a ref from a metadata file rather than from the bytes it describes.
 
 **Package layout:** CachyOS packages install the kernel at `/usr/lib/modules/<kver>/vmlinuz` (already bootc-compatible; no path adjustment needed).
 
