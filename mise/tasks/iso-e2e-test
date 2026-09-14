@@ -43,7 +43,12 @@ PAYLOAD_REF="${CLI_PAYLOAD_REF:-${usage_payload_ref:-}}"
 INSTALL_ONLY=$([[ "${CLI_INSTALL_ONLY:-${usage_install_only:-}}" == "true" ]] && echo 1 || echo 0)
 SECURE=$([[ "${CLI_SECURE:-${usage_secure:-}}" == "true" ]] && echo 1 || echo 0)
 EXPECT_FAIL=$([[ "${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}" == "true" ]] && echo 1 || echo 0)
-LUKS_PASSPHRASE="${CLI_LUKS_PASSPHRASE:-${usage_luks_passphrase:-}}"
+# The env fallback is load-bearing, not decoration: line 114 re-exports
+# LUKS_PASSPHRASE for iso-install-fisherman.sh, so resolving it from the flags
+# alone would overwrite an inherited value with "" and turn an encrypted install
+# into a plain one — silently, because the recipe just gets
+# `"encryption": {"type": "none"}` and fisherman succeeds.
+LUKS_PASSPHRASE="${CLI_LUKS_PASSPHRASE:-${usage_luks_passphrase:-${LUKS_PASSPHRASE:-}}}"
 QEMU_MEM="${CLI_MEM:-${usage_mem:-8192}}"
 QEMU_SMP="${CLI_SMP:-${usage_smp:-8}}"
 QEMU_DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"

@@ -23,10 +23,11 @@ set -euo pipefail
 # that never yielded a prompt — which is why the verdict asserts a prompt
 # APPEARED rather than that the disk unlocked.
 #
-# The install is delegated to dakota-iso's sealed-test-qemu chain, the same one
-# mise run iso-install-test uses, with LUKS_PASSPHRASE set. That chain is
-# root-free and needs no sshpass; dakota-iso's older luks-test-qemu chain
-# predates e2e-lib.sh and hardcodes sshpass, so it is deliberately NOT used here.
+# The install is delegated to mise/tasks/iso-e2e-test --install-only, the same
+# chain mise run iso-install-test uses, with the passphrase passed BOTH as
+# --luks-passphrase and in the environment: the flag is what iso-e2e-test
+# actually reads, and the env var is the interface scripts/iso-install-fisherman.sh
+# documents. That chain is root-free and needs no sshpass.
 # The verdict is delegated to boot-test, which already owns SMBIOS-credential
 # provisioning (the only way into a sealed system whose cmdline cannot be
 # touched), OVMF secboot selection, and now --luks-passphrase.
@@ -105,6 +106,7 @@ LUKS_PASSPHRASE="${PASSPHRASE}" \
     "${REPO_ROOT}/mise/tasks/iso-e2e-test" \
         --iso "${ISO_ABS}" \
         --payload-ref "${PAYLOAD_REF}" \
+        --luks-passphrase "${PASSPHRASE}" \
         --install-only
 RESULT=$?
 set -e

@@ -752,6 +752,38 @@ This means when `validate --container` calls `./mise/tasks/bst --container show 
 
 **Fix:** always shift unconditionally when `$1 = "--container"`. Mise already strips the flag from `$@` for the direct-call case (`mise bst --container`), so a double-shift cannot happen.
 
+## A `usage_*` fallback chain silently clobbers an inherited env var
+
+The argc-fallback idiom `VAR="${CLI_VAR:-${usage_var:-}}"` is correct only for
+values that arrive as flags. If the same name is also an **env-var interface**,
+the chain assigns `""` when no flag was passed and the task then re-exports that
+empty value to its own children — destroying the inherited value.
+
+This bit `mise run luks-install-test` in #843: it set `LUKS_PASSPHRASE` in
+`iso-e2e-test`'s environment, `iso-e2e-test` resolved
+`LUKS_PASSPHRASE="${CLI_LUKS_PASSPHRASE:-${usage_luks_passphrase:-}}"` → `""`
+(the parent's var is `usage_passphrase`, a different name, so the `usage_*`
+fallback never matched), and then exported that empty string to
+`scripts/iso-install-fisherman.sh`. The recipe got
+`"encryption": {"type": "none"}`, fisherman installed an unencrypted root and
+exited 0, and the gate failed several minutes later at "partition 2 is not a
+LUKS container" — pointing at the installer instead of the harness.
+
+**Fix, both halves:** put the env var last in the chain so an inherited value
+survives, *and* have the caller pass the flag explicitly.
+
+```bash
+# callee
+LUKS_PASSPHRASE="${CLI_LUKS_PASSPHRASE:-${usage_luks_passphrase:-${LUKS_PASSPHRASE:-}}}"
+# caller
+LUKS_PASSPHRASE="${PASSPHRASE}" ./mise/tasks/iso-e2e-test --luks-passphrase "${PASSPHRASE}" …
+```
+
+**Smell to grep for:** a task that both re-exports a variable to a child process
+and resolves it through a `usage_*` chain. Any env-var interface documented in a
+script header (`LUKS_PASSPHRASE`, `PAYLOAD_REF`, `OVMF_VARS_SECURE`) needs the
+three-level chain, not the two-level one.
+
 ## New worktrees require `mise trust`
 
 `mise` treats each new worktree directory as untrusted. Any `mise run` command fails immediately with:
