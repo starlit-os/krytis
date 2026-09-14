@@ -1,20 +1,19 @@
 ---
 name: upstream-lessons
-description: Sync the dakota and zirconium-hawaii fork repos to their upstream branch, mine the commits/docs/AI-guidance that changed since the last check, and turn anything applicable into docs/skills/ or AGENTS.md updates for krytis. Use whenever the user asks to sync forks, check dakota or zirconium-hawaii for lessons, mine upstream, "run the upstream check", or references docs/upstreams.yml or GitHub issue #141. Also the right tool if the user just says something like "see what's new in dakota" or "has zirconium-hawaii changed anything we should steal".
+description: Sync the dakota and zirconium-hawaii upstream repos, mine the commits/docs/AI-guidance that changed since the last check, and turn anything applicable into docs/skills/ or AGENTS.md updates for krytis. Use whenever the user asks to sync upstreams, check dakota or zirconium-hawaii for lessons, mine upstream, "run the upstream check", or references docs/upstreams.yml or GitHub issue #141. Also the right tool if the user just says something like "see what's new in dakota" or "has zirconium-hawaii changed anything we should steal".
 ---
 
 # Upstream Lessons
 
-Krytis shares its foundation (Freedesktop SDK, BST, bootc, niri/greetd) with two sibling
-projects the user maintains as forks: `dakota` (upstream: projectbluefin/dakota) and
-`zirconium-hawaii` (upstream: zirconium-dev/zirconium-hawaii). Both repos regularly solve
-problems krytis will hit too — a workaround for an FDSDK quirk, a BST element gotcha, a
-convention that isn't obvious until you've been burned by it. This skill is how those
-lessons get pulled into krytis's `docs/skills/` instead of being independently
-rediscovered later.
+Krytis shares its foundation (Freedesktop SDK, BST, bootc, niri/greetd) with two upstream
+projects: `dakota` (projectbluefin/dakota) and `zirconium-hawaii`
+(zirconium-dev/zirconium-hawaii). Both repos regularly solve problems krytis will hit too —
+a workaround for an FDSDK quirk, a BST element gotcha, a convention that isn't obvious
+until you've been burned by it. This skill is how those lessons get pulled into krytis's
+`docs/skills/` instead of being independently rediscovered later.
 
-The tracking state lives in `docs/upstreams.yml` — one entry per repo, recording the fork,
-its upstream, which local branch to follow, and `last_checked_sha`: the fork commit that
+The tracking state lives in `docs/upstreams.yml` — one entry per repo, recording the
+upstream, which local branch to follow, and `last_checked_sha`: the upstream commit that
 was HEAD the last time this skill finished mining it. Read that file first; it's the
 source of truth for what "new" means on this run.
 
@@ -23,13 +22,12 @@ source of truth for what "new" means on this run.
 ### 1. Sync
 
 Run `mise upstream-sync` (optionally `mise upstream-sync <name>` for just one repo) to
-fast-forward each fork from its upstream and report the commit range since
-`last_checked_sha`. This pushes to the user's own fork on GitHub (via `gh repo sync`) —
-low-risk since it's their fork and fast-forward-only, but say what you're about to do
-before running it, same as any other push.
+fetch and fast-forward the local checkout from upstream and report the commit range since
+`last_checked_sha`. No push is involved — `origin` in the local checkout points directly
+to the upstream repo.
 
 If you want to preview without syncing, `mise upstream-sync --check` fetches and reports
-the pending range without touching the fork or the local checkout.
+the pending range without updating the local checkout.
 
 ### 2. Bootstrap case
 

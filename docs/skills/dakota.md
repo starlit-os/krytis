@@ -172,6 +172,18 @@ racing ahead of `gnome-build-meta` whenever fdsdk tags a release — the same fa
 dakota hit on 2026-08-17). Not implemented in this pass — recorded as a candidate
 improvement to the existing manual-check workflow, not yet built.
 
+### Documentation discipline: "Docs Are the Model" and "Scoped Documentation"
+
+*Source: dakota `691a377` — `docs(agents): add Docs-Are-the-Model and Scoped-Documentation invariants`*
+
+Two documentation discipline invariants added to dakota's AGENTS.md that complement krytis's skill-improvement mandate (which focuses on writing lessons but is silent on these failure modes):
+
+**Docs Are the Model:** Never append dated session logs, issue numbers, or resolved checklists to skill files. Codify findings as timeless invariants. A skill file entry that records "we tried X on 2026-08-17 and it didn't work" belongs in the commit message or the linked issue — the skill file entry is what a future agent should carry into the next session, not a historical log.
+
+**Scoped Documentation:** When work reveals a guidance error, correct it — but don't manufacture doc changes for every session, and don't expand a read-only task into writes. The discipline is "update the skill file when you discover something worth capturing", not "touch the skill file on every session regardless."
+
+Dakota also added a PR checklist item from this commit: *"Existing guidance affected by the change is corrected; no unrelated documentation writeback is required."* Krytis's own checklist (§ Self-diagnosis) focuses on the write-back case; this is the symmetric guard against spurious writeback.
+
 ## Referencing This Project
 
 Copy patterns from `../dakota/` and adapt — don't symlink or junction into dakota from krytis. Independent BST artifact caches and element trees, same as the `zirconium-hawaii.md` convention.
