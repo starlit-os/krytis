@@ -3,6 +3,7 @@
 #USAGE flag "--debug" help="Enable SSH in the live environment (not for production)"
 #USAGE flag "--installer-channel <channel>" default="stable" help="bootc-installer channel: stable or dev"
 #USAGE flag "--payload-ref <ref>" help="OCI ref baked into recipe.json as the offline payload source"
+#USAGE flag "--source-image <ref>" help="Image the live env is built FROM. Default: localhost/krytis:latest when it exists, else the published ref"
 
 # Builds localhost/krytis-installer from live/Containerfile.
 # Called automatically by build-iso; run standalone to iterate on the live env
@@ -20,8 +21,20 @@ DEBUG=$([[ "${usage_debug:-}" == "true" ]] && echo 1 || echo 0)
 PAYLOAD_REF="${usage_payload_ref:-}"
 CACHE_BUST="$(date +%Y%m%d)"
 
+# Default to the local build. podman 6.1 re-pulls a registry-named base image in
+# a multistage build even when it is already in local storage
+# (containers/podman#27197), so naming ghcr.io/… here would quietly build the
+# live env from the published image instead of this checkout's.
+if [[ -n "${usage_source_image:-}" ]]; then
+    SOURCE_IMAGE="${usage_source_image}"
+elif podman image exists "localhost/${TARGET}:${TAG}"; then
+    SOURCE_IMAGE="localhost/${TARGET}:${TAG}"
+else
+    SOURCE_IMAGE="ghcr.io/${REGISTRY}/${TARGET}:${TAG}"
+fi
+
 echo "==> Building localhost/${TARGET}-installer"
-echo "    source:   ghcr.io/${REGISTRY}/${TARGET}:${TAG}"
+echo "    source:   ${SOURCE_IMAGE}"
 echo "    channel:  ${INSTALLER_CHANNEL}"
 echo "    debug:    ${DEBUG}"
 echo "    payload:  ${PAYLOAD_REF:-<default from recipe.json>}"
@@ -33,6 +46,7 @@ BUILD_ARGS=(
     --build-arg "INSTALLER_CHANNEL=${INSTALLER_CHANNEL}"
     --build-arg "DEBUG=${DEBUG}"
     --build-arg "CACHE_BUST=${CACHE_BUST}"
+    --build-arg "SOURCE_IMAGE=${SOURCE_IMAGE}"
 )
 [[ -n "${PAYLOAD_REF}" ]] && BUILD_ARGS+=(--build-arg "PAYLOAD_REF=${PAYLOAD_REF}")
 

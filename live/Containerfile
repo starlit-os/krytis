@@ -22,9 +22,22 @@ ARG TARGET=krytis
 ARG TAG=latest
 # REGISTRY selects the OCI registry org. Defaults to starlit-os.
 ARG REGISTRY=starlit-os
+# SOURCE_IMAGE is the image every krytis-based stage is built FROM. It defaults
+# to the published ref, but build-iso and iso-container-build pass the LOCAL tag
+# (localhost/krytis:latest, or :sealed) whenever one exists, and that is not a
+# convenience: podman 6.1 re-pulls a registry-named base image in a MULTISTAGE
+# build even when the ref is already in local storage and the policy is
+# --pull=missing (containers/podman#27197, #27779; a single-stage build with the
+# same ref does not). The pull re-points the tag at the published digest, so
+# build-iso's `podman tag localhost/krytis:latest ghcr.io/starlit-os/krytis:latest`
+# would be silently undone and BOTH the live environment and the offline payload
+# embedded in the ISO would come from the registry instead of this checkout.
+# A localhost/ ref has no registry to consult, which is what makes it immune.
+# See docs/skills/krytis-live-config.md § The payload ref must not name a registry.
+ARG SOURCE_IMAGE=ghcr.io/${REGISTRY}/${TARGET}:${TAG}
 
 # ── Stage 1: Reference image (kernel modules source) ─────────────────────────
-FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG} AS ref
+FROM ${SOURCE_IMAGE} AS ref
 
 # ── Stage 2a: Native initramfs (for images that have dracut, e.g. Fedora/bluefin)
 # If dracut is available on the target image, build the initramfs there so
@@ -33,10 +46,21 @@ FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG} AS ref
 # (e.g. GNOME OS / krytis), or when native dracut fails (e.g. fc44 images
 # where dracut's shutdown module cannot find poweroff/reboot/halt symlinks
 # in a container build context, or Fedora-based images missing /root).
+#
+# The gate is an RPM PACKAGE MANAGER, not `command -v dracut`: krytis ships
+# /usr/sbin/dracut from freedesktop-sdk, and on the sealed image its
+# `--list-modules` even reports dmsquash-live — so the old `dracut || dnf ||
+# rpm` condition took this path and produced a 221 MiB initramfs whose /init
+# emitted nothing at all on the serial console. The live ISO hung there until
+# iso-boot-live timed out. On the unsigned image the same condition happened to
+# fall through only because that dracut cannot list dmsquash-live. freedesktop
+# images must always use stage 2b, which is the path every booting krytis ISO
+# was built with. See docs/skills/krytis-live-config.md
+# § krytis's own dracut must not build the live initramfs.
 FROM ref AS initramfs-native
 RUN set -e; \
     kernel=$(ls /usr/lib/modules | sort -V | tail -1); \
-    if command -v dracut >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then \
+    if command -v dnf >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then \
         # Ensure dracut + dracut-live module are installed
         command -v dnf >/dev/null 2>&1 && \
             dnf install -y dracut dracut-live --setopt=install_weak_deps=False -q 2>/dev/null || true; \
@@ -54,7 +78,7 @@ RUN set -e; \
             touch /tmp/initramfs.img; \
         fi; \
     else \
-        echo "Target has no dracut/rpm — will use Debian cross-build"; \
+        echo "Target has no rpm/dnf — will use Debian cross-build"; \
         echo debian > /tmp/dracut-status; \
         touch /tmp/initramfs.img; \
     fi
@@ -94,7 +118,8 @@ RUN set -ex; \
 ARG TARGET=krytis
 ARG TAG=latest
 ARG REGISTRY=starlit-os
-FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}
+ARG SOURCE_IMAGE=ghcr.io/${REGISTRY}/${TARGET}:${TAG}
+FROM ${SOURCE_IMAGE}
 
 ARG TARGET=krytis
 ARG TAG=latest

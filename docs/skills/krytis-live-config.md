@@ -220,3 +220,86 @@ disk is always released before the installed VM tries to open it.
 **Renamed paths:** all `/tmp/dakota-sealed-qemu-*` paths and `/var/tmp/dakota-sealed-install.img`
 from the old dakota-iso delegation are replaced by `/tmp/krytis-qemu-*` and
 `/var/tmp/krytis-install.img`.
+
+### The payload ref must not name a registry (2026-09-14)
+
+**What:** `mise run build-iso` tags the local build into the published ref
+(`podman tag localhost/krytis:latest ghcr.io/starlit-os/krytis:latest`) because
+`scripts/iso-sd-boot.sh` exports the offline payload with `podman save
+"${PAYLOAD_REF}"`, and `recipe.json` must carry the published name as
+`targetImgref`. When `live/Containerfile` also built its stages `FROM
+ghcr.io/${REGISTRY}/${TARGET}:${TAG}`, `podman build` **pulled that ref from the
+registry** — 3.4 GiB, on a ref that was already in local storage, under the
+default `--pull=missing`. The completed pull re-points the tag at the published
+digest, so the live environment and the embedded offline payload both silently
+become the registry's image instead of the one the checkout just built. Nothing
+in the output says so; the ISO simply installs the wrong image.
+
+**Why:** podman ≥ 5.7 (reproduced on 6.1.0 / buildah 1.42) re-resolves a
+registry-named base image in a **multistage** build against the registry even
+when it exists locally and the policy is `missing` —
+[containers/podman#27197](https://github.com/containers/podman/issues/27197),
+[#27779](https://github.com/containers/podman/issues/27779),
+[#28038](https://github.com/containers/podman/issues/28038). Single-stage builds
+with the same ref resolve locally, which is why this never showed up in
+`mise run lint`.
+
+**Fix:** `live/Containerfile` takes `ARG SOURCE_IMAGE` (default
+`ghcr.io/${REGISTRY}/${TARGET}:${TAG}`) and every krytis-based stage builds
+`FROM ${SOURCE_IMAGE}`. `build-iso` passes `SOURCE_IMAGE=${LOCAL_IMAGE}`
+(`localhost/krytis:latest`, or `:sealed` / the `:iso-payload` alias);
+`iso-container-build` defaults to `localhost/krytis:<tag>` when it exists and
+accepts `--source-image`. A `localhost/` ref has no registry to consult, so the
+bug cannot fire and the `ghcr.io/...` tag survives untouched for `podman save`.
+`PAYLOAD_REF` still carries the published name — build source and payload
+identity are now separate knobs.
+
+**Reproducing it:** any multistage Containerfile whose base is a locally tagged
+registry ref shows it; `--pull=never` also avoids it but then blocks the
+legitimate `debian:bookworm` fetch in stage 2b.
+
+```console
+$ podman build --pull=missing live/     # base already local
+[1/4] STEP 1/1: FROM ghcr.io/starlit-os/krytis:latest AS ref
+Trying to pull ghcr.io/starlit-os/krytis:latest...
+```
+
+### krytis's own dracut must not build the live initramfs (2026-09-14)
+
+**What:** `live/Containerfile` stage 2a builds the initramfs *natively* when the
+source image can do it, and falls back to the Debian cross-build stage (2b)
+otherwise. Its condition was `command -v dracut || command -v dnf ||
+command -v rpm`. krytis ships `/usr/sbin/dracut` from freedesktop-sdk, and on
+`localhost/krytis:sealed` that dracut's `--list-modules` *does* report
+`dmsquash-live` — so a sealed ISO took the native path, produced a 221 MiB
+initramfs, and the live ISO hung with the serial console silent after
+`Run /init as init process` until `iso-boot-live` timed out. No dracut error, no
+panic: just nothing. The unsigned image escaped only by accident — its dracut
+cannot list `dmsquash-live`, so the condition fell through to stage 2b.
+
+**Why:** freedesktop-sdk's dracut has no working `dracut-live`/udev/`cdrom_id`
+chain for a live CD. Stage 2b (Debian `dracut` + `dracut-live`, cross-built
+against krytis's kernel modules) is the path every ISO that has ever booted was
+built with.
+
+**Fix:** gate stage 2a on an RPM package manager (`dnf`/`rpm`) — the Fedora /
+bluefin case it exists for — not on `dracut` being on `PATH`. A freedesktop
+image always takes stage 2b now.
+
+**Related:** `build-iso --sealed` must build the live ENVIRONMENT from the
+unsigned `localhost/krytis:latest`, not from `localhost/krytis:sealed`. Sealing
+concerns the payload; the live ISO is unsigned by design (#371) and a sealed
+rootfs carries a UKI plus a frozen cmdline describing an *installed* system.
+Before `SOURCE_IMAGE` existed this held by accident: the Containerfile's
+`TAG=latest` ref made podman pull the published `:latest` for the live stages
+while the payload came from the local `:sealed`. `build-iso` now sets
+`LIVE_SOURCE_IMAGE` explicitly, falling back to the payload image only when
+there is no local `:latest` (the `--payload-image` release-validation case).
+
+**Symptom → cause table for a live ISO that never reaches SSH:**
+
+| Serial console shows | Cause |
+|---|---|
+| Nothing after `Run /init as init process` | Native-dracut initramfs (stage 2a took the wrong branch) |
+| dracut messages, then `dracut-initqueue timeout` | Squashfs/label mismatch — check `LiveOS/squashfs.img` and `krytis/live_label` |
+| `Permission denied (publickey)` in the harness | ISO built without `--debug` |

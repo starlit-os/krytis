@@ -68,8 +68,25 @@ if ! podman image exists "${LOCAL_IMAGE}"; then
     exit 1
 fi
 
+# The tag is what iso-sd-boot.sh hands to `podman save` when it exports the
+# offline payload; the container build itself is pointed at a local image via
+# SOURCE_IMAGE, so a multistage podman pull can never overwrite it. See
+# live/Containerfile's SOURCE_IMAGE note.
 echo "==> Tagging ${LOCAL_IMAGE} → ${PAYLOAD_REF} for offline embed..."
 podman tag "${LOCAL_IMAGE}" "${PAYLOAD_REF}"
+
+# The live ENVIRONMENT is always the unsigned image, even for a sealed ISO: the
+# live ISO is unsigned by design (#371), and a sealed rootfs is the wrong thing
+# to boot from a CD — it carries a UKI and a frozen cmdline that describe an
+# installed system. Sealing concerns the PAYLOAD only. (Before SOURCE_IMAGE
+# existed this happened by accident, because the Containerfile's hardcoded
+# TAG=latest ref made podman pull the published :latest for the live stages
+# while the payload came from the local :sealed.)
+LIVE_SOURCE_IMAGE="localhost/krytis:latest"
+if ! podman image exists "${LIVE_SOURCE_IMAGE}"; then
+    # --payload-image release validation can run with no local :latest at all.
+    LIVE_SOURCE_IMAGE="${LOCAL_IMAGE}"
+fi
 
 OUTPUT_DIR="${usage_output_dir:-output}"
 WORKDIR="${usage_workdir:-${OUTPUT_DIR}}"
@@ -103,6 +120,7 @@ BUILD_ARGS=(
     --build-arg "DEBUG=${DEBUG}"
     --build-arg "CACHE_BUST=$(date +%Y%m%d)"
     --build-arg "PAYLOAD_REF=${PAYLOAD_REF}"
+    --build-arg "SOURCE_IMAGE=${LIVE_SOURCE_IMAGE}"
 )
 podman build \
     "${BUILD_ARGS[@]}" \
