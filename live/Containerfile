@@ -1,0 +1,176 @@
+# Krytis live ISO: environment image
+#
+# Build with:
+#   podman build --build-arg TARGET=krytis -t localhost/krytis-installer live/
+#
+# TARGET selects the source image. Everything else — initramfs rebuild,
+# live-user setup, installer config, flatpaks — is configured in
+# src/configure-live-krytis.sh.
+#
+# Three-stage build:
+#   1. ref          — source Krytis image (provides kernel modules)
+#   2. initramfs-builder — Debian: builds a dmsquash-live initramfs against
+#                          Krytis's kernel modules in its native glibc environment
+#   3. final        — Krytis: receives the rebuilt initramfs + live-env setup
+#
+# Krytis is GNOME OS / freedesktop-sdk based — no package manager, no dracut.
+# The initramfs is built in a separate Debian stage so no cross-distro binary
+# grafting is needed; only the initramfs.img output crosses the stage boundary.
+
+ARG TARGET=krytis
+# TAG selects the image tag. Defaults to 'latest'.
+ARG TAG=latest
+# REGISTRY selects the OCI registry org. Defaults to starlit-os.
+ARG REGISTRY=starlit-os
+
+# ── Stage 1: Reference image (kernel modules source) ─────────────────────────
+FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG} AS ref
+
+# ── Stage 2a: Native initramfs (for images that have dracut, e.g. Fedora/bluefin)
+# If dracut is available on the target image, build the initramfs there so
+# the udev rules, blkid, and cdrom_id all match the kernel. Falls back to
+# the Debian cross-build stage (2b) for images that lack a package manager
+# (e.g. GNOME OS / krytis), or when native dracut fails (e.g. fc44 images
+# where dracut's shutdown module cannot find poweroff/reboot/halt symlinks
+# in a container build context, or Fedora-based images missing /root).
+FROM ref AS initramfs-native
+RUN set -e; \
+    kernel=$(ls /usr/lib/modules | sort -V | tail -1); \
+    if command -v dracut >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then \
+        # Ensure dracut + dracut-live module are installed
+        command -v dnf >/dev/null 2>&1 && \
+            dnf install -y dracut dracut-live --setopt=install_weak_deps=False -q 2>/dev/null || true; \
+        command -v dracut >/dev/null 2>&1 || { echo 'no dracut after install attempt — falling back to Debian cross-build'; echo debian > /tmp/dracut-status; touch /tmp/initramfs.img; exit 0; }; \
+        dracut --list-modules 2>/dev/null | grep -q dmsquash-live || { echo 'dmsquash-live module not found — falling back to Debian cross-build'; echo debian > /tmp/dracut-status; touch /tmp/initramfs.img; exit 0; }; \
+        echo "Building initramfs natively for kernel ${kernel}"; \
+        if dracut -v --force --reproducible --no-hostonly \
+                --add "dmsquash-live" \
+                /tmp/initramfs.img "${kernel}"; then \
+            ls -lh /tmp/initramfs.img; \
+            echo native > /tmp/dracut-status; \
+        else \
+            echo "Native dracut failed (exit $?) — falling back to Debian cross-build"; \
+            echo debian > /tmp/dracut-status; \
+            touch /tmp/initramfs.img; \
+        fi; \
+    else \
+        echo "Target has no dracut/rpm — will use Debian cross-build"; \
+        echo debian > /tmp/dracut-status; \
+        touch /tmp/initramfs.img; \
+    fi
+
+# ── Stage 2b: Debian — cross-builds the initramfs for images without dracut ──
+FROM debian:bookworm AS initramfs-builder
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        dracut \
+        dracut-live \
+        dmsetup \
+        systemd-boot-efi \
+        xfsprogs \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ref /usr/lib/modules /usr/lib/modules
+COPY --from=initramfs-native /tmp/dracut-status /tmp/
+COPY --from=initramfs-native /tmp/initramfs.img /tmp/native-initramfs/
+
+RUN set -ex; \
+    if grep -q debian /tmp/dracut-status 2>/dev/null; then \
+        kernel=$(ls /usr/lib/modules | sort -V | tail -1); \
+        echo "Cross-building initramfs (Debian dracut) for kernel ${kernel}"; \
+        DRACUT_NO_XATTR=1 dracut -v --force --zstd --reproducible --no-hostonly \
+            --add "dmsquash-live" \
+            --add-drivers "squashfs overlay loop iso9660 sr_mod cdrom" \
+            /tmp/initramfs.img "${kernel}"; \
+    else \
+        echo "Using native initramfs"; \
+        cp /tmp/native-initramfs/initramfs.img /tmp/initramfs.img; \
+    fi; \
+    ls -lh /tmp/initramfs.img
+
+# ── Stage 3: Final live image ─────────────────────────────────────────────────
+ARG TARGET=krytis
+ARG TAG=latest
+ARG REGISTRY=starlit-os
+FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}
+
+ARG TARGET=krytis
+ARG TAG=latest
+ARG REGISTRY=starlit-os
+ARG INSTALLER_CHANNEL=stable
+ARG DEBUG=0
+ARG PAYLOAD_REF=
+ENV TARGET=${TARGET} INSTALLER_CHANNEL=${INSTALLER_CHANNEL} DEBUG=${DEBUG}
+ENV PAYLOAD_REF=${PAYLOAD_REF}
+
+# For ostree-based images (bluefin, bluefin-lts): install systemd-boot and
+# fuse-overlayfs with dnf so the live system remains a valid bootc deployment
+# for bootcDirect installs.  Krytis (freedesktop-sdk) images lack dnf; they use
+# the composefs podman-based install path instead.
+# The systemd-boot EFI binary is needed by build-iso.sh for the live ISO's ESP;
+# fuse-overlayfs supports overlay-on-overlay for kernels without native support
+# (e.g. CentOS Stream 10 in bluefin-lts).
+RUN if command -v dnf >/dev/null 2>&1; then \
+        dnf install -y systemd-boot-unsigned fuse-overlayfs \
+        && dnf clean all; \
+    fi
+
+COPY --from=initramfs-builder /tmp/initramfs.img /tmp/initramfs.img
+# xfsprogs runtime deps from Debian bookworm (libinih.so.1 notably):
+#   - Fedora ships libinih.so.0; recent xfsprogs (Fedora + Debian) requires .so.1
+#   - Copy to BOTH lib paths so both toolchains find it:
+#     /usr/lib/x86_64-linux-gnu/ → Debian-compiled binaries
+#     /usr/lib64/                → Fedora-compiled binaries
+# liburcu is already present in Fedora but harmless to have twice.
+# libblkid and libuuid must NOT be copied from Debian — the target base image
+# (freedesktop-sdk for krytis) ships a newer version that
+# sfdisk/libfdisk requires (BLKID_2_40+). Overwriting with Debian bookworm's
+# older libblkid (only BLKID_2_21) breaks sfdisk with "version BLKID_2_40 not found".
+COPY --from=initramfs-builder \
+    /usr/lib/x86_64-linux-gnu/libinih.so.1 \
+    /usr/lib/x86_64-linux-gnu/liburcu.so.8 \
+    /usr/lib/x86_64-linux-gnu/
+COPY --from=initramfs-builder /usr/lib/x86_64-linux-gnu/libinih.so.1 /usr/lib64/libinih.so.1
+COPY --from=initramfs-builder /usr/lib/x86_64-linux-gnu/liburcu.so.8 /usr/lib64/liburcu.so.8
+# Only install Debian mkfs.xfs binary for images using the Debian cross-build
+# initramfs (GNOME OS / krytis, dracut-status=debian).
+# For Fedora/CentOS images (native dracut), xfsprogs is already installed from
+# RPM (/usr/bin/mkfs.xfs). Installing the Debian binary over it breaks the
+# install because PATH finds /usr/sbin first and the Debian binary previously
+# landed there with wrong lib-path expectations.
+COPY --from=initramfs-builder /usr/sbin/mkfs.xfs /tmp/debian-mkfs.xfs
+COPY --from=initramfs-builder /usr/sbin/xfs_repair /tmp/debian-xfs_repair
+RUN if grep -q debian /tmp/dracut-status 2>/dev/null; then \
+        install -m755 /tmp/debian-mkfs.xfs /usr/sbin/mkfs.xfs && \
+        install -m755 /tmp/debian-xfs_repair /usr/sbin/xfs_repair; \
+    fi; \
+    rm -f /tmp/debian-mkfs.xfs /tmp/debian-xfs_repair
+# Ensure systemd-boot EFI binary is present for the live ISO builder regardless
+# of whether the target distro ships it (e.g. bluefin uses GRUB, not systemd-boot,
+# so the binary is absent from the base image but still needed for the live ISO).
+COPY --from=initramfs-builder /usr/lib/systemd/boot /usr/lib/systemd/boot
+RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
+    mv /tmp/initramfs.img "/usr/lib/modules/${kernel}/initramfs.img" && \
+    echo "Replaced initramfs for kernel ${kernel}"
+
+# CACHE_BUST invalidates the flatpak download layer when changed (e.g. daily via date).
+# Passed as --build-arg CACHE_BUST=$(date +%Y%m%d) in iso-container-build.
+ARG CACHE_BUST=0
+COPY src/flatpaks /tmp/flatpaks-list
+RUN --mount=type=bind,source=src,target=/src \
+    --mount=type=cache,target=/var/cache/flatpak-dl,id=krytis-flatpak-${TARGET} \
+    bash -c 'if command -v flatpak >/dev/null 2>&1; then /src/install-flatpaks.sh; else echo "Skipping flatpaks — flatpak not present on ${TARGET}"; fi'
+
+COPY src/ /tmp/src/
+# Dispatch to a target-specific configure script when one exists
+# (e.g. configure-live-krytis.sh for TARGET=krytis), falling back to
+# the default configure-live.sh for dakota/bluefin variants.
+RUN set -e; \
+    CONFIGURE_SCRIPT="/tmp/src/configure-live-${TARGET}.sh"; \
+    if [ -f "${CONFIGURE_SCRIPT}" ]; then \
+        chmod +x "${CONFIGURE_SCRIPT}" && "${CONFIGURE_SCRIPT}"; \
+    else \
+        chmod +x /tmp/src/configure-live.sh && /tmp/src/configure-live.sh; \
+    fi

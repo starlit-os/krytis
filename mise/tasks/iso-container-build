@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="Build the localhost/krytis-installer live environment container"
+#USAGE flag "--debug" help="Enable SSH in the live environment (not for production)"
+#USAGE flag "--installer-channel <channel>" default="stable" help="bootc-installer channel: stable or dev"
+#USAGE flag "--payload-ref <ref>" help="OCI ref baked into recipe.json as the offline payload source"
+
+# Builds localhost/krytis-installer from live/Containerfile.
+# Called automatically by build-iso; run standalone to iterate on the live env
+# without a full ISO assembly.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+TARGET="krytis"
+TAG="$(tr -d '[:space:]' < "${REPO_ROOT}/krytis/tag")"
+REGISTRY="$(tr -d '[:space:]' < "${REPO_ROOT}/krytis/registry")"
+INSTALLER_CHANNEL="${usage_installer_channel:-stable}"
+DEBUG=$([[ "${usage_debug:-}" == "true" ]] && echo 1 || echo 0)
+PAYLOAD_REF="${usage_payload_ref:-}"
+CACHE_BUST="$(date +%Y%m%d)"
+
+echo "==> Building localhost/${TARGET}-installer"
+echo "    source:   ghcr.io/${REGISTRY}/${TARGET}:${TAG}"
+echo "    channel:  ${INSTALLER_CHANNEL}"
+echo "    debug:    ${DEBUG}"
+echo "    payload:  ${PAYLOAD_REF:-<default from recipe.json>}"
+
+BUILD_ARGS=(
+    --build-arg "TARGET=${TARGET}"
+    --build-arg "TAG=${TAG}"
+    --build-arg "REGISTRY=${REGISTRY}"
+    --build-arg "INSTALLER_CHANNEL=${INSTALLER_CHANNEL}"
+    --build-arg "DEBUG=${DEBUG}"
+    --build-arg "CACHE_BUST=${CACHE_BUST}"
+)
+[[ -n "${PAYLOAD_REF}" ]] && BUILD_ARGS+=(--build-arg "PAYLOAD_REF=${PAYLOAD_REF}")
+
+podman build \
+    "${BUILD_ARGS[@]}" \
+    -t "localhost/${TARGET}-installer" \
+    --cap-add SYS_ADMIN \
+    --security-opt label=disable \
+    "${REPO_ROOT}/live"
+
+echo "==> localhost/${TARGET}-installer built"
