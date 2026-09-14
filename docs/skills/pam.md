@@ -1118,6 +1118,52 @@ bounded resize operations instead, which is why krytis's first-boot wizard sets
 `--auto-resize-mode=shrink-and-grow` on the initial account rather than touching discard (see
 `docs/design/first-boot-setup.md`, `files/systemd-firstboot/firstboot-wizard.sh`).
 
+## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
+
+**What:** krytis's sshd ships systemd's drop-in
+`AuthorizedKeysCommand /usr/bin/userdbctl ssh-authorized-keys %u` (+
+`AuthorizedKeysCommandUser root`), so **every** public-key authentication shells out to
+`userdbctl`, which queries `systemd-userdbd` over varlink. When that query does not
+answer, sshd blocks in the pre-auth phase indefinitely: the TCP connection is accepted,
+the kex completes, the server advertises `publickey`, and then nothing. The guest is
+otherwise healthy — `systemctl is-system-running` reports `running`, no jobs pending,
+`sshd.service` active and listening.
+
+Observed 2026-09-14 in QEMU while running the #843 ISO gates: three consecutive
+installs (unsigned payload and sealed payload alike) wedged this way, after an earlier
+identical run authenticated in seconds. Guest-side evidence, with
+`systemd.journald.forward_to_console=yes` on the cmdline:
+
+```
+sshd-session[938]: Connection closed by authenticating user root 10.0.2.2 port 34014 [preauth]
+```
+
+— i.e. the *client* gave up; the server never answered the key offer. A manual
+`ssh -vv` stalls at `debug1: Next authentication method: publickey` and never returns,
+even after 200 s.
+
+**Harness consequence, and the rule:** `ssh -o ConnectTimeout=N` does **not** bound this.
+`ConnectTimeout` applies to the TCP connect only, which succeeds instantly here — so a
+retry loop built on it never gets its iteration back, and a gate advertised as "up to 240s"
+hangs forever. `mise/tasks/boot-test` sat at `[3/5] Waiting for SSH (up to 240s)` for 40+
+minutes this way. Every SSH probe against a possibly-sick guest MUST carry a wall-clock cap:
+
+```bash
+timeout 10 ssh -o ConnectTimeout=2 -o BatchMode=yes …
+```
+
+and the surrounding loop MUST measure wall-clock (`date +%s` deadline), not iteration
+count — iteration count silently multiplies the advertised budget by the per-probe cap.
+
+**Still open:** why `systemd-userdbd` stops answering is not diagnosed. It is not caused by
+secure boot (reproduced with enforcement off), not by the sealed payload (reproduced with
+the unsigned one), and not by a dirty disk (reproduced on a fresh install). Suspected
+socket-activation race — it is intermittent. If a boot-test run fails with SSH never coming
+up while the serial log shows a healthy `running` system, this is the first thing to check.
+`AuthorizedKeysFile` alone (no `AuthorizedKeysCommand`) looked like the obvious escape hatch
+for the test path — it turned out not to be enough on its own; see the next entry for why
+and for the applied fix.
+
 ## `boot-test`'s SSH verdict must disable `AuthorizedKeysCommand`, not just override `AuthorizedKeysFile` (#848)
 
 **Symptom.** `mise run boot-test` (and everything that delegates its verdict to it —
