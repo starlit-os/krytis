@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Sync tracked forks (docs/upstreams.yml) to their upstream branch and report the commit range since the last lessons-mining pass"
+#MISE description="Sync tracked upstreams (docs/upstreams.yml) to their upstream branch and report the commit range since the last lessons-mining pass"
 #USAGE arg "[repo]" help="Only sync this repo (matches 'name:' in docs/upstreams.yml); default: all tracked repos"
-#USAGE flag "--check" help="Report pending commits without syncing (skips gh repo sync / git pull)"
+#USAGE flag "--check" help="Report pending commits without syncing (skips git fetch / git merge)"
 
 set -euo pipefail
 
@@ -14,7 +14,7 @@ if [ ! -f "$TRACKING_FILE" ]; then
   exit 1
 fi
 
-# docs/upstreams.yml is a fixed, flat "name/fork/upstream/branch/..." shape owned by
+# docs/upstreams.yml is a fixed, flat "name/upstream/branch/..." shape owned by
 # the upstream-lessons skill — parsed with awk rather than pulling in a yaml library.
 mapfile -t NAMES < <(awk -F': ' '/^  - name:/{print $2}' "$TRACKING_FILE")
 
@@ -37,7 +37,7 @@ for name in "${NAMES[@]}"; do
     found {print}
   ' "$TRACKING_FILE")
 
-  fork=$(awk -F': ' '/^    fork:/{print $2; exit}' <<<"$block")
+  upstream=$(awk -F': ' '/^    upstream:/{print $2; exit}' <<<"$block")
   branch=$(awk -F': ' '/^    branch:/{print $2; exit}' <<<"$block")
   local_path="${SIBLING_BASE}/$(awk -F': ' '/^    local_path:/{print $2; exit}' <<<"$block")"
   last_sha=$(awk -F': ' '/^    last_checked_sha:/{print $2; exit}' <<<"$block")
@@ -47,14 +47,14 @@ for name in "${NAMES[@]}"; do
     continue
   fi
 
-  echo "==> ${name} (${fork}, branch ${branch})"
+  echo "==> ${name} (${upstream}, branch ${branch})"
 
   if [ "$CHECK_ONLY" = "true" ]; then
     git -C "$local_path" fetch origin "$branch" --quiet
     new_sha=$(git -C "$local_path" rev-parse "origin/${branch}")
   else
-    gh repo sync "$fork" --branch "$branch"
-    git -C "$local_path" pull --ff-only origin "$branch"
+    git -C "$local_path" fetch origin "$branch"
+    git -C "$local_path" merge --ff-only "origin/${branch}"
     new_sha=$(git -C "$local_path" rev-parse HEAD)
   fi
 

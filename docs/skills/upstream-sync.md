@@ -7,23 +7,22 @@ Background and design rationale: [issue #141](https://github.com/starlit-os/kryt
 
 ## What It Is
 
-Krytis shares its foundation (Freedesktop SDK, BST, bootc, niri/greetd) with two sibling
-projects the user maintains as GitHub forks. Both regularly solve problems krytis will hit
-too. Rather than manually watching both repos, `docs/upstreams.yml` tracks a "last checked"
-ref per repo, and the `upstream-lessons` skill diffs from there to find what's new,
-proposes candidate lessons to a human, and writes accepted ones into `docs/skills/`.
+Krytis shares its foundation (Freedesktop SDK, BST, bootc, niri/greetd) with two upstream
+projects. Both regularly solve problems krytis will hit too. Rather than manually watching
+both repos, `docs/upstreams.yml` tracks a "last checked" ref per repo, and the
+`upstream-lessons` skill diffs from there to find what's new, proposes candidate lessons to
+a human, and writes accepted ones into `docs/skills/`.
 
 ## `docs/upstreams.yml` Schema
 
 ```yaml
 repos:
   - name: dakota                              # matches mise upstream-sync <name>
-    fork: starlit-os/dakota                   # owner/repo of the user's fork
-    upstream: projectbluefin/dakota           # owner/repo it was forked from
+    upstream: projectbluefin/dakota           # owner/repo to fetch from directly
     branch: main                              # branch to sync (not necessarily upstream's default branch — see note below)
-    local_path: dakota                        # dir name, sibling of krytis's *main* checkout
+    local_path: dakota                        # dir name, sibling of krytis's *main* checkout; origin must point to upstream
     skill_file: docs/skills/dakota.md         # where accepted lessons for this repo land
-    last_checked_sha: <sha>                   # fork HEAD at the last completed mining pass
+    last_checked_sha: <sha>                   # upstream HEAD at the last completed mining pass
     last_checked_date: "YYYY-MM-DD"
 ```
 
@@ -46,6 +45,10 @@ of krytis itself, which is the normal case per `AGENTS.md`'s worktree policy. An
 draft of this task stored `../dakota` and resolved it relative to `$PWD`; it silently
 skipped both repos the first time it ran from a worktree. Keep it a bare name.
 
+**The local checkout's `origin` must point to the upstream repo** (i.e. clone from
+`github.com/<upstream>`, not from a fork). `mise upstream-sync` runs `git fetch origin`
+directly — there is no `gh repo sync` step and no fork involved.
+
 ## `docs/upstreams.yml` Values Must Not Carry Inline Comments
 
 `mise upstream-sync` parses this file with `awk -F': '` on fixed field names — not a YAML
@@ -64,10 +67,9 @@ mise upstream-sync dakota         # just one repo
 mise upstream-sync --check        # fetch and report only — no gh repo sync, no local pull
 ```
 
-The sync itself is `gh repo sync <fork> --branch <branch>` (fast-forward from upstream)
-followed by `git pull --ff-only` in the local checkout. This is a push to the user's own
-fork on GitHub — low blast radius since it's fast-forward-only and it's their own fork, but
-still worth flagging before running, same as any other push.
+The sync is `git fetch origin <branch>` followed by `git merge --ff-only origin/<branch>`
+in the local checkout. No push is involved — `origin` in the local checkout must point to
+the upstream repo.
 
 Output per repo is either "up to date" or an `old_sha..new_sha (N commits)` range — that
 range is what the `upstream-lessons` skill mines. The task deliberately does not do any

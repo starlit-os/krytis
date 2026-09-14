@@ -1,9 +1,9 @@
-# Tracks fork repos mined for lessons applicable to krytis.
+# Tracks upstream repos mined for lessons applicable to krytis.
 #
 # Updated by the `upstream-lessons` skill (.claude/skills/upstream-lessons/)
-# each time it finishes a mining pass. `last_checked_sha` is the fork commit
-# that was HEAD when lessons were last extracted from that repo — the next
-# pass diffs from this SHA to the fork's new HEAD to find what's new.
+# each time it finishes a mining pass. `last_checked_sha` is the upstream
+# commit that was HEAD when lessons were last extracted from that repo — the
+# next pass diffs from this SHA to the upstream's new HEAD to find what's new.
 #
 # See docs/skills/upstream-sync.md for the full workflow and
 # https://github.com/starlit-os/krytis/issues/141 for the design rationale.
@@ -11,10 +11,10 @@
 # local_path is a directory name, resolved as a sibling of krytis's *main*
 # checkout (not the invoking worktree — `mise upstream-sync` resolves this via
 # `git worktree list`, since worktrees live elsewhere on disk).
+# The local checkout's origin must point to the upstream repo.
 
 repos:
   - name: dakota
-    fork: starlit-os/dakota
     upstream: projectbluefin/dakota
     # Re-verified 2026-08-31: main last moved 2026-08-09 (22 days stale at
     # check time); the promotion automation itself (auto/promote-testing-to-main)
@@ -28,7 +28,6 @@ repos:
     last_checked_date: "2026-08-31"
 
   - name: zirconium-hawaii
-    fork: starlit-os/zirconium-hawaii
     upstream: zirconium-dev/zirconium-hawaii
     # Re-verified 2026-08-31: stable is the upstream repo's actual GitHub
     # default branch, current (stable and testing point at the identical
