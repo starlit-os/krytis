@@ -83,8 +83,7 @@ e2e_ssh_auth_init() {
 #
 # Never fails the caller: a monitor that has already gone away is normal at
 # teardown. sudo is used when the socket is not writable — QEMU runs under sudo
-# on hosts where the user cannot open /dev/kvm, and the socket is then root-owned
-# (docs/skills/qa-policy.md § permission denied on root-owned monitor sockets).
+# on hosts where the user cannot open /dev/kvm, and the socket is then root-owned.
 e2e_monitor() {
     local sock="$1"; shift
     local cmd="$*"
