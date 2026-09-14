@@ -33,16 +33,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-# Resolve dakota-iso from the MAIN worktree via git-common-dir: inside a git
-# worktree REPO_ROOT is nested under .worktrees/ and a naive "${REPO_ROOT}/.."
-# points at the wrong place. Same block as mise/tasks/build-iso.
-if [[ -z "${DAKOTA_ISO_DIR:-}" ]]; then
-    COMMON_GIT="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-    MAIN_ROOT="${COMMON_GIT:+$(dirname "${COMMON_GIT}")}"
-    MAIN_ROOT="${MAIN_ROOT:-${REPO_ROOT}}"
-    DAKOTA_ISO_DIR="$(realpath "${MAIN_ROOT}/../dakota-iso" 2>/dev/null || echo "${MAIN_ROOT}/../dakota-iso")"
-fi
-
 PASSPHRASE="${usage_passphrase:-testpassphrase}"
 STRICT=$([[ "${usage_strict_installer:-}" == "true" ]] && echo 1 || echo 0)
 KEEP=$([[ "${usage_keep:-}" == "true" ]] && echo 1 || echo 0)
@@ -64,29 +54,6 @@ PAYLOAD_REF="${usage_payload_ref:-${DEFAULT_REF}}"
 
 # Everything is checked before QEMU starts. An install run is tens of minutes;
 # discovering a missing prerequisite at minute 30 is the failure this prevents.
-if [[ ! -f "${DAKOTA_ISO_DIR}/justfile" ]]; then
-    echo "ERROR: dakota-iso not found at ${DAKOTA_ISO_DIR}" >&2
-    echo "       Clone kitten-lily/dakota-iso as a sibling of the krytis checkout, or set DAKOTA_ISO_DIR." >&2
-    exit 1
-fi
-
-if ! grep -q 'sealed-test-qemu' "${DAKOTA_ISO_DIR}/justfile"; then
-    echo "ERROR: ${DAKOTA_ISO_DIR} has no 'sealed-test-qemu' recipe (#371)." >&2
-    echo "       Update the sibling checkout: git -C ${DAKOTA_ISO_DIR} pull" >&2
-    exit 1
-fi
-
-# The encryption knob is what makes this gate possible; without it the chain
-# installs unencrypted and this run would assert a prompt that can never appear.
-# Check for it explicitly instead of producing that confusing failure.
-if ! grep -q 'LUKS_PASSPHRASE' "${DAKOTA_ISO_DIR}/scripts/plain-install-qemu.sh"; then
-    echo "ERROR: ${DAKOTA_ISO_DIR}/scripts/plain-install-qemu.sh has no LUKS_PASSPHRASE" >&2
-    echo "       support, so the install would be UNENCRYPTED and this gate would" >&2
-    echo "       fail asserting a passphrase prompt that cannot appear (#473)." >&2
-    echo "       Update the sibling checkout: git -C ${DAKOTA_ISO_DIR} pull" >&2
-    exit 1
-fi
-
 if [[ ! -f "${ISO}" ]]; then
     echo "ERROR: ISO not found: ${ISO}" >&2
     echo "       Build it:  mise run build-iso$([[ "${ISO}" == *sealed* ]] && echo ' --sealed') --debug" >&2
@@ -125,31 +92,26 @@ if ! unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${DEBUG_DROPIN}" >/dev/nu
 fi
 
 ISO_ABS="$(realpath "${ISO}")"
-OUTPUT_DIR="$(dirname "${ISO_ABS}")"
-INSTALL_DISK="/var/tmp/dakota-sealed-install.img"
+INSTALL_DISK="/var/tmp/krytis-install.img"
 
 echo "==> Installing Krytis to an ENCRYPTED root from an ISO in QEMU"
-echo "    dakota-iso:  ${DAKOTA_ISO_DIR}"
 echo "    iso:         ${ISO_ABS}"
 echo "    payload:     ${PAYLOAD_REF}"
 echo "    passphrase:  ${PASSPHRASE}"
 
 echo "==> [1/3] Live ISO boot + encrypted install"
 set +e
-ISO_PATH="${ISO_ABS}" \
-PAYLOAD_REF="${PAYLOAD_REF}" \
 LUKS_PASSPHRASE="${PASSPHRASE}" \
-INSTALL_ONLY=1 \
-    just --justfile "${DAKOTA_ISO_DIR}/justfile" \
-         --working-directory "${DAKOTA_ISO_DIR}" \
-         output_dir="${OUTPUT_DIR}" \
-         sealed-test-qemu krytis
+    "${REPO_ROOT}/mise/tasks/iso-e2e-test" \
+        --iso "${ISO_ABS}" \
+        --payload-ref "${PAYLOAD_REF}" \
+        --install-only
 RESULT=$?
 set -e
 
 if [[ "${RESULT}" -ne 0 ]]; then
     echo "==> FAILED during install (exit ${RESULT}). Serial logs from the run:" >&2
-    ls -la /tmp/dakota-sealed-qemu-*serial*.log 2>/dev/null >&2 || true
+    ls -la /tmp/krytis-qemu-*serial*.log 2>/dev/null >&2 || true
     exit "${RESULT}"
 fi
 

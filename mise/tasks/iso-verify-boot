@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#MISE description="Verify the installed system reaches Graphical Interface on the serial console (phase 4 of iso-e2e-test)"
+#USAGE flag "--monitor <path>" default="/tmp/krytis-qemu-installed.sock" help="QEMU HMP monitor socket"
+#USAGE flag "--serial <path>" default="/tmp/krytis-qemu-installed-serial.log" help="Serial console log to poll"
+#USAGE flag "--screenshot <path>" default="/tmp/krytis-screenshot-final.ppm" help="PPM screenshot path on pass"
+#USAGE flag "--expect-fail" help="Invert verdict: pass only when secure-boot rejection is logged"
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=scripts/e2e-lib.sh
+source "${REPO_ROOT}/scripts/e2e-lib.sh"
+
+# argc-fallback: parse flags when invoked directly (not via mise run).
+CLI_MONITOR="" CLI_SERIAL="" CLI_SCREENSHOT="" CLI_EXPECT_FAIL=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --monitor)     CLI_MONITOR="$2";    shift 2 ;;
+        --serial)      CLI_SERIAL="$2";     shift 2 ;;
+        --screenshot)  CLI_SCREENSHOT="$2"; shift 2 ;;
+        --expect-fail) CLI_EXPECT_FAIL="true"; shift ;;
+        *) break ;;
+    esac
+done
+
+MONITOR="${CLI_MONITOR:-${usage_monitor:-/tmp/krytis-qemu-installed.sock}}"
+SERIAL="${CLI_SERIAL:-${usage_serial:-/tmp/krytis-qemu-installed-serial.log}}"
+SCREENSHOT="${CLI_SCREENSHOT:-${usage_screenshot:-/tmp/krytis-screenshot-final.ppm}}"
+EXPECT_FAIL=$([[ "${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}" == "true" ]] && echo 1 || echo 0)
+
+if [[ "${EXPECT_FAIL}" -eq 1 ]]; then
+    # Wait for a Secure Boot rejection. Two flavours:
+    #   systemd-boot: "Access Denied" when it refuses to chain an unverifiable UKI
+    #   EDK2 BDS:     "Security Violation" when the firmware refuses the image
+    # A guest that never booted and never rejected is INCONCLUSIVE (exit 2):
+    # concluding "rejected" from silence is a false pass on any unrelated failure.
+    echo "EXPECT_FAIL=1 — waiting for Secure Boot rejection on serial (up to 5 min)..."
+    DEADLINE=$((SECONDS + 300))
+    while [[ $SECONDS -lt $DEADLINE ]]; do
+        LOG=$(cat "$SERIAL" 2>/dev/null || true)
+        if echo "$LOG" | grep -qE '[Aa]ccess [Dd]enied|Security Violation'; then
+            echo "✅ Installed system was REJECTED by Secure Boot, as expected"
+            echo "$LOG" | grep -E '[Aa]ccess [Dd]enied|Security Violation' | tail -5
+            e2e_monitor "$MONITOR" quit
+            exit 0
+        fi
+        if echo "$LOG" | grep -qE 'Reached target.*Graphical|Reached target.*Multi-User|login:'; then
+            echo "❌ EXPECT_FAIL=1 but the installed system booted — enforcement did not reject it" >&2
+            e2e_monitor "$MONITOR" quit
+            exit 1
+        fi
+        sleep 5
+    done
+    echo "❓ INCONCLUSIVE: guest never booted and never logged a rejection — a silent disk proves nothing" >&2
+    echo "--- last 30 lines of serial log ---" >&2
+    cat "$SERIAL" 2>/dev/null | tail -30 >&2
+    e2e_monitor "$MONITOR" quit
+    exit 2
+fi
+
+echo "Waiting for installed system to reach Graphical Interface (up to 5 min)..."
+DEADLINE=$((SECONDS + 300))
+while [[ $SECONDS -lt $DEADLINE ]]; do
+    LOG=$(cat "$SERIAL" 2>/dev/null || true)
+    if echo "$LOG" | grep -qE 'Reached target.*Graphical|Reached target.*Multi-User|login:'; then
+        echo "✅ Installed system boot verified — composefs install succeeded"
+        e2e_monitor "$MONITOR" "screendump $SCREENSHOT"
+        bash "${REPO_ROOT}/scripts/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
+        e2e_monitor "$MONITOR" quit
+        exit 0
+    fi
+    if echo "$LOG" | grep -qE 'Emergency mode|You are in emergency mode|Kernel panic'; then
+        echo "❌ Emergency shell or kernel panic detected" >&2
+        echo "--- last 30 lines of serial log ---" >&2
+        echo "$LOG" | tail -30 >&2
+        exit 1
+    fi
+    sleep 5
+done
+echo "❌ Timeout: installed system did not reach graphical target in 5 minutes" >&2
+echo "--- last 30 lines of serial log ---" >&2
+cat "$SERIAL" 2>/dev/null | tail -30 >&2
+e2e_monitor "$MONITOR" "screendump $SCREENSHOT"
+exit 1

@@ -171,5 +171,52 @@ handles the container build via the inline `podman build` step before calling
 
 **payload-prep.sh** lives only in `kitten-lily/dakota-iso` and is referenced via
 `ISO_TOOLS_IMAGE` bind-mount — it is not copied here because sealed payloads
-(`PAYLOAD_SEALED=1`) skip it entirely, and `kitten-lily/dakota-iso` is still used
-for test path tasks (issues #839, #840). When #840 lands, revisit whether to inline it.
+(`PAYLOAD_SEALED=1`) skip it entirely. The test path no longer uses dakota-iso
+(#839 — see section below). When #840 lands, revisit whether to inline payload-prep.sh.
+
+### ISO test path now native in krytis (2026-09-14)
+
+**What:** `mise run iso-install-test` and `mise run luks-install-test` previously
+delegated to `just sealed-test-qemu krytis` in a sibling `kitten-lily/dakota-iso`
+checkout. That delegation is removed (issue #839). The full test path is now native
+mise tasks in this repo.
+
+**9-item BOM ported:**
+
+| File | Purpose |
+|---|---|
+| `scripts/e2e-lib.sh` | Shared QEMU E2E library (ssh auth, monitor, teardown, port check) |
+| `scripts/fisherman-install.sh` | Fisherman composefs install over SSH into a running VM |
+| `scripts/show-screenshot.sh` | Display PPM screendump inline (Kitty/iTerm2) |
+| `scripts/iso-install-fisherman.sh` | Drives fisherman over SSH: builds recipe.json, uploads, patches BLS |
+| `mise/tasks/iso-boot-live` | Phase 1: boot live ISO with plain OVMF, wait for SSH |
+| `mise/tasks/iso-boot-installed` | Phase 3: boot installed disk (optionally under secboot enforcement) |
+| `mise/tasks/iso-verify-boot` | Phase 4: grep serial log; `--expect-fail` inverts verdict |
+| `mise/tasks/iso-e2e-test` | Orchestrator: phases 0-4 (or 0-2 with `--install-only`) |
+| `mise/tasks/iso-install-test` | Top-level gate: calls `iso-e2e-test --install-only`, then `boot-test` |
+
+**Composefs-only simplification:** `plain-install-qemu.sh` in dakota-iso had two
+branches: composefs (VFS) and ostree/bootcDirect. Since krytis always uses composefs
+(`live/src/krytis/composefs` = `true`), the ostree/bootcDirect branch was dropped
+entirely from `iso-install-fisherman.sh`, which also drops the `<fisher_repo>` argument
+(no go binary to build).
+
+**INSTALL_ONLY=1 pattern for sealed systems:** sealed UKIs have frozen cmdlines, so
+`console=ttyS0` cannot be injected — `iso-verify-boot`'s serial grep can never match.
+Instead, `iso-e2e-test --install-only` is called (phases 0-2 only) and `boot-test`
+provides the verdict via SMBIOS credentials, which work on sealed systems because
+systemd reads them from firmware tables, not kernel args.
+
+**argc-fallback pattern:** tasks called by other tasks (not via `mise run`) need both
+`#USAGE` annotations (for `mise run`) and a `while case "$1"` argv parser (for direct
+invocation). Every new task in this BOM implements both. See `docs/skills/mise.md`
+§ Propagating flags through tasks that call other tasks.
+
+**Disk handover between phases 2 and 3:** `iso-install-fisherman.sh` asks the live VM
+to power down at the end of install, but an early exit can leave it still holding the
+disk. `iso-e2e-test` calls `e2e_qemu_stop` explicitly between phases 2 and 3 so the
+disk is always released before the installed VM tries to open it.
+
+**Renamed paths:** all `/tmp/dakota-sealed-qemu-*` paths and `/var/tmp/dakota-sealed-install.img`
+from the old dakota-iso delegation are replaced by `/tmp/krytis-qemu-*` and
+`/var/tmp/krytis-install.img`.

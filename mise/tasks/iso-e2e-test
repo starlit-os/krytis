@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#MISE description="Orchestrate a live-ISO QEMU install and optional boot verdict (internal helper for iso-install-test / luks-install-test)"
+#USAGE flag "--iso <path>" help="Live ISO to boot (required)"
+#USAGE flag "--payload-ref <ref>" help="Payload image ref baked into the fisherman recipe"
+#USAGE flag "--install-only" help="Stop after install; leave the disk in place for a caller to boot (iso-install-test, luks-install-test)"
+#USAGE flag "--secure" help="Boot the installed disk under Secure Boot enforcement (phase 3); requires OVMF_VARS_SECURE env"
+#USAGE flag "--expect-fail" help="Invert the phase-4 verdict: pass only when secure-boot rejection is logged"
+#USAGE flag "--luks-passphrase <s>" default="" help="Install to an encrypted root (LUKS2); passed through to iso-install-fisherman.sh"
+#USAGE flag "--mem <mb>" default="8192" help="QEMU memory in MiB"
+#USAGE flag "--smp <n>" default="8" help="QEMU vCPU count"
+#USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Install target disk image"
+#USAGE flag "--scratch <path>" default="/var/tmp/krytis-scratch.img" help="Scratch disk for /var/tmp in the live VM"
+#USAGE flag "--ssh-port <port>" default="2224" help="SSH port forwarded from the live VM"
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=scripts/e2e-lib.sh
+source "${REPO_ROOT}/scripts/e2e-lib.sh"
+
+# argc-fallback: parse flags when invoked directly (not via mise run).
+CLI_ISO="" CLI_PAYLOAD_REF="" CLI_INSTALL_ONLY="" CLI_SECURE="" CLI_EXPECT_FAIL=""
+CLI_LUKS_PASSPHRASE="" CLI_MEM="" CLI_SMP="" CLI_DISK="" CLI_SCRATCH="" CLI_SSH_PORT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --iso)             CLI_ISO="$2";             shift 2 ;;
+        --payload-ref)     CLI_PAYLOAD_REF="$2";     shift 2 ;;
+        --install-only)    CLI_INSTALL_ONLY="true";  shift ;;
+        --secure)          CLI_SECURE="true";        shift ;;
+        --expect-fail)     CLI_EXPECT_FAIL="true";   shift ;;
+        --luks-passphrase) CLI_LUKS_PASSPHRASE="$2"; shift 2 ;;
+        --mem)             CLI_MEM="$2";             shift 2 ;;
+        --smp)             CLI_SMP="$2";             shift 2 ;;
+        --disk)            CLI_DISK="$2";            shift 2 ;;
+        --scratch)         CLI_SCRATCH="$2";         shift 2 ;;
+        --ssh-port)        CLI_SSH_PORT="$2";        shift 2 ;;
+        *) break ;;
+    esac
+done
+
+ISO="${CLI_ISO:-${usage_iso:-}}"
+PAYLOAD_REF="${CLI_PAYLOAD_REF:-${usage_payload_ref:-}}"
+INSTALL_ONLY=$([[ "${CLI_INSTALL_ONLY:-${usage_install_only:-}}" == "true" ]] && echo 1 || echo 0)
+SECURE=$([[ "${CLI_SECURE:-${usage_secure:-}}" == "true" ]] && echo 1 || echo 0)
+EXPECT_FAIL=$([[ "${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}" == "true" ]] && echo 1 || echo 0)
+LUKS_PASSPHRASE="${CLI_LUKS_PASSPHRASE:-${usage_luks_passphrase:-}}"
+QEMU_MEM="${CLI_MEM:-${usage_mem:-8192}}"
+QEMU_SMP="${CLI_SMP:-${usage_smp:-8}}"
+QEMU_DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"
+SCRATCH_DISK="${CLI_SCRATCH:-${usage_scratch:-/var/tmp/krytis-scratch.img}}"
+SSH_PORT="${CLI_SSH_PORT:-${usage_ssh_port:-2224}}"
+
+MONITOR_LIVE="/tmp/krytis-qemu-live.sock"
+SERIAL_LIVE="/tmp/krytis-qemu-live-serial.log"
+MONITOR_INSTALLED="/tmp/krytis-qemu-installed.sock"
+SERIAL_INSTALLED="/tmp/krytis-qemu-installed-serial.log"
+OVMF_VARS_LIVE="/var/tmp/krytis-qemu-live-vars.fd"
+OVMF_VARS_INSTALLED="/var/tmp/krytis-qemu-installed-vars.fd"
+
+[[ -z "$ISO" ]] && { echo "ERROR: --iso is required" >&2; exit 1; }
+[[ -f "$ISO" ]] || { echo "ERROR: ISO not found: $ISO" >&2; exit 1; }
+
+if [[ "${SECURE}" -eq 1 && "${EXPECT_FAIL:-0}" -eq 0 && "${INSTALL_ONLY}" -eq 1 ]]; then
+    echo "note: --install-only — OVMF_VARS_SECURE is accepted but unused; nothing boots the installed disk here"
+fi
+if [[ "${EXPECT_FAIL}" -eq 1 && "${INSTALL_ONLY}" -eq 1 ]]; then
+    echo "ERROR: --expect-fail is incompatible with --install-only — this mode produces no boot verdict to invert" >&2
+    exit 1
+fi
+if [[ "${EXPECT_FAIL}" -eq 1 && "${SECURE}" -eq 0 && -z "${OVMF_VARS_SECURE:-}" ]]; then
+    echo "ERROR: --expect-fail requires --secure (or OVMF_VARS_SECURE) — with nothing enforcing there is nothing to reject" >&2
+    exit 1
+fi
+
+# Phase 2 (installed disk) enforces when OVMF_VARS_SECURE is set.
+SECURE_ENV=()
+PHASE2_DESC="PLAIN OVMF — no enforcement (OVMF_VARS_SECURE unset)"
+if [[ "${SECURE}" -eq 1 ]] || [[ -n "${OVMF_VARS_SECURE:-}" ]]; then
+    if [[ -n "${OVMF_VARS_SECURE:-}" ]]; then
+        [[ -f "${OVMF_VARS_SECURE}" ]] || { echo "ERROR: OVMF_VARS_SECURE=${OVMF_VARS_SECURE} not found" >&2; exit 1; }
+        SECURE_ENV=(--secure --ovmf-vars-override "${OVMF_VARS_SECURE}")
+        PHASE2_DESC="Secure Boot ENFORCEMENT (vars=${OVMF_VARS_SECURE})"
+    else
+        SECURE_ENV=(--secure)
+        PHASE2_DESC="Secure Boot ENFORCEMENT (--secure, no enrolled vars)"
+    fi
+fi
+
+echo "=== [0/4] Clearing any leftover Krytis VMs ==="
+e2e_qemu_stop "${MONITOR_LIVE}" "stale live VM"
+e2e_qemu_stop "${MONITOR_INSTALLED}" "stale installed VM"
+if ! e2e_port_free "${SSH_PORT}"; then
+    echo "ERROR: port ${SSH_PORT} is still in use after teardown — something holds it; refusing to start" >&2
+    exit 1
+fi
+
+# Both VMs are torn down on ANY exit, including mid-phase failures.
+e2e_on_exit "e2e_qemu_stop '${MONITOR_LIVE}' 'live VM'"
+e2e_on_exit "e2e_qemu_stop '${MONITOR_INSTALLED}' 'installed VM'"
+
+echo "=== [1/4] Booting live ISO with PLAIN OVMF (the live ISO is unsigned by design) ==="
+"${REPO_ROOT}/mise/tasks/iso-boot-live" \
+    --iso "${ISO}" \
+    --disk "${QEMU_DISK}" \
+    --scratch "${SCRATCH_DISK}" \
+    --monitor "${MONITOR_LIVE}" \
+    --serial "${SERIAL_LIVE}" \
+    --ssh-port "${SSH_PORT}" \
+    --mem "${QEMU_MEM}" \
+    --smp "${QEMU_SMP}" \
+    --ovmf-vars-scratch "${OVMF_VARS_LIVE}"
+
+echo "=== [2/4] Installing (PAYLOAD_REF=${PAYLOAD_REF:-<target>/payload_ref}) ==="
+PAYLOAD_REF="${PAYLOAD_REF}" \
+LUKS_PASSPHRASE="${LUKS_PASSPHRASE}" \
+    "${REPO_ROOT}/scripts/iso-install-fisherman.sh" \
+        krytis "${SSH_PORT}" "${MONITOR_LIVE}"
+
+# iso-install-fisherman.sh asks the live VM to power down, but if it exited
+# early the VM may still hold the disk. Make the handover explicit.
+e2e_qemu_stop "${MONITOR_LIVE}" "phase 1 live VM"
+
+if [[ "${INSTALL_ONLY}" -eq 1 ]]; then
+    echo "=== INSTALL_ONLY=1 — stopping after phase 2; installed disk left in place ==="
+    echo "Hand it to a cmdline-agnostic checker, e.g.:"
+    echo "  mise run boot-test --reuse-disk ${QEMU_DISK} --secure"
+    echo "${QEMU_DISK}"
+    exit 0
+fi
+
+echo "=== [3/4] Booting the installed disk: ${PHASE2_DESC} ==="
+"${REPO_ROOT}/mise/tasks/iso-boot-installed" \
+    --disk "${QEMU_DISK}" \
+    --monitor-live "${MONITOR_LIVE}" \
+    --monitor "${MONITOR_INSTALLED}" \
+    --serial "${SERIAL_INSTALLED}" \
+    --mem "${QEMU_MEM}" \
+    --smp "${QEMU_SMP}" \
+    --ovmf-vars-scratch "${OVMF_VARS_INSTALLED}" \
+    "${SECURE_ENV[@]}"
+
+echo "=== [4/4] Verdict (expect-fail=${EXPECT_FAIL}) ==="
+set +e
+"${REPO_ROOT}/mise/tasks/iso-verify-boot" \
+    --monitor "${MONITOR_INSTALLED}" \
+    --serial "${SERIAL_INSTALLED}" \
+    $([[ "${EXPECT_FAIL}" -eq 1 ]] && echo "--expect-fail")
+RC=$?
+set -e
+case "$RC" in
+    0) echo "✅ iso-e2e-test: PASS" ;;
+    2) echo "❓ iso-e2e-test: INCONCLUSIVE" >&2 ;;
+    *) echo "❌ iso-e2e-test: FAIL (exit ${RC})" >&2 ;;
+esac
+exit "$RC"
