@@ -1,4 +1,4 @@
-# xwayland-satellite v0.8.2 — rootless XWayland manager, vendored as a
+# xwayland-satellite v0.8.1 — rootless XWayland manager, vendored as a
 # first-party element (#499).
 #
 # Previously consumed via gnome-build-meta.bst:sdk/xwayland-satellite.bst.
@@ -10,20 +10,20 @@
 # reference entirely for this one element. Blast radius is exactly one line
 # (elements/stacks/desktop.bst's dependency on the gnome-build-meta path).
 #
-# Removal condition: drop this element and revert desktop.bst to
-# gnome-build-meta.bst:sdk/xwayland-satellite.bst once that element's own
-# `time` pin reaches >=0.3.47, or gnome-build-meta gains an overrides
-# mechanism — whichever comes first.
-#
-# Same upstream ref gnome-build-meta currently pins (v0.8.2 — confirmed no
-# newer tag exists as of 2026-09-01).
+# Pinned to v0.8.1 (not v0.8.2): v0.8.2 breaks Steam drop-down menus under
+# rootless XWayland — upstream issue #468. `track:` is commented out and
+# v0.8.2 is excluded. Re-enable tracking once issue #468 is fixed and a new
+# release ships the fix. Removal condition: drop this element and revert
+# desktop.bst to gnome-build-meta.bst:sdk/xwayland-satellite.bst once that
+# element's own `time` pin reaches >=0.3.47 AND upstream issue #468 is fixed
+# (meaning v0.8.2 is no longer the latest) — both must hold.
 #
 # build.rs uses vergen-gitcl's GitclBuilder::describe(true, true, None),
 # which shells out to `git describe --always --tags` plus a separate
 # `git status --porcelain` dirty probe. `kind: git_repo` stages a real
 # `.git`, so that succeeds here (hence components/git.bst in
 # build-depends) — but the `kind: patch` source below dirties the
-# worktree, so the embedded version lands on "v0.8.2-dirty".
+# worktree, so the embedded version lands on "v0.8.1-dirty".
 #
 # VERGEN_IDEMPOTENT does not suppress that: in vergen-gitcl 1.0.8 the
 # describe path never reads the idempotent flag (only the commit
@@ -31,7 +31,7 @@
 # short-circuits the shell-out, and the literal VERGEN_IDEMPOTENT_OUTPUT
 # sentinel is the value upstream's own src/lib.rs::version() special-cases,
 # falling back to CARGO_PKG_VERSION. So `xwayland-satellite -version`
-# prints "0.8.2" deterministically, independent of tag reachability in the
+# prints "0.8.1" deterministically, independent of tag reachability in the
 # mirror clone and of how many patches this element carries. See
 # docs/skills/bst.md § vergen-gitcl.
 #
@@ -73,8 +73,12 @@ config:
 sources:
 - kind: git_repo
   url: github:Supreeeme/xwayland-satellite.git
-  track: 'v*'
-  ref: v0.8.2-0-g8d135d3b2854b30fd01ea6cd6c27e523dd50a839
+  # FIXME: re-enable track when upstream issue is fixed:
+  # https://github.com/Supreeeme/xwayland-satellite/issues/468
+  # track: 'v*'
+  exclude:
+  - v0.8.2
+  ref: v0.8.1-0-g536bd32efc935bf876d6de385ec18a1b715c9358
 
 - kind: patch
   path: patches/xwayland-satellite/bump-time-ghsa-r6v5-fh4h-64xc.patch

@@ -272,3 +272,21 @@ writeup and the explicit caveat against a blind swap in `docs/skills/bst.md` § 
 deps and Mesa. Krytis's `desktop/niri.bst`, `desktop/cage.bst`, `desktop/wlroots.bst`, and
 `desktop/noctalia-greeter.bst` all build-depend on full `mesa.bst` per this file's own
 documented "always both" rule — worth a per-element spot-check, not a mechanical change.
+
+## xwayland-satellite 0.8.2 breaks Steam drop-down menus — pin to 0.8.1
+
+*Source: zirconium-hawaii `4a3f63a` — "fix(desktop): pin xwayland-satellite to 0.8.1"*
+
+xwayland-satellite 0.8.2 introduces a regression that breaks Steam drop-down menus under
+rootless XWayland ([upstream issue #468](https://github.com/Supreeeme/xwayland-satellite/issues/468)).
+Zirconium-hawaii pinned to v0.8.1 and commented out `track:` with a FIXME until upstream
+fixes the regression.
+
+**Krytis is affected.** `elements/desktop/xwayland-satellite.bst` was on v0.8.2 (#499).
+Downgraded to v0.8.1 in the same commit as this skill entry.
+
+Tracking approach: comment out `track: v*` and add `exclude: [v0.8.2]` — do not re-enable
+tracking or remove the exclude until issue #468 is resolved upstream and a new tag ships
+the fix. The removal condition already noted in the element's comment (drop it and revert
+to the gnome-build-meta pin when the `time` CVE is also fixed) becomes: revert *and* skip
+v0.8.2, or wait for a v0.8.3+ that fixes both.

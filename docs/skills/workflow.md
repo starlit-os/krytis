@@ -179,6 +179,22 @@ Running from the main repo dir produces: `head branch "main" is the same as base
 
 **Never pass a multi-line PR/issue body to `gh` via a heredoc (`--body "$(cat <<'EOF' ... EOF)"`) in the `bash` tool.** Hit three times now, same failure shape every time (PR #779, 2026-09-08; PR #803, 2026-09-10; PR #815/issue #794, 2026-09-11): the heredoc's terminator match breaks in transport to the persistent shell, `gh pr create` itself never runs, and the shell then reads the **leftover, unconsumed body text as fresh top-level shell input**. Every line/word that happens to look like a real path or command gets executed for real. The #779 incident ran a first-boot wizard script and kicked off an unattended `mise run build --pull` on a nearly-full disk. The #803 incident triggered `mise run bst source track` with no element filter — a full 937-element project-wide tracking sweep — which rewrote the pinned `ref:` on 7 unrelated elements (caught via `git status`, reverted with `git checkout --`, before anything leaked into the pushed branch). The #815 incident's PR body happened to contain inline-code-quoted `mise runner-vps:register`/`install` commands (documenting the very tasks the PR added) — both re-ran for real; harmless only because both are designed idempotent/safe-to-repeat (`register` failed cleanly on the missing PTY for the FIDO2 touch prompt, `install`'s package/binary steps are already guarded no-ops) and were caught and cancelled via `hub jobs`/`hub cancel` before either could do anything destructive. All three times `gh pr list` came back empty and no `gh` process existed afterward — the PR itself was never created; only the leaked body text did anything. This keeps recurring **despite being documented after the first two hits** — reading this entry is necessary but has proven insufficient; treat "does the PR/issue body contain a `--body "$(cat <<...)"` shape" as a mandatory pre-flight check on every `gh pr create`/`gh issue comment` call, not just a thing to remember. Fix, and the only fix: write the body with the `write` tool to a temp file, then `gh pr create --body-file <path>` (or `gh issue comment --body-file <path>`). Same root cause as the `git commit -m` backtick hazard directly above — any multi-line or quote-heavy content for a shell-invoked CLI goes through a temp file, never inline heredoc/quoting in the `bash` tool.
 
+## Retargeted PRs Skip CI Without `edited` in the Workflow Trigger
+
+*Source: dakota `cb7d1c5` — `ci: revalidate retargeted PRs and document CI-run Justfile recipes`*
+
+A `pull_request:` event with no `types:` filter uses GitHub's defaults: `opened`, `synchronize`, `reopened`. The `edited` event fires when a PR's **base branch changes** (e.g. a PR opened against a feature branch is retargeted to `main`). Without it, the retargeted PR merges without the checks ever running against the new base.
+
+Fix — add `edited` to every workflow that gates merge:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+```
+
+Krytis's `.github/workflows/checks.yml` currently uses bare `pull_request:` with no `types:` — same gap. A PR retargeted here skips the static checks until the next `synchronize` event (a new push).
+
 ## The One Verification Gate an Agent Cannot Run: `generate-disk`
 
 AGENTS.md § Verification requires every PR to confirm the image booted, and `mise run boot-test` is the automated pass/fail for it. An agent session cannot complete that command. Step 1/5 shells out to `mise/tasks/generate-disk`, which needs real root, and an agent's non-TTY shell dies immediately with:

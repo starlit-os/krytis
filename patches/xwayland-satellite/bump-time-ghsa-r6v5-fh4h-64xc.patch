@@ -1,11 +1,12 @@
-# xwayland-satellite v0.8.2 pins `time` 0.3.44, vulnerable to
+# xwayland-satellite v0.8.1 pins `time` 0.3.44, vulnerable to
 # GHSA-r6v5-fh4h-64xc (fixed 0.3.47). `time` is not a direct dependency —
 # pulled in transitively via the `vergen-gitcl` build-dependency. Bumps
 # Cargo.lock's `time` entry (and the transitive deps that moved with it:
 # deranged, num-conv, time-core, time-macros; drops itoa/serde, which
 # time no longer needs at this version) to 0.3.55, the newest published
 # release that is not yanked (0.3.48 and 0.3.50 both are) — produced via
-# `cargo update -p time --precise 0.3.55` against the v0.8.2 tag.
+# `cargo update -p time --precise 0.3.55` against the v0.8.2 tag; applies
+# cleanly to v0.8.1 (identical Cargo.lock sections for affected packages).
 #
 # Verified locally: `cargo build --release --locked` with this Cargo.lock
 # compiles vergen-gitcl + time + xwayland-satellite itself cleanly under

@@ -24,8 +24,8 @@ repos:
     branch: testing
     local_path: dakota
     skill_file: docs/skills/dakota.md
-    last_checked_sha: 9578027793d35920cb3ef17905185d26c68e32ba
-    last_checked_date: "2026-08-31"
+    last_checked_sha: 1cf9ef6507366a2e4471cf3cddb0268206e08255
+    last_checked_date: "2026-09-14"
 
   - name: zirconium-hawaii
     upstream: zirconium-dev/zirconium-hawaii
@@ -38,5 +38,5 @@ repos:
     branch: stable
     local_path: zirconium-hawaii
     skill_file: docs/skills/zirconium-hawaii.md
-    last_checked_sha: abb496944443a41d5000f7753cebe3484b62f7df
-    last_checked_date: "2026-08-31"
+    last_checked_sha: 807636dca25fb219afcf73a3a5383392f7859071
+    last_checked_date: "2026-09-14"
