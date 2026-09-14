@@ -78,7 +78,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-253-g3b9a14b35ae49e65af8af7ee2cbc80d984e5012b
+  ref: v0.6.0-alpha-254-g75609851ff006758f374e0a072db69f23d0b88fd
 
 - kind: patch
   path: patches/oo7/login-helper-connect-retry.patch
