@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+#MISE description="Boot the fisherman-installed disk in QEMU (phase 3 of iso-e2e-test)"
+#USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Installed disk image"
+#USAGE flag "--monitor-live <path>" default="/tmp/krytis-qemu-live.sock" help="Live VM monitor socket (waited on for disk release)"
+#USAGE flag "--monitor <path>" default="/tmp/krytis-qemu-installed.sock" help="QEMU HMP monitor socket"
+#USAGE flag "--serial <path>" default="/tmp/krytis-qemu-installed-serial.log" help="Serial console log"
+#USAGE flag "--mem <mb>" default="8192" help="QEMU memory in MiB"
+#USAGE flag "--smp <n>" default="8" help="QEMU vCPU count"
+#USAGE flag "--secure" help="Boot under Secure Boot enforcement (q35,smm=on + pflash secure=on)"
+#USAGE flag "--ovmf-vars-override <path>" help="Enrolled varstore to boot under (copied to scratch; required with --secure)"
+#USAGE flag "--ovmf-vars-scratch <path>" default="/var/tmp/krytis-qemu-installed-vars.fd" help="Writable copy of the OVMF variable store"
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=scripts/e2e-lib.sh
+source "${REPO_ROOT}/scripts/e2e-lib.sh"
+
+# argc-fallback: parse flags when invoked directly (not via mise run).
+CLI_DISK="" CLI_MONITOR_LIVE="" CLI_MONITOR="" CLI_SERIAL=""
+CLI_MEM="" CLI_SMP="" CLI_SECURE="" CLI_OVMF_VARS_OVERRIDE="" CLI_OVMF_VARS_SCRATCH=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --disk)               CLI_DISK="$2";               shift 2 ;;
+        --monitor-live)       CLI_MONITOR_LIVE="$2";       shift 2 ;;
+        --monitor)            CLI_MONITOR="$2";            shift 2 ;;
+        --serial)             CLI_SERIAL="$2";             shift 2 ;;
+        --mem)                CLI_MEM="$2";                shift 2 ;;
+        --smp)                CLI_SMP="$2";                shift 2 ;;
+        --secure)             CLI_SECURE="true";           shift ;;
+        --ovmf-vars-override) CLI_OVMF_VARS_OVERRIDE="$2"; shift 2 ;;
+        --ovmf-vars-scratch)  CLI_OVMF_VARS_SCRATCH="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+QEMU_DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"
+MONITOR_LIVE="${CLI_MONITOR_LIVE:-${usage_monitor_live:-/tmp/krytis-qemu-live.sock}}"
+MONITOR="${CLI_MONITOR:-${usage_monitor:-/tmp/krytis-qemu-installed.sock}}"
+SERIAL="${CLI_SERIAL:-${usage_serial:-/tmp/krytis-qemu-installed-serial.log}}"
+QEMU_MEM="${CLI_MEM:-${usage_mem:-8192}}"
+QEMU_SMP="${CLI_SMP:-${usage_smp:-8}}"
+SECURE=$([[ "${CLI_SECURE:-${usage_secure:-}}" == "true" ]] && echo 1 || echo 0)
+OVMF_VARS_OVERRIDE="${CLI_OVMF_VARS_OVERRIDE:-${usage_ovmf_vars_override:-}}"
+VARS_SCRATCH="${CLI_OVMF_VARS_SCRATCH:-${usage_ovmf_vars_scratch:-/var/tmp/krytis-qemu-installed-vars.fd}}"
+
+QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+           /usr/bin/qemu-system-x86_64 \
+           /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1 || true)
+[[ -z "$QEMU" ]] && { echo "ERROR: qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
+
+OVMF_CODE=""
+if [[ "${SECURE}" -eq 1 ]]; then
+    for f in /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd \
+              /usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
+              /usr/share/edk2/x64/OVMF_CODE.4m.secboot.fd \
+              /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd \
+              /usr/share/OVMF/OVMF_CODE.secboot.fd; do
+        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
+    done
+    [[ -z "$OVMF_CODE" ]] && { echo "ERROR: --secure but no secboot OVMF code image found" >&2; exit 1; }
+fi
+if [[ -z "$OVMF_CODE" ]]; then
+    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
+              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd; do
+        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
+    done
+fi
+[[ -z "$OVMF_CODE" ]] && { echo "ERROR: OVMF firmware code image not found" >&2; exit 1; }
+
+OVMF_VARS=""
+if [[ -n "$OVMF_VARS_OVERRIDE" ]]; then
+    [[ -f "$OVMF_VARS_OVERRIDE" ]] || { echo "ERROR: --ovmf-vars-override=${OVMF_VARS_OVERRIDE} not found" >&2; exit 1; }
+    cp "$OVMF_VARS_OVERRIDE" "${VARS_SCRATCH}"
+    OVMF_VARS="${VARS_SCRATCH}"
+else
+    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
+              /usr/share/edk2/ovmf/OVMF_VARS.fd \
+              /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
+        if [[ -f "$f" ]]; then cp "$f" "${VARS_SCRATCH}"; OVMF_VARS="${VARS_SCRATCH}"; break; fi
+    done
+fi
+
+rm -f "${MONITOR}" "${SERIAL}" "${MONITOR}.pid"
+
+# Wait for the live VM to release the disk (monitor socket disappears on exit).
+for i in $(seq 1 20); do
+    [[ -S "${MONITOR_LIVE}" ]] || break
+    sleep 2
+done
+
+QEMU_ACCEL="-accel kvm"
+QEMU_PREFIX=""
+if ! test -r /dev/kvm 2>/dev/null; then
+    if sudo test -r /dev/kvm 2>/dev/null; then
+        QEMU_PREFIX="sudo"
+    else
+        QEMU_ACCEL="-accel tcg,thread=multi"
+    fi
+fi
+CPU_FLAG="-cpu host"
+[[ "$QEMU_ACCEL" =~ tcg ]] && CPU_FLAG="-cpu qemu64"
+
+MACHINE_ARGS="q35"
+FLASH_SECURE_ARGS=()
+if [[ "${SECURE}" -eq 1 ]]; then
+    # smm=on protects the varstore from the guest; the pflash `secure`
+    # property is what makes the firmware honour that protection. Omitting
+    # either leaves the varstore writable, so nothing is really enforced.
+    MACHINE_ARGS="q35,smm=on"
+    FLASH_SECURE_ARGS=(-global driver=cfi.pflash01,property=secure,value=on)
+    echo "Secure Boot enforcement ON (machine=${MACHINE_ARGS}, code=${OVMF_CODE}, vars=${OVMF_VARS})"
+fi
+
+QEMU_PFLASH=(-drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}")
+[[ -n "$OVMF_VARS" ]] && QEMU_PFLASH+=(-drive "if=pflash,format=raw,file=${OVMF_VARS}")
+
+echo "Booting installed disk: ${QEMU_DISK} (mem=${QEMU_MEM} MiB, smp=${QEMU_SMP})"
+# shellcheck disable=SC2086
+$QEMU_PREFIX "$QEMU" \
+    -machine "${MACHINE_ARGS}" $CPU_FLAG -m "${QEMU_MEM}" -smp "${QEMU_SMP}" $QEMU_ACCEL \
+    "${FLASH_SECURE_ARGS[@]}" \
+    "${QEMU_PFLASH[@]}" \
+    -drive "if=none,id=disk,file=${QEMU_DISK},format=raw,cache=unsafe" \
+    -device virtio-blk-pci,drive=disk \
+    -netdev user,id=net0 \
+    -device virtio-net-pci,netdev=net0 \
+    -monitor "unix:${MONITOR},server,nowait" \
+    -serial "file:${SERIAL}" \
+    -display none \
+    -daemonize -pidfile "${MONITOR}.pid"
+echo "Installed QEMU started (monitor: ${MONITOR})"
+
+for i in $(seq 1 15); do
+    [[ -S "${MONITOR}" ]] && break
+    [[ $i -eq 15 ]] && {
+        echo "ERROR: installed QEMU never opened its monitor socket" >&2
+        e2e_qemu_stop "${MONITOR}" "installed VM"
+        exit 1
+    }
+    sleep 2
+done

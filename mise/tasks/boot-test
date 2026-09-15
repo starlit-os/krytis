@@ -474,8 +474,12 @@ LUKS_PROMPTED=false
 LUKS_ATTEMPTS=0
 LUKS_LAST_TRY=0
 LUKS_MAX_ATTEMPTS=3
+# Wall-clock, not iteration count: a probe that returns instantly and one that
+# burns its whole `timeout 10` cost very different amounts of the budget, and
+# `SSH_WAIT` is advertised to the operator in seconds.
+SSH_DEADLINE=$(( $(date +%s) + SSH_WAIT ))
 ELAPSED=0
-for _ in $(seq 1 $((SSH_WAIT / 2))); do
+while [ "$(date +%s)" -lt "${SSH_DEADLINE}" ]; do
     # Answer before probing SSH: until the root is unlocked there is no system to
     # ssh into, so a prompt sitting unanswered would just burn the whole budget.
     #
@@ -493,16 +497,23 @@ for _ in $(seq 1 $((SSH_WAIT / 2))); do
         echo "    LUKS passphrase prompt seen — answering on the serial console (attempt ${LUKS_ATTEMPTS}/${LUKS_MAX_ATTEMPTS})"
         send_passphrase "${LUKS_PASS}" || exit 1
     fi
-    if ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    # `timeout 10` is the wall-clock cap, and it is not redundant with
+    # ConnectTimeout: ConnectTimeout bounds the TCP connect only. A guest that
+    # accepts the connection and then stalls in authentication — krytis's sshd
+    # runs AuthorizedKeysCommand=/usr/bin/userdbctl ssh-authorized-keys, which
+    # blocks indefinitely when systemd-userdbd's varlink socket does not answer —
+    # leaves ssh waiting forever, so iteration 1 never returns and the whole
+    # SSH_WAIT budget below is never consulted. Observed as boot-test sitting at
+    # "[3/5] Waiting for SSH (up to 240s)" for 40+ minutes. See
+    # docs/skills/pam.md § userdbctl can wedge SSH pubkey auth.
+    if timeout 10 ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
            -o ConnectTimeout=2 -o BatchMode=yes -o IdentitiesOnly=yes \
            -i "${WORKDIR}/id_boottest" root@localhost true 2>/dev/null; then
         SSH_UP=true
         break
     fi
     sleep 2
-    # Wall-clock is not usable here — send_passphrase itself takes seconds — so the
-    # retry spacing counts loop iterations, which is what ELAPSED tracks.
-    ELAPSED=$((ELAPSED + 2))
+    ELAPSED=$(( SSH_WAIT - (SSH_DEADLINE - $(date +%s)) ))
 done
 
 # The acceptance criterion from #473: the hardware symptom was a splash that
