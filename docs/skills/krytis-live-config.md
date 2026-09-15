@@ -47,9 +47,9 @@ guessable from the krytis repo alone — see
 [krytis#236](https://github.com/starlit-os/krytis/issues/236#issuecomment-4862419237)).
 
 **Fix:** pre-seed the marker for `liveuser`, mirroring how
-`gnome-initial-setup-done` is pre-seeded for GNOME-based live images
-elsewhere in this repo (`dakota/src/configure-live.sh`,
-`live/src/configure-live.sh`):
+`gnome-initial-setup-done` is pre-seeded for GNOME-based live images upstream in
+`projectbluefin/dakota-iso` (`live/src/configure-live.sh` and `dakota/src/configure-live.sh`
+there — upstream paths, neither of which exists in this repo):
 
 ```bash
 mkdir -p /home/liveuser/.local/state/noctalia
@@ -64,22 +64,24 @@ whose UKI has a `composefs=<sha512>` digest baked into its frozen kernel cmdline
 time. `bootc install` recomputes that digest over the image it installs and aborts with
 "The UKI has the wrong composefs= parameter" on any mismatch.
 
-**Why it bites here:** the payload pipeline mutates every payload it embeds —
+**Why it bites here:** `live/iso-tools/payload-prep.sh` mutates every payload it embeds —
 `00-defaults.toml`, `/etc/containers/storage.conf`, and two `buildah commit --squash`
 round trips whose only observable effect can be a `/tmp` + `/var/tmp` mtime bump. All
 three invalidate the digest. Harmless for unsealed payloads (no digest to invalidate),
 which is why it went unnoticed until krytis became the first sealed payload.
 
-**Fix:** `PAYLOAD_SEALED=1` makes `scripts/iso-sd-boot.sh` skip payload prep entirely and
-`payload-prep.sh` pass the archive through, so the store receives the exported image
+**Fix:** `PAYLOAD_SEALED=1` makes `scripts/iso-sd-boot.sh` skip payload prep entirely, and
+`live/iso-tools/payload-prep.sh` honours the same flag, so the store receives the image
 byte for byte. `PAYLOAD_REF` moves the store key and recipe.json's
 imgref/targetImgref/image/local_imgref together — moving only one breaks either the
 install (local_imgref unresolvable) or the first `bootc upgrade` (targetImgref points at
 the unsigned image, which the enrolled firmware then refuses).
 
-**Aside, unrelated to sealing:** the `/etc/containers/storage.conf` injection lands on
-every *installed* dakota system too, pinning its podman to the vfs driver. Probably not
-intended; not changed here because unsealed behaviour is deliberately left byte-identical.
+**Aside, unrelated to sealing:** on the *unsealed* path that `/etc/containers/storage.conf`
+injection goes into the payload, so every system installed from an unsealed ISO carries it
+and has its podman pinned to the vfs driver. Inherited from upstream dakota-iso and
+probably not intended; not changed during the port, which deliberately left unsealed
+behaviour byte-identical.
 
 ### DEBUG ISOs need an sshd drop-in — krytis is pubkey-only (2026-08-01)
 
@@ -127,9 +129,11 @@ Verify with `mise run iso-container-build --debug` then
 
 ### ISO build pipeline now native in krytis (2026-09-14)
 
-**What:** `mise run build-iso` previously required a sibling `kitten-lily/dakota-iso`
-checkout and called `just` into it via `DAKOTA_ISO_DIR`. The pipeline is now native in
-this repo (issue #838).
+**What:** the whole ISO build lives in this repo. It used to require a sibling
+`kitten-lily/dakota-iso` checkout and shell out to `just` via `DAKOTA_ISO_DIR`; the build
+moved in-tree in #838, the test path in #839, and #840 removed the last references — no
+task resolves `DAKOTA_ISO_DIR` any more, and `just` is not even a `[tools]` entry in
+`mise.toml`.
 
 **Structure:**
 
@@ -138,6 +142,7 @@ live/
   Containerfile              # 3-stage build (ref → Debian initramfs-builder → final)
   iso-tools/
     Containerfile            # Fedora-based: xorriso, mtools, buildah, skopeo, isomd5sum
+    payload-prep.sh          # injects bootc install defaults; passes sealed payloads through
   src/
     configure-live-krytis.sh # live-env setup: liveuser, greetd autologin, polkit, installer
     install-flatpaks.sh      # bootc-installer flatpak + Flathub reconcile
@@ -161,18 +166,21 @@ scripts/
 mise/tasks/
   iso-container-build        # builds localhost/krytis-installer from live/Containerfile
   build-iso                  # end-to-end: iso-tools → live container → squashfs → ISO
+  verify-iso-payload         # asserts the finished ISO embeds the expected image
 ```
 
-**Key difference from dakota-iso:** `scripts/iso-sd-boot.sh` here does NOT call
-`just ... container` to build the live installer — that container must already
-exist (`localhost/krytis-installer`) before this script is invoked. `build-iso`
-handles the container build via the inline `podman build` step before calling
-`iso-sd-boot.sh`. `iso-container-build` can build it independently for iteration.
+**The live installer container is the caller's job:** `scripts/iso-sd-boot.sh` does not
+build `localhost/krytis-installer` — it must already exist before the script is invoked.
+`build-iso` builds it with an inline `podman build` (after building the `iso-tools`
+image) and only then calls `iso-sd-boot.sh`; `iso-container-build` builds the same
+container independently for iteration.
 
-**payload-prep.sh** lives only in `kitten-lily/dakota-iso` and is referenced via
-`ISO_TOOLS_IMAGE` bind-mount — it is not copied here because sealed payloads
-(`PAYLOAD_SEALED=1`) skip it entirely. The test path no longer uses dakota-iso
-(#839 — see section below). When #840 lands, revisit whether to inline payload-prep.sh.
+**payload-prep.sh is in-tree** at `live/iso-tools/payload-prep.sh`. `iso-sd-boot.sh` runs
+it on the host when buildah is present, and otherwise bind-mounts it into the
+`ISO_TOOLS_IMAGE` container (`-v …/payload-prep.sh:/payload-prep.sh:ro`, `STORAGE_DRIVER=vfs`)
+so the whole `buildah from → copy → commit` sequence survives in one `podman run`. Sealed
+payloads (`PAYLOAD_SEALED=1`) skip it entirely — see `docs/skills/secure-boot.md`
+§ A sealed ISO payload must be embedded byte-identically.
 
 ### ISO test path now native in krytis (2026-09-14)
 
@@ -195,11 +203,12 @@ mise tasks in this repo.
 | `mise/tasks/iso-e2e-test` | Orchestrator: phases 0-4 (or 0-2 with `--install-only`) |
 | `mise/tasks/iso-install-test` | Top-level gate: calls `iso-e2e-test --install-only`, then `boot-test` |
 
-**Composefs-only simplification:** `plain-install-qemu.sh` in dakota-iso had two
-branches: composefs (VFS) and ostree/bootcDirect. Since krytis always uses composefs
-(`live/src/krytis/composefs` = `true`), the ostree/bootcDirect branch was dropped
-entirely from `iso-install-fisherman.sh`, which also drops the `<fisher_repo>` argument
-(no go binary to build).
+**Composefs-only simplification:** upstream dakota-iso's `plain-install-qemu.sh` had two
+branches, composefs (VFS) and ostree/bootcDirect. Krytis is always composefs
+(`live/src/krytis/composefs` = `true`), so only the composefs branch was ported into
+`scripts/iso-install-fisherman.sh`, which therefore takes just
+`<target> <ssh_port> <monitor_live_socket>` — no `<fisher_repo>` argument, because there
+is no go binary to build.
 
 **INSTALL_ONLY=1 pattern for sealed systems:** sealed UKIs have frozen cmdlines, so
 `console=ttyS0` cannot be injected — `iso-verify-boot`'s serial grep can never match.
@@ -217,9 +226,14 @@ to power down at the end of install, but an early exit can leave it still holdin
 disk. `iso-e2e-test` calls `e2e_qemu_stop` explicitly between phases 2 and 3 so the
 disk is always released before the installed VM tries to open it.
 
-**Renamed paths:** all `/tmp/dakota-sealed-qemu-*` paths and `/var/tmp/dakota-sealed-install.img`
-from the old dakota-iso delegation are replaced by `/tmp/krytis-qemu-*` and
-`/var/tmp/krytis-install.img`.
+**Scratch paths:** the QEMU phases use `/tmp/krytis-qemu-live.sock`,
+`/tmp/krytis-qemu-live-serial.log`, `/tmp/krytis-qemu-installed.sock`,
+`/tmp/krytis-qemu-installed-serial.log`, `/var/tmp/krytis-qemu-live-vars.fd`,
+`/var/tmp/krytis-qemu-installed-vars.fd`, `/var/tmp/krytis-install.img` (the install
+target) and `/var/tmp/krytis-scratch.img` (the live VM's `/var/tmp`). The old
+delegation's `/tmp/dakota-sealed-qemu-*` and `/var/tmp/dakota-sealed-install.img` names
+are gone — a VM left behind by one of those is invisible to `iso-e2e-test`'s phase-0
+teardown, which only knows the krytis sockets.
 
 ### The payload ref must not name a registry (2026-09-14)
 

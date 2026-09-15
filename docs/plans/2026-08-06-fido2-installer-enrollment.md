@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `fido2-luks-passphrase` install-time encryption option to fisherman + bootc-installer, mirroring the existing `tpm2-luks-passphrase` support, and enable it for krytis's live-ISO installer (`dakota-iso`, krytis variant).
+**Goal:** Add a `fido2-luks-passphrase` install-time encryption option to fisherman + bootc-installer, mirroring the existing `tpm2-luks-passphrase` support, and enable it for krytis's live-ISO installer (`live/src/configure-live-krytis.sh`, in-repo since #838).
 
 **Architecture:** fisherman's `luks.EnrollFIDO2()` shells out to `systemd-cryptenroll --fido2-device=auto` after `bootc install to-filesystem`, exactly mirroring the existing `EnrollTPM2()` shape. The FIDO2 PIN (when the key has one) is supplied non-interactively via systemd's Credentials mechanism (`CREDENTIALS_DIRECTORY` env var + a file named `cryptenroll.fido2-pin`) — a source-verified path (`src/shared/creds-util.c`'s `get_credentials_dir_internal()` is a bare `secure_getenv()` + path-shape check, no systemd-unit context required) that needs zero PTY/agent machinery. bootc-installer's GTK wizard collects the PIN up front via a new masked entry, exactly like it already collects the LUKS passphrase, and passes it through `recipe.json`. The physical "touch your key" step needs no reply channel — it's a one-way `log_notice()` in systemd's own source, not an interactive query — so fisherman surfaces it with a plain `progress.Info()` call using existing infrastructure.
 
-**Tech Stack:** Go 1.22 (fisherman), Python 3 + GTK4/Libadwaita + Blueprint (bootc-installer), bash (dakota-iso live-ISO config).
+**Tech Stack:** Go 1.22 (fisherman), Python 3 + GTK4/Libadwaita + Blueprint (bootc-installer), bash (krytis's `live/` ISO config).
 
 ## Global Constraints
 
@@ -1196,9 +1196,13 @@ git commit -m "feat(progress): add friendly label for FIDO2 enrolment step"
 
 ---
 
-## Phase 3: dakota-iso krytis variant
+## Phase 3: krytis live-ISO variant
 
-Repo: `/home/lily/Projects/dakota-iso` (fork: `kitten-lily/dakota-iso`)
+Repo: this one. The live-ISO tree moved into krytis in #838/#839 and the sibling
+`kitten-lily/dakota-iso` fork is demoted to a read-only upstream mirror in #841 — do
+**not** edit it. `live/src/configure-live-krytis.sh` is now a krytis file, so Task 10 is
+ordinary in-repo work on a krytis branch, not cross-repo work, and `AGENTS.md`'s
+Cross-repo exception no longer applies to it.
 
 ### Task 10: Advertise FIDO2 support in krytis's images.json leaf
 
@@ -1210,7 +1214,9 @@ Repo: `/home/lily/Projects/dakota-iso` (fork: `kitten-lily/dakota-iso`)
 
 - [ ] **Step 1: Confirm the current block**
 
-Run: `cd /home/lily/Projects/dakota-iso && git log --oneline -1` to confirm current HEAD, then re-read `live/src/configure-live-krytis.sh:224-241` to confirm line numbers haven't shifted since this plan was written (the fisherman/bootc-installer submodule bump in Task 11 does not touch this file, but confirm anyway before editing).
+Run: re-read `live/src/configure-live-krytis.sh:223-241` to confirm the line numbers
+haven't shifted since this plan was written (they were identical before and after the
+port, but confirm anyway before editing).
 
 - [ ] **Step 2: Add the field**
 
@@ -1273,10 +1279,11 @@ IMGEOF
 
 - [ ] **Step 3: Verify the JSON is well-formed**
 
-Run: `cd /home/lily/Projects/dakota-iso && bash -c 'source live/src/configure-live-krytis.sh 2>/dev/null || true'` is not safe to run directly (the script assumes a live container context) — instead, extract just the heredoc and validate it:
+Run: `bash -c 'source live/src/configure-live-krytis.sh 2>/dev/null || true'` is not safe
+to run directly (the script assumes a live container context) — instead, extract just the
+heredoc and validate it:
 
 ```bash
-cd /home/lily/Projects/dakota-iso
 KRYTIS_IMGREF="ghcr.io/starlit-os/krytis:latest" awk '/^cat > \/etc\/bootc-installer\/images.json/,/^IMGEOF/' live/src/configure-live-krytis.sh | sed '1d;$d' | envsubst | python3 -m json.tool
 ```
 
@@ -1285,7 +1292,6 @@ Expected: prints the formatted JSON with `"supports_fido2": true` present, no pa
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/lily/Projects/dakota-iso
 git add live/src/configure-live-krytis.sh
 git commit -m "feat(krytis): advertise supports_fido2 in images.json"
 ```
@@ -1358,15 +1364,18 @@ Add a comment to `starlit-os/krytis#512` (or a new dedicated verification issue)
 
 ---
 
-### Task 13: End-to-end install test via dakota-iso
+### Task 13: End-to-end install test via the krytis ISO gates
 
 - [ ] **Step 1: Build the krytis debug ISO with the updated bootc-installer**
 
-Run: `cd /home/lily/Projects/dakota-iso && just debug=1 iso-sd-boot krytis` (confirm this is still the correct current task name/invocation via `just --list` before running — commands in this fast-moving repo may have been renamed since this plan was written).
+Run: `mise run build-iso --debug` (native since #838; `--debug` is mandatory for a
+drivable ISO — see `docs/design/secure-boot-testing.md` trap T-7).
 
 - [ ] **Step 2: Boot the ISO in QEMU with a passed-through FIDO2 key (or plain passphrase fallback if no USB passthrough is available in the test environment)**
 
-Run whatever this repo's current `plain-boot-qemu-live krytis` / `sealed-test-qemu krytis` equivalent is (check `justfile` — these exact task names have been renamed before in this repo's history per the earlier fisherman-fix investigation, verify current names first).
+Run `mise run iso-boot-live` for an interactive live session, or `mise run iso-install-test`
+for the full install gate (`mise run luks-install-test` for the encrypted-root variant).
+Confirm the current flags with `mise run iso-e2e-test --help` first.
 
 - [ ] **Step 3: Walk the installer GUI, select "Unlock with a security key", complete install**
 
@@ -1384,6 +1393,6 @@ Add a comment to `starlit-os/krytis#512` with the outcome, following this projec
 
 ## Self-Review Notes
 
-- **Spec coverage:** every gap identified in `starlit-os/krytis#512` ("What a FIDO2 install-time type would need", items 1-3) has a corresponding task: fisherman (Tasks 1-3), bootc-installer (Tasks 4-9), dakota-iso krytis variant (Task 10). Blocker 1's resolved design (Credentials-directory PIN mechanism, touch-step one-way message) is implemented exactly as specified in Task 2/3. Blocker 2 (#250) is respected by the Global Constraints' hard rule against a passphrase-less FIDO2 type — this plan does not attempt to fix #250, which is explicitly out of scope per the issue.
+- **Spec coverage:** every gap identified in `starlit-os/krytis#512` ("What a FIDO2 install-time type would need", items 1-3) has a corresponding task: fisherman (Tasks 1-3), bootc-installer (Tasks 4-9), krytis's live-ISO variant (Task 10). Blocker 1's resolved design (Credentials-directory PIN mechanism, touch-step one-way message) is implemented exactly as specified in Task 2/3. Blocker 2 (#250) is respected by the Global Constraints' hard rule against a passphrase-less FIDO2 type — this plan does not attempt to fix #250, which is explicitly out of scope per the issue.
 - **Placeholder scan:** every code step above contains complete, real code — no "TBD"/"add error handling"/"similar to Task N" shortcuts. Two steps (Task 5 Step 1, Task 7 Step 1, Task 9 Step 1) explicitly instruct the implementer to verify an exact existing helper name/JSON field name against the live source before finalizing, rather than guessing — this is a deliberate acknowledgment of incomplete visibility into those specific pre-existing test harnesses, not a placeholder for the *new* code itself, which is fully specified.
-- **Type consistency:** `EnrollFIDO2(partition, unlockPassphrase, pin string) error` (Task 2) matches its call site in Task 3 (`luks.EnrollFIDO2(activeRootPart, r.Encryption.Passphrase, r.Encryption.FIDO2Pin)`) exactly. `Encryption.FIDO2Pin` (Task 1, Go, `json:"fido2Pin,omitempty"`) matches `processor.py`'s emitted `"fido2Pin"` key (Task 7) exactly — same camelCase spelling on both sides of the JSON boundary. `supports_fido2` (Task 5, Python) is snake_case throughout Python and matches the `"supports_fido2"` JSON key written by dakota-iso (Task 10) exactly.
+- **Type consistency:** `EnrollFIDO2(partition, unlockPassphrase, pin string) error` (Task 2) matches its call site in Task 3 (`luks.EnrollFIDO2(activeRootPart, r.Encryption.Passphrase, r.Encryption.FIDO2Pin)`) exactly. `Encryption.FIDO2Pin` (Task 1, Go, `json:"fido2Pin,omitempty"`) matches `processor.py`'s emitted `"fido2Pin"` key (Task 7) exactly — same camelCase spelling on both sides of the JSON boundary. `supports_fido2` (Task 5, Python) is snake_case throughout Python and matches the `"supports_fido2"` JSON key written by `live/src/configure-live-krytis.sh` (Task 10) exactly.

@@ -15,7 +15,7 @@ depends:
   # freedesktop-sdk.bst:components/ostree.bst, which is a superset; adding
   # ostree-minimal causes non-whitelisted overlaps at oci/krytis/runtime.bst.
 
-  # ── ISO build (mise run build-iso → dakota-iso iso-sd-boot) ─────────────
+  # ── ISO build (mise run build-iso → scripts/iso-sd-boot.sh) ────────────
   # Host-side tools for squashfs assembly and the systemd-boot ESP image.
   # podman + skopeo are already pulled by stacks/bootc.bst — listing them
   # here would trip the `overlaps` fatal-warning. buildah and xorriso have
