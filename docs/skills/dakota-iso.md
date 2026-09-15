@@ -22,28 +22,35 @@ graph in-tree ([#519](https://github.com/starlit-os/krytis/issues/519) has the f
 BOM and the exclusion list). Krytis is single-target, always composefs + systemd-boot, so
 every one of those indirections collapsed to a constant on the krytis side.
 
-## Fork State
+## Fork State — there is no fork any more
 
-`kitten-lily/dakota-iso` is a **read-only fast-forward mirror** — same pattern as
-`dakota`/`zirconium-hawaii` (see [`upstream-sync.md`](upstream-sync.md)). Do not commit to
-it, and do not treat it as the home of anything krytis needs.
+Krytis tracks `projectbluefin/dakota-iso` **directly**, the way `zirconium-hawaii` is
+tracked: the local checkout's `origin` is the upstream repo, and no fork sits in the loop
+(`upstream-sync.md` § An `origin` pointing at a fork makes the sync lie explains why that
+matters). The `kitten-lily/dakota-iso` fork was reset to upstream and then **deleted** in
+#841. Do not re-fork it to make a change here; see § Third-party repositories in
+`AGENTS.md`.
 
-It carried four krytis-specific commits on `main` until #841 reset it to the shared
-ancestor `45cd7f22` and fast-forwarded it to upstream. Those commits added the krytis
-variant, the installer rebrand, sealed-payload support (`PAYLOAD_SEALED`/`PAYLOAD_REF`,
-`sealed-test-qemu`, `scripts/e2e-lib.sh`) and the root-free LUKS install chain — **none of
-which exist upstream**; all of it now lives in krytis's `mise/tasks/iso-*`, `scripts/` and
-`live/`. Nothing was lost, and the pre-reset history is still fetchable from the fork:
+That fork carried four krytis-specific commits on `main` (`a5780cf`, `ab94dcf5`,
+`8ee95564`, `3d32f848`): the krytis variant, the installer rebrand, sealed-payload support
+(`PAYLOAD_SEALED`/`PAYLOAD_REF`, `sealed-test-qemu`, `scripts/e2e-lib.sh`) and the
+root-free LUKS install chain — **none of which exist upstream**. All of that logic now
+lives in krytis's `mise/tasks/iso-*`, `scripts/` and `live/`, so nothing was lost by the
+deletion. The pre-demotion git history is archived twice on the dev host, since GitHub no
+longer holds it:
 
-| Ref on `kitten-lily/dakota-iso` | Contents |
+| Where | Contents |
 |---|---|
-| `pre-demotion-backup` | `3d32f848` — `main` as it stood before the reset, all four commits |
-| `feat/sealed-payload-support` | `89bb5aa6` — pre-merge branch of the sealed-payload work |
-| `feat/luks-passphrase-knob` | `a03f98db` — pre-merge branch of the LUKS work |
+| `../dakota-iso` branch `archive/krytis-fork-main` | `3d32f848` — fork `main` before the reset, all four commits |
+| `../dakota-iso` branch `archive/krytis-sealed-payload-support` | `89bb5aa6` — pre-merge branch of the sealed-payload work |
+| `../dakota-iso` branch `archive/krytis-luks-passphrase-knob` | `a03f98db` — pre-merge branch of the LUKS work |
+| `~/Projects/StarlitOS/dakota-iso-krytis-fork-archive.bundle` | all three of the above, `git bundle verify`-clean ("records a complete history") |
 
-The two feature branches are *not* ancestors of `3d32f848` (they were rewritten on merge),
-so they are independent history, not redundant copies — that is why they were left in
-place rather than deleted with the reset.
+The two feature branches are *not* ancestors of `3d32f848` — they were rewritten on merge,
+so they are independent history rather than redundant copies. That is why the archive
+carries all three refs and not just `main`. Restore with
+`git clone dakota-iso-krytis-fork-archive.bundle` or
+`git fetch ../dakota-iso-krytis-fork-archive.bundle 'refs/heads/*:refs/heads/*'`.
 
 ## Lessons Mined
 

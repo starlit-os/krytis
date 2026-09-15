@@ -21,6 +21,9 @@ repos:
     # hasn't run since 2026-06-24. testing moves daily and remains the
     # active branch to track. Also checked: 'next' branch is testing + 1
     # commit with no independent history — not a viable alternative.
+    # Remotes repointed 2026-09-15 (#841): this checkout's origin fetched from
+    # the starlit-os/dakota fork, which was 57 commits behind upstream and made
+    # every sync report "up to date" falsely. origin is now the upstream itself.
     branch: testing
     local_path: dakota
     skill_file: docs/skills/dakota.md

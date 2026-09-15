@@ -66,13 +66,19 @@ directly — there is no `gh repo sync` step and no fork involved.
 **An `origin` pointing at a fork makes the sync lie, silently.** `git fetch origin` +
 `git merge --ff-only origin/<branch>` then measures the *fork's* tip, and a fork only moves
 when somebody syncs it — so the task reports "up to date" while upstream runs away. Found
-while onboarding `dakota-iso` (#841): `../dakota`'s `origin` is `starlit-os/dakota` with
+while onboarding `dakota-iso` (#841): `../dakota`'s `origin` was `starlit-os/dakota` with
 `projectbluefin/dakota` on a second remote, and `origin/testing` was **57 commits behind**
-`upstream/testing` at that moment, which is also 57 commits the lesson-mining pass never
-saw. `dakota-iso`'s checkout is therefore wired the documented way — `origin` =
-`projectbluefin/dakota-iso`, the fork demoted to a `fork` remote — and `zirconium-hawaii`
-never had a fork at all. Check `git -C <local_path> remote -v` before trusting an
-"up to date" line.
+`upstream/testing` at that moment — 57 commits the lesson-mining pass never saw, reported
+as "up to date at 1cf9ef65…" because that *was* the fork's tip.
+
+All three checkouts are now wired the documented way: `../dakota`'s remotes were swapped
+(`origin` = `projectbluefin/dakota`, the unused `starlit-os/dakota` kept as `fork`, the
+duplicate `upstream` remote removed) and its `testing` branch retargeted at
+`origin/testing`; `../dakota-iso` was cloned from the fork but repointed at
+`projectbluefin/dakota-iso` when that fork was deleted (#841); `zirconium-hawaii` never had
+a fork at all. **No tracked repo goes through a fork any more.** If you add one, clone from
+the upstream — and check `git -C <local_path> remote -v` before trusting an "up to date"
+line on an existing one.
 
 ## `docs/upstreams.yml` Values Must Not Carry Inline Comments
 
