@@ -40,3 +40,16 @@ repos:
     skill_file: docs/skills/zirconium-hawaii.md
     last_checked_sha: 807636dca25fb219afcf73a3a5383392f7859071
     last_checked_date: "2026-09-14"
+
+  - name: dakota-iso
+    upstream: projectbluefin/dakota-iso
+    # Onboarded 2026-09-15 (#841) once krytis stopped depending on it: main is
+    # the only long-lived branch upstream (52 heads, every other one a topic
+    # branch), so there is no testing/stable promotion pair to choose between.
+    # It moves in bursts — 2026-08-01, then nothing until 2026-09-08 — so an
+    # empty range is the normal result here, not a signal that the sync broke.
+    branch: main
+    local_path: dakota-iso
+    skill_file: docs/skills/dakota-iso.md
+    last_checked_sha: f5fbf99bbc843167522eec9078ede12308a16848
+    last_checked_date: "2026-09-15"
