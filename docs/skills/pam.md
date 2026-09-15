@@ -401,11 +401,11 @@ and out:
   session tears down. Same root cause as `docs/skills/ci-runner.md` § Rootless podman
   subuid/subgid, except this fires unconditionally on **every boot for every account**, not
   just when a contributor happens to run `mise run runner/build`/`renovate-check`. Neither
-  `lily` nor the `greeter` service account has a `/etc/subuid`/`/etc/subgid` entry on this
+  `lily` nor the `greeter` service account had a `/etc/subuid`/`/etc/subgid` entry on this
   system — systemd-sysusers/homed account creation does not assign one the way classic
-  `useradd` does. Not yet fixed at the image level; worth a deliberate decision (sysusers.d
-  hook, first-boot script, or accepting it as a documented manual step) rather than another
-  per-task warning.
+  `useradd` does. **Fixed image-side in #780** (`elements/config/subuid-provision.bst`,
+  `krytis-subuid-provision.service`) — see the dedicated entry below for what that fix
+  covers and the UID-range gap in it that #852 closed.
 - **Separate, noisy-but-likely-harmless bug found in passing:** every `sudo` invocation spins
   up a full `user@0.service` (root's own systemd user manager) that tries to start
   `oo7-daemon.service` for root and crash-loops it 5× in under a second — `Capability error
@@ -413,6 +413,42 @@ and out:
   practical use for a Secret Service, so this is journal noise on every `sudo` call rather
   than a functional break, but it points at `oo7-daemon`'s systemd unit not handling uid 0
   cleanly. Not investigated further.
+
+## `krytis-subuid-provision.service` excluded every systemd-homed account — the exact population it was built for (#852)
+
+**Found 2026-09-15**, re-reading `files/subuid-provision/subuid-provision.sh` (added in #780
+/ commit `9bb344b`, see the investigation above) while diagnosing an unrelated SSH wedge
+(#848). The service's own commit message says it exists because a homed user hit "no subuid
+ranges found" — but the script only ever provisioned accounts inside `UID_MIN..UID_MAX` from
+`/etc/login.defs`, which krytis never overrides from the shadow-utils stock default:
+`UID_MIN=1000`, `UID_MAX=60000`. systemd-homed's own reserved "regular home user" range —
+visible via `userdbctl`'s boundary markers ("begin/end systemd-homed users") — starts at
+**UID 60001**, one past that ceiling. So the range check silently skipped every homed
+account, every boot, since the feature merged: the fix never actually fixed the case it was
+written for.
+
+**Fix:** a second branch for UIDs at or above 60001, gated on `userdbctl user <name>
+--output=json` reporting `"disposition": "regular"` — the same field that distinguishes a
+real homed identity from an NSS-only pass-through account (system services, `DynamicUser=yes`
+units report no disposition at all here, so they fall through unassigned same as before).
+Needs its own subuid anchor too: reusing the classic formula's `sub_uid_min=100000` base with
+a ~60000 UID offset overflows `SUB_UID_MAX` almost immediately
+(`(60001-1000)*65536 ≈ 3.9 billion` against a 600 million ceiling) — anchor on systemd's
+separately-reserved "container users" range floor instead (524288, also visible via
+`userdbctl`'s boundary markers), which has over a billion UIDs of headroom for the ~500-UID
+homed range.
+
+**Why not just extend `UID_MAX`:** the systemd-homed range (60001-60513) isn't contiguous
+with the classic range and isn't guaranteed to stay a fixed width — querying `userdbctl` for
+the property that actually means "this is a human login account" is correct regardless of
+where systemd places the numeric boundary, rather than re-encoding a second hardcoded range
+and hoping it never drifts.
+
+**Verified** by dry-running the selection+arithmetic against this workstation's real
+`getent passwd`/`userdbctl` output (a systemd-homed account, UID 60339) and against synthetic
+passwd lines covering a classic account, a homed-range UID with no userdb record, and a
+system account — each selected/excluded exactly as expected, with the homed account's
+computed range matching the anchor formula by hand.
 
 ## Login auto-unlock is lost to a race between `oo7-daemon.service` and `pam_oo7`'s login helper
 
