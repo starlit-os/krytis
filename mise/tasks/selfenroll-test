@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Boot an installed sealed disk against a pristine firmware and assert it enrols its own keys, then comes up enforcing (#438)"
-#USAGE flag "--disk <path>" default="/var/tmp/dakota-sealed-install.img" help="Installed sealed disk, as left behind by 'mise run iso-install-test'"
+#USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Installed sealed disk, as left behind by 'mise run iso-install-test'"
 #USAGE flag "--keep" help="Keep the workdir (disk copy, varstore, serial log) for inspection"
 
 set -euo pipefail
@@ -30,7 +30,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-DISK="${CLI_DISK:-${usage_disk:-/var/tmp/dakota-sealed-install.img}}"
+DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"
 KEEP="${CLI_KEEP:-${usage_keep:-}}"
 
 if [ ! -f "${DISK}" ]; then

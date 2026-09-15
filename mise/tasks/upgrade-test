@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Run bootc upgrade on an installed sealed system and assert it still boots under Secure Boot enforcement (#438 gap G-2)"
-#USAGE flag "--disk <path>" default="/var/tmp/dakota-sealed-install.img" help="Installed sealed disk, as left behind by 'mise run iso-install-test'"
+#USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Installed sealed disk, as left behind by 'mise run iso-install-test'"
 #USAGE flag "--to <ref>" help="Switch to this image ref instead of upgrading the configured stream. Default: plain 'bootc upgrade' against the system's own targetImgref"
 #USAGE flag "--keep" help="Keep the workdir (disk copy, varstore, serial log) for inspection"
 
@@ -31,7 +31,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-DISK="${CLI_DISK:-${usage_disk:-/var/tmp/dakota-sealed-install.img}}"
+DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"
 TO_REF="${CLI_TO:-${usage_to:-}}"
 KEEP="${CLI_KEEP:-${usage_keep:-}}"
 

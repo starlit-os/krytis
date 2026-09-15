@@ -953,15 +953,38 @@ acceptance criterion, not a lesser variant.
 
 **It needs a `--debug` ISO.** sshd is disabled in the live session unless the ISO
 was built with `mise run build-iso --debug`, and the install is driven over SSH.
-Without it the run dies ~2 minutes in with
-`kex_exchange_identification: Connection reset by peer`, which reads like a
-network fault. dakota-iso's own CI works around this by unsquashing and patching
-production ISOs; locally, just pass `--debug`.
+`--debug` becomes `DEBUG=1` in `live/src/configure-live-krytis.sh`, which is what
+sets `liveuser`'s password to `live`, symlinks `sshd.service` into
+`multi-user.target.wants`, and writes `/etc/ssh/sshd_config.d/05-live-debug.conf`
+to lift krytis's pubkey-only sshd policy for the live session only (see
+docs/skills/pam.md). Without it the run dies ~2 minutes in with
+`kex_exchange_identification: Connection reset by peer`, or on a readiness probe
+that keeps getting `Permission denied (publickey)` — both read like a network
+fault. So `iso-install-test` and `luks-install-test` pre-flight the ISO rather
+than wait for that: they locate the squashfs with `scripts/iso-squashfs-offset.py`
+and `unsquashfs -offset … -cat` the drop-in straight out of the image, failing in
+seconds with "built without `--debug`" when it is absent.
 
-As with `build-iso`, the QEMU/fisherman orchestration lives in dakota-iso
-(`just sealed-test-qemu krytis`) and the mise task is a wrapper that resolves
-defaults, checks every prerequisite *before* the tens-of-minutes run starts, and
-copies the enrolled varstore to scratch so an enforcing boot never writes back to
+**The QEMU/fisherman orchestration is all in-repo.** `mise/tasks/iso-e2e-test`
+owns the run and numbers its four phases: `iso-boot-live` boots the ISO under
+plain OVMF and waits for a serial readiness marker (`KRYTIS_LIVE_READY`) *and*
+then a real SSH login; `scripts/iso-install-fisherman.sh` writes the recipe,
+uploads it plus `scripts/fisherman-install.sh`, and drives the install over SSH;
+`iso-boot-installed` boots the resulting disk (adding `q35,smm=on` and
+`-global driver=cfi.pflash01,property=secure,value=on` under `--secure`); and
+`iso-verify-boot` reads the verdict off the serial log.
+
+`iso-install-test` and `luks-install-test` run only the first half —
+`iso-e2e-test --install-only`, which stops after the install and leaves
+`/var/tmp/krytis-install.img` in place — and then delegate the verdict to
+`boot-test --reuse-disk`, because `iso-verify-boot` waits for
+`Reached target … Graphical` on serial and a sealed system can never print it
+(§ A sealed image's console goes to tty0 … below). Both still check every
+prerequisite — ISO present, `.ovmf-vars-secure.fd` present under `--secure`, qemu
+present, the `--debug` drop-in present, `sfdisk` for the LUKS gate — *before* the
+tens-of-minutes run starts, and every enrolled varstore is copied to scratch
+before boot (`iso-boot-installed --ovmf-vars-override`, and `boot-test` for the
+delegated verdict), so an enforcing boot never writes back to
 `.ovmf-vars-secure.fd`.
 
 ## A sealed image's console goes to tty0, so an interactive prompt is invisible on serial
