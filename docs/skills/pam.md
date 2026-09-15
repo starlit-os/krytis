@@ -1081,3 +1081,42 @@ a normal disk. `--auto-resize-mode`/`--rebalance-weight` reclaim space through e
 bounded resize operations instead, which is why krytis's first-boot wizard sets
 `--auto-resize-mode=shrink-and-grow` on the initial account rather than touching discard (see
 `docs/design/first-boot-setup.md`, `files/systemd-firstboot/firstboot-wizard.sh`).
+
+## `boot-test`'s SSH verdict must disable `AuthorizedKeysCommand`, not just override `AuthorizedKeysFile` (#848)
+
+**Symptom.** `mise run boot-test` (and everything that delegates its verdict to it —
+`iso-install-test`, `luks-install-test`, `upgrade-test`, `selfenroll-test`,
+`tpm-boot-test`) intermittently wedged at `[3/5] Waiting for SSH`: TCP connects, kex
+completes, sshd advertises `publickey`, then never answers the key offer. Reproduced
+2026-09-14 running #843's ISO gates — three consecutive runs wedged after an earlier
+identical run authenticated in seconds. Guest otherwise healthy
+(`systemctl is-system-running` → `running`, sshd active and listening).
+
+**Why `AuthorizedKeysFile` alone didn't rescue it.** krytis's image-wide sshd config
+carries systemd's `AuthorizedKeysCommand /usr/bin/userdbctl ssh-authorized-keys` drop-in
+(`20-systemd-userdb.conf`). `boot-test`'s `sshd.service` override already pointed
+`AuthorizedKeysFile` at its own ephemeral credential
+(`-o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/krytis.boottest_authorized_keys"`), which
+looks like it should be sufficient — sshd normally short-circuits on the first
+matching source. It wasn't: `AuthorizedKeysCommand` stays configured regardless (that
+keyword is untouched by the `AuthorizedKeysFile` override — different keyword, both
+active), and *some* runs of the pubkey check reach it anyway rather than resolving off
+the file. The exact fallthrough trigger is unconfirmed — plausibly the same
+intermittent condition that makes this reproduce at all, possibly a credential-import
+race — but once `AuthorizedKeysCommand` is reached, `sshd` blocks in pre-auth
+indefinitely if `systemd-userdbd`'s varlink query doesn't answer, and there is no
+timeout on that call.
+
+**Fix, applied in `mise/tasks/boot-test`'s `sshd-dropin.conf`:** add
+`-o AuthorizedKeysCommand=none` alongside the existing `-o "AuthorizedKeysFile …"`, so
+the command source is disabled outright for this one boot rather than merely
+shadowed. `boot-test` doesn't need userdb-backed key lookup — it provisions its own
+ephemeral key — so there is no cost to removing the fallthrough path entirely instead
+of chasing why some runs take it. Verified: `mise run boot-test` passes clean with no
+SSH stall after this change.
+
+**Scope note:** this fixes the *test harness's* dependency on `userdbctl`, not the
+underlying `systemd-userdbd` intermittency, which is a real bug for any interactive
+user hitting SSH on a booted guest and remains open (issue #848). If a `boot-test` run
+still stalls at the SSH wait step after this fix, the cause is something else — this
+specific fallthrough is closed.
