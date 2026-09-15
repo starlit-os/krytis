@@ -194,11 +194,28 @@ printf '[Unit]\nWants=sshd.service krytis-boot-probe.service\n' > "${WORKDIR}/mu
 # and ${CREDENTIALS_DIRECTORY} expansion are known-good. sshd.service's existing
 # ExecStartPre=ssh-keygen -A generates the host keys (which requires the `rw`
 # karg — see docs/skills/bootc-vm.md § /etc and /var need the `rw` karg).
+#
+# AuthorizedKeysCommand=none is load-bearing, not cosmetic (#848): systemd's
+# 20-systemd-userdb.conf drop-in sets `AuthorizedKeysCommand userdbctl
+# ssh-authorized-keys` image-wide, and that keyword is untouched by the
+# AuthorizedKeysFile override above — both sources stay configured
+# simultaneously. sshd normally short-circuits on the first source that
+# matches the offered key, so AuthorizedKeysFile alone should suffice — but
+# some run of this loop doesn't take that path (same intermittent, still
+# undiagnosed condition #848 is tracking, possibly the credential import
+# itself racing sshd's first pubkey check) and reaches
+# AuthorizedKeysCommand, which then blocks in pre-auth indefinitely when
+# systemd-userdbd's varlink socket doesn't answer, wedging the whole
+# boot-test run regardless of ConnectTimeout/probe-loop deadlines.
+# boot-test doesn't need userdb-backed lookup — it provisions its own
+# ephemeral key — so disable the command source outright for this one boot,
+# closing the fallthrough rather than diagnosing it. See docs/skills/pam.md
+# § `userdbctl` can wedge SSH pubkey auth.
 cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
 [Service]
 ImportCredential=krytis.boottest_authorized_keys
 ExecStart=
-ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/krytis.boottest_authorized_keys"
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/krytis.boottest_authorized_keys" -o AuthorizedKeysCommand=none
 DROPIN
 
 # greetd starts unconditionally (it's enabled via Alias=display-manager.service
