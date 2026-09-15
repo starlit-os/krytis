@@ -24,9 +24,10 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Work on gaming support, or wonder why there is no native Steam/gamescope/sysext | [`docs/design/gaming-variant.md`](design/gaming-variant.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
+| Reference the upstream live-ISO/installer project krytis's ISO pipeline was forked out of | [`docs/skills/dakota-iso.md`](skills/dakota-iso.md) |
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
-| Sync dakota/zirconium-hawaii forks and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
+| Sync the dakota/zirconium-hawaii/dakota-iso mirrors and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
 | Generate/attach the SBOM or run the Grype vuln scan (`mise run sbom`, `mise run vuln-scan`, `mise run push`) | [`docs/skills/sbom.md`](skills/sbom.md) |
 | Re-check Grype vuln-scan false positives, or update `.grype.yaml`'s ignore list | [`docs/skills/sbom.md`](skills/sbom.md) § Mitigated: Grype `stock-matcher`..., skill: `.claude/skills/vuln-scan-triage/` |
 | Change `.github/renovate.json5`, enable a manager, or decide what auto-merges (`mise run renovate-check`) | [`docs/skills/renovate.md`](skills/renovate.md) |

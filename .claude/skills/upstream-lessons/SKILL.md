@@ -1,16 +1,18 @@
 ---
 name: upstream-lessons
-description: Sync the dakota and zirconium-hawaii upstream repos, mine the commits/docs/AI-guidance that changed since the last check, and turn anything applicable into docs/skills/ or AGENTS.md updates for krytis. Use whenever the user asks to sync upstreams, check dakota or zirconium-hawaii for lessons, mine upstream, "run the upstream check", or references docs/upstreams.yml or GitHub issue #141. Also the right tool if the user just says something like "see what's new in dakota" or "has zirconium-hawaii changed anything we should steal".
+description: Sync the dakota, zirconium-hawaii and dakota-iso upstream repos, mine the commits/docs/AI-guidance that changed since the last check, and turn anything applicable into docs/skills/ or AGENTS.md updates for krytis. Use whenever the user asks to sync upstreams, check dakota, zirconium-hawaii or dakota-iso for lessons, mine upstream, "run the upstream check", or references docs/upstreams.yml or GitHub issue #141. Also the right tool if the user just says something like "see what's new in dakota" or "has zirconium-hawaii changed anything we should steal".
 ---
 
 # Upstream Lessons
 
 Krytis shares its foundation (Freedesktop SDK, BST, bootc, niri/greetd) with two upstream
-projects: `dakota` (projectbluefin/dakota) and `zirconium-hawaii`
-(zirconium-dev/zirconium-hawaii). Both repos regularly solve problems krytis will hit too —
-a workaround for an FDSDK quirk, a BST element gotcha, a convention that isn't obvious
-until you've been burned by it. This skill is how those lessons get pulled into krytis's
-`docs/skills/` instead of being independently rediscovered later.
+projects — `dakota` (projectbluefin/dakota) and `zirconium-hawaii`
+(zirconium-dev/zirconium-hawaii) — and forked its live-ISO pipeline out of a third,
+`dakota-iso` (projectbluefin/dakota-iso, tracked since #841). All three regularly solve
+problems krytis will hit too — a workaround for an FDSDK quirk, a BST element gotcha, a
+convention that isn't obvious until you've been burned by it. This skill is how those
+lessons get pulled into krytis's `docs/skills/` instead of being independently
+rediscovered later.
 
 The tracking state lives in `docs/upstreams.yml` — one entry per repo, recording the
 upstream, which local branch to follow, and `last_checked_sha`: the upstream commit that
@@ -78,8 +80,8 @@ Sort every commit worth a second look into three buckets, not two:
 
 List every accept-candidate in the conversation: source commit SHA (or file), a
 one-or-two-sentence summary, and which krytis file it belongs in — usually the matching
-`docs/skills/<repo-name>.md` — both `docs/skills/dakota.md` and
-`docs/skills/zirconium-hawaii.md` already exist and show the shape to follow — but route
+`docs/skills/<repo-name>.md` — `dakota.md`, `zirconium-hawaii.md` and `dakota-iso.md` all
+already exist and show the shape to follow — but route
 genuinely cross-cutting workflow/process lessons to `AGENTS.md` instead. Ask the user which
 to accept. This mirrors issue #141's design — human judgment decides what's worth carrying
 forward, this skill just makes the candidates cheap to review.

@@ -13,7 +13,6 @@
 docs/design/secure-boot-tpm-analysis.md   # output of docs/plans/2026-07-12-secure-boot.md Task 2 (#312)
 docs/design/mise-tool-versions.md         # forward-referenced by docs/design/self-build.md
 docs/verifying-signatures.md              # planned by docs/design/cosign-keyless-signing.md § 5
-docs/skills/dakota-iso.md                 # output of docs/plans/2026-08-06-hard-fork-dakota-iso.md Phase 3 (#519)
 
 # Upstream repo paths, cited as sources
 docs/skills/patch-junctions.md            # dakota's skill tree, quoted in docs/skills/dakota.md

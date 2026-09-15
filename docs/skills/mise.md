@@ -15,7 +15,7 @@ mise load-image                                    # bst build + podman load →
 mise lint                                          # bootc container lint via Containerfile
 mise chunkify                                      # rechunk into composefs-ready component layers
 mise kernel-update                                 # bump linux-cachyos to latest CachyOS v3 release
-mise upstream-sync                                 # sync dakota/zirconium-hawaii forks, report new commits
+mise upstream-sync                                 # sync the tracked upstream mirrors, report new commits
 ```
 
 `--` is not needed. The bst task uses `#USAGE arg "<args>" var=#true` which captures all
