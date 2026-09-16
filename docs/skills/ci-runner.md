@@ -389,6 +389,27 @@ step — issue #844's own suggested verification — so a blocked capability
 fails in seconds with an unambiguous step name instead of ~15 minutes into
 the build inside `_ns_build_squashfs`.
 
+### Sealed variant needs no signing-key access at all (issue #862)
+
+`sealed: true` (`workflow_dispatch` boolean input, default `false`) pulls
+`ghcr.io/starlit-os/krytis:sealed` and passes it straight through to
+`mise run build-iso --sealed --payload-image ghcr.io/starlit-os/krytis:sealed`.
+That flag matters: `--payload-image <ref>` makes `scripts/ensure-sealed-image.sh`
+take its **explicit-ref branch**, which skips `mise run seal-uki` entirely and
+just requires the ref to already exist locally (pull it, don't build it) —
+the same "release validation" path the T4 hardware checklist uses. It still
+asserts the pulled image is genuinely sealed (`/boot/EFI/Linux/krytis.efi`
+present) before proceeding, so a corrupted or accidentally-unsigned `:sealed`
+tag fails loudly instead of silently shipping an ISO that looks sealed but
+isn't. No Proton Pass authentication, no `pull-keys`, no UEFI key material
+ever touches this job — that machinery stays confined to `publish.yml`,
+which is what actually produces `:sealed` in the first place.
+
+`build-iso --sealed` already runs `verify-iso-payload` internally right
+after assembly (`mise/tasks/build-iso`'s own tail), so `build-iso.yml`'s
+separate "Verify ISO payload" step is gated `if: ${{ !inputs.sealed }}` —
+running it again for the sealed path would just re-check what the task
+itself already asserted, against the same local tag.
 
 ## Scheduled Workflow Cron Delay
 
