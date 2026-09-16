@@ -3,9 +3,9 @@
 
 Feed the result to `unsquashfs -offset <n> <iso> …` to read the live rootfs
 straight out of the ISO: no root, no loop mount, and no ~5GB extract. xorriso
-is not installed on a Krytis host at all (dakota-iso routes it through the
-iso-tools container), so an `-osirrox` extract would be both slower and less
-portable here.
+is not installed on a Krytis host at all (the ISO build routes it through the
+live/iso-tools container instead), so an `-osirrox` extract would be both
+slower and less portable here.
 
 File data in an ISO 9660 image is contiguous — including across the
 multi-extent records `-iso-level 3` uses for files over 4GB — so the first

@@ -2,16 +2,30 @@
 
 Load when working on `docs/upstreams.yml`, `mise/tasks/upstream-sync`, or the
 `upstream-lessons` Claude Code skill (`.claude/skills/upstream-lessons/`) — the system that
-keeps krytis current with lessons from the `dakota` and `zirconium-hawaii` fork repos.
+keeps krytis current with lessons from the `dakota`, `zirconium-hawaii` and `dakota-iso`
+upstream mirrors.
 Background and design rationale: [issue #141](https://github.com/starlit-os/krytis/issues/141).
 
 ## What It Is
 
 Krytis shares its foundation (Freedesktop SDK, BST, bootc, niri/greetd) with two upstream
-projects. Both regularly solve problems krytis will hit too. Rather than manually watching
-both repos, `docs/upstreams.yml` tracks a "last checked" ref per repo, and the
-`upstream-lessons` skill diffs from there to find what's new, proposes candidate lessons to
-a human, and writes accepted ones into `docs/skills/`.
+projects, and forked its live-ISO pipeline out of a third. All of them regularly solve
+problems krytis will hit too. Rather than manually watching each repo, `docs/upstreams.yml`
+tracks a "last checked" ref per repo, and the `upstream-lessons` skill diffs from there to
+find what's new, proposes candidate lessons to a human, and writes accepted ones into
+`docs/skills/`.
+
+| Tracked repo | Branch | Skill file | Onboarded |
+|---|---|---|---|
+| `projectbluefin/dakota` | `testing` | `docs/skills/dakota.md` | #141 |
+| `zirconium-dev/zirconium-hawaii` | `stable` | `docs/skills/zirconium-hawaii.md` | #141 |
+| `projectbluefin/dakota-iso` | `main` | `docs/skills/dakota-iso.md` | #841 |
+
+`dakota-iso` joined only once krytis stopped *depending* on it: until #840 the ISO build
+shelled out to a sibling checkout of the `kitten-lily/dakota-iso` fork, which carried four
+krytis-only commits. A repo cannot be both a live dependency and a fast-forward mirror —
+`git merge --ff-only` refuses the moment the local checkout carries anything upstream does
+not have. See `docs/skills/dakota-iso.md` § Fork State.
 
 ## `docs/upstreams.yml` Schema
 
@@ -49,6 +63,23 @@ skipped both repos the first time it ran from a worktree. Keep it a bare name.
 `github.com/<upstream>`, not from a fork). `mise upstream-sync` runs `git fetch origin`
 directly — there is no `gh repo sync` step and no fork involved.
 
+**An `origin` pointing at a fork makes the sync lie, silently.** `git fetch origin` +
+`git merge --ff-only origin/<branch>` then measures the *fork's* tip, and a fork only moves
+when somebody syncs it — so the task reports "up to date" while upstream runs away. Found
+while onboarding `dakota-iso` (#841): `../dakota`'s `origin` was `starlit-os/dakota` with
+`projectbluefin/dakota` on a second remote, and `origin/testing` was **57 commits behind**
+`upstream/testing` at that moment — 57 commits the lesson-mining pass never saw, reported
+as "up to date at 1cf9ef65…" because that *was* the fork's tip.
+
+All three checkouts are now wired the documented way: `../dakota`'s remotes were swapped
+(`origin` = `projectbluefin/dakota`, the unused `starlit-os/dakota` kept as `fork`, the
+duplicate `upstream` remote removed) and its `testing` branch retargeted at
+`origin/testing`; `../dakota-iso` was cloned from the fork but repointed at
+`projectbluefin/dakota-iso` when that fork was deleted (#841); `zirconium-hawaii` never had
+a fork at all. **No tracked repo goes through a fork any more.** If you add one, clone from
+the upstream — and check `git -C <local_path> remote -v` before trusting an "up to date"
+line on an existing one.
+
 ## `docs/upstreams.yml` Values Must Not Carry Inline Comments
 
 `mise upstream-sync` parses this file with `awk -F': '` on fixed field names — not a YAML
@@ -64,7 +95,7 @@ trailing on the same line as a value.
 ```bash
 mise upstream-sync                # sync + report range for every tracked repo
 mise upstream-sync dakota         # just one repo
-mise upstream-sync --check        # fetch and report only — no gh repo sync, no local pull
+mise upstream-sync dakota-iso     # …or another
 ```
 
 The sync is `git fetch origin <branch>` followed by `git merge --ff-only origin/<branch>`
@@ -78,10 +109,13 @@ shell script.
 
 ## Bootstrap State
 
-The first pass (2026-07-09) seeded `last_checked_sha` at each fork's HEAD at the time
+The first pass (2026-07-09) seeded `last_checked_sha` at each repo's HEAD at the time
 without mining anything — there was no prior ref to diff against, so "mine the full
 history" would have been a firehose rather than a diff. Real mining starts on the next
-sync once there's an actual commit range.
+sync once there's an actual commit range. `dakota-iso` was bootstrapped the same way on
+2026-09-15 at `f5fbf99`, with one difference: its pre-existing content was already mined
+in anger by #519's port investigation, and what that found is written up in
+`docs/skills/dakota-iso.md` rather than left for a first mining pass to rediscover.
 
 ## `docs/skills/dakota.md`
 
@@ -89,4 +123,6 @@ Created on the first accepted dakota lesson (PR #303/#141) and grown since — u
 `zirconium-hawaii.md`'s "What It Is / Directory Layout / per-topic sections" shape, it uses
 a flatter "What It Is / Lessons Mined" structure with one `### <title>` + `*Source: ...*`
 entry per lesson. Match that existing shape when adding new entries rather than
-introducing a third structure.
+introducing a third structure. `dakota-iso.md` follows the same flatter shape, plus a
+`## Fork State` section that exists only because that repo had a fork with real divergence
+to unwind — don't copy that section into a new entry that never had one.

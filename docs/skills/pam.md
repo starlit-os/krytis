@@ -1043,11 +1043,14 @@ factor for SSH.
 
 ### Key-only SSH also breaks password-driven *tooling* — override with a lower-numbered drop-in
 
-Third consequence, found in #371: any external tool that drives krytis over SSH with a
-password cannot work, including the live-ISO installer test. dakota-iso's E2E gate sets
-`liveuser:live` with `chpasswd` and then logs in with `sshpass`; against a krytis live
-session that fails, and the failure looks like a boot or network problem rather than a
-policy decision:
+Third consequence, found in #371: any tool that drives krytis over SSH with a
+password cannot work — and krytis owns one such tool, the live-ISO installer gate.
+`live/src/configure-live-krytis.sh` sets `liveuser:live` with `chpasswd` (under
+`DEBUG=1` only), and `mise/tasks/iso-boot-live` plus
+`scripts/iso-install-fisherman.sh` then log in as `liveuser` with
+`-o PreferredAuthentications=password`. Against a live session still carrying the
+image's pubkey-only policy that login fails, and the failure looks like a boot or
+network problem rather than a policy decision:
 
 ```
 $ ssh -o PreferredAuthentications=none liveuser@127.0.0.1 -p 2224
@@ -1061,6 +1064,16 @@ sshd was up and listening the entire time — `10-krytis-auth.conf`'s two `no`s 
 harness reports a timeout. **Read a "SSH timeout" against a krytis guest as an auth-policy
 question first, not a boot failure.** Confirm with `PreferredAuthentications=none`, which
 makes sshd list the methods it will actually accept.
+
+**No client-side mechanism rescues this.** `scripts/e2e-lib.sh`'s
+`e2e_ssh_auth_init` uses `sshpass -p live` when that binary is present and
+otherwise writes a private `SSH_ASKPASS` shim, exporting
+`SSH_ASKPASS_REQUIRE=force` (OpenSSH 8.4+) and passing
+`-o NumberOfPasswordPrompts=1`. A krytis host always takes the fallback: it is a
+bootc image with no dnf and no apt, so `sshpass` cannot be installed and is
+deliberately absent. Either way both mechanisms only *supply* a password —
+whether sshd will accept one at all is decided server-side, so the gate still
+depends on the drop-in below, not on which of the two it picked.
 
 The intended escape hatch is the one `10-krytis-auth.conf` documents itself: `sshd_config`
 `Include`s `/etc/ssh/sshd_config.d/*.conf` at line 2 and first-obtained-value wins for

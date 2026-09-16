@@ -8,11 +8,11 @@ set -euo pipefail
 # Why this exists: a sealed payload's UKI carries a composefs= digest baked into
 # its frozen cmdline at seal time, and `bootc install` refuses any mismatch. The
 # embed pipeline therefore has to hand the payload through byte-identically
-# (PAYLOAD_SEALED=1 in dakota-iso). Asserting that inside the pipeline would be
-# tautological — the pass-through makes it true by construction. The finished ISO
-# is the only place that proves the whole chain (podman save → oci-archive →
-# skopeo copy → VFS store → squashfs → ISO) preserved the image, and the same
-# check catches the "wrong tag embedded" class of bug that already bit once
+# (PAYLOAD_SEALED=1 in scripts/iso-sd-boot.sh). Asserting that inside the pipeline
+# would be tautological — the pass-through makes it true by construction. The
+# finished ISO is the only place that proves the whole chain (podman save →
+# oci-archive → skopeo copy → VFS store → squashfs → ISO) preserved the image,
+# and the same check catches the "wrong tag embedded" class of bug that already bit once
 # (#417/#425). Unprivileged, no QEMU, seconds.
 #
 # The invariant: the image ID recorded in the ISO's embedded VFS store equals

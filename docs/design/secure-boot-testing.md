@@ -25,7 +25,7 @@ in §2.
 | `Containerfile` (the `sealed` stage), `files/boot-keys/`, `files/microsoft-uefi-certs/` | T1 + **T2 in full** | This is the `.auth`/signing surface. #438 lived here |
 | `Containerfile.seal-uki`, anything affecting the composefs digest | T1 + T2 + T3 | The digest is verified at install time, not build time |
 | `elements/config/secureboot-loader-conf.bst`, `loader.conf` handling | T2 (`enroll-test`) + T4 | Enrollment policy is firmware-visible; the VM answer differs from hardware |
-| `mise/tasks/build-iso`, `verify-iso-payload`, dakota-iso payload path | T3 | The ISO is the only artifact that exercises the offline store |
+| `mise/tasks/{build-iso,iso-container-build,verify-iso-payload}`, `scripts/iso-sd-boot.sh`, `live/` | T3 | The ISO is the only artifact that exercises the offline store |
 | Kernel cmdline / `files/bootc-config/*.toml` | T1 + T2 + T4 | A UKI freezes the cmdline; FIDO2 unlock depends on it (trap T-9) |
 | Publishing (`push`, `publish.yml`) | T1 (CI now runs `enroll-test` against the published `:sealed` tag automatically — the sealed-publishing part of G-1 is resolved, see §6) | `publish.yml` builds and pushes sealed since #450; `publish_sealed=false` opts a run out |
 | Nothing — periodic confidence check | T0 + T1 + T2 | ~10 minutes, catches drift from dependency bumps |
@@ -89,7 +89,7 @@ firmware. It reads each list's `SignatureSize` field; 16 means no certificate.
 | `mise run selfenroll-test` | **66 s** | the full chain on a real installed disk against a pristine firmware — see T3 below, where it belongs in the sequence | the manual enrollment prompt (a VM auto-enrols) |
 
 The last two need an installed disk, which T3's `iso-install-test` leaves behind at
-`/var/tmp/dakota-sealed-install.img`. Both boot a *copy* of it, so the disk stays a
+`/var/tmp/krytis-install.img`. Both boot a *copy* of it, so the disk stays a
 first-boot disk and can be reused (trap T-4).
 
 ⚠ = `generate-disk` needs `CAP_SYS_ADMIN` for loop devices and a real mount; no
@@ -123,7 +123,7 @@ and it is `mise run selfenroll-test` — **66 s**, no root. Run it after
 `iso-install-test`, which leaves the installed disk behind for it:
 
 ```
-mise run iso-install-test --secure     # ~4 min, leaves /var/tmp/dakota-sealed-install.img
+mise run iso-install-test --secure     # ~4 min, leaves /var/tmp/krytis-install.img
 mise run selfenroll-test               # 66 s
 ```
 
@@ -261,10 +261,15 @@ Each of these cost real debugging time. They are ranked by how convincingly they
   headers in a `db.esl` that contained three *empty* lists, and the zero-byte
   extractions were written off as a tool quirk. Arithmetic is the check: one entry is
   `28 + 16 + len(DER)` bytes, so anything near 44 is empty.
-- **T-6 · A `just` recipe's `VAR={{var}}` prefix shadows the environment.** Every
-  `build-iso` flag (`--output-dir`, `--workdir`, `--compression`, `--debug`) was a
-  silent no-op for months. Grep the build log for the assignment; do not trust that a
-  flag arrived.
+- **T-6 · Task flags can be silently dropped at a task → task boundary.** mise does not
+  parse a child script's `#USAGE` annotations when one task invokes another directly, as
+  `iso-e2e-test` does for `iso-boot-live`/`iso-boot-installed`/`iso-verify-boot` — the
+  flags must be forwarded as positional args and the child needs its own argc fallback.
+  The same class of bug arrived the other way round before #840: a `just` recipe's
+  `VAR={{var}}` prefix shadowed the environment `mise/tasks/build-iso` exported, so every
+  `build-iso` flag (`--output-dir`, `--workdir`, `--compression`, `--debug`) was a silent
+  no-op for months. That specific mechanism is gone with the `just` delegation, the class
+  is not. Assert the effect of a flag; do not trust that it arrived.
 - **T-7 · An ISO without `--debug` is not drivable.** krytis is pubkey-only, so the
   installer's password login is refused and the readiness probe times out looking like
   a network fault.
@@ -274,9 +279,13 @@ Each of these cost real debugging time. They are ranked by how convincingly they
 - **T-9 · The UKI cmdline is a signing-time decision.** `bootc kargs` and `kargs.d`
   edits do nothing on a sealed system. Anything a test needs to inject must arrive as
   a credential, not a karg.
-- **T-10 · A stale sibling `dakota-iso` checkout silently builds a broken sealed ISO.**
-  `iso-sd-boot.sh` ignores env vars it does not know. `build-iso --sealed` now greps
-  the sibling for `PAYLOAD_SEALED`/`PAYLOAD_REF` and refuses up front.
+- **T-10 · (Resolved by #840.) A stale sibling `dakota-iso` checkout silently built a
+  broken sealed ISO.** `iso-sd-boot.sh` ignores env vars it does not know, so a sibling
+  checkout predating `PAYLOAD_SEALED`/`PAYLOAD_REF` produced a mutated payload whose
+  composefs digest no longer matched the UKI, failing late in the install. The build engine
+  is now in-repo (`scripts/iso-sd-boot.sh`), versioned with the task that calls it, so the
+  two cannot drift apart. Kept as a record of *why* the cutover happened; no out-of-repo
+  checkout is consulted by any gate in this document.
 
 ---
 

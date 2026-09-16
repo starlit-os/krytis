@@ -437,27 +437,32 @@ element change touching systemd invalidates an existing `:sealed` image — reru
 offline install payload. Two non-obvious requirements, both of which otherwise
 produce late, confusing failures:
 
-**1. Byte identity.** dakota-iso's payload pipeline injects
-`/usr/lib/bootc/install/00-defaults.toml` and `/etc/containers/storage.conf` into
-every payload and re-commits it twice with `buildah commit --squash`. Krytis ships
-neither file, and each `buildah run`/`commit` round trip can bump `/tmp` and
-`/var/tmp` mtimes — the same, and only, discrepancy that broke the UKI digest
-before (§ `bootc container ukify` must run in a throwaway stage). Any of the three
-invalidates the `composefs=` digest baked into the UKI's frozen cmdline, and
-`bootc install` then aborts with `The UKI has the wrong composefs= parameter (is
-'sha512:X', should be sha512:Y')`. `PAYLOAD_SEALED=1` makes the pipeline pass the
-payload through untouched. Skipping only the `00-defaults.toml` injection — which
-is what issue #371 originally scoped — is **not** enough.
+**1. Byte identity.** The payload injector — `live/iso-tools/payload-prep.sh`, in this
+repo — writes `/usr/lib/bootc/install/00-defaults.toml` (a `root-mount-spec`) into every
+payload, adds `/etc/containers/storage.conf` on the composefs backend krytis uses, and
+re-commits the result twice with `buildah commit --squash` (the second pass only to
+relabel `ostree.final-diffid` on the squashed layer). The krytis *image* ships neither
+file — the live environment's own copies come from `live/src/configure-live-krytis.sh`
+and are a separate thing — and each `buildah run`/`commit` round trip can bump `/tmp` and
+`/var/tmp` mtimes, the same, and only, discrepancy that broke the UKI digest before
+(§ `bootc container ukify` must run in a throwaway stage). Any of the three invalidates
+the `composefs=` digest baked into the UKI's frozen cmdline, and `bootc install` then
+aborts with `The UKI has the wrong composefs= parameter (is 'sha512:X', should be
+sha512:Y')`. `PAYLOAD_SEALED=1` makes the pipeline pass the payload through untouched.
+Skipping only the `00-defaults.toml` injection — which is what issue #371 originally
+scoped — is **not** enough.
 
-Where that code lives is itself a trap: the injection exists in **three** places
-in dakota-iso, and `mise run build-iso` only reaches one of them. `iso-sd-boot.sh`
-calls `live/iso-tools/payload-prep.sh` (via the `ISO_TOOLS_IMAGE` container, since
-krytis's host has no buildah) and then assembles the squashfs with its own inline
-`_ns_build_squashfs`. `scripts/build-live-squashfs.sh` is a *different* entry point
-with a duplicate copy of both. Grep for `00-defaults.toml`, don't assume.
+`PAYLOAD_SEALED=1` is honoured twice over, because both halves of the pipeline live here:
+`scripts/iso-sd-boot.sh` skips the prep step entirely, and `payload-prep.sh` — which
+`iso-sd-boot.sh` otherwise runs on the host, or inside the `ISO_TOOLS_IMAGE` container on
+a krytis host with no buildah — still passes the archive through untouched if it is
+invoked directly. Squashfs assembly is `iso-sd-boot.sh`'s own inline
+`_ns_build_squashfs`; there is exactly one copy of the injection in this repo. (Upstream
+dakota-iso carried a duplicate in a second entry point, `scripts/build-live-squashfs.sh`,
+that krytis never reached and deliberately did not port — do not go looking for it here.)
 
-**2. `targetImgref`, not just the store key.** `configure-live-krytis.sh` bakes one
-ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
+**2. `targetImgref`, not just the store key.** `live/src/configure-live-krytis.sh` bakes
+one ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
 `local_imgref`. Change only the embedded *content* and the install succeeds while
 `targetImgref` still points at `…/krytis:latest` — so the first `bootc upgrade` on
 the freshly sealed system pulls the **unsigned** image, overwrites the signed UKI
@@ -467,20 +472,23 @@ the install immediately. `PAYLOAD_REF` moves both together; `build-iso --sealed`
 sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
 `bootc status --json | jq '.spec.image.image'`.
 
-Because `iso-sd-boot.sh` ignores env vars it does not know, an out-of-date sibling
-checkout would silently produce a *broken* sealed ISO. `build-iso --sealed`
-therefore greps the sibling for both knobs and refuses up front — same
-"fail before the expensive step, not during it" discipline as `boot-test`'s UKI
-presence check.
+`iso-sd-boot.sh` ignores env vars it does not know, so an engine that had drifted from its
+caller would silently produce a *broken* sealed ISO instead of failing. That is now
+structural rather than policed: caller (`mise/tasks/build-iso`) and engine
+(`scripts/iso-sd-boot.sh`, `live/iso-tools/payload-prep.sh`) are versioned together in one
+repo. `build-iso` still refuses up front, before the expensive build, when the image it is
+asked to embed does not exist locally — the same "fail before the expensive step, not
+during it" discipline as `boot-test`'s UKI presence check.
 
 ### Assert the embed on the finished ISO, not inside the pipeline
 
 Once the sealed path is a pass-through, byte identity is true *by construction*, so
-an assertion inside dakota-iso would be tautological. `mise run verify-iso-payload`
-reads the **finished ISO** instead, which is the only place that proves the whole
-chain (`podman save` → oci-archive → `skopeo copy` → VFS store → squashfs → ISO)
-preserved the image. It also catches the "wrong tag embedded" class of bug that
-already bit once (#417/#425). `build-iso --sealed` runs it automatically.
+asserting it inside `scripts/iso-sd-boot.sh` would be tautological.
+`mise run verify-iso-payload` reads the **finished ISO** instead, which is the only
+place that proves the whole chain (`podman save` → oci-archive → `skopeo copy` → VFS
+store → squashfs → ISO) preserved the image. It also catches the "wrong tag embedded"
+class of bug that already bit once (#417/#425). `build-iso --sealed` runs it
+automatically.
 
 The invariant is image-ID equality, established empirically:
 
@@ -504,9 +512,9 @@ ISO 9660 directory records to find `LiveOS/squashfs.img`'s extent, then
 contiguous — including across the multi-extent records `-iso-level 3` uses for
 files over 4GB — so the first record's extent is the start of the squashfs. Assert
 the `hsqs` magic at the computed offset so a layout change fails loudly instead of
-as a confusing unsquashfs error. `xorriso` is not on the krytis host at all
-(dakota-iso routes it through the iso-tools container), so an `-osirrox` extract
-would be both slower and less portable here.
+as a confusing unsquashfs error. `xorriso` is not on the krytis host at all — `build-iso`
+routes it and `implantisomd5` through this repo's own `live/iso-tools/` container via
+`ISO_TOOLS_IMAGE` — so an `-osirrox` extract would be both slower and less portable here.
 
 ## A sealed system's boot cannot be judged from the serial console
 
@@ -514,10 +522,13 @@ would be both slower and less portable here.
 inside the signed PE — injecting one is exactly what sealing prevents. So every
 harness that decides "did it boot?" by grepping the guest's serial log for
 `Reached target Graphical Interface` is structurally unable to pass a sealed
-system. dakota-iso's installed-boot verdict does precisely that (it patches
-`console=ttyS0` into the BLS type-1 entry first, which a sealed system does not
-boot through), and it reported a five-minute timeout for an install that was in
-fact completely healthy.
+system. Krytis's own phase-4 verdict does precisely that: `mise/tasks/iso-verify-boot`
+polls the installed guest's serial log for `Reached target …Graphical` / `Multi-User` /
+`login:` (with `--expect-fail` inverting it into a grep for the firmware's rejection
+line), and `scripts/iso-install-fisherman.sh` patches `console=tty0 console=ttyS0` into
+the BLS type-1 entries to make that output exist at all — a path a sealed system does not
+boot through. Pointed at a sealed install it reported a five-minute timeout for a system
+that was in fact completely healthy.
 
 What a *successful* enforced sealed boot looks like on serial — all of it:
 
@@ -539,13 +550,13 @@ see the boot", never "the boot failed."**
 
 The verdict has to come from a channel that needs no kernel argument.
 `mise run boot-test --reuse-disk <disk> --secure` is that channel and is why
-`mise run iso-install-test` keeps the verdict on the krytis side instead of
-delegating it: boot-test provisions sshd, an authorized key and a diagnostics
-probe as **SMBIOS type-11 systemd credentials**, which systemd consumes with no
-cmdline involvement, then asserts health over SSH. The same mechanism is what
-makes the negative test honest — the firmware's own rejection line *does* reach
-serial, so `--expect-fail` asserts on that and reports INCONCLUSIVE for a merely
-silent disk.
+`mise run iso-install-test` stops `iso-e2e-test` at `--install-only` and takes the
+verdict itself instead of using phase 4: boot-test provisions sshd, an authorized
+key and a diagnostics probe as **SMBIOS type-11 systemd credentials**, which
+systemd consumes with no cmdline involvement, then asserts health over SSH. The
+same mechanism is what makes the negative test honest — the firmware's own
+rejection line *does* reach serial, so `--expect-fail` asserts on that and reports
+INCONCLUSIVE for a merely silent disk.
 
 Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
 kargs for anything a test needs to inject. Kargs are a signing-time decision;
