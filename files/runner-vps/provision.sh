@@ -18,9 +18,20 @@ apt-get update -qq
 
 # Same package set as Containerfile.runner's apt list (bubblewrap + BST's
 # native-dep set from mise.toml's [bootstrap.packages] apt: entries), plus
-# podman. podman is not used by cache-warm.yml today (it only runs
-# `bst build`) — installed anyway per issue #794 so this box has parity for
-# a future publish.yml migration, which is explicitly out of scope here.
+# podman. podman was unused by cache-warm.yml (the only workflow this box
+# ran) when first installed for parity against a future publish.yml
+# migration; build-iso.yml (#844) is that future arriving — mksquashfs,
+# mtools and dosfstools are the additional host tools it needs that no
+# workflow on this box required before:
+#   - squashfs-tools: mksquashfs, run on the host inside `podman unshare`/
+#     as root, never inside a container (iso-sd-boot.sh's
+#     _ns_build_squashfs).
+#   - dosfstools + mtools: mkfs.fat + mcopy/mmd, used by
+#     live/src/build-iso.sh to assemble the FAT ESP image without a loop
+#     mount (unprivileged-container-friendly).
+# xorriso/implantisomd5 are deliberately NOT installed here — build-iso.yml
+# routes both through the iso-tools container it builds itself
+# (ISO_TOOLS_IMAGE), so the host never needs them.
 # Deliberately NOT pinned to 4.9.3: docs/skills/ci-runner.md's own
 # 2026-08-12 follow-up (docs/plans/done/2026-08-12-verify-baked-composefs-digest.md)
 # found 4.9.3 and 5.8.2 both produce byte-identical, correctly-booting sealed
@@ -39,7 +50,10 @@ apt-get install -y -qq --no-install-recommends \
     ca-certificates \
     jq \
     sudo \
-    podman
+    podman \
+    squashfs-tools \
+    mtools \
+    dosfstools
 
 # Swap: Contabo's Debian image ships none at all, which turns any RAM spike
 # into an immediate kernel OOM kill rather than a slowdown. That is not
