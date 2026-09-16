@@ -27,7 +27,11 @@
 # Upstream is polkit#633 (see also #622, #623): acknowledged, unfixed, no ETA,
 # and upstream's own advice in the meantime is a unit override. This is that
 # override, relaxing exactly the two options that block the token and nothing
-# else. Everything the sandbox is actually worth keeping stays: the helper
+# else. #874 tracks the upstream fix and carries the removal condition — do
+# not delete this element just because polkit drops the setuid helper
+# (polkit#704) or because the socket unit stops being enabled; read #874
+# first, both of those make the override MORE load-bearing, not less.
+# Everything the sandbox is actually worth keeping stays: the helper
 # still runs with NoNewPrivileges=yes, SystemCallFilter=@system-service,
 # ProtectSystem=strict, RestrictAddressFamilies=AF_UNIX, PrivateNetwork=yes,
 # MemoryDenyWriteExecute=yes and the rest of upstream's list.
