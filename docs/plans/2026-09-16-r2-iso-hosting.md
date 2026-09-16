@@ -1,0 +1,320 @@
+# Host ISO Downloads via Cloudflare R2 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Publish the sealed ISO that `build-iso.yml` (#844/#861/#862) builds to a stable, publicly reachable URL — `https://iso.ririi.dev/krytis-live-sealed.iso` — via Cloudflare R2, instead of only as a 7-day GitHub Actions artifact behind GitHub auth. Closes #867.
+
+**Architecture:** A new Cloudflare R2 bucket (`krytis-iso`) holds exactly two objects, both overwritten in place on every successful publish run: `krytis-live-sealed.iso` and `krytis-live-sealed.iso.sha256`. The bucket is bound to a Cloudflare-managed Custom Domain (`iso.ririi.dev`), which terminates TLS and fronts the bucket with Cloudflare's CDN — R2 has **zero egress fees**, which is the entire reason this is R2 and not S3/GCS for a multi-GB file downloaded repeatedly. `build-iso.yml` uploads via `rclone` (Cloudflare's own documented R2 tool) using a fully environment-variable-configured S3-compatible remote — no config file, no secret ever touches disk on the runner beyond process environment. Upload is gated behind a new `publish_r2` boolean input, independent of `sealed`, so a sealed test dispatch doesn't have to touch the public "latest" object.
+
+**Decisions already made (2026-09-16, via `ask` during planning):**
+- Domain: `iso.ririi.dev` — reuses the existing `ririi.dev` zone (already fronts `bst-cache.ririi.dev` for bow).
+- Scope: **sealed ISO only.** The unsealed build stays a GH Actions artifact for internal testing; it is never uploaded to R2 or exposed publicly. Publishing an unsigned/non-Secure-Boot image at a "download Krytis here" URL would be a trust-model footgun.
+- Versioning: **latest only.** One stable, overwritten object — no dated archive. See the Known Limitation note in Task 4 for the tradeoff this implies and the deferred fix if it ever matters.
+
+**Tech Stack:** Cloudflare R2 (S3-compatible object storage), Cloudflare Custom Domains for R2, `rclone`, GitHub Actions secrets, `build-iso.yml` (this repo), `provision.sh` (VPS runner).
+
+## Global Constraints
+
+- R2 credentials are a scoped API token — **Object Read & Write on the `krytis-iso` bucket only**, never an account-wide token. Create it from the bucket's own "Manage API tokens" panel, not the account-level R2 API Overview page (the latter defaults to all-buckets scope).
+- Secrets (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are GitHub Actions repo secrets, matching the `TRACKING_APP_*` precedent (#699/#793) for CI-only credentials with no local-dev use case — not Proton Pass/fnox, which this repo reserves for credentials a human also needs locally (signing keys, Buildbarn tokens, the VPS SSH host). Bucket name (`krytis-iso`) is not sensitive and is hardcoded in the workflow, not a secret.
+- `publish_r2: true` with `sealed: false` must fail the job loudly at the top, before any build work — there is no unsealed-to-R2 path, ever (see Scope decision above).
+- `rclone` runs with credentials passed as `RCLONE_CONFIG_*` environment variables scoped to the single upload step — no `rclone.conf` file written to the runner's persistent disk.
+- No new `uses:` GitHub Action is introduced — `rclone` is a `run:` shell step after an apt install, so this plan does not touch the org's external-action allowlist (docs/skills/ci-runner.md § Org allowlist).
+- This is additive to `build-iso.yml` (#861) — no existing step's behavior changes when `publish_r2` is omitted/false (the default).
+
+---
+
+### Task 1: Create the R2 bucket and scoped API token — human, Security Gate
+
+Per AGENTS.md, provisioning auth/secrets is a human decision point. Do this in the Cloudflare dashboard, not via an agent.
+
+**Files:** none — this is entirely in the Cloudflare dashboard.
+
+- [ ] **Step 1: Enable R2 on the Cloudflare account** (if not already)
+
+Dashboard → R2 → follow the enablement flow. R2 requires a payment method on file even though a single ~3-5GB ISO overwritten in place costs well under R2's free tier (10GB-month storage, 1M Class A / 10M Class B ops free) — actual spend should round to $0.
+
+- [ ] **Step 2: Create the bucket**
+
+R2 → Create bucket → name `krytis-iso` → Location: Automatic → Storage class: Standard.
+
+- [ ] **Step 3: Create a bucket-scoped API token**
+
+From the `krytis-iso` bucket's page → Settings → **Manage API tokens** (bucket-scoped panel, not the account-level R2 API Overview — that one defaults to all-buckets access) → Create API token → Permissions: **Object Read & Write** → TTL: no expiry (rotate manually per Task 6's note) → Create.
+
+Record the three values shown **once**: Access Key ID, Secret Access Key, and the Account ID (also visible in the dashboard sidebar / any existing R2 endpoint URL, format `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`).
+
+- [ ] **Step 4: Provision as GitHub Actions secrets**
+
+```bash
+gh secret set R2_ACCOUNT_ID --repo starlit-os/krytis --body "<Account ID from Step 3>"
+gh secret set R2_ACCESS_KEY_ID --repo starlit-os/krytis --body "<Access Key ID from Step 3>"
+gh secret set R2_SECRET_ACCESS_KEY --repo starlit-os/krytis --body "<Secret Access Key from Step 3>"
+```
+
+- [ ] **Step 5: Verify (names only — GitHub never returns secret values)**
+
+```bash
+gh secret list --repo starlit-os/krytis
+```
+
+Expected: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` all listed.
+
+### Task 2: Bind the custom domain — human, Security/Design Gate (external DNS)
+
+**Files:** none — Cloudflare dashboard only.
+
+- [ ] **Step 1: Confirm `ririi.dev` is on Cloudflare DNS**
+
+```bash
+dig NS ririi.dev +short
+```
+
+Expected: Cloudflare nameservers (`*.ns.cloudflare.com`). `bst-cache.ririi.dev` already resolves for bow, but confirm rather than assume — that record could in principle be a plain CNAME/A record on a non-Cloudflare DNS provider with TLS terminated by materia's own reverse proxy, which would NOT satisfy R2 Custom Domain's requirement that Cloudflare manage the zone. If the zone is not on Cloudflare, this task blocks on adding it there first (out of scope for this plan — coordinate with whoever owns `ririi.dev`'s registrar/DNS, likely via the `materia` repo/infra, before continuing).
+
+- [ ] **Step 2: Connect the custom domain to the bucket**
+
+R2 → `krytis-iso` bucket → Settings → **Custom Domains** → Connect Domain → `iso.ririi.dev` → Continue. Cloudflare auto-creates the proxied CNAME record in the zone and issues a managed TLS certificate.
+
+- [ ] **Step 3: Wait for Active status**
+
+The custom domain's status shows "Initializing" → "Active" (usually under a few minutes since the zone is already on Cloudflare — no external DNS propagation wait). Do not proceed to Task 6 until it reads Active.
+
+- [ ] **Step 4: Add a Cache Rule for edge caching**
+
+R2 serves the origin correctly without this, but a multi-GB file repeatedly downloaded by users worldwide benefits from Cloudflare's edge cache, not just R2's zero-egress-to-Cloudflare pricing. Dashboard → `ririi.dev` zone → Rules → Cache Rules → Create rule:
+- When incoming requests match: Hostname equals `iso.ririi.dev`
+- Then: Eligible for cache = **Eligible**, Edge TTL = **Respect origin TTL** (this defers to the `Cache-Control` header the upload step sets in Task 4 — no separate TTL to keep in sync by hand)
+
+### Task 3: Provision `rclone` on the VPS runner — agent
+
+**Files:**
+- Modify: `files/runner-vps/provision.sh`
+
+Mirrors the `squashfs-tools`/`mtools`/`dosfstools` addition in #861 — same file, same `apt-get install` line, same "whatever Debian trixie's apt carries is fine" reasoning (no known R2-compatibility version floor for `rclone`; Cloudflare's R2 docs target `rclone`'s generic S3-provider config, which has been stable for years).
+
+- [ ] **Step 1: Add `rclone` to the package list**
+
+```diff
+     podman \
+     squashfs-tools \
+     mtools \
+-    dosfstools
++    dosfstools \
++    rclone
+```
+
+- [ ] **Step 2: Re-run provisioning against the live VPS**
+
+```bash
+mise run runner-vps:install
+```
+
+FIDO2 resident key required (touch, sometimes PIN — retry on failure per the standing instruction: pause and ask the operator to stay ready after two consecutive failures rather than silently retrying a third time).
+
+- [ ] **Step 3: Verify**
+
+```bash
+. scripts/runner-vps-host.sh && ssh_vps 'command -v rclone && rclone version'
+```
+
+Expected: a path under `/usr/bin/rclone` and a version banner.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add files/runner-vps/provision.sh
+git commit -m "ci(runner-vps): add rclone for R2 ISO uploads
+
+Part of #867. Same pattern as squashfs-tools/mtools/dosfstools
+(#861/#844): host tool the VPS runner needs that no prior workflow
+required."
+```
+
+### Task 4: Wire the R2 upload into `build-iso.yml` — agent
+
+**Files:**
+- Modify: `.github/workflows/build-iso.yml`
+
+- [ ] **Step 1: Add the `publish_r2` input**
+
+In the `workflow_dispatch.inputs` block, after `sealed`:
+
+```yaml
+      publish_r2:
+        description: 'Upload the sealed ISO to Cloudflare R2 as the public "latest" download (iso.ririi.dev) — only valid with sealed=true (#867)'
+        type: boolean
+        default: false
+```
+
+- [ ] **Step 2: Gate the invalid combination at the top of the job**
+
+New first step, before "Checkout repository":
+
+```yaml
+      - name: Reject publish_r2 without sealed
+        if: ${{ inputs.publish_r2 && !inputs.sealed }}
+        run: |
+          echo "::error::publish_r2=true requires sealed=true — there is no unsealed-to-R2 publish path (#867)."
+          exit 1
+```
+
+- [ ] **Step 3: Add the upload step after "Build ISO", before "Print disk usage after build"**
+
+```yaml
+      - name: Publish sealed ISO to R2
+        if: ${{ inputs.sealed && inputs.publish_r2 }}
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          RCLONE_CONFIG_R2_REGION: auto
+        run: |
+          ISO=output/krytis-live-sealed.iso
+          sha256sum "${ISO}" | awk '{print $1}' > "${ISO}.sha256"
+
+          echo "==> Uploading ${ISO} to r2://krytis-iso/krytis-live-sealed.iso..."
+          rclone copyto "${ISO}" r2:krytis-iso/krytis-live-sealed.iso \
+            --header-upload "Content-Type: application/x-iso9660-image" \
+            --header-upload "Cache-Control: public, max-age=3600, must-revalidate" \
+            --progress
+
+          echo "==> Uploading checksum..."
+          rclone copyto "${ISO}.sha256" r2:krytis-iso/krytis-live-sealed.iso.sha256 \
+            --header-upload "Content-Type: text/plain" \
+            --header-upload "Cache-Control: public, max-age=3600, must-revalidate"
+
+      - name: Verify the public download
+        if: ${{ inputs.sealed && inputs.publish_r2 }}
+        run: |
+          LOCAL_SIZE=$(stat -c%s output/krytis-live-sealed.iso)
+          REMOTE_SIZE=$(curl -sI https://iso.ririi.dev/krytis-live-sealed.iso | awk 'BEGIN{IGNORECASE=1} /^content-length:/{print $2}' | tr -d '\r')
+          echo "local=${LOCAL_SIZE} remote=${REMOTE_SIZE}"
+          [ "${LOCAL_SIZE}" = "${REMOTE_SIZE}" ] || { echo "::error::Published object size does not match the built ISO — upload may have been served from stale edge cache or truncated." >&2; exit 1; }
+
+          REMOTE_SHA=$(curl -sL https://iso.ririi.dev/krytis-live-sealed.iso.sha256)
+          LOCAL_SHA=$(cat output/krytis-live-sealed.iso.sha256)
+          [ "${REMOTE_SHA}" = "${LOCAL_SHA}" ] || { echo "::error::Published checksum does not match the built ISO." >&2; exit 1; }
+          echo "==> iso.ririi.dev serves the ISO this run built (size + checksum both match)."
+```
+
+**Known limitation, deliberately not engineered around for this "latest only" MVP:** the upload is a plain object overwrite, not atomic-swap-via-new-key-then-redirect. A client mid-download across a very long-lived connection (or one that re-issues HTTP Range requests without `If-Range`) during the brief window of a new publish could theoretically mix bytes from two builds. Mitigated today by the `.sha256` file every download should be checked against (the ISO also carries an embedded `implantisomd5` checksum, checkable from the boot menu) — not eliminated. If this ever bites in practice, the fix is: upload to a content-addressed key (e g. `builds/<sha256>.iso`), then flip `krytis-live-sealed.iso` to a 302 redirect (Cloudflare Bulk Redirect or a tiny Worker) — deferred, not built now, since the "latest only" decision was made explicitly to avoid this complexity for v1.
+
+- [ ] **Step 4: Validate YAML**
+
+```bash
+python3 -c "
+import yaml
+d = yaml.safe_load(open('.github/workflows/build-iso.yml'))
+inputs = d[True]['workflow_dispatch']['inputs']
+assert 'publish_r2' in inputs, 'publish_r2 input missing'
+print('YAML OK, inputs:', list(inputs.keys()))
+"
+```
+
+Expected: `YAML OK, inputs: ['compression', 'sealed', 'publish_r2']`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add .github/workflows/build-iso.yml
+git commit -m "feat(ci): publish sealed ISO to R2 (#867)
+
+Adds a publish_r2 workflow_dispatch input, independent of sealed, so
+a sealed test dispatch does not have to touch the public latest
+object. Uploads via rclone with a fully env-var-configured S3
+remote -- no config file, no secret written to disk. A same-run
+verification step confirms iso.ririi.dev serves an object matching
+this build's size and checksum before the job is considered green."
+```
+
+### Task 5: Document the design — agent, same-commit skill mandate
+
+**Files:**
+- Create: `docs/design/iso-distribution.md`
+- Modify: `docs/skills/ci-runner.md`
+
+- [ ] **Step 1: Write the living-reference design doc**
+
+`docs/design/iso-distribution.md` — why R2 (zero egress vs S3/GCS for a repeatedly-downloaded multi-GB file), the sealed-only trust-model decision, the latest-only/no-archive decision and its known limitation (cross-reference Task 4's note), the bucket/domain/credential inventory (`krytis-iso` bucket, `iso.ririi.dev` custom domain, `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` GH secrets), and the rotation procedure (create a new bucket-scoped token in the Cloudflare dashboard, `gh secret set` the three values, revoke the old token — no in-flight upload to invalidate since `rclone` runs a single short-lived job).
+
+- [ ] **Step 2: Add the CI-facing operational notes to the skill file**
+
+Append a `## build-iso.yml — R2 publish (issue #867)` section to `docs/skills/ci-runner.md`, cross-referencing the existing `build-iso.yml` section (#844/#862): the `publish_r2`-requires-`sealed` gate, why credentials are plain GH secrets rather than Proton Pass/fnox (no local-dev use case, matching the `TRACKING_APP_*` precedent), and the same-run size+checksum verification step's rationale.
+
+- [ ] **Step 3: Verify docs links**
+
+```bash
+mise run docs-links
+```
+
+Expected: `docs-links passed.`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/design/iso-distribution.md docs/skills/ci-runner.md
+git commit -m "docs: document R2 ISO hosting design (#867)"
+```
+
+### Task 6: Verify end to end — agent + human
+
+**Files:** none — verification only.
+
+- [ ] **Step 1: Push the branch and open the PR**
+
+```bash
+git push -u origin <branch>
+gh pr create --repo starlit-os/krytis --title "feat(ci): host sealed ISO downloads via Cloudflare R2" --body "Closes #867"
+```
+
+- [ ] **Step 2: Merge it**
+
+Merge Gate — human clicks merge. `build-iso.yml` can only be dispatched with the new inputs once they're live on `main` (agents cannot dispatch a workflow_dispatch run using inputs that only exist on an unmerged branch).
+
+- [ ] **Step 3: Dispatch with `sealed=true, publish_r2=true`**
+
+```bash
+gh workflow run build-iso.yml --repo starlit-os/krytis --ref main -f sealed=true -f publish_r2=true -f compression=release
+```
+
+- [ ] **Step 4: Confirm the run's own verification step passed**
+
+```bash
+gh run list --repo starlit-os/krytis --workflow build-iso.yml --limit 1 --json databaseId,conclusion
+```
+
+Expected: `conclusion: success` — which already proves the same-run size+checksum check (Task 4 Step 3) passed, so this step and the next are belt-and-braces, not the only evidence.
+
+- [ ] **Step 5: Independently confirm from outside CI**
+
+```bash
+curl -sI https://iso.ririi.dev/krytis-live-sealed.iso | head -5
+curl -sL https://iso.ririi.dev/krytis-live-sealed.iso.sha256
+```
+
+Expected: `HTTP/2 200`, a `content-type: application/x-iso9660-image`, and a 64-char hex checksum. Optionally download the full ISO and verify `sha256sum` locally against the printed checksum for full confidence beyond the CI job's own self-check.
+
+- [ ] **Step 6: Archive this plan and close the issue**
+
+```bash
+git mv docs/plans/2026-09-16-r2-iso-hosting.md docs/plans/done/2026-09-16-r2-iso-hosting.md
+git commit -m "docs: archive R2 ISO hosting plan (#867 complete)"
+git push
+gh issue comment 867 --repo starlit-os/krytis --body "Closed via <PR URL>. Verified: iso.ririi.dev serves krytis-live-sealed.iso, size+checksum match a real workflow_dispatch build (run <run-id>). Closing."
+gh issue close 867 --repo starlit-os/krytis
+```
+
+---
+
+## Self-Review
+
+**Spec coverage:** Both explicit asks — "upload the built ISO to R2" (Tasks 1, 3, 4) and "serve it on a custom domain" (Task 2) — have dedicated tasks. The three `ask`-clarified decisions (domain, sealed-only scope, latest-only versioning) are load-bearing constraints repeated in Global Constraints and enforced in code (Task 4 Step 2's hard gate for the sealed-only rule), not just prose.
+
+**Placeholder scan:** No TBD/TODO. Every code/config step (provision.sh diff, workflow YAML, rclone invocation, verification commands) is the actual content, not a description of one. Bucket name, domain, secret names, and object keys are concrete throughout — no `<TODO>` left for a future pass.
+
+**Type/reference consistency:** `publish_r2` input name matches across Task 4 Steps 1–3 and the Task 4/6 verification commands. `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secret names match between Task 1 Step 4 (provisioning) and Task 4 Step 3 (consumption). `iso.ririi.dev` and `krytis-iso` are the same strings in every task that references them.
+
+**Gate placement:** Human/Security/Design gates (Tasks 1, 2, and the merge/dispatch steps of Task 6) are kept to actions genuinely requiring a browser session or credential a human must hold — matching the `docs/plans/2026-09-02-tracking-bot-github-app.md` precedent this plan's structure is modeled on. Every other task is agent-executable without new human input beyond what Tasks 1–2 provision.
