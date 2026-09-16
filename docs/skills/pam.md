@@ -932,11 +932,53 @@ Wrong key: `org.freedesktop.secrets.collection.Label` (lowercase, plural) → pa
 
 Merged upstream in noctalia-dev/main commit `26865dae` ("always allow empty passwords and surface PAM info messages"). `desktop/noctalia-greeter.bst` is now pinned to upstream `main` directly — the local patch and fork pin are gone. If a future `bst source track` update on this element regresses the cue, check whether `26865dae`'s equivalent logic survived the change.
 
-## noctalia polkit agent: FIDO2 works out of the box
+## polkit's sandboxed PAM helper hides the FIDO2 token (polkit ≥ 127)
 
-Noctalia ships its own polkit agent (`src/dbus/polkit/`). The `show-info` signal (from `PAM_TEXT_INFO`) is wired to `showInfoCallback → setSupplementary(text, false)`, which `polkit_panel.cpp` displays in `promptLabel` when no input is required. Multi-round (PIN prompt) is handled via the `request` signal → `handleRequest` → input field shown. No krytis config change needed for polkit FIDO2. Verified by code audit against polkit `9e4894c` and noctalia `78e528b` (issue #137).
+**PAM chain**: `polkit-1` → `system-auth` → `pam_u2f.so`. The polkit meson.build defaults to `system-auth` for non-SUSE/non-BSD Linux builds. `/etc/pam.d/polkit-1` does not exist in krytis — the file lives at `/usr/lib/pam.d/polkit-1` (pam 1.7 vendor dir); look there before concluding the service file is missing.
 
-**PAM chain**: `polkit-1` → `system-auth` → `pam_u2f.so`. The polkit meson.build defaults to `system-auth` for non-SUSE/non-BSD Linux builds.
+**polkit 127 runs that chain inside a systemd sandbox, and the sandbox makes `pam_u2f` incapable of succeeding.** Since upstream polkit#501, polkitd no longer fork/execs the setuid helper per authentication: it hands the conversation to a socket-activated unit, `polkit-agent-helper.socket` → `polkit-agent-helper@.service`. Two of that unit's hardening options are fatal for `pam_u2f`:
+
+|Option|Effect on `pam_u2f`|
+|---|---|
+|`PrivateDevices=yes` (+ `DevicePolicy=strict`, `DeviceAllow=/dev/null rw`)|Private `/dev` with pseudo devices only. `/dev/hidraw*` is absent, libfido2 enumerates **zero** tokens, `pam_u2f` returns `PAM_AUTHINFO_UNAVAIL`.|
+|`ProtectHome=yes`|systemd chases the `/home -> var/home` symlink when building the namespace, so **`/var/home` is inaccessible too** — the per-user authfile `~/.config/Yubico/u2f_keys` cannot be opened.|
+
+Both fail silently. The auth phase falls through to `pam_unix` and the user sees a password prompt; `pam_u2f` itself logs nothing either way (see lesson 3 below), so the only trace is the fallthrough:
+
+```
+polkit-agent-helper-1[16850]: pam_unix(polkit-1:auth): authentication failure; ... user=lily
+polkitd[912]: Operator of unix-session:3 FAILED to authenticate to gain authorization for
+              action org.freedesktop.systemd1.manage-units for system-bus-name::1.165 [run0]
+```
+
+Reproduce either blocker without touching polkit, by running something under the unit's own options:
+
+```bash
+systemd-run --user -P -p PrivateDevices=yes -p DevicePolicy=strict \
+    -p DeviceAllow='/dev/null rw' fido2-token -L        # no output = zero tokens
+systemd-run --user -P -p ProtectHome=yes \
+    wc -c ~/.config/Yubico/u2f_keys                     # Permission denied
+```
+
+**Fix (#871): `elements/config/polkit-agent-sandbox.bst`** ships `/usr/lib/systemd/system/polkit-agent-helper@.service.d/50-krytis-fido2.conf` with `PrivateDevices=no`, `DevicePolicy=closed`, `DeviceAllow=char-hidraw rw`, `ProtectHome=read-only` — and nothing else. `PrivateDevices=no` is unavoidable (a cgroup `DeviceAllow` cannot re-materialise a node that a private `/dev` never created); `DevicePolicy=closed` keeps a whitelist instead of opening `/dev` wholesale; `read-only` is all `pam_u2f` needs, since it only reads the authfile. `NoNewPrivileges`, `SystemCallFilter=@system-service`, `ProtectSystem=strict`, `RestrictAddressFamilies=AF_UNIX`, `PrivateNetwork` and the rest stay as upstream ships them. Confirm a candidate relaxation with a real CTAPHID transaction, not just enumeration: `fido2-token -I /dev/hidraw2` under the same `-p` flags.
+
+`mise run boot-test` asserts the four merged properties on the booted image (`systemctl show 'polkit-agent-helper@boottest.service' -p PrivateDevices -p ProtectHome -p DevicePolicy -p DeviceAllow`; a template instance resolves without being started). The VM has no token, so the merged unit properties *are* the testable contract — and a drop-in is silently dead if upstream renames or restructures the unit.
+
+**Scope of the blast radius.** Only the polkit path is affected: `sudo`, `run0`'s own PAM stack, the greeter and console login do not go through this helper. So a key that works for `sudo` looks broken for polkit, for `run0` (which authorizes via polkit), and for every GUI privilege prompt. The same sandbox breaks any PAM module needing devices, `$HOME` or an agent socket — upstream polkit#633 was filed for `pam_ssh_agent`, #622/#623 for neighbouring cases. Upstream acknowledges the class, has no fix, and recommends a unit override in the meantime; `SSH_AUTH_SOCK` in particular is dropped deliberately and will not come back.
+
+**Retiring the override is gated on #874**, not on the next polkit bump. Two changes look like the fix and are not: polkit dropping the setuid helper entirely (polkit#704, setuid-less `pkexec`) removes the *fallback* while leaving the sandbox, and anything that merely stops `polkit-agent-helper.socket` being enabled just routes prompts back down the setuid path by accident of preset ordering. The override is what makes FIDO2 work on **both** paths. #874 carries the real removal condition and the watch points (junction bumps that move polkit past 127, a second PAM module needing devices/`$HOME`/a socket, NFC tokens that `char-hidraw` does not cover).
+
+**Which path a prompt takes is decided in the agent, not in polkitd.** noctalia's polkit agent calls `polkit_agent_session_new()` / `polkit_agent_session_initiate()` (`src/dbus/polkit/polkit_agent.cpp`), i.e. libpolkit-agent-1 — and since polkit 127 that library connects to `/run/polkit/agent-helper.socket` when it is there, falling back to exec'ing the setuid `/usr/lib/polkit-1/polkit-agent-helper-1` only when it is not. So the sandbox applies exactly when the socket unit is running. On krytis it always is: the socket has an `[Install]` section and no preset rule, so the image build's `preset-all` enables it — the symlink ships in the image's own `/etc/systemd/system/sockets.target.wants/polkit-agent-helper.socket` (checked in three separate builds; it is **not** in `/usr/lib/systemd/system/sockets.target.wants/` or in `/usr/share/factory/etc/`, so do not go looking there). This is the #711 fall-through pattern that `mise run vt-owners-test` guards for kmscon, reappearing in an upstream unit.
+
+Diagnosing the socket-vs-setuid question on a live system: `journalctl -g 'Starting polkit-agent-helper@'`. A unit start whose instance encodes the **agent's** PID (`polkit-agent-helper@0-1-<agentpid>_<n>-1000.service`) means the socket path, and therefore the sandbox. No such line around a prompt means the setuid path, where `pam_u2f` has the whole system's `/dev` and `$HOME`.
+
+**The sandbox also silences the audit trail, which is why this is so hard to reconstruct after the fact.** `RestrictAddressFamilies=AF_UNIX` blocks `AF_NETLINK`, so libaudit inside the helper cannot reach the kernel audit socket: `polkit-agent-helper-1` emits **no** `AUDIT1100`/`AUDIT1110` PAM records at all, for success or failure. Every other consumer does — on this machine `journalctl -g 'grantors=.*pam_u2f'` returns 91 records over a month, all `exe="/usr/bin/sudo"`, `"/usr/bin/greetd"` or `"/usr/bin/login"`, and none from the polkit helper, because the helper cannot write any. So `grantors=` is a reliable way to prove *which module* granted a `sudo` or greeter authentication, and is useless for polkit until the sandbox is relaxed. Restoring those records would need `AF_NETLINK` added to `RestrictAddressFamilies`; #871 deliberately does not, since it only relaxes what `pam_u2f` needs.
+
+**Three lessons, all paid for here:**
+
+1. **A code audit of the agent says nothing about the helper.** This section used to read "noctalia polkit agent: FIDO2 works out of the box … No krytis config change needed for polkit FIDO2. Verified by code audit against polkit `9e4894c` and noctalia `78e528b` (issue #137)." The agent half is right and still is — noctalia wires `show-info` → `showInfoCallback` → `setSupplementary(text, false)` for the touch cue and `request` → `handleRequest` for the PIN round, so a multi-round FIDO2 conversation renders correctly. But the audit read conversation code and never ran an authentication, so it could not have caught a helper that never gets as far as a conversation. "Works out of the box" needs a live attempt behind it.
+2. **`pam_u2f` reachability has bitten twice, from opposite directions.** #784 was stack ordering (`pam_systemd_home`'s `success=done` short-circuit meant `pam_u2f` never ran); #871 is process environment (`pam_u2f` runs, finds no device). "The module is in the stack and the key is enrolled" implies nothing about either.
+3. **Do not read success or failure out of the absence of log lines.** `pam_u2f` logs nothing on success *and* nothing on a clean `PAM_AUTHINFO_UNAVAIL` fall-through, and polkitd logs only `FAILED to authenticate`, never the successful authorizations — so a journal with no `pam_u2f` lines and no polkitd successes is equally consistent with "worked fine for months" and "never once ran". An early draft of this section concluded from exactly that silence that polkit FIDO2 had never worked in krytis; the user had been using it. Establish which path a prompt took from the `polkit-agent-helper@` unit starts above, and establish reachability from the sandbox itself (`systemd-run` replication, `systemctl show`), not from what the journal fails to say.
 
 ## PAM file path in Freedesktop SDK
 

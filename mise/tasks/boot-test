@@ -678,6 +678,28 @@ if [ "${SECURE}" = "true" ]; then
     fi
 fi
 
+# polkit's PAM helper must be able to see a FIDO2 token and the per-user
+# authfile, or FIDO2 at a polkit prompt silently degrades to a password prompt
+# (#871). config/polkit-agent-sandbox.bst relaxes PrivateDevices/ProtectHome
+# on polkit-agent-helper@.service; a drop-in is silently dead if upstream
+# renames or restructures the unit, and nothing else would notice — the VM has
+# no token, so the merged unit properties are the observable contract.
+# `systemctl show` resolves a template instance without starting it.
+POLKIT_SANDBOX=$(SSH systemctl show 'polkit-agent-helper@boottest.service' \
+    -p PrivateDevices -p ProtectHome -p DevicePolicy -p DeviceAllow 2>/dev/null || true)
+POLKIT_MISSING=""
+for want in "PrivateDevices=no" "ProtectHome=read-only" "DevicePolicy=closed" "DeviceAllow=char-hidraw rw"; do
+    case "${POLKIT_SANDBOX}" in
+        *"${want}"*) ;;
+        *) POLKIT_MISSING="${POLKIT_MISSING}${POLKIT_MISSING:+, }${want}" ;;
+    esac
+done
+if [ -n "${POLKIT_MISSING}" ]; then
+    echo "    FAIL: polkit-agent-helper@.service sandbox missing ${POLKIT_MISSING} — pam_u2f cannot reach the token (#871)" >&2
+    printf '%s\n' "${POLKIT_SANDBOX}" | sed 's/^/      /' >&2
+    FAILED=1
+fi
+
 echo "==> [5/5] Shutting down..."
 SSH systemctl poweroff &>/dev/null || true
 sleep 5
