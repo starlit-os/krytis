@@ -36,7 +36,6 @@ on:
           - core-junctions
           - game-devices-udev
           - papirus-icon-theme
-          - adw-gtk3
           - noctalia
           - noctalia-greeter
           - umbriel
@@ -917,10 +916,6 @@ jobs:
             element: desktop/papirus-icon-theme.bst
             branch: auto/track-papirus-icon-theme
             title: "chore(deps): update papirus-icon-theme"
-          - group: adw-gtk3
-            element: desktop/adw-gtk3.bst
-            branch: auto/track-adw-gtk3
-            title: "chore(deps): update adw-gtk3"
           - group: noctalia
             element: desktop/noctalia.bst
             branch: auto/track-noctalia
@@ -2394,6 +2389,7 @@ jobs:
       fail-fast: false
       matrix:
         name:
+          - adw-gtk3
           - cage
           - greetd
           - gtk4-layer-shell
