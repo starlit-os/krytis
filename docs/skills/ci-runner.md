@@ -333,6 +333,84 @@ skips `svc.sh install` when the unit exists, so re-running it just
 re-asserts the service and the drop-in. Re-key by running
 `mise runner-vps:deregister` first.
 
+## `build-iso.yml` — ISO Build CI Job (issue #844)
+
+Manual trigger only (`workflow_dispatch`, no push/schedule) as of #844. Runs
+`mise run build-iso` on this same `krytis-vps` runner, not Blacksmith — the
+VPS is the only runner provisioned with the host tools the job needs
+(`squashfs-tools`, `mtools`, `dosfstools`, all in `provision.sh`), and
+provisioning an ephemeral Blacksmith runner for those on every dispatch would
+repeat work the always-on box doesn't have to.
+
+### Builds from the published image, not a fresh BST build
+
+`build-iso` needs `localhost/krytis:latest` to already exist locally. Rather
+than running `mise run build` first (publish.yml's own multi-hour job), the
+workflow pulls the already-published `ghcr.io/starlit-os/krytis:latest` and
+re-tags it — same tradeoff `verify-sealed.yml` makes for `:sealed`: exercise
+the next pipeline stage against what publish.yml already produced, don't
+re-derive it.
+
+### Disk-exhaustion pitfall is closed by `actions/checkout`'s default `clean: true`, not a manual step
+
+Issue #844 flagged that `_ns_build_squashfs`'s own EXIT trap only removes
+the squashfs staging tree (`${TARGET}-sfs-root`) on a normal in-process
+failure — an OOM or job-timeout kill leaves it behind to fill the volume on
+the next run. `build-iso.yml` uses `build-iso`'s default `output/` dir
+(relative to the checkout), which is untracked — `actions/checkout`'s
+default `clean: true` runs `git clean -ffdx` at the *start* of every run and
+wipes it regardless of how the previous run died. No dedicated wipeable
+volume or explicit pre-build cleanup step needed as long as `--output-dir`/
+`--workdir` stay inside the checkout; pointing them outside it (e.g. to
+survive between runs for caching) would reopen this gap and need its own
+cleanup step.
+
+### Provisioning gap found while implementing #844
+
+`provision.sh`'s original package list (podman + BST's native-dep set) had
+no ISO-build tools at all — `mksquashfs`, `mkfs.fat`, and `mcopy`/`mmd` are
+not used by `cache-warm.yml`, the only workflow the VPS ran before this one.
+Added `squashfs-tools`, `mtools`, `dosfstools` and re-ran
+`mise runner-vps:install` against the live box (2026-09-16) — provisioning
+isn't retroactive, so the already-registered VPS needed the explicit re-run
+to pick the new packages up; confirmed by the task's own `apt-get install`
+step completing clean and "Provisioning complete" on stdout. `xorriso` and
+`implantisomd5` are deliberately NOT added: `ISO_TOOLS_IMAGE` routes both
+through the iso-tools container `build-iso` builds itself, so the host
+never needs them (see the issue's own "not needed on the host" note).
+
+### `podman run --privileged` preflight
+
+The VFS-store import inside `_ns_build_squashfs` needs `CAP_SYS_ADMIN` even
+under rootful podman (this job runs as root, matching the rest of the VPS
+runner design). Some hosting providers or seccomp profiles block it anyway.
+`build-iso.yml` runs `podman run --rm --privileged busybox true` as its own
+step — issue #844's own suggested verification — so a blocked capability
+fails in seconds with an unambiguous step name instead of ~15 minutes into
+the build inside `_ns_build_squashfs`.
+
+### Sealed variant needs no signing-key access at all (issue #862)
+
+`sealed: true` (`workflow_dispatch` boolean input, default `false`) pulls
+`ghcr.io/starlit-os/krytis:sealed` and passes it straight through to
+`mise run build-iso --sealed --payload-image ghcr.io/starlit-os/krytis:sealed`.
+That flag matters: `--payload-image <ref>` makes `scripts/ensure-sealed-image.sh`
+take its **explicit-ref branch**, which skips `mise run seal-uki` entirely and
+just requires the ref to already exist locally (pull it, don't build it) —
+the same "release validation" path the T4 hardware checklist uses. It still
+asserts the pulled image is genuinely sealed (`/boot/EFI/Linux/krytis.efi`
+present) before proceeding, so a corrupted or accidentally-unsigned `:sealed`
+tag fails loudly instead of silently shipping an ISO that looks sealed but
+isn't. No Proton Pass authentication, no `pull-keys`, no UEFI key material
+ever touches this job — that machinery stays confined to `publish.yml`,
+which is what actually produces `:sealed` in the first place.
+
+`build-iso --sealed` already runs `verify-iso-payload` internally right
+after assembly (`mise/tasks/build-iso`'s own tail), so `build-iso.yml`'s
+separate "Verify ISO payload" step is gated `if: ${{ !inputs.sealed }}` —
+running it again for the sealed path would just re-check what the task
+itself already asserted, against the same local tag.
+
 ## Scheduled Workflow Cron Delay
 
 `cache-warm.yml` and `track-bst-sources.yml` were both `cron: '0 6 * * ...'`

@@ -1,0 +1,148 @@
+name: Build ISO
+
+# Manual trigger only for now (#844). No push/schedule trigger yet — this is
+# the first run of `mise run build-iso` on the always-on VPS runner
+# (docs/skills/ci-runner.md § Always-on VPS Runner). The runner has been
+# re-provisioned with the extra host packages this job needs
+# (squashfs-tools/mtools/dosfstools — files/runner-vps/provision.sh) as part
+# of landing this workflow. Once a few workflow_dispatch runs have proven
+# the job out, graduate the trigger (push to main / release tags) in a
+# follow-up.
+#
+# Builds from the already-published ghcr.io/starlit-os/krytis:latest (or,
+# with sealed=true, :sealed) rather than running `mise run build`/
+# `mise run seal-uki` first — those are publish.yml's job, not this one's
+# concern. Same tradeoff verify-sealed.yml makes for :sealed: pull the
+# artifact publish.yml already produced and exercise the next stage of the
+# pipeline against it. sealed=true needs no Proton Pass / signing-key
+# access at all (#862) — `mise run build-iso --sealed --payload-image
+# ghcr.io/starlit-os/krytis:sealed` takes the already-signed published
+# image as-is via `scripts/ensure-sealed-image.sh`'s explicit-ref path,
+# which only requires the ref to exist locally and asserts it's genuinely
+# sealed (`/boot/EFI/Linux/krytis.efi` present) — it never re-seals.
+
+on:
+  workflow_dispatch:
+    inputs:
+      compression:
+        description: 'Squashfs compression mode'
+        type: choice
+        options:
+          - fast
+          - release
+        default: fast
+      sealed:
+        description: 'Install the sealed (signed UKI) image, pulled from ghcr — not re-sealed locally (#862)'
+        type: boolean
+        default: false
+
+permissions: read-all
+
+concurrency:
+  group: krytis-build-iso
+  cancel-in-progress: false
+
+jobs:
+  build-iso:
+    name: Build live ISO (VPS)
+    # Same distinct-label reasoning as cache-warm.yml: without krytis-vps,
+    # `[self-hosted, linux, x64]` would also match the local container
+    # runner (mise.toml RUNNER_LABELS) whenever both happen to be online.
+    # No Blacksmith fallback (unlike cache-warm/publish) — Blacksmith has
+    # none of the host packages this job needs (mksquashfs, mtools,
+    # dosfstools) and provisioning an ephemeral runner for those on every
+    # run is wasted work the always-on VPS doesn't have to repeat.
+    runs-on: [self-hosted, linux, x64, krytis-vps]
+    timeout-minutes: 60
+    steps:
+      # Default `clean: true` runs `git clean -ffdx` after checkout, which
+      # wipes the untracked `output/` dir this job builds into — including
+      # any squashfs staging tree (`output/krytis-sfs-root`) a killed
+      # previous run left behind. That's the fix for issue #844's "disk
+      # exhaustion mid-build" pitfall: _ns_build_squashfs's own EXIT trap
+      # only cleans up on a normal failure, not an OOM/timeout kill, but
+      # checkout's clean step doesn't care how the previous run died.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          experimental: true
+
+      - name: Install system dependencies
+        run: mise bootstrap --yes
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Verify privileged podman works
+        # _ns_build_squashfs's VFS-store import (skopeo copy into a
+        # bind-mounted dir) needs `podman run --privileged`. This job runs
+        # as root (RUNNER_ALLOW_RUNASROOT=1), so rootful podman applies —
+        # but some seccomp profiles block CAP_SYS_ADMIN even for root.
+        # Fail loudly here instead of ~15 minutes into the build.
+        run: podman run --rm --privileged busybox true
+
+      - name: Pull payload image
+        run: podman pull ghcr.io/starlit-os/krytis:latest
+
+      - name: Pull sealed payload image
+        if: inputs.sealed
+        # `mise run build-iso --sealed --payload-image <ref>` requires this
+        # exact ref to already exist locally — scripts/ensure-sealed-image.sh
+        # skips seal-uki entirely for an explicit ref and only checks
+        # existence + genuine-seal (see the header comment above). No
+        # re-tag needed: podman pull already stores it under this name.
+        run: podman pull ghcr.io/starlit-os/krytis:sealed
+
+      - name: Tag payload image for build-iso
+        # build-iso expects the unsigned payload as localhost/krytis:latest
+        # (what `mise run build` tags locally). This job never runs that
+        # build, so alias the pulled published image onto the same tag.
+        run: podman tag ghcr.io/starlit-os/krytis:latest localhost/krytis:latest
+
+      - name: Print disk usage before build
+        run: df -h -x fuse || true
+
+      - name: Build ISO
+        run: |
+          if [[ "${{ inputs.sealed }}" == "true" ]]; then
+            mise run build-iso --compression "${{ inputs.compression }}" \
+              --sealed --payload-image ghcr.io/starlit-os/krytis:sealed
+          else
+            mise run build-iso --compression "${{ inputs.compression }}"
+          fi
+
+      - name: Verify ISO payload
+        # Sealed builds only: `build-iso --sealed` already runs
+        # verify-iso-payload internally right after assembly (against the
+        # exact ref passed to --payload-image), so re-verifying here would
+        # be redundant. The unsealed path has no such internal check.
+        if: ${{ !inputs.sealed }}
+        run: mise run verify-iso-payload --iso output/krytis-live.iso --image localhost/krytis:latest
+
+      - name: Print disk usage after build
+        if: always()
+        run: df -h -x fuse || true
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: krytis-live-iso-${{ github.run_id }}
+          path: ${{ inputs.sealed && 'output/krytis-live-sealed.iso' || 'output/krytis-live.iso' }}
+          retention-days: 7
+
+      - name: Clean up local images
+        # Best-effort, never fails the job (§ "does this decide anything?"
+        # in docs/skills/ci-runner.md) — this box is persistent and every
+        # run otherwise leaves ~7GB per pulled image plus the iso-tools and
+        # krytis-installer builds behind it. Listing both sealed and
+        # unsealed tags unconditionally is simpler than branching on
+        # inputs.sealed here — podman rmi on a nonexistent tag is already
+        # swallowed by the 2>/dev/null || true below.
+        if: always()
+        run: |
+          podman rmi -f localhost/krytis-installer localhost/iso-tools:latest \
+            localhost/krytis:latest ghcr.io/starlit-os/krytis:latest \
+            ghcr.io/starlit-os/krytis:sealed 2>/dev/null || true
