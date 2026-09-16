@@ -61,6 +61,10 @@ depends:
   # pam_u2f.so module + PAM config wiring password-auth for sudo/login/screensaver.
   # Depends on #69 (core/pam-u2f.bst) — ensure that PR merges before this one.
   - config/u2f-config.bst
+  # Drop-in letting pam_u2f see /dev/hidraw* and the per-user authfile from
+  # inside polkit 127's sandboxed, socket-activated PAM helper — without it
+  # FIDO2 can never succeed at a polkit prompt (#871, upstream polkit#633).
+  - config/polkit-agent-sandbox.bst
 
   # ── Firmware ───────────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/fwupd.bst
