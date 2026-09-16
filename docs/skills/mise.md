@@ -857,6 +857,24 @@ tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --h
 `docs/*.md` references and markdown links across the tree — run it before any PR
 that touches docs (see `docs/skills/workflow.md` § Where Plan and Design Docs Go).
 
+**`docs-links` scans `git grep --untracked`, not just committed content — this
+was a real bug, not a defensive choice made up front.** A brand-new doc written
+with `write`/`edit` but not yet `git add`ed used to be invisible to the plain
+`git grep` the task ran: `mise run docs-links` reported "passed" locally on
+`docs/plans/2026-09-16-r2-iso-hosting.md` (#867/#868) while the file sat
+untracked, then CI failed on the exact same content once it was committed and
+checked out fresh — the two broken forward-references (`docs/design/…`,
+`docs/plans/done/…`, both legitimately "planned but unwritten" per
+`docs/.links-ignore`'s own category for this) were never checked at all until
+CI ran on a tree where the file was tracked. `--untracked` (honors
+`.gitignore` by default, so build output/`.venv`/etc. still don't leak in)
+closes that local/CI parity gap for good — but the operational lesson still
+matters: `mise run docs-links` on a just-written file is only a meaningful
+check once it does; running the *task* right after `write` is no longer a
+false negative, but running some *other* stale tool/script that shells out to
+plain `git grep` on your own would be. See #867/#868's PR thread for the full
+trace of the false-positive-then-CI-failure.
+
 ### Hidden tasks
 
 A task carrying `#MISE hide=true` in its header is **omitted from `mise tasks`** but
