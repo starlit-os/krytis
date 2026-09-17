@@ -40,6 +40,14 @@ depends:
   # ── Network config ─────────────────────────────────────────────────
   - freedesktop-sdk.bst:vm/config/networkd.bst
   - freedesktop-sdk.bst:vm/config/resolved.bst
+  # NetworkManager (pulled in transitively, see docs/skills/bst.md §
+  # NetworkManager Is Present and Running) owns every physical interface
+  # before systemd-networkd's own matching runs, leaving networkd's
+  # aggregate online state permanently wrong. Masks systemd-networkd.service
+  # and systemd-networkd-wait-online.service — see config/networkd-mask.bst
+  # for the full rationale (breaks systemd-timesyncd and adds ~2min to every
+  # boot via network-online.target otherwise).
+  - config/networkd-mask.bst
 
   # ── Storage / filesystem ───────────────────────────────────────────
   - freedesktop-sdk.bst:components/lvm2.bst
