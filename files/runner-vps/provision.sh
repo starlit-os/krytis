@@ -32,6 +32,16 @@ apt-get update -qq
 # xorriso/implantisomd5 are deliberately NOT installed here — build-iso.yml
 # routes both through the iso-tools container it builds itself
 # (ISO_TOOLS_IMAGE), so the host never needs them.
+# nftables is required, not optional, despite apt only listing it as a
+# netavark Recommends: --no-install-recommends never pulls it in on its
+# own, but netavark (podman's default rootful network backend on Debian)
+# has dropped iptables support and defaults to the nftables firewall
+# driver, so the `nft` binary has to be present explicitly. Without it even
+# a plain `podman run --privileged` with no custom network fails at
+# CNI/netavark setup:
+#   Error: netavark: nftables error: unable to execute nft: No such file or
+#   directory (os error 2)
+# (see docs/skills/ci-runner.md, issue #882).
 # Deliberately NOT pinned to 4.9.3: docs/skills/ci-runner.md's own
 # 2026-08-12 follow-up (docs/plans/done/2026-08-12-verify-baked-composefs-digest.md)
 # found 4.9.3 and 5.8.2 both produce byte-identical, correctly-booting sealed
@@ -51,6 +61,7 @@ apt-get install -y -qq --no-install-recommends \
     jq \
     sudo \
     podman \
+    nftables \
     squashfs-tools \
     mtools \
     dosfstools
