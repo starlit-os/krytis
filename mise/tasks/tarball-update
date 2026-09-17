@@ -40,6 +40,13 @@
 #       is deliberately held on 0.16.x because falcond declares
 #       minimum_zig_version 0.16.0 and ghostty is still on 0.15.2 — so this
 #       must never wander to 0.17.
+#
+#   github-release-glued   locator=<owner/repo>   extra=<tarball basename prefix>
+#       Latest GitHub release, asset named `<prefix><tag>.tar.xz` — no
+#       separator between prefix and version, tag keeps its leading "v", and
+#       the archive is .tar.xz not .tar.gz. Needed for
+#       lassekongo83/adw-gtk3, whose release CI glues the prefix straight onto
+#       the tag (`adw-gtk3v6.5.tar.xz`, not `adw-gtk3-6.5.tar.gz`).
 TARGETS=(
     "cage|elements/desktop/cage.bst|github-release|cage-kiosk/cage|cage"
     "greetd|elements/desktop/greetd.bst|github-tag|kennylevinsen/greetd|"
@@ -50,6 +57,7 @@ TARGETS=(
     "buildstream-plugins|elements/plugins/buildstream-plugins.bst|pypi|buildstream-plugins|"
     "buildstream-plugins-community|elements/plugins/buildstream-plugins-community.bst|pypi|buildstream-plugins-community|"
     "zig-0.16|elements/desktop/zig-0.16.bst|zig-series|0.16|"
+    "adw-gtk3|elements/desktop/adw-gtk3.bst|github-release-glued|lassekongo83/adw-gtk3|adw-gtk3"
 )
 
 set -euo pipefail
@@ -181,6 +189,13 @@ update_one() {
         [ -n "$new" ] || { echo "    no ${locator}.x release published yet — nothing to do"; return 0; }
         url="https://ziglang.org/download/${new}/zig-x86_64-linux-${new}.tar.xz"
         elem=""   # handled per-arch below
+        ;;
+      github-release-glued)
+        cur=$(url_lines "$element" | grep -oP "${extra}\Kv[0-9][0-9.]*(?=\.tar\.xz)" | head -1)
+        local tag; tag=$(gh api "repos/${locator}/releases/latest" --jq '.tag_name')
+        new="$tag"
+        url="https://github.com/${locator}/releases/download/${tag}/${extra}${tag}.tar.xz"
+        elem="github_files:${locator}/releases/download/${tag}/${extra}${tag}.tar.xz"
         ;;
       *) echo "ERROR: unknown provider '$provider'" >&2; return 1 ;;
     esac
