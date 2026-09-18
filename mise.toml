@@ -12,7 +12,7 @@ usage = "6.9.1"
 # deliberate call, so Renovate is capped below it (allowedVersions in
 # .github/renovate.json5).
 python = "3.12.14"
-uv = "0.12.15"
+uv = "0.12.16"
 gum = "2.0.1"
 bat = "0.26.1"
 # pass-cli: required by `mise run pull-keys` (#311) to authenticate against the
