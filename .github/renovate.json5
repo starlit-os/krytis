@@ -49,6 +49,41 @@
       "depNameTemplate": "protonpass/pass-cli",
       "datasourceTemplate": "github-releases",
     },
+    {
+      // The mise binary CI runs on. `jdx/mise-action` is SHA-pinned by the
+      // github-actions manager, but the *mise version it installs* was
+      // unpinned, and the action only installs/self-updates when a version is
+      // requested: with no `version:` input it no-ops whenever a mise binary
+      // already exists. Ephemeral runners therefore always got latest while
+      // the persistent krytis-vps box stayed on whatever it was first given
+      // (2026.9.5 from 2026-09-10) — see cache-warm.yml's comment and
+      // docs/skills/ci-runner.md § Pin the mise version, not just the action.
+      //
+      // A custom manager is needed even though the github-actions manager
+      // *does* extract this input natively (as `depType: "uses-with"`,
+      // datasource `github-release-attachments`): this repo sets
+      // `pinDigests: true` repo-wide, that datasource has no digest to pin,
+      // and Renovate then drops the computed update — verified by dry-run,
+      // "Could not determine new digest for update" followed by `updates: []`
+      // for a deliberately stale 2026.9.5 pin. The regex dep resolves through
+      // plain `github-releases` instead, the same path actions/runner already
+      // uses successfully above.
+      //
+      // The `# renovate:` annotation above each pin is what anchors the
+      // match; keying off position inside the `with:` block would break the
+      // moment an input is reordered. All 31 pins share one depName and
+      // currentValue, so they move in a single PR.
+      "customType": "regex",
+      "description": "mise version pinned on every jdx/mise-action step",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=jdx/mise\\s+version: (?<currentValue>[0-9][^\\s]*)",
+      ],
+      "depNameTemplate": "jdx/mise",
+      "datasourceTemplate": "github-releases",
+      // Releases are tagged v2026.9.11; the pins hold the bare version.
+      "extractVersionTemplate": "^v(?<version>.+)$",
+    },
   ],
   "packageRules": [
     {
@@ -60,6 +95,28 @@
       // "squash" — PR #721 automerged as a merge commit — but the mismatch
       // read as if squash automerge were still in play.
       "automergeStrategy": "merge",
+    },
+    {
+      // Cool every tool `mise install` consumes for 24h, matching mise's own
+      // `minimum_release_age` default. mise no longer *enforces* that window
+      // on an exact pin replayed from mise.lock (jdx/mise#13128, #13251), so
+      // this is not what keeps CI green — the mise version pin is. What it
+      // restores is the protection the default was for: these bumps
+      // auto-merge unattended, and a hijacked release should not reach a
+      // build within hours of being published.
+      "matchManagers": ["mise"],
+      "minimumReleaseAge": "1 day",
+    },
+    {
+      // Same window for the CI mise binary, which the native mise manager
+      // cannot see (it is a workflow input, not a [tools] entry) and which
+      // every runner self-updates to before anything else runs. Matchers
+      // inside one rule are ANDed, so this cannot be folded into the rule
+      // above — a single rule naming both a manager and this depName would
+      // match nothing at all. pass-cli needs no rule here: it is
+      // automerge: false below, so a human already gates it.
+      "matchDepNames": ["jdx/mise"],
+      "minimumReleaseAge": "1 day",
     },
     {
       // Hard-pinned in pyproject.toml for BST 2.5.x compatibility. A bump has

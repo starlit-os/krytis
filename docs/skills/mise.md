@@ -699,6 +699,8 @@ Without the `mise_toml:` input the action reads the project's `mise.toml` direct
 
 **When `mise_toml:` is set, it completely overwrites the project's `mise.toml`.** Any tools or settings in the project file are invisible to that job unless also listed in the inline block. This is why bootstrap packages belong in the project's `mise.toml` rather than being duplicated per-workflow.
 
+**Always pass `version:`.** Without it the action installs mise only when the runner has none — on a persistent runner it keeps whatever version is already there, forever, and reports success either way. Every step in this repo pins it; [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action has the CI failure that caused and the Renovate wiring that moves all 31 pins together.
+
 ## Propagating flags through tasks that call other tasks
 
 When a task (e.g. `validate`) calls another task script directly (`./mise/tasks/bst`), mise does not parse the child's `#USAGE` annotations — it just runs the script. Flags must be forwarded explicitly as positional args.
@@ -834,7 +836,7 @@ fi
 because a hand-maintained copy of the tree rots: the list that lived here named 16
 tasks while `mise/tasks/` held 53.
 
-**25 of the 90 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**25 of the 100 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --hidden
 | wc -l` is the check; this line has drifted before.)
 
@@ -849,7 +851,7 @@ tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --h
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
 | Docs & upstreams | `docs-links` `upstream-sync` |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)) |
-| Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock` |
+| Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 
 `generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).
@@ -890,8 +892,8 @@ precisely because it renames nothing: `track-bst-sources.yml`'s hardcoded
 it needs no AGENTS.md rename approval.
 
 ```bash
-mise tasks --hidden          # the full 87
-mise tasks                  # the 62 worth scanning
+mise tasks --hidden          # the full 100
+mise tasks                   # the 75 worth scanning
 ```
 
 Hidden today:
