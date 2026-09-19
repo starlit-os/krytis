@@ -699,6 +699,8 @@ Without the `mise_toml:` input the action reads the project's `mise.toml` direct
 
 **When `mise_toml:` is set, it completely overwrites the project's `mise.toml`.** Any tools or settings in the project file are invisible to that job unless also listed in the inline block. This is why bootstrap packages belong in the project's `mise.toml` rather than being duplicated per-workflow.
 
+**Always pass `version:`.** Without it the action installs mise only when the runner has none — on a persistent runner it keeps whatever version is already there, forever, and reports success either way. Every step in this repo pins it; [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action has the CI failure that caused and the Renovate wiring that moves all 31 pins together.
+
 ## Propagating flags through tasks that call other tasks
 
 When a task (e.g. `validate`) calls another task script directly (`./mise/tasks/bst`), mise does not parse the child's `#USAGE` annotations — it just runs the script. Flags must be forwarded explicitly as positional args.

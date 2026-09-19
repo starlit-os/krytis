@@ -659,6 +659,60 @@ before treating #703 as fully closed — if it doesn't, something about the
 new dependency's Renovate config is still wrong despite `--dry-run` looking
 clean.
 
+### Pin the mise version, not just the action
+
+`jdx/mise-action` is SHA-pinned like every other action, but until this was
+fixed the *mise binary it installs* was not pinned at all — and the action
+only installs or self-updates when a `version:` input is present. Its
+`setupMise()` logic is:
+
+- no mise binary on the box → install latest (or `version:` if given);
+- binary present **and** `version:` requested → `mise self-update <version> -y`
+  when the installed one differs;
+- binary present and **no** `version:` requested → do nothing at all.
+
+On an ephemeral runner the third case never happens. On the persistent
+`krytis-vps` box it happens on every run forever: whatever mise version first
+landed there stays, silently, while `Setup mise` still reports success. The
+box sat on 2026.9.5 (2026-09-10) for nine days while hosted runners moved to
+2026.9.11.
+
+That skew broke [run 35461887730](https://github.com/starlit-os/krytis/actions/runs/35461887730):
+
+```
+mise ✗ usage@6.10.0 failed: packslip release was recorded by the transparency
+log at 2026-09-19T13:40:28Z, after the allowed cutoff 2026-09-18T18:39:35Z;
+refusing to bypass minimum_release_age
+```
+
+mise defaults `minimum_release_age` to **24h**, and 2026.9.5 applied that
+cutoff even to an exact version replayed from `mise.lock`.
+[jdx/mise#13128](https://github.com/jdx/mise/pull/13128) (2026.9.7) stopped
+the cutoff from rejecting locked versions, and
+[#13251](https://github.com/jdx/mise/pull/13251) (2026.9.10) did the same for
+an exact `packslip:` pin. Renovate merged `usage` 6.10.0 three hours after
+release; every runner on ≥ 2026.9.7 installed it, the VPS refused. The
+`Static gates` job on that same PR passed — hosted runner, current mise — so
+the bump looked safe to auto-merge.
+
+Reproduced and fixed locally against the same tree and the same `mise.lock`:
+
+```bash
+mise install --locked usage            # 2026.9.6  → refuses
+/tmp/mise/bin/mise install --locked    # 2026.9.11 → installs usage 6.10.0
+```
+
+So every `jdx/mise-action` step now carries a pinned `version:` (31 of them
+across 8 workflows), Renovate-tracked — see [`renovate.md`](renovate.md)
+§ Pinning the mise version. Two rules follow:
+
+- **Never add a `jdx/mise-action` step without `version:`.** Without it the
+  step is a no-op on any persistent runner, which is exactly where a stale
+  toolchain is hardest to notice.
+- **A hosted-runner check passing says nothing about the VPS toolchain.**
+  When a tool install fails there for a reason that makes no sense elsewhere,
+  read the version line the action prints (`2026.9.11 linux-x64 (…)`) first.
+
 ## Buildbarn CAS (Quadlet)
 
 krytis owns a Buildbarn deployment (`bb-storage` + `bb-remote-asset`) on the

@@ -25,9 +25,11 @@ automerge, but fix it anyway.
 | `github-actions` | `.github/workflows/*.yml` | digest/pin/patch/minor |
 | `pep621` | `pyproject.toml` (+ `uv.lock`) | patch/minor, except the packages listed below |
 | `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | digest/pin/patch/minor — except `pass-cli` (see below), which is never |
-| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `pass-cli` pin | patch/minor; `pass-cli` never |
+| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `pass-cli` pin; the `version:` pin on every `jdx/mise-action` step | patch/minor; `pass-cli` never |
 
 Everything else is tracked by the `track-bst-sources.yml` CI matrix, not Renovate — see [`bst.md`](bst.md) § Element update path.
+
+Tools that `mise install` consumes carry `minimumReleaseAge: "1 day"`, matching mise's own `minimum_release_age` default — the `mise` manager's deps, plus `jdx/mise` itself. It is *not* what keeps CI green (mise ≥ 2026.9.7 no longer enforces that window on a version replayed from `mise.lock`, see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action); it is there because these bumps auto-merge unattended, so a hijacked release should not reach a build hours after publication. `pass-cli` needs no entry: it is `automerge: false`, so a human already gates it. Matchers inside one `packageRule` are ANDed, so the manager-scoped and depName-scoped halves have to be two rules — one rule naming both matches nothing.
 
 ## Verifying a config change
 
@@ -126,6 +128,28 @@ git restore mise.toml Containerfile.runner
 ```
 
 Commit before simulating, and restore with `git restore` — never `git checkout <path>`, which silently discards unstaged work elsewhere in the tree.
+
+`--dry-run` reads the *working tree*, config included: an uncommitted `renovate.json5` edit is picked up and an uncommitted new `customManagers` entry does take effect. If a manager you just added extracts nothing, dump the resolved config from the debug log (`grep -n '"customManagers"'`) and confirm your entry is in it before touching the regex — editing the file in the wrong worktree looks exactly like a non-matching pattern.
+
+### Pinning the mise version
+
+Every `jdx/mise-action` step pins the mise binary it installs (`version:`), because the action no-ops on a persistent runner when no version is requested — see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action for the CI failure that caused.
+
+**Renovate extracts that input natively and it still needs a custom manager.** The `github-actions` manager reads known setup-action inputs as `depType: "uses-with"`: `jdx/mise` comes out on the `github-release-attachments` datasource with the right `currentValue`, and Renovate even computes the `non-major` bump. Then it drops it, because this repo sets `pinDigests: true` repo-wide and that datasource has no digest to pin:
+
+```
+DEBUG: Could not determine new digest for update.
+       "packageName": "jdx/mise", "currentValue": "2026.9.5",
+       "datasource": "github-release-attachments", "newValue": "2026.9.11"
+...
+DEBUG: 0 flattened updates found
+```
+
+A deliberately stale pin yielding *zero* proposed updates is the symptom. The custom manager routes the same pin through plain `github-releases` — the path `actions/runner` already uses — and anchors on a `# renovate: datasource=… depName=…` comment above each pin rather than on position inside the `with:` block, so reordering inputs cannot silently unhook it. With the manager in place the same stale-pin simulation reports `31 flattened updates found: jdx/mise, …` and `Returning 1 branch(es)` (`renovate/jdx-mise-2026.x`) — all 31 pins in one PR.
+
+**Generalise:** under `pinDigests: true`, any dep whose datasource cannot supply a digest is extracted, resolved, and then silently discarded. If a dep visible in the debug config dump never yields an update, grep the log for `Could not determine new digest` before blaming the matcher.
+
+A `/…/`-delimited `managerFilePatterns` entry may contain inner slashes — `"/^\\.github/workflows/[^/]+\\.yml$/"` matches all eight workflow files. The delimiters are stripped by first/last character, not by splitting on `/`.
 
 ## Rule ordering
 

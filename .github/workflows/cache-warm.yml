@@ -99,11 +99,22 @@ jobs:
         # works end-to-end.
         uses: hastd/free-disk-space@68572aeaadb7f76bd408246328e95926323402b5 # v0.1.2
 
+      # `version:` is not cosmetic on this job. Without it mise-action skips
+      # setup entirely whenever a mise binary already exists — which on this
+      # persistent VPS is whatever version first landed here, forever. Run
+      # 35461887730 failed on exactly that: the box was still on 2026.9.5
+      # while every ephemeral runner had 2026.9.11, and 2026.9.5 predates
+      # jdx/mise#13128, which stops `minimum_release_age` (default 24h) from
+      # rejecting a version already committed to mise.lock. usage@6.10.0
+      # merged 3h after release, the hosted runners installed it, this one
+      # refused. With a pin, mise-action self-updates a mismatched binary.
+      # See docs/skills/ci-runner.md § Pin the mise version, not just the action.
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.9.11
           experimental: true
-
 
       - name: Install system dependencies
         run: mise bootstrap --yes
