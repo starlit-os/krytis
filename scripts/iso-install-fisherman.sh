@@ -78,8 +78,18 @@ printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "%s",\n  "composeF
     "${DISK}" "${FILESYSTEM}" "${INSTALL_IMAGE}" "${BOOTLOADER}" "${HOSTNAME_KEY}" "${ENCRYPTION}" > "${RECIPE_TMP}"
 $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/krytis-recipe.json
 echo "Uploaded recipe — running fisherman (this takes several minutes)..."
-$SCP "${SCRIPT_DIR}/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
-$SSH 'sudo bash /tmp/fisherman-install.sh /tmp/krytis-recipe.json'
+# Straight into fisherman. This used to go through scripts/fisherman-install.sh,
+# a wrapper that re-mounted the installed root to finish a hostname write
+# fisherman aborted on composefs sysroots (it resolved the deployment with
+# `ostree admin --print-current-dir` against the *running* system, after
+# unmounting the target). fisherman's post.WriteHostname now resolves the
+# composefs deploy etc from the BLS entry's composefs=<hash>, so the write
+# lands on the first try. The wrapper's only other action was a systemd
+# override for Universal Blue's rechunker-group-fix.service, which krytis has
+# never shipped — it looked for the deployment under ostree/{bootc/,}deploy,
+# found nothing in krytis's state/deploy layout, and printed a warning instead
+# of patching anything, on every single run.
+$SSH 'sudo /usr/local/bin/fisherman /tmp/krytis-recipe.json'
 
 echo "Patching BLS entries to add serial console..."
 $SSH "sudo bash -c \"

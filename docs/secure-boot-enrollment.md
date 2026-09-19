@@ -262,41 +262,45 @@ system is installed from the offline payload with no network.
 *Failure signature:* `The UKI has the wrong composefs= parameter` means the embedded
 payload was mutated — the ISO is bad, not the machine. Stop and rebuild.
 
-### On a LUKS install, retag the root partition BEFORE you reboot
+### On a LUKS install, confirm the root partition type before you reboot
 
-**Do this from the live session, while the installer's disk is still in front of you.**
-A LUKS install lands **unbootable** until `tuna-os/fisherman#72` merges: fisherman types
-the root partition with the generic `linux` GUID, and a sealed UKI cannot find an
-encrypted root that way — the signed cmdline carries no `rd.luks.uuid`, `hostonly=no`
-means the initrd has no `/etc/crypttab`, so `systemd-gpt-auto-generator` is the only
-discovery mechanism and it needs the Discoverable Partitions root GUID.
+**This used to be a mandatory manual retag.** Until 2026-09-19 fisherman typed the
+encrypted root with the generic `linux` GUID, and a sealed UKI cannot find an encrypted
+root that way — the signed cmdline carries no `rd.luks.uuid`, `hostonly=no` means the
+initrd has no `/etc/crypttab`, so `systemd-gpt-auto-generator` is the only discovery
+mechanism and it needs the Discoverable Partitions root GUID. The machine booted to a
+plymouth splash, waited ~90 s on `dev-gpt-auto-root.device`, then dropped to emergency
+mode with **no passphrase prompt** (#473, reproduced synthetically in #474).
 
-Skip this and the machine boots to a plymouth splash, waits ~90 s on
-`dev-gpt-auto-root.device`, then drops to emergency mode with **no passphrase prompt** —
-which reads like a broken image and is not. Confirmed on hardware (#473) and reproduced
-synthetically (#474).
+[tuna-os/fisherman#219](https://github.com/tuna-os/fisherman/pull/219) fixed it at the
+source — the type is now written when the partition table is created — and krytis picks
+it up through the `tuna-os/bootc-installer` flatpak. An ISO built after 2026-09-19 gets
+it right on its own, verified end to end by `mise run luks-install-test`, which now
+*fails* on the generic GUID instead of repairing it.
+
+So this is a one-line check, not a repair:
 
 ```bash
-# sudo on the lsblk calls too: FSTYPE, LABEL and PARTTYPENAME come from probing the
+# sudo on the lsblk call too: FSTYPE, LABEL and PARTTYPENAME come from probing the
 # device, not from sysfs, so unprivileged they come back EMPTY. A blank PARTTYPENAME
-# reads exactly like a failed retag, and a blank FSTYPE hides which partition is the
-# crypto_LUKS one. NAME/SIZE/TYPE/TRAN/RM need no root, which is why the USB step
-# above works without it.
-sudo lsblk -o NAME,SIZE,FSTYPE,PARTTYPENAME,PARTUUID   # find the crypto_LUKS partition
-# It will read "Linux filesystem" (generic). Retag it — metadata only, data untouched:
+# reads exactly like a failed retag. NAME/SIZE/TYPE/TRAN/RM need no root, which is why
+# the USB step above works without it.
+sudo lsblk -o NAME,SIZE,FSTYPE,PARTTYPENAME,PARTUUID   # want "Linux root (x86-64)"
+```
+
+- [ ] Root partition reads `Linux root (x86-64)` before the first reboot
+
+If it reads `Linux filesystem` instead, the ISO was built against a stale installer
+bundle. Retag it here — metadata only, data untouched — and then fix the ISO:
+
+```bash
 sudo sfdisk --part-type /dev/nvme0n1 3 4f68bce3-e8cd-4db1-96e7-fbcaf984b709
 sudo partprobe /dev/nvme0n1
-sudo lsblk -o NAME,PARTTYPENAME /dev/nvme0n1           # want "Linux root (x86-64)"
+sudo lsblk -o NAME,PARTTYPENAME /dev/nvme0n1
 ```
 
 Adjust the disk and **partition number** from your own `lsblk` output — the number is
 the crypto_LUKS partition's, not always 3.
-
-- [ ] Root partition reads `Linux root (x86-64)` before the first reboot
-
-`mise run luks-install-test` gates this in QEMU and repairs it automatically, printing
-the same warning; `--strict-installer` fails instead, which is how to check whether
-fisherman#72 has landed and this subsection can be deleted.
 
 ## 2b. The first-boot wizard — do this first, or you cannot do anything else
 
