@@ -708,7 +708,13 @@ across 8 workflows), Renovate-tracked — see [`renovate.md`](renovate.md)
 
 - **Never add a `jdx/mise-action` step without `version:`.** Without it the
   step is a no-op on any persistent runner, which is exactly where a stale
-  toolchain is hardest to notice.
+  toolchain is hardest to notice. `mise run mise-pin-check` enforces this in
+  `Static gates`: every step must pin, every pin must carry the `# renovate:`
+  annotation the custom manager anchors on, all 31 must agree, and none may
+  sit below 2026.9.10 (the first release that installs an exact `mise.lock`
+  pin inside the `minimum_release_age` window). Nothing else notices the
+  regression — the drift is silent by construction, which is why the gate
+  exists rather than just the convention.
 - **A hosted-runner check passing says nothing about the VPS toolchain.**
   When a tool install fails there for a reason that makes no sense elsewhere,
   read the version line the action prints (`2026.9.11 linux-x64 (…)`) first.

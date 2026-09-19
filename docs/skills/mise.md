@@ -836,7 +836,7 @@ fi
 because a hand-maintained copy of the tree rots: the list that lived here named 16
 tasks while `mise/tasks/` held 53.
 
-**25 of the 90 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**25 of the 100 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --hidden
 | wc -l` is the check; this line has drifted before.)
 
@@ -851,7 +851,7 @@ tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --h
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
 | Docs & upstreams | `docs-links` `upstream-sync` |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)) |
-| Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock` |
+| Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 
 `generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).
@@ -892,8 +892,8 @@ precisely because it renames nothing: `track-bst-sources.yml`'s hardcoded
 it needs no AGENTS.md rename approval.
 
 ```bash
-mise tasks --hidden          # the full 87
-mise tasks                  # the 62 worth scanning
+mise tasks --hidden          # the full 100
+mise tasks                   # the 75 worth scanning
 ```
 
 Hidden today:

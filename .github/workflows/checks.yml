@@ -53,6 +53,9 @@ jobs:
       - name: Check mise.lock is in sync
         run: mise run mise-lock --check
 
+      - name: Check mise-action pins
+        run: mise run mise-pin-check
+
       - name: Check docs references
         run: mise run docs-links
 

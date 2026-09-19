@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#MISE description="Verify every jdx/mise-action step pins a Renovate-tracked mise version"
+
+# Guards the failure mode behind #897 / run 35461887730: `jdx/mise-action`
+# installs or self-updates mise *only* when a `version:` input is present.
+# With none, it silently no-ops on any runner that already has a mise binary,
+# so the persistent krytis-vps box froze at 2026.9.5 for nine days while every
+# ephemeral runner rode latest — and then refused an exact `mise.lock` pin that
+# every other runner installed. Nothing fails loudly when a new step is added
+# without the pin; the drift just comes back. Hence this gate.
+#
+# Three invariants, all of them load-bearing:
+#
+#   1. Every step pins a version. Without it the step is a no-op on the VPS.
+#   2. Every pin carries the `# renovate:` annotation directly above it. That
+#      comment is what the custom manager in .github/renovate.json5 anchors on
+#      (the native `uses-with` extraction is discarded by `pinDigests: true` —
+#      see docs/skills/renovate.md § Pinning the mise version). A pin without
+#      it is invisible to Renovate and rots.
+#   3. All pins hold the same version. Divergent pins make Renovate open one
+#      branch per distinct currentValue instead of one PR for all of them.
+#
+# The floor below is not stylistic: mise enforced its 24h `minimum_release_age`
+# default against exact, already-locked versions until jdx/mise#13128 (2026.9.7)
+# and #13251 (2026.9.10). Pinning anything older reintroduces the original
+# failure on the first same-day tool bump.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+MIN_VERSION="2026.9.10"
+ANNOTATION="# renovate: datasource=github-releases depName=jdx/mise"
+
+fail=0
+versions=""
+count=0
+
+report() {
+    printf '  %s:%s → %s\n' "$1" "$2" "$3"
+    fail=1
+}
+
+echo "==> Checking jdx/mise-action version pins..."
+
+while IFS=: read -r file line _; do
+    count=$((count + 1))
+    with_line=$(sed -n "$((line + 1))p" "$file" | tr -d ' ')
+    annotation=$(sed -n "$((line + 2))p" "$file" | sed -E 's/^[[:space:]]+//')
+    pin=$(sed -n "$((line + 3))p" "$file" | sed -E 's/^[[:space:]]+//')
+
+    if [ "$with_line" != "with:" ]; then
+        report "$file" "$line" "step has no 'with:' block — add the version pin"
+        continue
+    fi
+    # Distinguish "no pin at all" from "pin present but not where the Renovate
+    # manager can see it" — they need different fixes, and the first is the
+    # one that actually breaks the VPS.
+    if ! sed -n "$((line + 1)),$((line + 6))p" "$file" | grep -qE '^[[:space:]]+version:'; then
+        report "$file" "$line" "step pins no mise version — it is a no-op on any runner that already has mise"
+        continue
+    fi
+    if [ "$annotation" != "$ANNOTATION" ]; then
+        report "$file" "$((line + 2))" "pin is not preceded by '${ANNOTATION}' — Renovate cannot track it"
+        continue
+    fi
+    if [[ ! "$pin" =~ ^version:[[:space:]]+([0-9][^[:space:]]*)$ ]]; then
+        report "$file" "$((line + 3))" "expected 'version: <x.y.z>', got '${pin}'"
+        continue
+    fi
+    versions="${versions}${BASH_REMATCH[1]}"$'\n'
+done < <(git grep --untracked -n 'uses: jdx/mise-action@' -- '.github/workflows/*.yml')
+
+if [ "$count" -eq 0 ]; then
+    echo "==> No jdx/mise-action steps found — did the workflows move?"
+    exit 1
+fi
+
+distinct=$(printf '%s' "$versions" | sort -u)
+if [ "$(printf '%s\n' "$distinct" | grep -c .)" -gt 1 ]; then
+    echo "  pins disagree — Renovate would open one branch per version:"
+    printf '    %s\n' $distinct
+    fail=1
+elif [ -n "$distinct" ] && [ "$(printf '%s\n%s\n' "$MIN_VERSION" "$distinct" | sort -V | head -1)" != "$MIN_VERSION" ]; then
+    echo "  pinned ${distinct} is older than ${MIN_VERSION}, which is the first"
+    echo "  release that installs an exact mise.lock pin inside the"
+    echo "  minimum_release_age window (jdx/mise#13128, #13251)"
+    fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+    echo "==> mise-pin-check FAILED — see docs/skills/ci-runner.md § Pin the mise version, not just the action."
+    exit 1
+fi
+
+echo "==> mise-pin-check passed — ${count} steps pinned to ${distinct}."
