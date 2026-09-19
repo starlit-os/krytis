@@ -523,9 +523,15 @@ the wrong assertion. `mise run luks-boot-test` (#474) covers the boot half
 synthetically, with no installer. Both mechanisms and the traps in them are in
 `docs/skills/bootc-vm.md` § A sealed image's console goes to tty0.
 
-Verified on both arms: the default run passes, and `--strict-installer` fails on
-today's installer with the generic root GUID — so it doubles as the detector for
-`tuna-os/fisherman#72` landing.
+The gate carried a `--strict-installer` arm while fisherman typed the encrypted root
+with the generic GUID: by default it repaired the disk and booted on, and the flag was
+how to check whether the upstream fix had landed. It landed on 2026-09-19
+([tuna-os/fisherman#219](https://github.com/tuna-os/fisherman/pull/219), v0.4.0), so
+the repair and the flag are gone — the discoverable GUID is now a hard assertion, and
+a generic one means the ISO carries a stale installer bundle. Verified end to end on
+2026-09-19 against an ISO built from `tuna-os/bootc-installer`: `sfdisk` reports
+`Created a new partition 2 of type 'Linux root (x86-64)'` during the install, and the
+encrypted disk boots, prompts, and unlocks.
 
 #### FIDO2 unlock stays a T4-only item — deliberately
 

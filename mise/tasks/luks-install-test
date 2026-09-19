@@ -3,7 +3,6 @@
 #USAGE flag "--iso <path>" help="ISO to install from. Default: output/krytis-live-sealed.iso, falling back to output/krytis-live.iso"
 #USAGE flag "--passphrase <s>" default="testpassphrase" help="LUKS passphrase to install with and answer the prompt with"
 #USAGE flag "--payload-ref <ref>" help="Payload image ref for the fisherman recipe. Default: matches the ISO variant"
-#USAGE flag "--strict-installer" help="Fail instead of repairing when the installer types the root partition with the generic linux GUID (fisherman#72). Use this to check whether that fix has landed"
 #USAGE flag "--keep" help="Keep the installed disk image after the run, for post-mortem inspection"
 
 set -euo pipefail
@@ -35,7 +34,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 PASSPHRASE="${usage_passphrase:-testpassphrase}"
-STRICT=$([[ "${usage_strict_installer:-}" == "true" ]] && echo 1 || echo 0)
 KEEP=$([[ "${usage_keep:-}" == "true" ]] && echo 1 || echo 0)
 
 if [[ -n "${usage_iso:-}" ]]; then
@@ -179,35 +177,31 @@ echo "    partition ${ROOT_PART} carries a LUKS header — the install is encryp
 # dev-gpt-auto-root.device and drops to emergency mode with no prompt: exactly
 # the hardware symptom in #473/#474.
 #
-# Fix is upstream at tuna-os/fisherman#72 but unmerged, so an ISO built today
-# still produces the wrong GUID. Repair it and carry on by default — the point of
-# this gate is the boot path, and stopping here would test nothing — but say so
-# loudly, and offer --strict-installer for checking whether the fix has landed.
+# Until 2026-09-19 fisherman typed it generic and this gate repaired the disk
+# before booting it, behind a --strict-installer opt-out. tuna-os/fisherman#219
+# (v0.4.0) now writes the architecture's DPS root GUID when the table is
+# created, which covers the encrypted layout the old post-install retag could
+# never reach, and tuna-os/bootc-installer ships it. The repair is gone with
+# it: a generic GUID today is a regression in the installer we ship, and
+# repairing it here would hide exactly that.
 DISCOVERABLE_ROOT="4f68bce3-e8cd-4db1-96e7-fbcaf984b709"
 GENERIC_LINUX="0fc63daf-8483-4772-8e79-3d69d8477de4"
 
-if [[ "${ROOT_TYPE}" == "${GENERIC_LINUX}" ]]; then
-    if [[ "${STRICT}" -eq 1 ]]; then
-        echo "ERROR: the installer typed the root partition ${GENERIC_LINUX} (generic linux)." >&2
-        echo "       A sealed UKI cannot find an encrypted root with that type: the signed" >&2
-        echo "       cmdline has no rd.luks.uuid and the initrd has no crypttab, so" >&2
-        echo "       systemd-gpt-auto-generator is the only discovery mechanism and it" >&2
-        echo "       needs ${DISCOVERABLE_ROOT}." >&2
-        echo "       Fix: tuna-os/fisherman#72 (unmerged). Drop --strict-installer to" >&2
-        echo "       repair the disk and test the boot path anyway." >&2
-        exit 1
-    fi
-    echo "    !! installer used the generic linux root GUID — the known fisherman bug"
-    echo "       (tuna-os/fisherman#72, unmerged). Retagging to ${DISCOVERABLE_ROOT}"
-    echo "       so the boot path below is still exercised. Metadata only; data untouched."
-    sfdisk --part-type "${INSTALL_DISK}" "${ROOT_PART}" "${DISCOVERABLE_ROOT}" >/dev/null
-    INSTALLER_REPAIRED=1
-elif [[ "${ROOT_TYPE}" == "${DISCOVERABLE_ROOT}" ]]; then
+if [[ "${ROOT_TYPE}" == "${DISCOVERABLE_ROOT}" ]]; then
     echo "    root partition carries the Discoverable Partitions GUID — installer is correct"
-    INSTALLER_REPAIRED=0
+elif [[ "${ROOT_TYPE}" == "${GENERIC_LINUX}" ]]; then
+    echo "ERROR: the installer typed the root partition ${GENERIC_LINUX} (generic linux)." >&2
+    echo "       A sealed UKI cannot find an encrypted root with that type: the signed" >&2
+    echo "       cmdline has no rd.luks.uuid and the initrd has no crypttab, so" >&2
+    echo "       systemd-gpt-auto-generator is the only discovery mechanism and it" >&2
+    echo "       needs ${DISCOVERABLE_ROOT}." >&2
+    echo "       This was fixed upstream in tuna-os/fisherman#219 (v0.4.0) and ships in" >&2
+    echo "       tuna-os/bootc-installer, so seeing it again means the ISO was built" >&2
+    echo "       against a stale installer bundle — check live/src/install-flatpaks.sh." >&2
+    exit 1
 else
     echo "ERROR: unexpected root partition type ${ROOT_TYPE}." >&2
-    echo "       Expected ${DISCOVERABLE_ROOT} (correct) or ${GENERIC_LINUX} (fisherman#72)." >&2
+    echo "       Expected ${DISCOVERABLE_ROOT}." >&2
     exit 1
 fi
 
@@ -215,8 +209,3 @@ echo "==> [3/3] Verdict: boot the encrypted disk and answer the prompt"
 ./mise/tasks/boot-test --reuse-disk "${INSTALL_DISK}" --luks-passphrase "${PASSPHRASE}"
 
 echo "==> PASS: encrypted install booted, a passphrase prompt appeared, and it unlocked"
-if [[ "${INSTALLER_REPAIRED}" -eq 1 ]]; then
-    echo "    NOTE: the disk needed a root-GUID repair first (tuna-os/fisherman#72)."
-    echo "          Until that merges, a real encrypted install still lands unbootable;"
-    echo "          re-run with --strict-installer to check whether it has."
-fi

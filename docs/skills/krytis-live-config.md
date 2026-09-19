@@ -189,12 +189,12 @@ delegated to `just sealed-test-qemu krytis` in a sibling `kitten-lily/dakota-iso
 checkout. That delegation is removed (issue #839). The full test path is now native
 mise tasks in this repo.
 
-**9-item BOM ported:**
+**9-item BOM ported** (8 survive; `scripts/fisherman-install.sh` was deleted once
+tuna-os/fisherman#219 landed — see the installer-source note below):
 
 | File | Purpose |
 |---|---|
 | `scripts/e2e-lib.sh` | Shared QEMU E2E library (ssh auth, monitor, teardown, port check) |
-| `scripts/fisherman-install.sh` | Fisherman composefs install over SSH into a running VM |
 | `scripts/show-screenshot.sh` | Display PPM screendump inline (Kitty/iTerm2) |
 | `scripts/iso-install-fisherman.sh` | Drives fisherman over SSH: builds recipe.json, uploads, patches BLS |
 | `mise/tasks/iso-boot-live` | Phase 1: boot live ISO with plain OVMF, wait for SSH |
@@ -317,3 +317,41 @@ there is no local `:latest` (the `--payload-image` release-validation case).
 | Nothing after `Run /init as init process` | Native-dracut initramfs (stage 2a took the wrong branch) |
 | dracut messages, then `dracut-initqueue timeout` | Squashfs/label mismatch — check `LiveOS/squashfs.img` and `krytis/live_label` |
 | `Permission denied (publickey)` in the harness | ISO built without `--debug` |
+
+### The installer flatpak carries fisherman — pull it from tuna-os (2026-09-19)
+
+**What:** `live/src/install-flatpaks.sh` downloads `org.bootcinstaller.Installer.flatpak`
+from GitHub Releases, and `configure-live-krytis.sh` then symlinks the `fisherman` binary
+out of the installed app dir to `/usr/local/bin/fisherman`. That one asset is therefore
+both the GUI installer **and** the install backend: the bundle's age decides which
+fisherman bugs the ISO ships.
+
+**Why it mattered:** the script pulled from `projectbluefin/bootc-installer` with
+`tuna-os/tuna-installer` as a fallback. Development moved back to the tuna-os org and
+**both of those repos are archived** — newest bundles 2026-08-01 and 2026-05-08. So when
+`tuna-os/fisherman#219` fixed the unbootable encrypted-sealed install on 2026-09-19, an
+ISO built the same day still carried the bug, with nothing in the build log to say so.
+
+**Fix:** `INSTALLER_REPO="tuna-os/bootc-installer"`, and **no fallback** — both former
+fallbacks are archived, and quietly installing a months-old bundle is worse than a hard
+curl failure. That repo cuts a release per merge (`v2026.09.19-cee9ba29`), so
+`releases/latest/download/` moves daily and `latest-dev` still names the Devel asset;
+neither URL shape needed changing.
+
+**How to check what a bundle actually contains** — the flatpak is an ostree bundle, so
+the binary is two commands away:
+
+```bash
+ostree init --repo=repo --mode=archive-z2
+flatpak build-import-bundle repo org.bootcinstaller.Installer.flatpak
+ostree --repo=repo checkout -U app/org.bootcinstaller.Installer/x86_64/master co
+strings -a co/files/bin/fisherman | grep -c 'type=%s, name="root"'   # 1 = has #219
+```
+
+**Related:** `scripts/fisherman-install.sh` is gone with the same change. It wrapped
+fisherman to finish a hostname write that used to fail on composefs sysroots; upstream's
+`post.WriteHostname` now resolves the deploy `etc` from the BLS entry's `composefs=<hash>`
+and writes `state/deploy/<hash>/etc/hostname` directly — confirmed in the install log.
+Its only other action patched Universal Blue's `rechunker-group-fix.service`, which
+krytis has never shipped, and which had been printing "deployment etc/ not found" on
+every run instead of patching anything.

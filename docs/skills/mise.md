@@ -1180,7 +1180,7 @@ vfs stores layers uncompressed (~2× the payload) and makes `bootc update` on th
 User-selected graph driver "overlay" overwritten by graph driver "vfs" from database
 ```
 
-That is expected and non-fatal — the update still succeeds and stages the image. It is inherent to *any* live-ISO composefs install using vfs, not krytis-specific: fisherman's `selectStorageDriver` (`projectbluefin/fisherman`, `internal/install/storage_driver.go`) rejects `overlayfs`/`tmpfs` scratch and falls back to vfs, and a live environment's scratch dir is always overlayfs/tmpfs — so bootc records vfs in the installed system's containers-storage database and containers/storage honours that over whatever driver is configured.
+That is expected and non-fatal — the update still succeeds and stages the image. It is inherent to *any* live-ISO composefs install using vfs, not krytis-specific: fisherman's `selectStorageDriver` (`tuna-os/fisherman`, `fisherman/internal/install/storage_driver.go`) rejects `overlayfs`/`tmpfs` scratch and falls back to vfs, and a live environment's scratch dir is always overlayfs/tmpfs — so bootc records vfs in the installed system's containers-storage database and containers/storage honours that over whatever driver is configured.
 
 **The `graphroot` override is not optional, whichever driver is in play — it avoids a self-reference lock trap.** fisherman installs via `pkexec` (**rootful**), whose *default* graphroot is exactly `/var/lib/containers/storage` — the same path as the embedded payload. containers/storage caches lockfiles by absolute path (`pkg/lockfile` `getLockfile`): the primary store opens its `layers.lock` **read-write**, then the additional store requests the **same** path **read-only** → cache hit on a read-write lock → fatal:
 
