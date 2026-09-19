@@ -63,7 +63,7 @@ permissions: read-all
 
 jobs:
   track-linux-cachyos:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -161,7 +161,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-mise:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -259,7 +259,7 @@ jobs:
     # out-of-date dbx silently keeps trusting Microsoft-signed binaries that have
     # since been revoked, and nothing fails to tell you (#446). Microsoft adds
     # revocations on their own schedule, so this has to be pulled, not pinned.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -360,7 +360,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-gum:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -454,7 +454,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-libsodium:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -548,7 +548,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-niri:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -642,7 +642,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-ghostty:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -738,7 +738,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-symbols-nerd-font:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -833,7 +833,7 @@ jobs:
 
   # ── BST source tracking (git_repo + cargo2 elements) ─────────────────────
   track:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1099,7 +1099,7 @@ jobs:
   # freedesktop-sdk.bst overrides reference gnome-build-meta.bst elements
   # directly — both must land in one commit or the element graph breaks.
   track-core-junctions:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1157,7 +1157,7 @@ jobs:
           fi
 
   track-pangolin:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1251,7 +1251,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-game-devices-udev:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1343,7 +1343,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-proton-pass:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1435,7 +1435,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-falcond:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1532,7 +1532,7 @@ jobs:
   # element would otherwise never be updated. Option (b) of AGENTS.md's update
   # path gate: a <name>-update mise task plus this track-mise-pattern job. See #640.
   track-libqalculate:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1629,7 +1629,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-falcond-profiles:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1727,7 +1727,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-scx-loader:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1824,7 +1824,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-zed:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -1918,7 +1918,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-zen-browser:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -2012,7 +2012,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-chunkah:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -2090,7 +2090,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-warp:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -2184,7 +2184,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-qemu:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -2278,7 +2278,7 @@ jobs:
           echo "PR: $PR_URL"
 
   track-equibop:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -2377,7 +2377,7 @@ jobs:
   # mise/tasks/tarball-update, so adding an element is a row there plus a name
   # here.
   track-tarball:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write

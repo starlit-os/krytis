@@ -33,7 +33,7 @@ concurrency:
 jobs:
   enroll:
     name: Key enrollment (QEMU)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     # A failed publish may not have pushed a sealed image at all; re-testing the
     # previous one would report on an artifact this run did not produce.
