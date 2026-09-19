@@ -181,10 +181,39 @@ and 5.8.2 both produce byte-identical, correctly-booting sealed images once
 `verify-composefs-digest` checks the digest directly, and #527 already
 reverted the `podman >= 5` assertion #524 had added on that now-disproven
 premise. `provision.sh` installs whatever Debian trixie's apt carries
-(5.4.2 as of setup). Moot either way today: `cache-warm.yml` — the only
-workflow this box runs — never invokes podman; it was installed for parity
-against a possible future `publish.yml` migration, which issue #794
-explicitly leaves out of scope.
+(5.4.2 as of setup). When first installed, this was moot in practice:
+`cache-warm.yml` was the only workflow on this box and never invoked
+podman — it was added purely for parity against a possible future
+`publish.yml` migration, which issue #794 explicitly left out of scope.
+`build-iso.yml` (#844) is that future arriving: it runs `podman run
+--privileged` directly on this host (see "nftables must be installed
+explicitly" below for the gap that surfaced once podman was actually
+exercised here).
+
+### nftables must be installed explicitly — podman's `--no-install-recommends` misses it
+
+`provision.sh` installs `podman` with `apt-get install
+--no-install-recommends`. On Debian, `nftables` is only a **Recommends** of
+`netavark` (podman's default rootful network backend), not a hard
+`Depends`, so `--no-install-recommends` never pulls in the `nft` binary.
+netavark has dropped iptables support and defaults to the nftables
+firewall driver, so `nft` is required even for the simplest case — a
+plain `podman run --privileged` with no custom network. Without it:
+
+```
+Error: netavark: nftables error: unable to execute nft: No such file or directory (os error 2)
+```
+
+This went undetected from the runner's original setup (podman installed,
+never exercised) until `build-iso.yml`'s "Verify privileged podman works"
+step actually ran a container here for the first time (issue #882,
+2026-09-17). Fixed by adding `nftables` explicitly to `provision.sh`'s apt
+package list — the same "don't trust Recommends" lesson as
+`libicu74`/`installdependencies.sh` above, just on the VPS runner instead
+of the container one. **Generalisable:** a host-level tool dependency that
+only bites on a rarely-exercised code path (here: the first `podman run`
+on a box that installed podman for parity months earlier) can sit latent
+through multiple provisioning runs before anything triggers it.
 
 ### Build concurrency is `builders` x `max-jobs` — size the product, not either half
 
