@@ -1002,7 +1002,9 @@ jobs:
           experimental: true
 
       - name: Install system dependencies
-        run: mise bootstrap --yes
+        # --update: refresh the apt index first — runner images carry stale
+        # package lists, and a superseded .deb 404s on install (#900).
+        run: mise bootstrap --yes --update
 
       - name: Track sources with BuildStream
         run: uv run bst --no-interactive -o x86_64_v3 true source track "${{ matrix.element }}"
@@ -1146,7 +1148,9 @@ jobs:
           experimental: true
 
       - name: Install system dependencies
-        run: mise bootstrap --yes
+        # --update: refresh the apt index first — runner images carry stale
+        # package lists, and a superseded .deb 404s on install (#900).
+        run: mise bootstrap --yes --update
 
       - name: Track core junctions
         run: |
@@ -1788,7 +1792,9 @@ jobs:
           experimental: true
 
       - name: Install system dependencies
-        run: mise bootstrap --yes
+        # --update: refresh the apt index first — runner images carry stale
+        # package lists, and a superseded .deb 404s on install (#900).
+        run: mise bootstrap --yes --update
 
       - name: Read current version
         id: current
