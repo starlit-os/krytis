@@ -106,7 +106,9 @@ jobs:
 
 
       - name: Install system dependencies
-        run: mise bootstrap --yes
+        # --update: refresh the apt index first — runner images carry stale
+        # package lists, and a superseded .deb 404s on install (#900).
+        run: mise bootstrap --yes --update
 
       - name: Install Python dependencies
         run: uv sync

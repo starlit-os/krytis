@@ -690,8 +690,45 @@ Add to every job that invokes mise tasks:
 - uses: jdx/mise-action@... # v4.2.0
   with:
     experimental: true
-- run: mise bootstrap --yes
+- run: mise bootstrap --yes --update
 ```
+
+### In CI, always pass `--update`
+
+**`mise bootstrap` does not refresh package-manager metadata on its own.** The apt
+backend goes straight to `sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --
+<pkgs>`, so the candidate versions come from whatever package lists the runner image was
+baked with. When the archive publishes a security update and drops the superseded `.deb`
+from the pool, that stale index points at a file that no longer exists and every job
+dies at *Install system dependencies*:
+
+```
+Err:2 http://us.archive.ubuntu.com/ubuntu noble-security/main amd64 bubblewrap amd64 0.9.0-1ubuntu0.2
+  404  Not Found
+E: Failed to fetch .../bubblewrap_0.9.0-1ubuntu0.2_amd64.deb  404  Not Found
+```
+
+That is issue #900: Ubuntu published `bubblewrap 0.9.0-1ubuntu0.3` on 2026-09-17 and
+both publish runs the following morning failed, 25–34 s in, before any build work
+started. Nothing in the repo changed — the runner image simply aged past the archive.
+
+`--update` ("Refresh package manager metadata and update configured repos") runs
+`apt-get update` first (`apk: --update-cache`, `dnf` metadata refresh). Every
+`mise bootstrap` call in `.github/workflows/` carries it. The one exception is
+`vuln-diff.yml`'s *Re-sync dependencies for base commit* step: an earlier step in the
+same job already refreshed the index, so a second `apt-get update` is pure latency.
+
+Self-hosted runners are not affected — `Containerfile.runner` runs
+`apt-get update && apt-get install` at image build time, and `mise bootstrap` finds the
+packages already present. This failure mode is specific to hosted (Blacksmith/GitHub)
+images, which are rebuilt on their own cadence.
+
+To reproduce the stale-index class of failure locally without waiting for an archive
+rotation, pin `/etc/apt/sources.list.d/ubuntu.sources` at a
+`https://snapshot.ubuntu.com/ubuntu/<YYYYMMDD>T000000Z` URI, `apt-get update`, then
+repoint the file at the live archive *without* updating again. `mise bootstrap --yes`
+then fails on the stale candidates; `mise bootstrap --yes --update` installs the current
+versions.
 
 ## `jdx/mise-action` and `mise_toml`
 
