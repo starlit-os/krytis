@@ -786,6 +786,45 @@ and resolves it through a `usage_*` chain. Any env-var interface documented in a
 script header (`LUKS_PASSPHRASE`, `PAYLOAD_REF`, `OVMF_VARS_SECURE`) needs the
 three-level chain, not the two-level one.
 
+## An inherited `usage_*` makes the child think a flag was passed
+
+The mirror image of the section above. Where that one loses a value, this one
+**invents** one: the parent's `usage_*` vars reach the child unchanged, so a
+child whose argc-fallback is `CLI_X:-${usage_x:-}` behaves as if `--x` had been
+typed on its own command line — even though the caller deliberately did not
+forward it.
+
+`mise run iso-install-test --secure --expect-fail` was unrunnable for exactly
+this reason. `iso-install-test` runs the install through
+`iso-e2e-test --install-only` and keeps the verdict for `boot-test`, so it
+passes neither `--secure` nor `--expect-fail` down. But `usage_expect_fail=true`
+was in the environment, `iso-e2e-test` read it, and the run died in 0.2 s on
+that task's own sanity guard:
+
+```
+ERROR: --expect-fail is incompatible with --install-only — this mode produces no boot verdict to invert
+```
+
+The guard is right; the input was fabricated by inheritance. Nothing had booted,
+so the failure looks like a bad invocation rather than a harness bug — which is
+why the T3 negative gate sat documented-but-never-green in
+`docs/design/secure-boot-testing.md`.
+
+**Fix:** strip the ambient copies at the call site, and pass everything the
+child needs explicitly.
+
+```bash
+env -u usage_secure -u usage_expect_fail \
+    "${REPO_ROOT}/mise/tasks/iso-e2e-test" --iso "${ISO}" --install-only
+```
+
+**Smell to grep for:** a task that spawns another task **sharing a flag name**
+with it. Same name + boolean semantics = the child cannot tell "inherited" from
+"asked for", because there is no `--no-x` to override with. `iso-install-test`,
+`luks-install-test`, `boot-test` and `iso-e2e-test` all share `--iso`,
+`--secure`, `--expect-fail` and `--payload-ref` in some combination; value flags
+survive because the caller passes them explicitly and CLI wins, booleans do not.
+
 ## New worktrees require `mise trust`
 
 `mise` treats each new worktree directory as untrusted. Any `mise run` command fails immediately with:
@@ -795,6 +834,21 @@ mise ERROR Config files in .../mise.toml are not trusted. Trust them with `mise 
 ```
 
 **Fix:** run `mise trust` once in the worktree root before any `mise run` invocation.
+
+The same applies to every **gitignored** artifact a gate depends on: a worktree
+starts without them even though the primary checkout has had them for months.
+The secure-boot gates need two, and neither is obtainable from the branch:
+
+```bash
+cp -a ../../krytis/files/boot-keys/. files/boot-keys/   # .gitignore:39 — normally `mise run pull-keys` (needs fnox)
+mise run generate-ovmf-vars                             # .gitignore:19 — rebuilds .ovmf-vars-secure.fd, ~2 s
+```
+
+Copy the keys rather than re-pulling them when the primary checkout already has
+them: `pull-keys` needs an unlocked Proton Pass, and `generate-ovmf-vars` is
+cheap and self-verifying — it ends by comparing its db against
+`localhost/krytis:sealed`'s own `db.auth` and prints both sizes (8891 bytes when
+they agree). A varstore copied from another checkout gets no such check.
 
 ## Pushing the image to ghcr.io
 
