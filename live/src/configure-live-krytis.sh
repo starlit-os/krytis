@@ -103,6 +103,40 @@ mkdir -p /home/liveuser/.local/state/noctalia
 touch /home/liveuser/.local/state/noctalia/.setup-complete
 chown -R liveuser:liveuser /home/liveuser/.local
 
+# ── oo7: unlock the live session's login keyring ──────────────────────────────
+# Without this the live session pops an "Unlock Keyring" dialog (#911).
+#
+# The chain: greetd's initial_session below is an autologin, so no password is
+# ever collected and `session optional pam_oo7.so auto_start` (see
+# elements/config/greetd-config.bst) has nothing to stash. oo7-daemon then finds
+# no secret from any of its three sources and logs
+#   "Created default 'Login' collection (locked)".
+# noctalia is both a secret-service *client* (it opens a session ~25 s into the
+# session) and the owner of org.gnome.keyring.SystemPrompter, so its own access
+# to that locked collection raises its own unlock prompt. #585 does not save us
+# here — that bug makes locked *items* read back as absent, while the collection
+# unlock request still prompts.
+#
+# oo7-daemon.service ships `ImportCredential=oo7.keyring-encryption-password`
+# upstream and reads $CREDENTIALS_DIRECTORY/oo7.keyring-encryption-password when
+# the login helper socket yields nothing (server/src/main.rs
+# read_secret_from_credentials_directory). Supplying it via SetCredential makes
+# the daemon create the collection UNLOCKED, so nothing ever prompts.
+#
+# The passphrase is deliberately a constant: the live session's keyring exists
+# only in tmpfs for the length of one boot, holds nothing the user typed, and is
+# destroyed at poweroff. This drop-in is written into the live squashfs only —
+# it cannot reach an installed system, which keeps the PAM unlock path.
+install -d /etc/systemd/user/oo7-daemon.service.d
+cat > /etc/systemd/user/oo7-daemon.service.d/20-live-keyring-unlock.conf <<'EOF'
+# Live ISO only — see live/src/configure-live-krytis.sh (krytis#911).
+# Autologin collects no password, so oo7 has no secret to unlock with and the
+# login collection would stay locked, making noctalia's first secret access
+# raise an unlock prompt.
+[Service]
+SetCredential=oo7.keyring-encryption-password:live
+EOF
+
 # ── Passwordless polkit for the live user ─────────────────────────────────────
 # The bootc-installer flatpak needs polkit authorization to run `bootc install`.
 # GNOME provides a polkit GUI agent via gnome-shell; niri ships none, so polkit
