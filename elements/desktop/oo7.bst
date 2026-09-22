@@ -78,7 +78,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-254-g75609851ff006758f374e0a072db69f23d0b88fd
+  ref: v0.6.0-alpha-256-g886813eb2b04ee0dc5274794fbee985dec5dd8e2
 
 - kind: patch
   path: patches/oo7/login-helper-connect-retry.patch
@@ -1016,12 +1016,12 @@ sources:
     sha: 3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328
   - kind: registry
     name: zgvariant
-    version: 1.1.0
-    sha: 63e0c3a9bc69ca818b5281575046ec75ff9a0f66fdfe35f4b94abbdc85968e83
+    version: 1.2.0
+    sha: 8dca004bfe7d03c9e68ae443e63b2c25c69ac2fcfc9c4f47bc3546ff04c102cc
   - kind: registry
     name: zgvariant_derive
-    version: 1.1.0
-    sha: a67e56f4a51d6e02ab7faa5237abbaaa1fa4358af8d0cadfede6663e59211d1f
+    version: 1.2.0
+    sha: 1a5cbf304b5650a6be838eae8b9d400a84f7003faa1f68862c085f28d0357cb2
   - kind: registry
     name: zmij
     version: 1.0.23
