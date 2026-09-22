@@ -57,6 +57,56 @@ touch /home/liveuser/.local/state/noctalia/.setup-complete
 chown -R liveuser:liveuser /home/liveuser/.local
 ```
 
+### "Unlock Keyring" dialog in the live session (2026-09-22)
+
+**What:** the live ISO pops an *Unlock Keyring* dialog at the desktop. Found on a
+metal test, reproduced in QEMU ([krytis#911](https://github.com/starlit-os/krytis/issues/911)).
+
+**Why:** greetd's `initial_session` is an autologin, so no password is ever
+collected and `session optional pam_oo7.so auto_start`
+(`elements/config/greetd-config.bst`) has nothing to stash. `oo7-daemon` finds a
+secret from none of its three sources and logs:
+
+```
+INFO oo7_daemon::service: No default collection found, creating 'Login' keyring
+INFO oo7_daemon::service: Created default 'Login' collection (locked)
+```
+
+noctalia is both a secret-service **client** (it opens sessions `s0`/`s1` about
+25 s into the session) and the owner of `org.gnome.keyring.SystemPrompter`, so
+its own access to the locked collection raises its own prompt. #585 does not
+mask this: that bug makes locked *items* read back as absent, while a
+collection **unlock** request still prompts.
+
+**Fix:** hand oo7 the secret as a systemd credential, live-squashfs only.
+`oo7-daemon.service` already carries `ImportCredential=oo7.keyring-encryption-password`
+upstream, and `read_secret_from_credentials_directory()` (`server/src/main.rs`)
+reads `$CREDENTIALS_DIRECTORY/oo7.keyring-encryption-password` whenever the
+login-helper socket yields nothing — so a drop-in is enough:
+
+```bash
+install -d /etc/systemd/user/oo7-daemon.service.d
+cat > /etc/systemd/user/oo7-daemon.service.d/20-live-keyring-unlock.conf <<'EOF'
+[Service]
+SetCredential=oo7.keyring-encryption-password:live
+EOF
+```
+
+The daemon then logs `Created default 'Login' collection (unlocked)` and
+`Locked` reads `b false`. A constant passphrase is correct here: the live
+keyring lives in tmpfs for one boot, holds nothing the user typed, and dies at
+poweroff. The drop-in is written by `live/src/configure-live-krytis.sh`, so it
+cannot reach an installed system — installed systems keep the PAM unlock path.
+
+**Debugging handle** (live VM, over the DEBUG ISO's ssh):
+
+```bash
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked
+busctl --user list | grep -i prompt   # noctalia owns org.gnome.keyring.SystemPrompter
+journalctl --user -u oo7-daemon
+```
+
 ### Sealed (UKI) payloads must be embedded byte-identically (2026-08-01)
 
 **What:** krytis's `mise run build-iso --sealed` embeds `ghcr.io/starlit-os/krytis:sealed`,

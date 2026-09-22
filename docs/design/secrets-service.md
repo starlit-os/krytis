@@ -116,6 +116,18 @@ The fork pin is the other live risk: it is a moving target that `bst source trac
 so an unrelated commit on that branch can change what krytis ships. Pin discipline matters more
 than usual until the prompter is upstreamed.
 
+**Autologin is a third way in, and the live ISO hits it every boot.** greetd's
+`initial_session` collects no password, so `pam_oo7 auto_start` stashes nothing and the
+login collection is created locked — the same end state as #806, reached without any race.
+There the #585 workaround does not even apply: noctalia asks the collection to *unlock*,
+which prompts rather than lying. The live ISO fixes this with oo7's systemd-credential
+path (`SetCredential=oo7.keyring-encryption-password`, read by
+`read_secret_from_credentials_directory()` when the login-helper socket is empty), written
+into the live squashfs only — see `docs/skills/krytis-live-config.md`
+§ "Unlock Keyring" dialog in the live session and krytis#911. Any future passwordless
+login mode for *installed* systems inherits the same problem and will need the same
+source of secret, which is why oo7#506 remains the real exit condition.
+
 ### History: the hold that preceded this (2026-06 → 2026-08-14)
 
 The migration was held from #178 until now. The bar was:
