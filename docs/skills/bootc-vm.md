@@ -935,8 +935,7 @@ sends the installed system to the wrong upgrade stream.
 | `mise run iso-install-test` | ISO → live session → fisherman → disk, boot |
 | `mise run iso-install-test --secure` | as above, installed disk under enforcement |
 | `mise run iso-install-test --secure --expect-fail` | enforcement refuses an unsigned install |
-| `mise run luks-install-test` | ISO → fisherman → **encrypted** disk, boot, answer the passphrase |
-| `mise run luks-install-test --strict-installer` | as above, but fail if the installer types the root GUID wrongly |
+| `mise run luks-install-test` | ISO → fisherman → **encrypted** disk, boot, answer the passphrase; asserts the root partition carries the Discoverable Partitions GUID |
 | `mise run luks-boot-test` | synthetic LUKS2 disk + real UKI — the boot half, no installer |
 
 Two things about the ISO variants that are easy to get wrong:
@@ -969,7 +968,7 @@ seconds with "built without `--debug`" when it is absent.
 owns the run and numbers its four phases: `iso-boot-live` boots the ISO under
 plain OVMF and waits for a serial readiness marker (`KRYTIS_LIVE_READY`) *and*
 then a real SSH login; `scripts/iso-install-fisherman.sh` writes the recipe,
-uploads it plus `scripts/fisherman-install.sh`, and drives the install over SSH;
+uploads it, and runs `fisherman` over SSH;
 `iso-boot-installed` boots the resulting disk (adding `q35,smm=on` and
 `-global driver=cfi.pflash01,property=secure,value=on` under `--secure`); and
 `iso-verify-boot` reads the verdict off the serial log.

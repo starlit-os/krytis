@@ -943,23 +943,55 @@ The chain, and why each link is load-bearing:
    recognises a root partition carrying the **discoverable** GUID
    `4f68bce3-e8cd-4db1-96e7-fbcaf984b709`, not the generic `0fc63daf-…`.
 
-fisherman types the encrypted root generically and relies on injecting
-`rd.luks.name=<UUID>=root` into BLS entries, which a UKI install never receives. Its
-own retag to the discoverable GUID exists but is gated `&& !hasEncryption`
-(`cmd/fisherman/main.go:681`).
+Historically fisherman typed the encrypted root generically and relied on injecting
+`rd.luks.name=<UUID>=root` into BLS entries, which a UKI install never receives. Its own
+retag to the discoverable GUID existed but was gated `&& !hasEncryption` — behind a LUKS
+mapping the raw partition is not what is mounted, so the post-install unmount/rewrite/
+remount could not run there at all.
 
-The fix is [tuna-os/fisherman#72](https://github.com/tuna-os/fisherman/pull/72) (fork
-commit `423a581`): type the partition at partition time rather than retagging
-afterwards, since by then partition 2 holds an open LUKS container that later steps
-still need. Until it merges and a build carries it, new encrypted installs still need
-the operator fix below.
+**Fixed upstream 2026-09-19 in [tuna-os/fisherman#219](https://github.com/tuna-os/fisherman/pull/219)**
+(merged in PR #224, released as v0.4.0): the type is written when the partition table is
+created, which covers both layouts, and it is architecture-aware — the old constant was
+x86-64 only, so an aarch64 install would have been tagged with a GUID the generator
+ignores there. krytis's own [#72](https://github.com/tuna-os/fisherman/pull/72), which
+proposed the same partition-time approach, was closed 2026-08-06 and is superseded.
 
-Process note, because the sequence is confusing in the history: that PR was opened
+### The encrypted-root GUID fix, and where it actually comes from
+
+The merge is necessary but not sufficient: krytis never builds fisherman: it gets the
+binary out of the bootc-installer flatpak (`configure-live-krytis.sh` symlinks it out of
+the app dir), and that flatpak builds fisherman from a git submodule. So the fix reaches
+krytis only when three things line up:
+
+1. fisherman `dev` carries it — merged 2026-09-19 02:38Z;
+2. `tuna-os/bootc-installer` bumps its `fisherman` submodule past that commit — the
+   release krytis installs pins `982282b` (2026-09-19 07:39Z);
+3. `live/src/install-flatpaks.sh` downloads from *that* repo.
+
+Step 3 was the real blocker. The script pointed at `projectbluefin/bootc-installer` with
+`tuna-os/tuna-installer` as fallback, and **both are archived** — development moved back
+to the tuna-os org. Their newest bundles are 2026-08-01 and 2026-05-08, so an ISO built
+the day after the upstream fix landed still shipped the bug. Extracting both bundles
+shows it directly:
+
+```bash
+ostree init --repo=repo --mode=archive-z2
+flatpak build-import-bundle repo org.bootcinstaller.Installer.flatpak
+ostree --repo=repo checkout -U app/org.bootcinstaller.Installer/x86_64/master co
+strings -a co/files/bin/fisherman | grep -c 'type=%s, name="root"'
+# archived projectbluefin bundle → 0  (only the old literal type=linux)
+# tuna-os bundle                 → 1  (arch-aware, written at partition time)
+```
+
+**Generalise: when an upstream fix "lands", check the delivery vehicle, not just the
+merge.** A green upstream PR says nothing about which binary our ISO embeds.
+
+Process note, because the sequence is confusing in the history: #72 was opened
 uninvited, closed, then reopened on request. Publishing to a repository this project
 does not own needs an explicit instruction — AGENTS.md § Third-party repositories.
 
-**Operator fix for a machine already installed this way** — metadata only, data
-untouched:
+**Operator fix for a machine installed before the fix shipped** — metadata only, data
+untouched. New installs from an ISO built after 2026-09-19 do not need it:
 
 ```bash
 sudo sfdisk --part-type /dev/nvme0n1 3 4f68bce3-e8cd-4db1-96e7-fbcaf984b709

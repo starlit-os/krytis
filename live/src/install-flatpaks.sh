@@ -34,36 +34,42 @@ fi
 flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo
 
-# bootc-installer bundle
+# bootc-installer bundle — the flatpak that also carries the fisherman binary
+# the live session installs with (configure-live-krytis.sh symlinks it out of
+# the app dir).
+#
 # INSTALLER_CHANNEL controls which release to pull from:
 #   stable (default) → GitHub "latest" release (non-pre-release)
 #   dev              → latest-dev rolling pre-release (tracks dev branch)
-# Primary source: projectbluefin/bootc-installer (Project Bluefin's fork).
-# Fallback: tuna-os/tuna-installer (upstream) if projectbluefin assets are unavailable.
-# v2.6.1 adds nvidia_imgref GPU auto-detection support.
-INSTALLER_REPO="projectbluefin/bootc-installer"
-FALLBACK_REPO="tuna-os/tuna-installer"
+#
+# Source is tuna-os/bootc-installer. Development moved back to the tuna-os org:
+# projectbluefin/bootc-installer (this script's previous primary) and
+# tuna-os/tuna-installer (its fallback) are both ARCHIVED, last stable releases
+# 2026-08-01 and 2026-05-08. That staleness is not cosmetic — it is why krytis
+# still shipped the unbootable encrypted-sealed install after the upstream fix
+# landed. tuna-os/fisherman#219 (merged 2026-09-19, released v0.4.0) types the
+# root partition with the discoverable DPS GUID at partition-creation time, so
+# a UKI's gpt-auto-generator can find an encrypted root; the archived flatpak
+# predates it. Verified by extracting both bundles: the archived binary carries
+# only the old literal `type=linux, name="root"`, the tuna-os one carries the
+# arch-aware `type=%s, name="root"`. See docs/skills/secure-boot.md
+# § The encrypted-root GUID fix, and where it actually comes from.
+#
+# There is deliberately no fallback repo. Both former fallbacks are archived,
+# and silently installing a months-old bundle reintroduces the very bug this
+# source change fixes — a hard failure here is the correct outcome.
+INSTALLER_REPO="tuna-os/bootc-installer"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
-    # projectbluefin/bootc-installer uses tag "latest-dev" for dev builds.
-    # tuna-os/tuna-installer uses tag "continuous-dev" — different naming convention.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/download/latest-dev/${FLATPAK_FILENAME}"
-    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/download/continuous-dev/${FLATPAK_FILENAME}"
+    INSTALLER_URL="https://github.com/${INSTALLER_REPO}/releases/download/latest-dev/${FLATPAK_FILENAME}"
 else
-    # Use GitHub's /releases/latest/download/ redirect — always resolves to the
-    # current latest stable release without needing to know the version tag.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
-    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
+    # GitHub's /releases/latest/download/ redirect — always the current stable
+    # release, no version tag to keep in sync. tuna-os/bootc-installer cuts one
+    # per merge (v2026.09.19-cee9ba29 and friends), so "latest" moves daily.
+    INSTALLER_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
 fi
-if ! curl --retry 3 --fail --location \
-    "${PRIMARY_URL}" \
-    -o /tmp/tuna-installer.flatpak 2>/dev/null; then
-    echo "Primary source unavailable, falling back to ${FALLBACK_REPO}..."
-    curl --retry 3 --fail --location \
-        "${FALLBACK_URL}" \
-        -o /tmp/tuna-installer.flatpak
-fi
+curl --retry 3 --fail --location "${INSTALLER_URL}" -o /tmp/tuna-installer.flatpak
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 

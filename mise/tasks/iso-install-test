@@ -112,8 +112,17 @@ echo "    expect-fail: ${EXPECT_FAIL}"
 # UKI, so `console=ttyS0` cannot be injected, the kernel logs to tty0 only,
 # and serial output ends at systemd-stub's verified-chain confirmation. See
 # docs/skills/secure-boot.md § sealed UKI serial output.
+# `env -u` is load-bearing: mise exports THIS task's parsed flags as usage_*,
+# and every child process inherits them (docs/skills/mise.md § `usage_container`
+# is inherited by child processes). iso-e2e-test and boot-test carry flags of
+# the same names, and their argc-fallback reads an inherited
+# usage_expect_fail=true exactly as if --expect-fail had been passed — so
+# `mise run iso-install-test --secure --expect-fail` died on iso-e2e-test's
+# "--expect-fail is incompatible with --install-only" guard before any VM
+# booted. Both children get every flag they need explicitly.
 set +e
-"${REPO_ROOT}/mise/tasks/iso-e2e-test" \
+env -u usage_secure -u usage_expect_fail \
+    "${REPO_ROOT}/mise/tasks/iso-e2e-test" \
     --iso "${ISO_ABS}" \
     --payload-ref "${PAYLOAD_REF}" \
     --install-only
@@ -140,6 +149,6 @@ BOOT_TEST_ARGS=(--reuse-disk "${INSTALL_DISK}")
 [[ "${EXPECT_FAIL}" -eq 1 ]] && BOOT_TEST_ARGS+=(--expect-fail)
 
 echo "==> Verdict: booting the installed disk (boot-test ${BOOT_TEST_ARGS[*]})"
-./mise/tasks/boot-test "${BOOT_TEST_ARGS[@]}"
+env -u usage_secure -u usage_expect_fail ./mise/tasks/boot-test "${BOOT_TEST_ARGS[@]}"
 
 echo "==> PASS"
