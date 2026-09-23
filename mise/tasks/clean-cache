@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Reclaim disk from stale build scratch and dangling images (see #416)"
+#MISE description="Reclaim disk from stale build scratch, orphaned VM scratch, and dangling images (see #416, #913)"
 #USAGE flag "--dry-run" help="Report what would be freed and delete nothing"
 #USAGE flag "--yes" help="Skip the safety pause and delete immediately"
+#USAGE flag "--min-age <hours>" default="24" help="Only reap VM scratch whose mtime is older than this many hours"
+#USAGE flag "--install-scratch" help="Also remove /sysroot/.fisherman-scratch, the ISO installer's leftover container store (needs sudo)"
 
 # Why this exists: BuildStream derives its CAS quota from the *filesystem*
 # (buildbox-casd --quota-low=80% --reserved=46.5G), so a nearly-full disk makes
@@ -19,13 +21,22 @@ set -euo pipefail
 
 DRY_RUN="${usage_dry_run:-}"
 ASSUME_YES="${usage_yes:-}"
+MIN_AGE_HOURS="${usage_min_age:-24}"
+WITH_INSTALL="${usage_install_scratch:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
-        --dry-run) DRY_RUN=true; shift ;;
-        --yes)     ASSUME_YES=true; shift ;;
+        --dry-run)         DRY_RUN=true; shift ;;
+        --yes)             ASSUME_YES=true; shift ;;
+        --min-age)         MIN_AGE_HOURS="$2"; shift 2 ;;
+        --install-scratch) WITH_INSTALL=true; shift ;;
         *) break ;;
     esac
 done
+
+if ! [[ "${MIN_AGE_HOURS}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --min-age takes whole hours, got '${MIN_AGE_HOURS}'" >&2
+    exit 2
+fi
 
 # ── Safety: never run alongside a live build ──────────────────────────────────
 # /var/tmp/buildah* belongs to an *in-flight* podman build while it exists;
@@ -42,6 +53,11 @@ if [ -n "${LIVE}" ]; then
 fi
 
 human() { numfmt --to=iec --suffix=B "${1:-0}" 2>/dev/null || echo "${1:-0}B"; }
+
+# Allocated blocks, never apparent size. /var/tmp/krytis-install.img is a 64G
+# sparse file that held 23G when this was written: reporting apparent size
+# would promise 41G of reclaim that does not exist.
+disk_bytes() { du -s --block-size=1 --total "$@" 2>/dev/null | tail -1 | cut -f1; }
 
 echo "==> Disk before:"
 df -h /var | tail -1 | sed 's/^/    /'
@@ -64,7 +80,7 @@ done
 SCRATCH_BYTES=0
 SCRATCH_PARTIAL=""
 if [ ${#SCRATCH[@]} -gt 0 ]; then
-    if ! SCRATCH_BYTES=$(du -sb --total "${SCRATCH[@]}" 2>/dev/null | tail -1 | cut -f1); then
+    if ! SCRATCH_BYTES=$(disk_bytes "${SCRATCH[@]}"); then
         SCRATCH_PARTIAL="; partial, some unreadable until deletion"
     fi
     SCRATCH_BYTES="${SCRATCH_BYTES:-0}"
@@ -76,7 +92,53 @@ else
     echo "==> Stale build scratch in /var/tmp: none"
 fi
 
-# ── 2. Dangling images ───────────────────────────────────────────────────────
+# ── 2. Orphaned VM scratch ───────────────────────────────────────────────────
+# boot-test and enroll-test rm -rf their own WORKDIR from an EXIT trap, so a
+# leftover means the run was SIGKILLed, the host crashed, or --debug-keep held
+# it for a post-mortem. Each carries a 15G disk image; three of them, eight days
+# old, were sitting in 48G of /var/tmp debris on a dev box while this task
+# reclaimed 13G of buildah dirs beside them (#913).
+#
+# iso-boot-live's disks differ in kind: it creates them only when absent
+# (`truncate -s 64G`) and otherwise *reuses* them, which is how a live-ISO
+# install is handed to `iso-boot-installed`. Reaping one throws away that
+# install, not just garbage — so the age gate is the safety, and the next
+# iso-boot-live run starts from an empty disk.
+VM_SCRATCH=()
+VM_IN_USE=()
+# /proc cmdlines are world-readable, so this sees other users' VMs too.
+CMDLINES=$(ps -eo args= 2>/dev/null || true)
+while IFS= read -r -d '' p; do
+    # An open path is not stale however old its mtime: qemu creates the disk up
+    # front and then writes only through its own fd, so mtime stops advancing
+    # while the VM runs. boot-test line 374 records what deleting one costs —
+    # qemu survives on its open fds, orphaned, with no pidfile left to kill it
+    # by. The age gate alone would not catch a long-running VM; this does.
+    if printf '%s\n' "${CMDLINES}" | grep -Fq -- "$p"; then
+        VM_IN_USE+=("$p")
+    else
+        VM_SCRATCH+=("$p")
+    fi
+done < <(find /var/tmp -maxdepth 1 \
+    \( -name 'krytis-boot-test.*' -o -name 'krytis-enroll-test.*' \
+       -o -name 'krytis-*.img' -o -name 'krytis-qemu-*-vars.fd' \) \
+    -mmin "+$((MIN_AGE_HOURS * 60))" -print0 2>/dev/null)
+
+if [ ${#VM_SCRATCH[@]} -gt 0 ]; then
+    VM_BYTES=$(disk_bytes "${VM_SCRATCH[@]}" || true)
+    echo "==> Orphaned VM scratch older than ${MIN_AGE_HOURS}h ($(human "${VM_BYTES:-0}") across ${#VM_SCRATCH[@]} paths):"
+    for p in "${VM_SCRATCH[@]}"; do
+        printf '    %-44s %s\n' "$p" "$(stat -c %y "$p" | cut -d. -f1)"
+    done
+else
+    echo "==> Orphaned VM scratch older than ${MIN_AGE_HOURS}h: none"
+fi
+if [ ${#VM_IN_USE[@]} -gt 0 ]; then
+    echo "==> VM scratch skipped — open in a running process:"
+    printf '    %s\n' "${VM_IN_USE[@]}"
+fi
+
+# ── 3. Dangling images ───────────────────────────────────────────────────────
 # Untagged, unreachable layers — mostly superseded krytis:{latest,sealed,
 # sealed-base} generations, ~7G per build+seal-uki cycle. Tagged images are
 # never touched.
@@ -84,12 +146,51 @@ DANGLING=$(podman images --filter dangling=true -q 2>/dev/null | wc -l)
 RECLAIMABLE=$(podman system df --format '{{.Reclaimable}}' 2>/dev/null | head -1 || true)
 echo "==> Dangling images: ${DANGLING} (podman reports ${RECLAIMABLE:-unknown} reclaimable across all images)"
 
+# ── 4. Installer scratch ─────────────────────────────────────────────────────
+# fisherman — the ISO's bootc installer — works in /sysroot/.fisherman-scratch:
+# a throwaway root podman store (containers-root/) plus the oci-cache it pulled
+# the payload into, and a var-tmp-override it bind-mounts over /var/tmp to get
+# room during the install. All three are write-once. On a machine installed in
+# August they were still sitting there in September, 9.6G, every timestamp
+# inside the four minutes the install took, referenced by no unit, no mount and
+# no process (#913).
+#
+# Opt-in, because reclaiming it is not just a sudo away: bootc mounts /sysroot
+# **read-only**, so `rm -rf` there returns EROFS on every single file. Freeing
+# it means remounting the OS root rw, which is a decision for the operator, not
+# for a cache-cleaning task — so this reports the exact incantation and stops.
+INSTALL_SCRATCH=/sysroot/.fisherman-scratch
+SYSROOT_RO=""
+case "$(findmnt -rno OPTIONS /sysroot 2>/dev/null)" in ro | ro,*) SYSROOT_RO=true ;; esac
+if [ -d "${INSTALL_SCRATCH}" ]; then
+    # Root-owned and mode 700, so a rootless `du` cannot size it. Don't prompt
+    # for a password just to print a number — say so instead.
+    IS_BYTES=$(sudo -n du -s --block-size=1 "${INSTALL_SCRATCH}" 2>/dev/null | cut -f1 || true)
+    if [ -n "${IS_BYTES}" ]; then
+        echo "==> Installer scratch: ${INSTALL_SCRATCH} ($(human "${IS_BYTES}"), installed $(stat -c %y "${INSTALL_SCRATCH}" | cut -d' ' -f1))"
+    else
+        echo "==> Installer scratch: ${INSTALL_SCRATCH} (size needs sudo)"
+    fi
+    if [ "${WITH_INSTALL}" != "true" ]; then
+        echo "    kept — pass --install-scratch to remove it"
+    elif [ -n "${SYSROOT_RO}" ]; then
+        echo "    /sysroot is mounted read-only — bootc keeps it that way, and rm returns"
+        echo "    EROFS on every file. Remounting the OS root rw is your call, not this"
+        echo "    task's. To do it by hand:"
+        echo "        sudo mount -o remount,rw /sysroot \\"
+        echo "          && sudo rm -rf ${INSTALL_SCRATCH} \\"
+        echo "          && sudo mount -o remount,ro /sysroot"
+    fi
+fi
+
 # ── Never touched ────────────────────────────────────────────────────────────
 # The systemd-buildbarn-storage-{cas,ac,fsac} and -asset-cache volumes (~70G)
 # are the Buildbarn cache that `mise bst --pull` and cache-warm.yml depend on.
 # Pruning them is a self-inflicted cache miss for the whole project, so this
 # task never prunes volumes and never prunes tagged images.
-echo "==> NOT touching: podman volumes (Buildbarn cache), tagged images, ~/.cache/buildstream"
+echo "==> NOT touching: podman volumes (Buildbarn cache), tagged images, ~/.cache/buildstream,"
+echo "    VM scratch newer than ${MIN_AGE_HOURS}h or open in a running process,"
+echo "    the root podman store (its krytis:latest is tagged, and generate-disk re-copies it)"
 
 if [ "${DRY_RUN}" = "true" ]; then
     echo "==> --dry-run: nothing deleted."
@@ -115,8 +216,29 @@ if [ ${#SCRATCH[@]} -gt 0 ]; then
     fi
 fi
 
+if [ ${#VM_SCRATCH[@]} -gt 0 ]; then
+    echo "==> Removing orphaned VM scratch..."
+    rm -rf "${VM_SCRATCH[@]}"
+fi
+
 echo "==> Pruning dangling images..."
 podman image prune -f
+
+# Runs after the image prune, and never aborts the task: this step is opt-in,
+# touches the OS root, and must not cost the caller the reclaim they came for.
+if [ "${WITH_INSTALL}" = "true" ] && [ -z "${SYSROOT_RO}" ] && [ -d "${INSTALL_SCRATCH}" ]; then
+    # A half-finished install still holds var-tmp-override bind-mounted over
+    # /var/tmp; pulling the backing directory out from under a live installer
+    # is the boot-test-WORKDIR mistake with the OS image at stake.
+    INSTALL_LIVE=$(pgrep -a -f 'fisherman|bootc install' 2>/dev/null | grep -v 'clean-cache' || true)
+    if [ -n "${INSTALL_LIVE}" ] || findmnt -rno TARGET | grep -q "^${INSTALL_SCRATCH}"; then
+        echo "    WARNING: installer scratch is in use — skipping:" >&2
+        echo "${INSTALL_LIVE}" | sed 's/^/        /' >&2
+    else
+        echo "==> Removing installer scratch (sudo)..."
+        sudo rm -rf "${INSTALL_SCRATCH}" || echo "    WARNING: installer scratch not fully removed" >&2
+    fi
+fi
 
 echo "==> Disk after:"
 df -h /var | tail -1 | sed 's/^/    /'
