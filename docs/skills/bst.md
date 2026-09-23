@@ -3232,12 +3232,13 @@ makes it refuse to stage regardless of how small its own cache is. When this fir
 `~/.cache/buildstream` was **27 GB** while `/var` sat at 94% — pruning BST would have
 achieved nothing. Check `df -h /var` before `du ~/.cache/buildstream`.
 
-Run **`mise run clean-cache`** (`--dry-run` to look first). It reclaims the two things
+Run **`mise run clean-cache`** (`--dry-run` to look first). It reclaims the three things
 that actually accumulate:
 
 | Source | Typical | Why it accumulates |
 |---|---|---|
 | `/var/tmp/buildah*`, `/var/tmp/container_images_oci*` | tens of GB | Per-build scratch from interrupted `podman build` runs. Nothing reaps it; dirs three weeks old are normal. |
+| `/var/tmp/krytis-boot-test.*`, `krytis-enroll-test.*`, `krytis-*.img`, `krytis-qemu-*-vars.fd` | 16 GB per orphan | `boot-test`/`enroll-test` delete their own WORKDIR from an `EXIT` trap, so a survivor means the run was SIGKILLed, the host crashed, or `--debug-keep` held it. Three orphans sat for eight days in 85 GB of `/var/tmp` on one dev box (#913). |
 | Dangling (untagged) images | ~7 GB per cycle | Every `mise run build` + `mise run seal-uki` supersedes the previous `krytis:latest`/`:sealed`/`:sealed-base`, orphaning the old layers. |
 
 **Never prune the podman volumes.** `systemd-buildbarn-storage-{cas,ac,fsac}` and
@@ -3249,6 +3250,29 @@ project. `clean-cache` never touches volumes or tagged images.
 `/var/tmp/buildah*` belongs to an *in-flight* build while it exists. Deleting it
 mid-build corrupts that build — the same class of mistake as removing a running
 `boot-test`'s WORKDIR (docs/skills/bootc-vm.md § Reading a stalled guest without root).
+
+### VM scratch needs two guards, not one
+
+Build scratch is unambiguous garbage the moment its build dies. VM scratch is not, so
+`clean-cache` gates it twice (#913):
+
+- **Age.** `--min-age <hours>`, default 24. `iso-boot-live` *reuses* `/var/tmp/krytis-install.img`
+  when it already exists (`truncate -s 64G` only when absent) — that file is how a live-ISO
+  install is handed to `iso-boot-installed`, not garbage. Reaping it throws the install away;
+  the next `iso-boot-live` then starts from an empty disk.
+- **Open in a running process.** Checked against `ps -eo args=`, because **mtime does not
+  advance while a VM runs**: qemu creates the disk up front and writes only through its own
+  fd. A long boot-test would otherwise look stale to any age gate. `boot-test` line 374
+  records what deleting one costs — qemu survives on its open fds, orphaned, with no pidfile
+  left to kill it by.
+
+Sizes are reported as **allocated blocks, never apparent size**: `krytis-install.img` is a
+64 GB sparse file that held 23 GB, so `du -sb` would have promised 41 GB of reclaim that
+does not exist.
+
+One trap when driving the task from a pipeline: its in-flight-build guard is `pgrep -f`,
+which matches *arguments*, so `mise run clean-cache | grep -v buildah` makes the task refuse
+to run — the grep's own argv is the "live build" it finds. Filter on something else.
 
 ### Two traps that made `clean-cache` fail exactly when it was needed
 
@@ -3288,6 +3312,44 @@ General lesson for these tasks: under `set -euo pipefail`, `VAR=$(cmd | tail -1)
 the script when `cmd` fails, and because bash traces the assignment first, the failure
 looks like it happened on the *next* line. Wrap size probes in `if ! VAR=$(...)`.
 
-One consumer it cannot reclaim: the **root** podman store. `bootc install` copies every
-image there via `generate-disk`, and it is invisible to rootless `podman system df`.
-Check it with `sudo podman system df`.
+### What `clean-cache` deliberately cannot reclaim
+
+Four things eat a krytis dev disk that this task will not take back, and all four are
+outside `/var/tmp` where people look first. Measured on one workstation at 297 GB used:
+
+**The root podman store** (~8 GB). `bootc install` copies every image there via
+`generate-disk`, and it is invisible to rootless `podman system df` — check with
+`sudo podman system df`. It holds a *tagged* `localhost/krytis:latest`, so `podman image
+prune` (dangling-only) would never touch it anyway, and the task's own doctrine is that
+tagged images are never pruned. `generate-disk` re-copies it on demand.
+
+**`/sysroot/.fisherman-scratch`** (~10 GB). fisherman, the ISO's bootc installer, does its
+work in a throwaway root podman store (`containers-root/`) plus an `oci-cache/` it pulls
+the payload into, and a `var-tmp-override/` it bind-mounts over `/var/tmp` for room. All
+write-once, all still present a month after the install with every timestamp inside the
+four minutes the install took, referenced by no unit, no mount and no process. Reclaiming
+it is **not just a sudo away**: bootc mounts `/sysroot` read-only, so `rm -rf` returns
+EROFS on every file. `clean-cache --install-scratch` detects this and prints the remount
+recipe rather than doing it — remounting the OS root rw is an operator decision:
+
+```shell
+sudo mount -o remount,rw /sysroot \
+  && sudo rm -rf /sysroot/.fisherman-scratch \
+  && sudo mount -o remount,ro /sysroot
+```
+
+**Anything inside `~` on a systemd-homed host.** The LUKS home image
+(`/var/home/<user>.home`) is allocated at its full size — 110 GB on this machine — and
+**does not shrink when you free space inside it**. `podman image prune` against the
+rootless store (70 GB of `~/.local/share/containers` there) buys space *in home*, none on
+the root filesystem. Only `homectl resize` hands it back. Note also that the home btrfs
+is mounted `compress=zstd:1`, so `du` inside home over-reports against `df`.
+
+**Unreferenced extents.** After the cleanup above, `btrfs filesystem df /sysroot` reported
+`Data used 207.23 GiB` while a full root `du -sx /sysroot` saw 144.73 GiB — a stable ~62 GiB
+that no file accounts for. Ruled out by measurement: snapshots (`btrfs subvolume list` is
+empty), deleted-but-open files (`lsof +L1` clean), and sparse-file skew (the gap did not
+move when 85 GB of sparse VM images were deleted). Unconfirmed cause: extent bookending on
+the large always-rewritten `*.home` image, where btrfs keeps whole extents allocated while
+`st_blocks` counts only the referenced bytes. If you need that space,
+`btrfs filesystem defragment` on the home image is the thing to try — untested here.

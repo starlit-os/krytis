@@ -383,6 +383,13 @@ That output *is* the pass signal for the harness — the run still fails (a blan
 
 **Use `--debug-keep`.** Without it the `EXIT` trap deletes `WORKDIR`, taking `serial.log` with it, so a failing run leaves nothing to read.
 
+A kept WORKDIR is 16 GB and nothing reaps it on its own, so `--debug-keep` runs and
+SIGKILLed runs both leave one behind — three of them accounted for 48 GB on one dev box.
+`mise run clean-cache` now reaps `/var/tmp/krytis-boot-test.*` once it is older than
+`--min-age` hours (default 24) *and* no running process has it open, so a post-mortem you
+are still reading is safe but a forgotten one is not permanent. See docs/skills/bst.md
+§ VM scratch needs two guards, not one.
+
 **Gotcha when running a task from a worktree:** `mise` resolves tasks from the directory it starts in. Launch it with the worktree as the working directory — if the `cd` silently fails, you get the *main* checkout's task and will conclude your fix did nothing. Check the `[boot-test] $ <path>` line mise echoes: it names the script that actually ran.
 
 ### Reading a stalled guest without root
