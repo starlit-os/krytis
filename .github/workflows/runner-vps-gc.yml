@@ -1,0 +1,57 @@
+name: Runner VPS GC
+
+# Weekly disk reclaim on the always-on krytis-vps runner (#938).
+#
+# The box ratchets upward and never comes back down: 91G used on
+# 2026-09-17, 115G by 2026-09-24, flat but never falling. Transient build
+# space is already handled — build-iso.yml's "Clean up local images" runs
+# `if: always()` and actions/checkout's default `clean: true` wipes
+# `output/` however the previous run died (#844) — so what remains is the
+# accumulated kind: BuildStream's cache outside the part its quota covers,
+# stale podman images, and an unbounded journal.
+#
+# This runs AS A JOB on the VPS rather than as a systemd timer on the box,
+# and that is the whole safety argument. A self-hosted runner executes one
+# job at a time, so a GC job physically cannot overlap a build. A timer
+# could fire in the middle of cache-warm and delete a CAS blob out from
+# under a running BuildStream, which would surface as a corrupt-cache
+# failure with no obvious cause.
+
+on:
+  schedule:
+    # Sunday 04:27 UTC. Deliberately a weekend day and a distinct minute:
+    # cache-warm.yml is `41 6 * * 1-5` (weekdays only, so Sunday avoids it
+    # entirely rather than merely missing it by minutes) and
+    # track-bst-sources.yml is `13 5 * * *`. See docs/skills/ci-runner.md
+    # § Scheduled Workflow Cron Delay for why sharing a trigger minute is
+    # worth avoiding even between unrelated workflows.
+    - cron: '27 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report what would be reclaimed without deleting anything'
+        type: boolean
+        default: false
+
+permissions: read-all
+
+concurrency:
+  group: krytis-runner-vps-gc
+  cancel-in-progress: false
+
+jobs:
+  gc:
+    name: Reclaim disk on the VPS runner
+    runs-on: [self-hosted, linux, x64, krytis-vps]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # No mise/uv bootstrap: the script is plain bash against coreutils,
+      # podman and journalctl, all already on the box. Installing a
+      # toolchain to run `rm` would cost more disk than this reclaims.
+      - name: Reclaim disk
+        run: bash files/runner-vps/gc.sh
+        env:
+          GC_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}

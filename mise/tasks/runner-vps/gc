@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Reclaim disk on the always-on Debian CI VPS runner: BuildStream logs, stale podman images, journal (issue #938)"
+
+set -euo pipefail
+
+# Resolves RUNNER_VPS_HOST (env, else the Krytis vault) and defines ssh_vps/scp_vps.
+. scripts/runner-vps-host.sh
+SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../files/runner-vps" && pwd)/gc.sh"
+
+# Same copy-and-run shape as runner-vps:install, and the same script that
+# .github/workflows/runner-vps-gc.yml runs on its weekly schedule. The
+# workflow executes it locally (it is already on the box); this task is the
+# operator's path to the identical behaviour from a dev machine, which is
+# what AGENTS.md's mise-task-integrity gate requires.
+#
+# Pass --dry-run to report reclaimable space without deleting:
+#   mise run runner-vps:gc -- --dry-run
+GC_DRY_RUN=0
+for arg in "$@"; do
+    case "${arg}" in
+        --dry-run) GC_DRY_RUN=1 ;;
+        *) echo "unknown argument: ${arg}" >&2; exit 2 ;;
+    esac
+done
+
+echo "==> Copying GC script to ${RUNNER_VPS_HOST}..."
+scp_vps "${SCRIPT}" "${RUNNER_VPS_HOST}:/tmp/gc-runner.sh"
+
+echo "==> Running GC (dry_run=${GC_DRY_RUN})..."
+ssh_vps "chmod +x /tmp/gc-runner.sh && GC_DRY_RUN='${GC_DRY_RUN}' /tmp/gc-runner.sh && rm -f /tmp/gc-runner.sh"
