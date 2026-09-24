@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#MISE description="Update the pinned qemux/qemu-docker container digest in boot-vm and convert-to-qcow2"
+#MISE hide=true
+
+set -euo pipefail
+
+# Two task files carry the same QEMU_IMAGE_REF and must move together: boot-vm
+# runs the image --privileged with /dev/kvm, convert-to-qcow2 runs qemu-img out
+# of it. Splitting the bump would leave one of them on a stale digest with
+# nothing to notice, so this task rewrites both or neither.
+TASK_FILES=(mise/tasks/boot-vm mise/tasks/convert-to-qcow2)
+IMAGE="ghcr.io/qemus/qemu"
+
+CURRENT_REF=$(grep -oP 'QEMU_IMAGE_REF="\K[^"]+' "${TASK_FILES[0]}")
+echo "==> Current: ${CURRENT_REF}"
+
+# Fail loudly if the two files have drifted apart — a silent single-file update
+# is exactly the state this task exists to prevent.
+for f in "${TASK_FILES[@]}"; do
+    REF=$(grep -oP 'QEMU_IMAGE_REF="\K[^"]+' "$f")
+    if [ "${REF}" != "${CURRENT_REF}" ]; then
+        echo "ERROR: ${f} pins ${REF}, ${TASK_FILES[0]} pins ${CURRENT_REF} — resolve by hand." >&2
+        exit 1
+    fi
+done
+
+echo "==> Fetching latest tags for ${IMAGE}..."
+# Upstream tags releases MAJOR.MINOR (7.50) and also publishes `latest`; the
+# numeric filter keeps the pin on a real release rather than a moving alias.
+LATEST_TAG=$(skopeo list-tags "docker://${IMAGE}" | jq -r '.Tags[]' | grep -E '^[0-9]+\.[0-9]+$' | sort -V | tail -1)
+[ -n "${LATEST_TAG}" ] || { echo "ERROR: no numeric tags found for ${IMAGE}" >&2; exit 1; }
+echo "==> Latest tag: ${LATEST_TAG}"
+
+LATEST_DIGEST=$(skopeo inspect "docker://${IMAGE}:${LATEST_TAG}" | jq -r '.Digest')
+[ -n "${LATEST_DIGEST}" ] || { echo "ERROR: could not resolve digest for ${IMAGE}:${LATEST_TAG}" >&2; exit 1; }
+NEW_REF="${IMAGE}:${LATEST_TAG}@${LATEST_DIGEST}"
+
+if [ "${NEW_REF}" = "${CURRENT_REF}" ]; then
+    echo "==> Already up to date (${CURRENT_REF})"
+    exit 0
+fi
+
+echo "==> Updating: ${CURRENT_REF} → ${NEW_REF}"
+for f in "${TASK_FILES[@]}"; do
+    sed -i "s|QEMU_IMAGE_REF=\"${CURRENT_REF}\"|QEMU_IMAGE_REF=\"${NEW_REF}\"|" "$f"
+    echo "    ${f}"
+done
+
+echo "==> Done. Verify with 'mise run convert-to-qcow2' against a built disk."

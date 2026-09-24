@@ -10,6 +10,12 @@ DISK="${usage_disk:-bootable.raw}"
 SECURE="${usage_secure:-}"
 WANT_DISPLAY="${usage_display:-}"
 
+# Pinned qemux/qemu-docker image — bump via `mise run qemu-image-update`.
+# This container runs --privileged with /dev/kvm and the disk image bind-mounted,
+# so a floating tag here is the same supply-chain exposure as an unpinned CI
+# action. Same ref in mise/tasks/convert-to-qcow2; the update task rewrites both.
+QEMU_IMAGE_REF="ghcr.io/qemus/qemu:7.50@sha256:e7f6fda52503a546fd649670ba46e4bc23dc6dcef275bc3fac48877fbbc430df"
+
 if [ ! -e "${DISK}" ]; then
     echo "ERROR: ${DISK} not found — run 'mise run generate-disk' first." >&2
     exit 1
@@ -136,7 +142,6 @@ else
     podman run \
         --rm --privileged \
         --device /dev/kvm \
-        --pull=always \
         --publish "127.0.0.1:${PORT}:8006" \
         --publish "127.0.0.1:2222:22" \
         -e "USER_PORTS=22" \
@@ -147,5 +152,5 @@ else
         -e "BOOT_MODE=uefi" \
         -e "ARGUMENTS=-snapshot" \
         -v "${DISK}:/boot.img" \
-        ghcr.io/qemus/qemu:latest
+        "${QEMU_IMAGE_REF}"
 fi
