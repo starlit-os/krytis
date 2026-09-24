@@ -12,7 +12,7 @@ Operational notes for changing that workflow live in
 `build-iso.yml` has uploaded the ISO as an `actions/upload-artifact` artifact
 since #844. That is adequate for internal testing and useless for distribution:
 
-- It expires after **7 days** (`retention-days: 7`).
+- It expires after **1 day** (`retention-days: 1`, lowered from #844's 7 — see below).
 - Downloading it requires a **GitHub account with access to this repository** —
   artifacts are not public even on a public repo without going through the API.
 - The download is a **ZIP wrapper** around the ISO, not the ISO, so it cannot be
@@ -22,7 +22,7 @@ The artifact therefore keeps its original internal-testing purpose on every
 path that still needs it — but **a run that successfully publishes to R2 does
 not upload one**. Once `iso.ririi.dev` serves those exact bytes, the artifact is
 a redundant 4.5 GB copy of a publicly fetchable file, charged against Actions
-storage for a week. Unsealed builds and sealed-but-unpublished test dispatches
+storage. Unsealed builds and sealed-but-unpublished test dispatches
 still upload, because neither has another way out of the runner.
 
 The skip is conditioned on the publish having *succeeded* (`if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}`),
@@ -31,6 +31,13 @@ which is load-bearing. GitHub steps run on success by default, so a bare
 the public-download check failed — throwing away ~40 minutes of build that the
 next run's `git clean -ffdx` makes unrecoverable. With the `failure()` clause a
 failed publish falls back to the artifact and the retry can skip the rebuild.
+
+Those remaining uploads retain for **1 day**, not #844's 7. Every one of them is
+now a same-session internal artifact — an unsealed build being tested, a sealed
+dry-run, or a rescue copy from a failed publish — fetched within minutes of the
+run or not at all. At 4.5 GB apiece the difference between a day and a week of
+Actions storage is real, and anything genuinely meant to outlive the session
+belongs on R2, which is what `publish_r2` exists for.
 
 ## Why Cloudflare R2
 

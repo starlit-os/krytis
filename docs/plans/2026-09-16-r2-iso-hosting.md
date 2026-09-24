@@ -252,7 +252,7 @@ this build's size and checksum before the job is considered green."
 
 - [x] **Step 6: Stop uploading an ISO artifact when the run published one** (added 2026-09-24, after the plan was written)
 
-The original plan left the `Upload ISO artifact` step untouched, so a publishing run produced the ISO twice: once at `iso.ririi.dev` and once as a 4.5 GB Actions artifact billed against repo storage for seven days, of a file anyone can now fetch anonymously. The step is now conditional:
+The original plan left the `Upload ISO artifact` step untouched, so a publishing run produced the ISO twice: once at `iso.ririi.dev` and once as a 4.5 GB Actions artifact retained for a week, of a file anyone can now fetch anonymously. The step is now conditional, and the uploads that remain retain for **1 day** rather than #844's 7 — each is a same-session internal artifact (unsealed build under test, sealed dry-run, or a rescue copy from a failed publish), fetched within minutes of the run or not at all:
 
 ```yaml
         if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}

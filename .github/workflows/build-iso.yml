@@ -214,7 +214,7 @@ jobs:
         # Skipped when this run published to R2: iso.ririi.dev already
         # serves those exact bytes, so the artifact would be a redundant
         # 4.5 GB copy of a publicly fetchable file, billed against Actions
-        # storage for 7 days. Every other path still uploads — the unsealed
+        # storage. Every other path still uploads — the unsealed
         # build has no other distribution route (#867 keeps it as an
         # internal-testing artifact deliberately), and a sealed build with
         # publish_r2=false is a test dispatch that must stay retrievable.
@@ -234,7 +234,15 @@ jobs:
         with:
           name: krytis-live-iso-${{ github.run_id }}
           path: ${{ inputs.sealed && 'output/krytis-live-sealed.iso' || 'output/krytis-live.iso' }}
-          retention-days: 7
+          # 1, not #844's original 7. At 4.5 GB per run this is the
+          # difference between an ISO costing a day of Actions storage and
+          # a week of it, and nothing here is a durable artifact: every
+          # remaining upload is a same-session internal test (unsealed
+          # build, sealed dry-run, or a publish-failure rescue copy),
+          # fetched within minutes or not at all. Anything meant to
+          # outlive the session belongs on R2, which is what publish_r2
+          # exists for.
+          retention-days: 1
 
       - name: Clean up local images
         # Best-effort, never fails the job (§ "does this decide anything?"
