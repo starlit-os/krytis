@@ -582,7 +582,8 @@ A committer that isn't `github-actions[bot]` on a commit whose message/author st
 
 `required_signatures` has no bypass, so a commit that cannot be signed cannot be made
 at all — `git commit` aborts with `fatal: failed to write commit object`. Distinguish
-the two causes before doing anything, because only one of them is unfixable locally:
+the cause before doing anything — three produce the same `fatal`, and only one of them is
+unfixable locally:
 
 ```bash
 ssh-add -l                                         # key listed by the agent?
@@ -607,6 +608,26 @@ Do not bother retrying against the inner plain agent gcr spawns
 key, 58 s apiece, while direct file signing succeeded in 10 s. Derive the base dir from
 `$SSH_AUTH_SOCK` if you do look — it is `/run/user/<uid>/gcr`, and the uid is not always
 `1000` (it was `60339` on that host).
+
+**A third cause, and the one that actually bit on 2026-09-24: no controlling terminal.**
+`Confirm user presence for key …` prints, ~29 s pass, and it fails with
+`Couldn't sign message: incorrect passphrase supplied to decrypt private key?` — which is
+not about a passphrase at all. `ssh-keygen -Y sign` against an `sk` key wants a terminal to
+talk to the token through; run from a captured-output context with no PTY it cannot, and
+reports the failure as a passphrase error after the presence timeout. The same `git commit
+--amend -S`, byte for byte, succeeded in 24 s the moment it was given a PTY.
+
+The tell is the **fixed ~29 s** and the passphrase wording on a key that has no passphrase.
+A genuine untouched-token timeout and an agent refusal both say `agent refused operation`.
+An agent-authoring harness must allocate a PTY for any command that may sign; four
+consecutive failures were spent bypassing agents that were never the problem.
+
+**`createCommitOnBranch` cannot carry a file mode.** The mutation's `FileAddition` has
+`path` and `contents` and nothing else, so a new file lands `100644`. That makes the
+server-side escape unusable for anything under `mise/tasks/` — mise will not run a
+non-executable file task — and for any new hook or script. Found while landing #936, whose
+new `mise/tasks/qemu-image-update` had to come from a real `git commit` (mode `100755`)
+rather than the mutation. For a docs- or config-only change the mutation is still fine.
 
 For the first case, `createCommitOnBranch` is not bot-only: GitHub signs **any** commit it
 creates through that mutation, so a human with an authenticated `gh` can land a verified
