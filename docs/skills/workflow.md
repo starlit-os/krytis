@@ -546,3 +546,30 @@ and the still-dirty worktree will otherwise be re-committed as a duplicate. Auth
 are the `gh` token's account (`Lily`, `verified: true`, reason `valid`), *not*
 `github-actions[bot]`, so this does not muddy the bot-commit conventions above. Verified on
 `c83b6c7` (PR #785).
+
+### Re-signing a commit that was already pushed unsigned
+
+The other outcome of an absent key: the commit was made with signing off
+(`-c commit.gpgsign=false`, the escape hatch for "I'm afk, key is away") and pushed, so the
+PR sits `mergeStateStatus: BLOCKED` with `verified: false, reason: "unsigned"` while every
+check is green. Once the key is back, re-sign in place — do **not** re-do the work:
+
+```bash
+git commit --amend --no-edit -S          # one touch; author and message untouched
+git rev-parse <old-sha>^{tree} <new-sha>^{tree}   # MUST print the same tree twice
+git push --force-with-lease=refs/heads/<branch>:<old-sha> origin <branch>
+```
+
+`--amend` rewrites the committer (name, email, date) but preserves the **author**, which is
+what keeps a Renovate commit attributed to `renovate[bot]` after a human amends it — see
+`docs/skills/renovate.md`. Spell `--force-with-lease` with the explicit `<ref>:<old-sha>`
+form: the bare flag compares against a remote-tracking ref that a stale `git fetch` can
+make meaningless.
+
+Comparing tree SHAs rather than `git diff` is the cheap proof that re-signing changed
+nothing — `git diff` between the two also prints empty for a genuinely reordered or
+partially-staged amend. Required checks re-run from scratch on the force-push even though
+the tree is identical, so `BLOCKED` immediately afterward means "queued", not "failed";
+re-check with `gh pr view <n> --json mergeStateStatus,statusCheckRollup`.
+
+Applied on PR #902 (`2dcefe9` unsigned → `75a6267` `verified: true, reason: "valid"`).

@@ -176,9 +176,32 @@ a specific mise-installed `gh` version (e.g. `.../gh/2.95.0/.../gh`). mise only 
 `latest` version on disk after an upgrade — the old version dir is pruned, so the
 credential helper points at a binary that no longer exists, and any `git push`/`fetch`
 over HTTPS fails with `gh: not found` (not an auth error, easy to misdiagnose as one).
-Fix: `gh auth setup-git` regenerates the helper to point at the current `gh`. This isn't a
-krytis-specific bug, but the project's `mise`-managed `gh` makes it something any
-contributor pushing from this repo can hit after their next `mise` upgrade.
+
+**Recurred 2026-09-24** on the 2.100.0 → 2.101.0 bump, with a different error string —
+`gh auth git-credential get: line 1: …/gh: No such file or directory`, then
+`fatal: could not read Username for 'https://github.com'` — because git routes the
+helper through a shell. Same cause, so match on the *path*, not the message:
+`git config --global --get-regexp credential` and check the version dir still exists.
+
+`gh auth setup-git` fixes it for exactly one upgrade cycle: it re-writes another
+version-pinned absolute path, so the next bump breaks it again. Point the helper at
+mise's version-stable shim instead (it is a symlink to `/usr/bin/mise`, which resolves
+the current `gh` at call time):
+
+```bash
+for host in https://github.com https://gist.github.com; do
+  git config --global --unset-all "credential.$host.helper"
+  git config --global --add "credential.$host.helper" ""        # reset earlier helpers
+  git config --global --add "credential.$host.helper" \
+    "!$HOME/.local/share/mise/shims/gh auth git-credential"
+done
+```
+
+The empty-string first value is what `gh auth setup-git` writes too — it clears any
+helper configured earlier in the chain — so keep both lines per host, in that order.
+
+This isn't a krytis-specific bug, but the project's `mise`-managed `gh` makes it
+something any contributor pushing from this repo can hit after their next `mise` upgrade.
 
 ## File tasks
 
