@@ -549,7 +549,7 @@ A committer that isn't `github-actions[bot]` on a commit whose message/author st
 
 `required_signatures` has no bypass, so a commit that cannot be signed cannot be made
 at all — `git commit` aborts with `fatal: failed to write commit object`. Distinguish
-the two causes before doing anything, because only one of them is fixable in software:
+the two causes before doing anything, because only one of them is unfixable locally:
 
 ```bash
 ssh-add -l                                         # key listed by the agent?
@@ -561,9 +561,19 @@ env -u SSH_AUTH_SOCK ssh-keygen -Y sign \
   direct probe → the token holding the resident credential is physically absent (a
   *different* YubiKey being plugged in still lists fine via the agent, since the agent
   lists key handles, not devices). No local workaround exists.
-- `agent refused operation` but the direct probe prompts for presence → the gcr-ssh-agent
-  proxy at `$SSH_AUTH_SOCK` is the problem; retry against the inner plain agent it spawns
-  (`ps -eo args | grep ssh-agent` shows `-a /run/user/1000/gcr/.ssh`, note the leading dot).
+- `agent refused operation` but the direct probe prompts for presence → an agent is
+  refusing a key it can see. Bypass every agent instead of hunting for a better one:
+  `env -u SSH_AUTH_SOCK git commit …` makes `ssh-keygen -Y sign` open the token directly,
+  which works because `user.signingkey` is a key **file path** — check
+  `git config user.signingkey` before relying on it, since a `key::`-style value or a bare
+  public key would need the agent.
+
+Do not bother retrying against the inner plain agent gcr spawns
+(`ps -eo args | grep ssh-agent` → `-a <gcr-base-dir>/.ssh`, note the leading dot). On
+2026-09-24 both the gcr proxy at `$SSH_AUTH_SOCK` and that inner agent refused the same
+key, 58 s apiece, while direct file signing succeeded in 10 s. Derive the base dir from
+`$SSH_AUTH_SOCK` if you do look — it is `/run/user/<uid>/gcr`, and the uid is not always
+`1000` (it was `60339` on that host).
 
 For the first case, `createCommitOnBranch` is not bot-only: GitHub signs **any** commit it
 creates through that mutation, so a human with an authenticated `gh` can land a verified
