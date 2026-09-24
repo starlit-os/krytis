@@ -426,6 +426,39 @@ loop while `git rev-parse` resolved them fine a moment later, and the loop silen
 empty strings — reporting `IDENTICAL` for everything. Any comparison loop that can pass by
 comparing nothing must print the hash it compared, so an empty compare is visible.
 
+## Archiving an Upstream Freezes Its PRs — Deleting the Head Fork Is the Only Exit
+
+A PR whose **base** repo gets archived becomes immutable for everyone, author included.
+Not a permissions problem — GitHub locks the whole issue/PR surface:
+
+```console
+$ gh pr close 19 --repo projectbluefin/fisherman --comment "superseded by …"
+GraphQL: Repository was archived so is read-only and unable to create comment
+  because issue is locked (addComment)
+
+$ gh pr close 19 --repo projectbluefin/fisherman
+API call failed: GraphQL: Repository was archived so is read-only (closePullRequest)
+```
+
+So "close it with a pointer to the superseding fix" is not available, and neither is
+leaving a comment saying where the work went. The PR sits `OPEN` forever against a repo
+that can never merge it.
+
+**Deleting the head fork does close it.** `projectbluefin/fisherman#19` flipped to
+`CLOSED` the moment `starlit-os/fisherman` was deleted (2026-09-24), despite the archived
+base refusing the direct close a few minutes earlier. Deleting the head *branch* alone
+does not — the PR just renders "head ref deleted" and stays open.
+
+Two consequences worth planning around:
+
+- **Record the supersession somewhere you own.** The pointer cannot live on the PR, so it
+  belongs in the skill file that describes the fix — here, `docs/skills/secure-boot.md`
+  § A sealed UKI's frozen cmdline, which names both PR copies and the `tuna-os/fisherman#219`
+  that replaced them.
+- **Check for open PRs before deleting a fork**, since deletion is how they get closed and
+  the tombstone is all that remains: `gh search prs --author <you> --state open` across
+  every repo, not just the one you are thinking about.
+
 ## Where Plan and Design Docs Go
 
 `docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.

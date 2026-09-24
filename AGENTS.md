@@ -38,7 +38,7 @@ The skill file update is part of the implementation — not a post-task step. Up
 3. Stage it alongside your change.
 4. Commit them together.
 
-**Cross-repo exception.** Some work spans two repositories — most commonly a code change in the `dakota-iso` fork paired with its skill entry in this repo's `docs/skills/` tree. A single commit cannot span two repos, so "commit them together" is impossible there. It is satisfied instead when **both** hold:
+**Cross-repo exception.** Some work spans two repositories — most commonly a patch carried on a component fork (`kitten-lily/noctalia`, `kitten-lily/noctalia-greeter`) paired with its skill entry in this repo's `docs/skills/` tree. A single commit cannot span two repos, so "commit them together" is impossible there. It is satisfied instead when **both** hold:
 
 - The skill entry lands in the paired PR (the two PRs are opened/updated in the same work session), and
 - The code commit message references the skill entry, or the skill commit references the code commit SHA — so the pairing is traceable.
@@ -68,7 +68,7 @@ The user may request a compliance check at any time by asking for a **skills che
 **3. Skill file commit timing**
 - List commits: `git log main...HEAD --oneline`.
 - Confirm skill file updates appear in the same commit as the change that produced the learning — not in a later commit.
-- **Cross-repo work** (e.g. a `dakota-iso` fork change paired with a skill entry here): apply the *Cross-repo exception* in the Skill-improvement mandate. Pass when the skill entry is in the paired PR **and** the two commits cross-reference each other; do not flag the unavoidable two-repo split as a failure.
+- **Cross-repo work** (e.g. a `kitten-lily/*` component-fork change paired with a skill entry here): apply the *Cross-repo exception* in the Skill-improvement mandate. Pass when the skill entry is in the paired PR **and** the two commits cross-reference each other; do not flag the unavoidable two-repo split as a failure.
 
 **4. Memory vs skill file**
 - Recall any lessons written to the memory system this session.

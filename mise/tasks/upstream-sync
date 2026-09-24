@@ -42,12 +42,18 @@ for name in "${NAMES[@]}"; do
   local_path="${SIBLING_BASE}/$(awk -F': ' '/^    local_path:/{print $2; exit}' <<<"$block")"
   last_sha=$(awk -F': ' '/^    last_checked_sha:/{print $2; exit}' <<<"$block")
 
-  if [ ! -d "$local_path/.git" ]; then
-    echo "==> ${name}: no checkout at ${local_path}, skipping" >&2
-    continue
-  fi
-
   echo "==> ${name} (${upstream}, branch ${branch})"
+
+  # A missing checkout used to be skipped with a warning, which made the whole
+  # task a silent no-op on a machine that never had the siblings (exit 0, every
+  # repo "skipped", nothing mined). Clone it instead — and clone from
+  # `upstream:`, which is also the only clone path that cannot reintroduce a
+  # fork remote. Full depth, not --depth: the mining pass runs `git log A..B`
+  # and `git show`, both of which need real history.
+  if [ ! -d "$local_path/.git" ]; then
+    echo "    no checkout at ${local_path} — cloning https://github.com/${upstream}"
+    git clone --branch "$branch" "https://github.com/${upstream}.git" "$local_path"
+  fi
 
   if [ "$CHECK_ONLY" = "true" ]; then
     git -C "$local_path" fetch origin "$branch" --quiet
