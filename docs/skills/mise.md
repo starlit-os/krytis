@@ -999,7 +999,8 @@ docs (see `docs/skills/workflow.md` § *Where Plan and Design Docs Go*).
 was a real bug, not a defensive choice made up front.** A brand-new doc written
 with `write`/`edit` but not yet `git add`ed used to be invisible to the plain
 `git grep` the task ran: `mise run docs-links` reported "passed" locally on
-`docs/plans/2026-09-16-r2-iso-hosting.md` (#867/#868) while the file sat
+`docs/plans/done/2026-09-16-r2-iso-hosting.md` (#867/#868, since archived; it
+lived at `docs/plans/` when this happened) while the file sat
 untracked, then CI failed on the exact same content once it was committed and
 checked out fresh — the two broken forward-references (`docs/design/…`,
 `docs/plans/done/…`, both legitimately "planned but unwritten" per
