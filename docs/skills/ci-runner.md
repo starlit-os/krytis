@@ -488,6 +488,19 @@ ISO it just built. Both checks, not one: a size match with a checksum
 mismatch means Cloudflare served an equally-sized *older* object, which is
 precisely what a size-only check cannot see.
 
+**A successful publish suppresses the artifact upload, and the `failure()`
+clause in that condition is not decoration.** The step carries
+`if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}`. Skipping
+is the point — once `iso.ririi.dev` serves those bytes the artifact is a
+redundant 4.5 GB copy billed against Actions storage — but GitHub steps
+run on success by default, so the skip condition alone would *also*
+discard the ISO whenever the upload or the public-download check failed.
+That is the expensive case: ~40 minutes of build, and the next run's
+`git clean -ffdx` wipes `output/` before a retry could reuse it. Every
+other path still uploads: the unsealed build has no other route off the
+runner, and a sealed dispatch with `publish_r2=false` is a test that must
+stay retrievable.
+
 **Do not use DNS resolution or a bare 200 to decide whether
 `iso.ririi.dev` is wired up.** The `ririi.dev` zone carries a wildcard
 `*.ririi.dev` A record pointing at materia, so the hostname resolved and

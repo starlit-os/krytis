@@ -18,8 +18,19 @@ since #844. That is adequate for internal testing and useless for distribution:
 - The download is a **ZIP wrapper** around the ISO, not the ISO, so it cannot be
   `curl`ed, `dd`ed, or handed to a friend as a URL.
 
-So the artifact stays exactly as it is, for exactly its original purpose, and a
-second publication path exists alongside it.
+The artifact therefore keeps its original internal-testing purpose on every
+path that still needs it — but **a run that successfully publishes to R2 does
+not upload one**. Once `iso.ririi.dev` serves those exact bytes, the artifact is
+a redundant 4.5 GB copy of a publicly fetchable file, charged against Actions
+storage for a week. Unsealed builds and sealed-but-unpublished test dispatches
+still upload, because neither has another way out of the runner.
+
+The skip is conditioned on the publish having *succeeded* (`if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}`),
+which is load-bearing. GitHub steps run on success by default, so a bare
+"skip when publishing" condition would also discard the ISO when the upload or
+the public-download check failed — throwing away ~40 minutes of build that the
+next run's `git clean -ffdx` makes unrecoverable. With the `failure()` clause a
+failed publish falls back to the artifact and the retry can skip the rebuild.
 
 ## Why Cloudflare R2
 

@@ -250,6 +250,18 @@ verification step confirms iso.ririi.dev serves an object matching
 this build's size and checksum before the job is considered green."
 ```
 
+- [x] **Step 6: Stop uploading an ISO artifact when the run published one** (added 2026-09-24, after the plan was written)
+
+The original plan left the `Upload ISO artifact` step untouched, so a publishing run produced the ISO twice: once at `iso.ririi.dev` and once as a 4.5 GB Actions artifact billed against repo storage for seven days, of a file anyone can now fetch anonymously. The step is now conditional:
+
+```yaml
+        if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}
+```
+
+Scope is narrower than "no ISO artifacts": unsealed builds and sealed dispatches with `publish_r2=false` still upload, because neither has another route off the runner and #867's recorded scope decision keeps the unsealed artifact for internal testing.
+
+The `|| failure()` clause is the part worth remembering. GitHub steps run on success by default, so the skip condition on its own would also throw the ISO away when the *upload* or the public-download check failed — the one case where a 4.5 GB build artifact is most valuable, since the next run's `git clean -ffdx` wipes `output/` before a retry could reuse it. With the clause, a failed publish falls back to the artifact and a retry need not rebuild. A failed *build* produces no file, and `upload-artifact`'s default `if-no-files-found: warn` leaves the genuine error as the only one reported.
+
 ### Task 5: Document the design — agent, same-commit skill mandate
 
 **Files:**

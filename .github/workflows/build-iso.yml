@@ -211,6 +211,25 @@ jobs:
         run: df -h -x fuse || true
 
       - name: Upload ISO artifact
+        # Skipped when this run published to R2: iso.ririi.dev already
+        # serves those exact bytes, so the artifact would be a redundant
+        # 4.5 GB copy of a publicly fetchable file, billed against Actions
+        # storage for 7 days. Every other path still uploads — the unsealed
+        # build has no other distribution route (#867 keeps it as an
+        # internal-testing artifact deliberately), and a sealed build with
+        # publish_r2=false is a test dispatch that must stay retrievable.
+        #
+        # The `|| failure()` is what makes the skip safe rather than a
+        # data-loss path. Steps default to running only on success, so
+        # without it a failed upload or a failed public-download check
+        # would discard a 4.5 GB ISO that took ~40 minutes to build, and
+        # the next run's `git clean -ffdx` wipes output/ before a retry
+        # could reuse it. With it, a publish failure falls back to the
+        # artifact and the rebuild is avoidable. If the *build* itself
+        # failed there is no ISO to find, and upload-artifact's default
+        # if-no-files-found: warn leaves the real error as the only one
+        # reported.
+        if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: krytis-live-iso-${{ github.run_id }}
