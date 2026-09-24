@@ -58,6 +58,30 @@ if [ "${DRY_RUN}" = "1" ]; then
     echo "==> DRY RUN — reporting only, nothing will be deleted."
 fi
 
+# --- Refuse to run destructively while another job is building --------------
+# The "a self-hosted runner executes one job at a time" argument covers the
+# scheduled workflow, which IS that one job. It does not cover
+# `mise run runner-vps:gc`, which arrives over SSH from a dev machine and
+# knows nothing about the runner's scheduling. That gap is not theoretical:
+# the first dry run of this script, executed while an ISO build was in
+# flight, correctly proposed deleting localhost/krytis-installer:latest and
+# localhost/iso-tools:latest — both of which that build had just created and
+# was still using. A real run would have broken it.
+#
+# Runner.Worker exists only for the duration of a job, so its presence means
+# a job is running. When this script IS that job, GITHUB_ACTIONS=true and
+# the worker it would otherwise trip over is its own.
+#
+# Dry runs are exempt: they only read.
+if [ "${DRY_RUN}" != "1" ] \
+    && [ "${GITHUB_ACTIONS:-}" != "true" ] \
+    && pgrep -f 'Runner\.Worker' >/dev/null 2>&1; then
+    echo "ERROR: a job is currently running on this runner — refusing to delete." >&2
+    echo "       Its build intermediates and casd scratch are live." >&2
+    echo "       Wait for it to finish, or re-run with --dry-run to inspect." >&2
+    exit 1
+fi
+
 BEFORE_KB=$(df -Pk / | awk 'NR==2 {print $3}')
 echo "==> Disk before:"
 df -h /

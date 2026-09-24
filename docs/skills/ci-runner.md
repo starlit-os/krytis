@@ -406,6 +406,18 @@ runner executes one job at a time, so a GC *job* cannot overlap a build. A
 timer can, and would eventually delete casd scratch out from under a live
 BuildStream.
 
+**That argument does not cover `mise run runner-vps:gc`**, which arrives
+over SSH and knows nothing about the runner's scheduling — and the gap bit
+immediately. The very first dry run, executed while an ISO build was in
+flight, correctly proposed deleting `localhost/krytis-installer:latest` and
+`localhost/iso-tools:latest`, both of which that build had just created and
+was still using. Only the dry run's existence prevented it. The script now
+refuses to delete when `pgrep -f 'Runner\.Worker'` finds a job running,
+unless `GITHUB_ACTIONS=true` says the worker in question is its own. Worth
+generalising: a safety property that holds because of *how something is
+scheduled* stops holding the moment a second entry point exists, and the
+second entry point here was one this very change added.
+
 **It never runs `podman system prune -a`.** This box is shared — it also
 carries `ghcr.io/stryan/materia:stable`, `henrygd/beszel-agent`,
 `fedora-minimal`, `debian:bookworm` and `busybox`. A blanket prune deletes
