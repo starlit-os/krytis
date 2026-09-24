@@ -21,14 +21,22 @@ apt-get update -qq
 # podman. podman was unused by cache-warm.yml (the only workflow this box
 # ran) when first installed for parity against a future publish.yml
 # migration; build-iso.yml (#844) is that future arriving — mksquashfs,
-# mtools and dosfstools are the additional host tools it needs that no
-# workflow on this box required before:
+# mtools, dosfstools and rclone are the additional host tools it needs
+# that no workflow on this box required before:
 #   - squashfs-tools: mksquashfs, run on the host inside `podman unshare`/
 #     as root, never inside a container (iso-sd-boot.sh's
 #     _ns_build_squashfs).
 #   - dosfstools + mtools: mkfs.fat + mcopy/mmd, used by
 #     live/src/build-iso.sh to assemble the FAT ESP image without a loop
 #     mount (unprivileged-container-friendly).
+#   - rclone: uploads the sealed ISO to Cloudflare R2 over the
+#     S3-compatible API (#867), on build-iso.yml's `publish_r2` path only.
+#     Credentials never reach this box's disk — the workflow passes them as
+#     RCLONE_CONFIG_* environment variables scoped to that single step, so
+#     there is no rclone.conf to provision, protect, or rotate here.
+#     Unpinned for the same reason as the rest of this list: Cloudflare's
+#     R2 docs target rclone's generic S3-provider config, which has been
+#     stable for years, so whatever trixie carries works.
 # xorriso/implantisomd5 are deliberately NOT installed here — build-iso.yml
 # routes both through the iso-tools container it builds itself
 # (ISO_TOOLS_IMAGE), so the host never needs them.
@@ -64,7 +72,8 @@ apt-get install -y -qq --no-install-recommends \
     nftables \
     squashfs-tools \
     mtools \
-    dosfstools
+    dosfstools \
+    rclone
 
 # Swap: Contabo's Debian image ships none at all, which turns any RAM spike
 # into an immediate kernel OOM kill rather than a slowdown. That is not
