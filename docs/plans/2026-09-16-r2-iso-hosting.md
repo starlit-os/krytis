@@ -15,7 +15,7 @@
 
 ## Global Constraints
 
-- R2 credentials are a scoped API token — **Object Read & Write on the `krytis-iso` bucket only**, never an account-wide token. Create it from the bucket's own "Manage API tokens" panel, not the account-level R2 API Overview page (the latter defaults to all-buckets scope).
+- R2 credentials are a scoped API token — **Object Read & Write, scoped to the `krytis-iso` bucket only**, never an account-wide token and never `Admin Read & Write` (which can create and delete buckets). Bucket scoping is a step *inside* the account-level token flow, not a separate bucket-scoped panel — see Task 1 Step 3.
 - Secrets (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are GitHub Actions repo secrets, matching the `TRACKING_APP_*` precedent (#699/#793) for CI-only credentials with no local-dev use case — not Proton Pass/fnox, which this repo reserves for credentials a human also needs locally (signing keys, Buildbarn tokens, the VPS SSH host). Bucket name (`krytis-iso`) is not sensitive and is hardcoded in the workflow, not a secret.
 - `publish_r2: true` with `sealed: false` must fail the job loudly at the top, before any build work — there is no unsealed-to-R2 path, ever (see Scope decision above).
 - `rclone` runs with credentials passed as `RCLONE_CONFIG_*` environment variables scoped to the single upload step — no `rclone.conf` file written to the runner's persistent disk.
@@ -44,7 +44,13 @@ This is the one way the "one ISO at a time" assumption can silently stop holding
 
 - [ ] **Step 3: Create a bucket-scoped API token**
 
-From the `krytis-iso` bucket's page → Settings → **Manage API tokens** (bucket-scoped panel, not the account-level R2 API Overview — that one defaults to all-buckets access) → Create API token → Permissions: **Object Read & Write** → TTL: no expiry (rotate manually per Task 6's note) → Create.
+R2 Object Storage → **Overview** ([direct link](https://dash.cloudflare.com/?to=/:account/r2/overview)) → **Account Details** panel → **API Tokens** → **Manage** → **Create Account API token** → Permissions: **Object Read & Write** → a bucket selector unfolds once that permission is chosen: select **`krytis-iso`** (not "all buckets") → Create.
+
+**This is not the bucket's own settings page.** An earlier revision of this plan sent the reader to a per-bucket "Manage API tokens" panel; that panel is gone from the dashboard, and scoping now lives at step 5 of the account-level flow instead (Cloudflare's own docs at `developers.cloudflare.com/r2/api/tokens/`, as of their 2026-08-18 revision, document only the account flow). The *intent* of the original instruction still holds exactly — the token must not be all-buckets — the UI location for satisfying it moved.
+
+Choose **Account** API token, not **User** API token. A user token is tied to your individual Cloudflare user, inherits your personal permissions, and goes inactive if that user is ever removed from the account — unacceptable for a credential CI depends on. Account tokens stay valid until manually revoked and require the Super Administrator role to create or view.
+
+`Object Read & Write` is supported by the S3-compatible API only, not Cloudflare's REST API. That is the correct choice here: `rclone` speaks S3 to `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
 
 Record the three values shown **once**: Access Key ID, Secret Access Key, and the Account ID (also visible in the dashboard sidebar / any existing R2 endpoint URL, format `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`).
 
