@@ -12,7 +12,7 @@ set -euo pipefail
 # boot" step, inspecting the current ESP layout to perform the switch, finds
 # that shape mismatch and fails with "Found NonEFI config" rather than
 # writing a usable entry. Root-caused live on this exact class of machine —
-# see docs/skills/bootc-vm.md § local bootc switch on a UKI-booted machine.
+# see docs/skills/bootc-vm.md § *`bootc switch` from a UKI-booted (sealed) system to a non-UKI image fails*.
 #
 # Fix: detect which shape the running system already has, and switch to an
 # image with the *same* shape. `localhost/krytis:sealed` (mise run seal-uki)

@@ -1,10 +1,12 @@
 # Secrets Service: gnome-keyring vs. oo7
 
-Krytis ships `gnome-keyring` (`gnome-build-meta.bst:core/gnome-keyring.bst`) as its
-`org.freedesktop.secrets` provider and PAM-unlocked login keyring, wired in
-`stacks/desktop.bst` and `elements/config/greetd-config.bst`. This doc tracks whether/when
-to switch to [oo7](https://github.com/linux-credentials/oo7) instead, and why the last
-attempt was abandoned.
+Krytis ships [oo7](https://github.com/linux-credentials/oo7)
+(`elements/desktop/oo7.bst`) as its `org.freedesktop.secrets` provider and
+PAM-unlocked login keyring, wired in `stacks/desktop.bst` and
+`elements/config/greetd-config.bst`. It replaced `gnome-keyring` in PR #594
+(2026-08-15). This doc is the record of why that took from #84 to #594, which
+upstream defects krytis still carries workarounds for, and what would let them be
+dropped.
 
 ## Why oo7 is attractive
 
@@ -47,7 +49,8 @@ on FIDO2-only login, for the same reason (no password captured, nothing to unloc
 Switching to oo7 does not make FIDO2 login worse. It also does not unblock #129/#133 the way
 #178's PR description claimed, because the actual blocker survives the swap.
 
-**Verified still open as of 2026-08-12**, both in code and in upstream's own tracker:
+**Verified still open 2026-08-12, re-checked 2026-09-24**, both in code and in
+upstream's own tracker:
 
 - `pam/src/lib.rs::get_auth_token_internal` on current `main` still returns
   `Err(PAM_SYSTEM_ERR)` on null `PAM_AUTHTOK`, and `pam_sm_authenticate` still treats that
@@ -58,8 +61,9 @@ Switching to oo7 does not make FIDO2 login worse. It also does not unblock #129/
   mature before deciding a direction — there is no fix in flight, just an open design
   question. Re-attempting #84 today would not change this outcome.
 
-See `docs/skills/pam.md` § pam_oo7 for the full technical detail, plus two more findings
-from the 2026-08-12 pass that don't block anything but matter for a future attempt:
+See `docs/skills/pam.md` § *pam_oo7: null PAM_AUTHTOK does not unlock* for the full
+technical detail, plus two more findings from the 2026-08-12 pass that don't block
+anything but matter for a future attempt:
 
 - A restart of `oo7-daemon.service` mid-session silently re-locks an already-unlocked
   collection (no FD-store/credential-based resume yet — oo7#506, 2026-08-03 comment).
@@ -87,7 +91,13 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
   — `gcr-prompter` installed and present, but fails to activate after a mid-session daemon
   restart, hanging every libsecret caller rather than erroring cleanly. Treat this as a
   required boot-test scenario, not a theoretical edge case. Full detail in
-  `docs/skills/pam.md` § Manual unlock on niri needs `gcr-3`.
+  `docs/skills/pam.md` § *Manual unlock on niri needs a GCR SystemPrompter*.
+  **Overtaken by events:** krytis answered this by building the missing shell-level
+  component rather than carrying GCR3 — noctalia's own `SystemPrompter` (see § Path
+  forward below). Since #594 the image ships no `gcr-3` at all and `oo7.bst` never
+  gained the dependency this bullet demanded; `noctalia.bst` links `sdk/gcr.bst`
+  (gcr-4) for `GcrSecretExchange` only. cosmic-epoch#3453 is still open upstream, and
+  is still the reason a *missing* prompter is a hang rather than an error.
 
 ## Decision
 
@@ -159,40 +169,37 @@ no shell-level `org.gnome.keyring.SystemPrompter` provider either way, today. Fi
 valuable regardless of which Secret Service backend krytis ends up on, and de-risks a future
 oo7 attempt as a side effect rather than being blocked by it.
 
-## fdsdk 26.08 forces the oo7 swap regardless of this decision
+## fdsdk 26.08 would have forced the oo7 swap anyway — and then did
 
-**Verified 2026-08-13.** The Decision above only holds on krytis's current freedesktop-sdk
-`25.08` baseline, where `gnome-keyring.bst` and `sdk/gcr-3.bst` both still exist upstream and
-the hold is a real, deliberate choice. That stops being true once `#305` (the fdsdk `26.08`
-bump) lands:
+**Written 2026-08-13, resolved by events.** At the time the Decision above only held
+on krytis's freedesktop-sdk `25.08` baseline, where `gnome-keyring.bst` and
+`sdk/gcr-3.bst` both still existed upstream and the hold was a real, deliberate
+choice. #305 (the fdsdk `26.08` bump) removed that choice:
 
 - `gnome-build-meta` `master` deleted `gnome-keyring.bst` entirely (upstream commit
-  `528af16d74`, "Replace gnome-keyring with oo7"). `elements/stacks/desktop.bst` on the
-  `chore/gh305-upgrade-fdsdk-26-08` branch already documents this — the oo7 swap there is
-  **forced by the SDK bump, not a #84 decision**: "This is NOT the same as voluntarily
-  adopting oo7."
+  `528af16d74`, "Replace gnome-keyring with oo7"). The oo7 swap on the bump branch was
+  **forced by the SDK bump, not a #84 decision**: "This is NOT the same as
+  voluntarily adopting oo7."
 - `sdk/gcr-3.bst` is gone too, confirmed absent (not just unreferenced) from the same
-  junction — so `gcr-prompter` isn't available as a fallback on fdsdk `26.08` either. This is
-  ahead of the *official* GNOME timeline (GNOME 51 Flatpak runtime drops gcr-3 end of 2026,
-  gcr-3 support continues through GNOME 50 / April 2027) — `gnome-build-meta` tracking
-  `master` is already past that milestone independent of the runtime schedule.
-- Consequence: `#305` as it currently stands ships with **no manual-unlock UI at all**, not
-  merely a fragile one. `elements/desktop/noctalia.bst` on that branch is still pinned to
-  plain upstream `v5.0.0-beta.7` — the fork pin + `gcr-4` dependency from this doc's Path
-  forward section (and PR #574) has not been ported there.
-- The oo7 blockers documented in this doc are **not fixed** at the exact oo7 commit `#305`
-  pins (`v0.6.0-alpha-219-g06b9cfe0`, via `gnome-build-meta`'s `oo7.inc`) — verified
-  `server/src/collection/mod.rs::search_inner_items` still returns `Ok(Vec::new())` for a
-  locked collection at that ref, identical to the finding above.
+  junction — so `gcr-prompter` isn't available as a fallback on fdsdk `26.08` either.
+  This is ahead of the *official* GNOME timeline (GNOME 51 Flatpak runtime drops
+  gcr-3 end of 2026, gcr-3 support continues through GNOME 50 / April 2027) —
+  `gnome-build-meta` tracking `master` was already past that milestone independent of
+  the runtime schedule.
+- The oo7 blockers documented in this doc were **not fixed** at the oo7 commit #305
+  pinned (`v0.6.0-alpha-219-g06b9cfe0`, via `gnome-build-meta`'s `oo7.inc`) — verified
+  `server/src/collection/mod.rs::search_inner_items` still returned `Ok(Vec::new())`
+  for a locked collection at that ref, identical to the finding above.
 
-**Practical effect on "hold #84":** it only controls whether krytis *chooses* oo7 on the
-SDK line it's on today. It does not prevent oo7 from arriving via `#305` as an SDK-forced
-side effect — that happens either way, on its own timeline, independent of this Decision.
-
-**Not yet actioned:** porting PR #574's `noctalia.bst` change (fork pin + `gcr-4` dependency)
-onto `chore/gh305-upgrade-fdsdk-26-08` before that branch merges — there it is load-bearing
-(no `gcr-prompter` fallback exists to decline gracefully behind), not the optional/reversible
-experiment it is on `main`. Recorded on issue #305 rather than done as part of this pass.
+**How it actually landed.** The voluntary swap went first: PR #594 merged 2026-08-15,
+carrying `desktop/oo7.bst`, the noctalia fork pin and the `sdk/gcr.bst` (gcr-4)
+dependency onto `main`. The fdsdk bump merged twelve days later as PR #646
+(2026-08-27, closing #305), so it inherited all of that rather than needing it ported
+onto the bump branch — which is what the "not yet actioned" item recorded here was
+worried about. The junction now tracks `freedesktop-sdk-26.08*`
+(`freedesktop-sdk-26.08.1`) and `gnome-build-meta` `gnome-51`, and krytis ships no
+`gcr-3` at all: `stacks/desktop.bst` says so explicitly, and `noctalia.bst`'s own
+prompter is the manual-unlock UI.
 
 ## Path forward: a native prompter in noctalia
 
@@ -202,7 +209,7 @@ daemon-restart prompts happen in the user's running niri session, which noctalia
 the long-term goal of upstreaming it or shipping it as a noctalia plugin.
 
 **Why noctalia is a good fit, not just the only option:**
-- v5 (krytis is on `v5.0.0-beta.7`) is a from-scratch native C++23 rewrite with **no Qt or
+- v5 (krytis was on `v5.0.0-beta.7` when this was written; `v5.0.1` today) is a from-scratch native C++23 rewrite with **no Qt or
   GTK dependency at all** — confirmed via upstream's own README and `libsodium.bst`/`stb.bst`
   comments in this repo. This removes the QML/Quickshell integration problem entirely; there
   is no JS/GObject-introspection bridge to fight.
@@ -313,11 +320,13 @@ dependency of the `libgcr-devel` binary package noctalia links against).
 clients that fall back to `org.gnome.keyring.SystemPrompter` when no portal-based prompter is
 available.
 
-## Status: implemented on a fork (2026-08-12)
+## Status: implemented on a fork (2026-08-12), shipping since #594
 
 Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`. Originally commit
 `ba821c7da` on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`); **rebased 2026-08-17 onto
-upstream `main` `87b203c68` (`v5.0.0-beta.8-135`), now at `47c1df893`.** **No PR or issue
+upstream `main` `87b203c68` (`v5.0.0-beta.8-135`)** and re-pinned in PR #606. The branch has
+been followed forward since — `elements/desktop/noctalia.bst` pins
+`v5.0.1-2-g0b4ae36c` today, still on `track: feat/system-prompter`. **No PR or issue
 has been opened against `noctalia-dev/noctalia`** — per AGENTS.md's Upstream Gate that needs
 an explicit instruction naming that action. The branch loses nothing by waiting.
 
@@ -528,6 +537,11 @@ Re-pinned to check whether upstream had fixed anything since the migration shipp
 **one bug fixed, one fixed-then-reopened-by-another-route, two untouched.** The element now
 tracks `refs/heads/main` rather than a tag glob, because no tag carries any of it.
 
+`elements/desktop/oo7.bst` has been tracked forward since and sits at
+`v0.6.0-alpha-256-g886813eb` today. The one row of this table that moved is the first:
+oo7#558 / `f6a8624a` landed 2026-08-25 and the krytis patch was deleted 2026-08-27
+(#588) — see the Revisit trigger below.
+
 | Tracked defect | Status on `c2aa2315` |
 |---|---|
 | **oo7#530 / #588** — CLI prompter chosen | **Reworked, still broken here.** `9f4de634` swapped env-sniffing for the peer's logind session type. The new lookup fails for every client of a systemd-managed session, so krytis still lands on `Cli`. Patch rewritten as a fallback rather than dropped. |
@@ -544,7 +558,8 @@ today — `ChangePassword` is still the untested path called out above.
 gone downstream. oo7#530 was closed by a real fix that is correct for the maintainer's
 environment and inert in ours, because the two disagree about where a graphical client's
 process lives. Re-verify against the running system, not the issue tracker.
-See `docs/skills/pam.md` § *krytis patches oo7's prompter detection* for the measurements.
+See `docs/skills/pam.md` § *oo7's prompter detection, and the patch krytis no longer
+needs* for the measurements.
 
 `mise run oo7-prompter-test` now gates the prompter choice on the built artifact, so the next
 re-pin does not have to rediscover this by hand. It failed on unpatched `c2aa2315` and passes
@@ -561,7 +576,8 @@ workaround?". Re-read this doc when any of these move:
   `patches/oo7/prompter-detect-session-type.patch` and its wiring in
   `elements/desktop/oo7.bst` are deleted. The trigger was correctly written as "a follow-up
   fix, not oo7#530" — the follow-up turned out to be `f6a8624a` / oo7#558, which upstream
-  found independently. It surfaced downstream as the `track-oo7` CI job going red, because
+  found independently. It surfaced downstream as the `desktop/oo7.bst` leg of
+  `track-bst-sources.yml`'s `track` matrix (branch `auto/track-oo7`) going red, because
   the patch stopped applying to the reworked code.
 - **oo7#506 gains a maintainer-endorsed direction** → revisit FIDO2 login independently of
   #585; the two reasons it is off are separable.
@@ -570,4 +586,5 @@ workaround?". Re-read this doc when any of these move:
   linking `GcrSecretExchange`.
 
 Until then the workarounds stay. Each is annotated at its call site with the issue number, so
-`git grep 585` and `git grep 588` find everything that has to change.
+`git grep 585` finds everything that has to change. (`git grep 588` was the other half of
+that pair until 2026-08-27; it now only turns up history, because that workaround is gone.)

@@ -40,7 +40,7 @@ fi
 # after 20 minutes. It parses fine on this project's usual workstation because
 # CachyOS ships uutils coreutils as /usr/bin/date, and uutils is more permissive
 # than GNU — so the bug is invisible to any amount of local testing here. See
-# docs/skills/mise.md § uutils vs GNU coreutils.
+# docs/skills/mise.md § *`/usr/bin/date` here is uutils, not GNU*.
 #
 # `--format json` is the stable interface: Go marshals time.Time as RFC3339Nano
 # regardless of podman version, and both date implementations agree on it.

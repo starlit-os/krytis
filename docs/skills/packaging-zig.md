@@ -162,14 +162,22 @@ ziglang: https://ziglang.org/
 
 ### pika-os git deps (falcond pattern)
 
-falcond's `build.zig.zon` deps are all `git+https://git.pika-os.com/...` — no CDN tarballs. All go
-in `zig-deps-git/` and are populated via `zig fetch <local-tarball>`. Add the alias:
+falcond's own `build.zig.zon` deps are `git+https://git.pika-os.com/...` — no CDN
+tarballs — so they all go in `zig-deps-git/` and are populated via
+`zig fetch <local-tarball>`. Add the alias:
 
 ```yaml
 pikaos_files: https://git.pika-os.com/
 ```
 
 Archive URL from Gitea: `pikaos_files:<org>/<repo>/archive/<commit-sha>.tar.gz`
+
+`zig-deps-git/` is not pika-only, though: `elements/desktop/falcond.bst` also stages
+transitive deps of `otter_desktop`'s pipewire binding from other forges under the same
+directory (`github_files:allyourcodebase/valgrind.h`,
+`freedesktop_files:pipewire/pipewire`, `codeberg_files:ziglang/translate-c` and aro). The
+directory selects the *fetch mechanism*, not the host — anything `zig fetch` must
+content-hash goes there regardless of which alias serves it.
 
 In the build commands, run `zig fetch --global-cache-dir ... zig-deps-git/<sha>.tar.gz` for each
 dep. Zig computes the content hash and stores the package in the correct 0.16.0 format. If the
@@ -246,10 +254,13 @@ Zig 0.16.0. When updating ghostty to 1.4:
 - Promote `zig-0.16.bst` → `zig.bst` (replace its contents in place).
 - Delete `zig-0.16.bst`.
 - Update `falcond.bst` `build-depends` to reference `zig.bst` again.
-- Re-derive all `place_git_dep` hashes for ghostty deps under 0.16.0 (hash format changed).
+- Drop ghostty's `place_git_dep` block entirely and re-populate those deps with
+  `zig fetch <local-tarball>` like falcond already does — under 0.16.0 manually placed
+  `p/<hash>/` entries are ignored, so re-deriving the old hashes is not an option.
 
-**Current state (as of 2026-06-28):** `zig.bst` = 0.15.2 (ghostty), `zig-0.16.bst` = 0.16.0
-(falcond). Both coexist until ghostty 1.4 ships.
+**Current state (re-verified 2026-09-24):** `zig.bst` = 0.15.2 (ghostty 1.3.1, still using
+`place_git_dep` in its Stage 3), `zig-0.16.bst` = 0.16.0 (falcond 2.0.14, using
+`zig fetch`). Both coexist until ghostty 1.4 ships.
 
 ### `-Dpie=true` is project-specific — check `build.zig` first
 

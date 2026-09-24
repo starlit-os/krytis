@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-#MISE description="Verify docs/ path references and markdown links resolve"
+#MISE description="Verify docs/ references, backticked repo paths and mise task names resolve"
 
-# Two classes of reference are checked across all tracked text files:
+# Four classes of reference are checked across all tracked text files:
 #
 #   1. Repo-root-relative `docs/<name>.md` paths, wherever they appear — prose,
 #      backticks, code comments (e.g. Containerfile.seal-uki cites a design doc).
 #      A negative lookbehind keeps the pattern from matching inside URLs
 #      (`.../tcmalloc/blob/master/docs/tuning.md`) or longer paths.
 #   2. Markdown inline links `](target)` resolved relative to the linking file.
+#   3. Backticked repo-relative paths under elements/ files/ include/ live/
+#      mise/ patches/ quadlet/ scripts/ .github/, in markdown only.
+#   4. Backticked `mise run <task>` / `mise <task>` invocations, in markdown only.
 #
 # Exclusions, and why:
 #
@@ -34,6 +37,15 @@
 # and then failed in CI on the exact same content once committed. `--untracked`
 # closes that local/CI parity gap by checking new files the moment they exist
 # on disk, before the first `git add`.
+#
+# Checks 3 and 4 exist because #860's rot audit found the silent-rot classes
+# that checks 1 and 2 miss: prose naming a file under elements/, files/,
+# include/, live/, scripts/ or mise/tasks/ that was renamed or never existed
+# here (it belongs to an upstream tree), and `mise run <task>` invocations for
+# tasks that were deleted or never landed. Both only ever appear inside
+# backticks in this repo's prose, so both scan backticked spans only — an
+# unquoted path in a sentence is prose, not a reference, and matching it
+# produces noise (`docs/…`, `files/<name>/`) rather than findings.
 
 set -uo pipefail
 
@@ -41,11 +53,26 @@ cd "$(git rev-parse --show-toplevel)"
 
 IGNORE_FILE="docs/.links-ignore"
 declare -A IGNORED=()
+IGNORED_PREFIXES=()
 if [ -f "$IGNORE_FILE" ]; then
     while read -r path _; do
-        [ -n "$path" ] && [ "${path:0:1}" != "#" ] && IGNORED["$path"]=1
+        [ -n "$path" ] && [ "${path:0:1}" != "#" ] || continue
+        IGNORED["$path"]=1
+        # A directory entry covers everything beneath it: one line for
+        # `elements/components/` instead of a line per upstream element
+        # some doc happens to cite.
+        [ "${path: -1}" = "/" ] && IGNORED_PREFIXES+=("$path")
     done <"$IGNORE_FILE"
 fi
+
+ignored() {
+    [ -n "${IGNORED[$1]:-}" ] && return 0
+    local prefix
+    for prefix in "${IGNORED_PREFIXES[@]}"; do
+        [ "${1##"$prefix"}" != "$1" ] && return 0
+    done
+    return 1
+}
 
 fail=0
 
@@ -71,10 +98,127 @@ while IFS=: read -r file line target; do
     [ -n "$target" ] || continue
     resolved="$(dirname "$file")/$target"
     [ -e "$resolved" ] && continue
-    [ -n "${IGNORED[$target]:-}" ] && continue
+    ignored "$target" && continue
     report "$file" "$line" "broken link $target"
 done < <(git grep --untracked -I -noE '\]\([^)]+\)' -- '*.md' ':(exclude)docs/plans' |
     sed -E 's/^([^:]*):([0-9]+):\]\((.*)\)$/\1:\2:\3/')
+
+# Task names: mise/tasks/<group>/<name> → "group:name", plus [tasks."name"]
+# headers in any tracked .toml. The second source is load-bearing: the fido2:*
+# tasks a user runs on a booted system are declared in files/fido2-tasks/
+# config.toml (shipped to /etc/mise/config.toml), not in mise/tasks/, because
+# mise only directory-scans project configs. `mise tasks --json` is *not* used
+# — it hides the hidden <name>-update tasks and includes whatever the running
+# user has in ~/.config/mise, so it both false-positives and false-negatives.
+declare -A TASKS=()
+while IFS= read -r t; do
+    TASKS["${t#mise/tasks/}"]=1
+done < <(git ls-files 'mise/tasks/*' | sed 's|/|:|3')
+while IFS= read -r t; do
+    TASKS["$t"]=1
+done < <(git grep --untracked -hoP '^\[tasks\.\K[^\]]+' -- '*.toml' | tr -d '"')
+
+# Backticked spans, once, for both remaining checks. `-o` emits one match per
+# line with the originating line number, so multiple spans on a line all land.
+backticks="$(git grep --untracked -I -noP '`[^`]+`' -- '*.md' \
+    ':(exclude)docs/plans' ':(exclude)docs/plans/done' |
+    sed -E 's/^([^:]*):([0-9]+):`(.*)`$/\1:\2:\3/')"
+
+echo "==> Checking backticked repo paths..."
+while IFS=: read -r file line ref; do
+    case "$ref" in
+        mise/* | scripts/* | elements/* | live/* | files/* | include/* | patches/* | quadlet/* | .github/*) ;;
+        *) continue ;;
+    esac
+    # Placeholders (`elements/core/<name>.bst`), brace expansions and globs name
+    # a shape, not a file. A trailing `:12` or `:12-20` is a line citation.
+    case "$ref" in
+        *[\<\>\{\}\*\ ]* | *…*) continue ;;
+    esac
+    ref="${ref%%:[0-9]*}"
+    ref="${ref%[.,;]}"
+    [ -e "$ref" ] && continue
+    # Build artifacts (include/image-version.yml, files/boot-keys/) are real
+    # references whose absence from a clean checkout proves nothing.
+    git check-ignore -q "$ref" && continue
+    ignored "$ref" && continue
+    report "$file" "$line" "missing path $ref"
+done <<<"$backticks"
+
+echo "==> Checking mise task references..."
+while IFS=: read -r file line ref; do
+    case "$ref" in
+        "mise run "* | "mise "*) ;;
+        *) continue ;;
+    esac
+    task="${ref#mise }"
+    task="${task#run }"
+    task="${task%% *}"
+    case "$task" in
+        '' | -* | *[!a-z0-9:_-]*) continue ;;
+    esac
+    [ -n "${TASKS[$task]:-}" ] && continue
+    ignored "task:$task" && continue
+    # mise's own subcommands, not tasks.
+    case "$task" in
+        run | tasks | use | exec | install | upgrade | outdated | ls | ls-remote | \
+            self-update | trust | settings | config | env | which | where | prune | \
+            plugins | reshim | doctor | generate | link | unset | set | activate | \
+            latest | current | uninstall | registry | lock | fmt | alias | bin-paths | \
+            cache | completion | deactivate | implode | sync | test-tool | tool | deps | \
+            version | watch) continue ;;
+    esac
+    report "$file" "$line" "unknown mise task $task"
+done <<<"$backticks"
+
+# Section citations: `<path>.md` § <anchor text>. An anchor is an `##`+ heading
+# *or* a `**bold lead**` opening a paragraph — this repo cites both, and a
+# heading-only resolver fires on a large, correct population (docs/skills/
+# pam.md:39 cites a bold lead, not a heading). Only the same-line form with an
+# explicit path is checked: a bare `§ Foo` needs the target inferred, and three
+# inference variants disagreed with each other by 40 findings on this tree.
+#
+# Why this check exists: #647 renamed one pam.md heading and orphaned three
+# citers in files its own diff never touched (docs/SKILL.md,
+# mise/tasks/oo7-prompter-test, docs/design/secrets-service.md). Four weeks, no
+# signal. It is the one rot class re-reading the *changed* file cannot catch.
+declare -A ANCHORS=()
+
+normalize() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' |
+        sed -E 's/[`*_"“”]//g; s/[.,;:—–]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+echo "==> Checking § section citations..."
+while IFS=: read -r file line ref; do
+    path="${ref%%§*}"
+    frag="${ref#*§}"
+    path="$(printf '%s' "$path" | sed -E 's/[`) ]+$//')"
+    frag="${frag#§}"
+    case "$path" in
+        docs/*) target="$path" ;;
+        */*) target="$path" ;;
+        *) target="$(dirname "$file")/$path" ;;
+    esac
+    [ -f "$target" ] || target="$(dirname "$file")/$path"
+    [ -f "$target" ] || continue
+    # The citation runs on into prose far more often than not; cut at the first
+    # separator that cannot appear inside an anchor.
+    frag="$(printf '%s' "$frag" | sed -E 's/ — .*$//; s/ – .*$//; s/[;|)].*$//; s/\. .*$//; s/…+$//' |
+        sed -E 's/ (for|explains|shows|says|and it) .*$//')"
+    key="$(normalize "$frag" | cut -d' ' -f1-3)"
+    # Two words is too weak to distinguish anchors; a leading digit is a
+    # numbered cross-reference (`§§ 3–4`), not a title.
+    [ "$(printf '%s' "$key" | wc -w)" -ge 3 ] || continue
+    case "$key" in [0-9]*) continue ;; esac
+    if [ -z "${ANCHORS[$target]:-}" ]; then
+        ANCHORS["$target"]="$(sed -nE 's/^#{2,}[[:space:]]+//p; s/^\*\*([^*]+)\*\*.*/\1/p' "$target" |
+            while IFS= read -r a; do normalize "$a"; done)"
+    fi
+    printf '%s\n' "${ANCHORS[$target]}" | grep -qF -- "$key" && continue
+    report "$file" "$line" "no such section in $target: § $frag"
+done < <(git grep --untracked -I -noP '[A-Za-z0-9._/-]+\.md`?\)?[[:space:]]*§+[[:space:]]*[^|;)]+' \
+    -- ':(exclude)docs/plans' ':(exclude)docs/plans/done')
 
 if [ "$fail" -ne 0 ]; then
     echo "==> docs-links FAILED — fix the references above."

@@ -9,6 +9,8 @@ name: Checks
 # what each candidate costs. Referenced by PR rather than by path: docs-links
 # checks every docs/ path mentioned anywhere in the tree, so naming a file that
 # only exists on an unmerged branch would make this workflow fail its own gate.
+# Since #860 it also checks backticked repo paths, `mise run <task>` names and
+# `<path>.md § <anchor>` citations — the same rule applies to each of those.
 #
 # A temporary job here already answered the one open question about the QEMU
 # gates: /dev/kvm exists on both ubuntu-24.04 and blacksmith-8vcpu-ubuntu-2404

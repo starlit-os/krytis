@@ -143,6 +143,7 @@ seconds, self-corrects on the next check.
   (`SettingsSection::Hooks`), `example.toml` (`[hooks]` block)
 - falcond `README.md` "Monitoring" / "Build Path Options" sections —
   `/tmp/falcond_status` contract, `RESTORE_STATE` semantics
-- `noctalia-dev/noctalia-shell#2051` (closed, unrelated feature) — evidence the v5 issue tracker
-  may not be accepting public feature requests, kept for context though no upstream PR was
-  needed for this issue
+- `noctalia-dev/noctalia-shell#2051` ("Customizable power profiles", closed) — filed on
+  the *old QML* repo, not the v5 `noctalia-dev/noctalia` one, and evidence the v5 issue
+  tracker may not be accepting public feature requests. Kept for context though no
+  upstream PR was needed for this issue

@@ -111,7 +111,7 @@ echo "    expect-fail: ${EXPECT_FAIL}"
 # system can never produce that. Its kernel cmdline is frozen inside the signed
 # UKI, so `console=ttyS0` cannot be injected, the kernel logs to tty0 only,
 # and serial output ends at systemd-stub's verified-chain confirmation. See
-# docs/skills/secure-boot.md § sealed UKI serial output.
+# docs/skills/secure-boot.md § *A sealed system's boot cannot be judged from the serial console*.
 # `env -u` is load-bearing: mise exports THIS task's parsed flags as usage_*,
 # and every child process inherits them (docs/skills/mise.md § `usage_container`
 # is inherited by child processes). iso-e2e-test and boot-test carry flags of

@@ -80,7 +80,7 @@ Reads `mise.toml` `[tools]` only — `[env]` values need a custom manager (see b
 
 **The native manager auto-merges patch/minor/digest bumps; the `pass-cli` custom-regex pin does not.** Renovate's `mise` manager updates `mise.lock` in the same commit as the `mise.toml` bump when it changes a dependency — reliable across every native-manager PR from 2026-08 through 2026-09-10 — so it inherits the repo's default `automerge: true` for digest/patch/minor. `pass-cli` comes from a `custom.regex` manager instead (see below) and does *not* get that lockfile treatment: two of its PRs (2026-08-25, 2026-08-27) landed with a stale `mise.lock` entry and failed CI's `mise install --locked` step, needing a manual force-push fix — so that rule stays `automerge: false`. Either way, CI's `mise install --locked` (`checks.yml`, via `jdx/mise-action`) …
 
-**A green `mise-lock --check` at PR-creation time is not permanent — `jdx/mise-action` floats to the newest `mise` release on every run.** None of the `checks.yml` job steps pin a `version:` input, so each CI run bootstraps whatever `mise` shipped most recently. `mise/tasks/mise-lock --check` (see below) regenerates `mise.lock` with that binary and diffs it against the committed copy — so a `mise` release that changes what it *writes* to the lockfile (not what it resolves) can fail `Static gates` on a PR whose `mise.toml`/`mise.lock` diff is otherwise correct and unrelated. Observed on PR #808 (`uv` 0.12.12 → 0.12.13, 2026-09-11): `mise` v2026.9.5 started emitting a `signer = "sigstore-oidc:…"` line for `github-attestations`-provenance tools (`fnox`, `usage`) that the lockfile committed under v2026.9.4 didn't have — a diff in two tools the PR never touched. Fix is the same either way: `mise run mise-lock` (no `--check`) with the CI-current `mise` regenerates the full file correctly; commit and push it. Renovate's own PRs don't self-heal this — its `mise` manager only rewrites the entries for the dependency it's bumping, so a human/agent push onto the Renovate branch is required.
+**A green `mise-lock --check` at PR-creation time is not permanent — the `mise` binary CI runs on still moves.** It used to move invisibly: no `checks.yml` step pinned a `version:` input, so every run bootstrapped whatever `mise` shipped most recently. Since #897 all 31 `jdx/mise-action` steps pin one Renovate-tracked version (see § Pinning the mise version), so the move is now a commit you can point at — but it is still a move, and the PR that performs it runs `mise-lock --check` with the *new* binary against a lockfile the old one wrote. `mise/tasks/mise-lock --check` regenerates `mise.lock` with that binary and diffs it against the committed copy — so a `mise` release that changes what it *writes* to the lockfile (not what it resolves) can fail `Static gates` on a PR whose `mise.toml`/`mise.lock` diff is otherwise correct and unrelated. Observed on PR #808 (`uv` 0.12.12 → 0.12.13, 2026-09-11): `mise` v2026.9.5 started emitting a `signer = "sigstore-oidc:…"` line for `github-attestations`-provenance tools (`fnox`, `usage`) that the lockfile committed under v2026.9.4 didn't have — a diff in two tools the PR never touched. Fix is the same either way: `mise run mise-lock` (no `--check`) with the CI-current `mise` regenerates the full file correctly; commit and push it. Renovate's own PRs don't self-heal this — its `mise` manager only rewrites the entries for the dependency it's bumping, so a human/agent push onto the Renovate branch is required.
 
 Two tools need rules of their own:
 
@@ -91,12 +91,12 @@ A tool pinned to `"latest"` is extracted with nothing to compare against, so it 
 
 ## Custom regex managers
 
-Two pins need one: `RUNNER_VERSION`, which lives in `mise.toml`'s `[env]` block that the `mise` manager does not read, and `pass-cli`, which is in `[tools]` but absent from the mise registry. Four things about custom managers are easy to get wrong:
+Three pins need one: `RUNNER_VERSION`, which lives in `mise.toml`'s `[env]` block that the `mise` manager does not read; `pass-cli`, which is in `[tools]` but absent from the mise registry; and the `version:` input on every `jdx/mise-action` step, which the `github-actions` manager *does* extract natively and then silently discards (see § Pinning the mise version). Four things about custom managers are easy to get wrong:
 
 1. **`enabledManagers` must list `"custom.regex"`.** With an allowlist in place, `customManagers` is silently skipped otherwise — no error, no PR, nothing in the log to notice.
 2. **The config keys are `customManagers` + `customType: "regex"` + `managerFilePatterns`.** `regexManagers` and `fileMatch` are the old spellings; `renovate-config-validator --strict` fails on them.
 3. **Renovate uses RE2, and matches per *file*, not per line.** No lookahead, no backreferences; `^`/`$` anchor the whole file. For a line boundary use `(?:^|\r\n|\r|\n|$)`.
-4. **Tag prefixes need `extractVersionTemplate`.** `actions/runner` tags releases `v2.325.0` while both pins hold the bare `2.325.0`, so `"^v(?<version>.+)$"` strips the prefix — without it every lookup mismatches the current value.
+4. **Tag prefixes need `extractVersionTemplate`.** `actions/runner` tags releases `v2.337.0` while both pins hold the bare `2.337.0`, so `"^v(?<version>.+)$"` strips the prefix — without it every lookup mismatches the current value.
 
 ### One manager, two files, one PR
 
@@ -112,7 +112,7 @@ If the two pins ever drift apart, Renovate will open *two* branches (one per `cu
 [tool_alias]
 pass-cli = "github:protonpass/pass-cli"
 [tools]
-pass-cli = "2.2.3"
+pass-cli = "2.3.3"
 ```
 
 `pass-cli = "(?<currentValue>[^"]+)"` matches both, and the alias line yields a dep whose "version" is `github:protonpass/pass-cli`. Requiring a leading digit — `"(?<currentValue>\d[^"]*)"` — pins the match to the real version without needing lookahead, which RE2 does not have anyway.
@@ -122,7 +122,7 @@ pass-cli = "2.2.3"
 A `--dry-run` showing the dep extracted only proves half of it. The other half — that the pin Renovate *writes* is one it will then read back as current — is what stops a manager opening the same PR forever. Check the `replaceString` in the debug log is the whole assignment, apply the bump by hand, and confirm the update disappears:
 
 ```bash
-sed -i 's/2\.325\.0/2.336.0/' mise.toml Containerfile.runner
+sed -i 's/2\.337\.0/2.338.0/' mise.toml Containerfile.runner
 mise run renovate-check --dry-run --log-level debug   # actions/runner gone from "flattened updates found"
 git restore mise.toml Containerfile.runner
 ```
@@ -162,13 +162,13 @@ Two families are held for manual merge:
 - `click`, `dulwich` — hard-pinned in `pyproject.toml` for BuildStream 2.5.x compatibility (see the comments there). A bump has to survive `mise run validate` and `mise run build`.
 - `buildstream`, `buildstream-plugins`, `buildstream-plugins-community` — coupled to the junction pins in `elements/freedesktop-sdk.bst` / `elements/gnome-build-meta.bst`, which may need bumping in lockstep.
 
-## Auto-merge works here despite no `pull_request` workflow
+## Auto-merge needs at least one check on the PR
 
 Renovate waits for a passing status check before calling GitHub's auto-merge API (`platformAutomerge`, default `true`). A repo with **zero** checks on the PR never satisfies that and the PR sits open forever with `autoMergeRequest: null` and no error — the failure mode called out in [#14](https://github.com/starlit-os/krytis/issues/14#issuecomment-4853545174).
 
-None of `cache-warm.yml`, `publish.yml`, or `track-bst-sources.yml` trigger on `pull_request`, so this repo looks like exactly that case — but it is not. Blacksmith's app posts a single `[code]smith` check run on every PR (verified on #420, #423, #425, #426 — bot- and human-authored alike), and its `SKIPPED` conclusion counts as resolved rather than pending. Evidence, PR #426 (`jdx/mise-action` v4.2.4): created `16:42:26Z`, auto-merge enabled `16:42:27Z`, check run completed `16:42:28Z`, merged by `app/renovate` at `16:42:30Z` — four seconds end to end. So `ignoreTests` is not needed, and no new manager needs its own workflow to unblock merging.
+Two workflows now trigger on `pull_request` and run on every Renovate branch — `checks.yml` (`Static gates`) and `vuln-diff.yml` (`Diff vulnerabilities vs base`), neither `paths`-filtered — so there is always a real check to wait on. That was not true when this was first worked out: at the time nothing in `.github/workflows/` triggered on `pull_request` at all, and the only thing satisfying `platformAutomerge` was Blacksmith's app posting a single `[code]smith` check run whose `SKIPPED` conclusion counts as resolved rather than pending (verified on #420, #423, #425, #426 — bot- and human-authored alike; PR #426 went created `16:42:26Z` → auto-merge enabled `16:42:27Z` → check completed `16:42:28Z` → merged by `app/renovate` `16:42:30Z`, four seconds end to end). `checks.yml` landed the next day (#445, 2026-08-02) and `vuln-diff.yml` a month later (#689). Either way `ignoreTests` is not needed, and a new manager needs no workflow of its own to unblock merging.
 
-Re-check this if the Blacksmith app is ever removed: the symptom is a PR that is `MERGEABLE`/`CLEAN` with `autoMergeRequest` null indefinitely, and
+Re-check this if every PR check is ever removed or `paths`-filtered off a Renovate branch: the symptom is a PR that is `MERGEABLE`/`CLEAN` with `autoMergeRequest` null indefinitely, and
 
 ```bash
 gh pr view <n> --json autoMergeRequest,statusCheckRollup

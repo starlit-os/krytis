@@ -114,7 +114,26 @@ Commit the skill-file edits and the `upstreams.yml` update together, in the same
 this *is* the self-improvement-loop mandate from `AGENTS.md`: the learning and the record
 of having looked land as one unit, not a follow-up.
 
-### 6. PR, don't merge
+### 6. Pay down what this run just added
+
+Mining is **append**-shaped by construction: step 5 writes accepted lessons into
+`docs/skills/` and moves `last_checked_sha` forward. Nothing in the loop ever re-reads the
+older sections of the file being appended to, which is exactly how a skill file grows past
+the point where anyone rereads it — dakota reached 5385 lines of CI documentation, stale in
+places and contradicted by the workflow YAML in others, before needing an emergency prune
+to ~450 lines (see `docs/skills/dakota.md`, and `AGENTS.md` § Skill files rot too).
+
+So close every run that wrote anything by running a rot pass over **the files this run
+appended to** — not the whole tree, and not as a separate follow-up PR. Use the
+`skill-rot-audit` skill (`.claude/skills/skill-rot-audit/`): sample the claims in those
+files that name a concrete artifact (path, mise task, flag, `#USAGE` default, config key),
+check each against the tree, and classify **wrong / unreachable / stale-status**. Fold any
+fix into the same commit as the lessons, which is where it belongs — the mining run created
+the growth, so the mining run pays for it.
+
+If the run accepted nothing, there is nothing to pay down; skip this step and say so.
+
+### 7. PR, don't merge
 
 Follow `AGENTS.md`'s worktree/branch policy for the commit (this is "no issue" maintenance
 work unless the user ties a specific run to a GitHub issue — branch name like

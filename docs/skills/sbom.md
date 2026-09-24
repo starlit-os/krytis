@@ -136,9 +136,12 @@ enrichment for every BST-element-is-the-package case would cover most of the C/C
 non-cargo/non-pypi graph — too large and too risky (a wrong CPE assignment reintroduces
 the same class of mismatch) for the 8 confirmed instances actually found. Instead,
 `mise/tasks/vuln-scan` passes `grype --config .grype.yaml`, and the repo-root
-`.grype.yaml` lists all 25 confirmed (`vulnerability`, `package.name`,
-`package.version`) triples as `ignore:` rules (Grype's own suppression mechanism,
-documented in `grype config`). Pinned to the exact installed version, not name alone:
+`.grype.yaml` lists every confirmed (`vulnerability`, `package.name`,
+`package.version`) triple as an `ignore:` rule (Grype's own suppression mechanism,
+documented in `grype config`) — 25 when this class was first triaged, 33 today across
+11 package names after the `bitnami` and class-2 additions documented below. Grep the
+file rather than trusting a count here.
+Pinned to the exact installed version, not name alone:
 a version bump on the underlying BST element makes the rule stop applying, and Grype
 re-flags the match — re-verify `matchDetails[0].searchedBy.namespace` before re-adding
 rather than assuming the same package name is always safe to ignore.
@@ -169,7 +172,9 @@ actually below what's installed" verification applies before ignoring.
 Confirmed for real, same 2026-09-01 re-scan: two entries already in `.grype.yaml`
 (`markdown` pinned to `3.10.2`, `shaderc` pinned to `2025.3`) had gone stale — routine
 `chore(deps)` bumps moved the installed versions to `3.10.3`/`2026.3` between when the
-rules were written and this scan, so Grype re-flagged both as if unignored (exactly the
+rules were written and this scan, so Grype re-flagged both as if unignored (both entries
+have since been re-pinned to the new versions in `.grype.yaml`; that is the whole
+remediation, exactly the
 documented, intended behavior of pinning by version — this is not a bug in the
 ignore-list design, just a reminder that it needs upkeep). There's no automated drift
 check for this the way `mise run systemd-base-check`/`rust-bindgen-check` cover the
@@ -184,10 +189,11 @@ Confirmed 2026-09-10 vuln-scan-triage pass: the `zlib`/`GHSA-g857-hhfv-j68w`/`1.
 rule (class 1, table above) produced **zero** matches — not in `.matches`, not in
 `.ignoredMatches` either — meaning it wasn't just failing to suppress (the version-bump
 case above), it was suppressing *nothing at all*. Root cause, found investigating issue
-#79 (zlib-rs adoption) the same day: upstream fdsdk replaced the bare `zlib` package with
-`zlib-ng` 2.3.3 at the bootstrap level sometime in the 26.08 cycle —
-`elements/components/zlib.bst` collapsed from a real build to a `kind: stack` depending
-on the new `elements/bootstrap/zlib-ng.bst`. The SBOM package is now named `zlib-ng`, so
+#79 (zlib-rs adoption, since closed) the same day: upstream fdsdk replaced the bare `zlib`
+package with `zlib-ng` 2.3.3 at the bootstrap level sometime in the 26.08 cycle —
+freedesktop-sdk's `elements/components/zlib.bst` collapsed from a real build to a
+`kind: stack` depending on its new `elements/bootstrap/zlib-ng.bst` (both paths are in
+fdsdk's tree, not krytis's). The SBOM package is now named `zlib-ng`, so
 the old rule's `package.name: zlib` pin can never match again regardless of version.
 
 **Distinguishing this from the routine version-bump case:** a version-bumped rule still
@@ -283,8 +289,8 @@ metadata only — confirmed by timing a real run in this repo (2026-09-01,
 clean worktree, no artifact cache primed): `mise run vuln-scan` end-to-end
 (SBOM generation + enrichment + Grype scan over the full ~7,600-package
 graph) took **70.6s**. That number is what makes both of these viable as
-fast, isolated jobs on a plain `ubuntu-24.04` runner instead of piggybacking
-on a real publish run.
+fast, isolated jobs on a plain GitHub-hosted runner (both are `runs-on:
+ubuntu-26.04`) instead of piggybacking on a real publish run.
 
 - **`.github/workflows/vuln-scan.yml`** — periodic report. `schedule` (weekly)
   + `workflow_dispatch` only, deliberately not `pull_request`: `checks.yml`

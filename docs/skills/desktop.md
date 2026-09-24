@@ -38,9 +38,9 @@ backend) — no existing element anywhere provided this.
 
 This is the load-bearing discovery of #775, and the reason umbriel took real
 investigation rather than a straight copy of `desktop/noctalia-greeter.bst`'s
-pattern. `desktop/noctalia-greeter.bst`'s own compositor code hits the exact
-same "fdsdk mesa doesn't expose `egl.pc`/`glesv2.pc`" gap (see `bst.md`) but
-works around it in its *own* `meson.build`:
+pattern. `desktop/noctalia-greeter.bst`'s own compositor code can survive the same
+"fdsdk mesa doesn't expose `egl.pc`/`glesv2.pc`" gap (see `bst.md`) unaided, because its
+*own* `meson.build` degrades to libepoxy:
 
 ```meson
 egl_dep = dependency('egl', required: false)
@@ -53,14 +53,21 @@ if not gles2_dep.found()
 endif
 ```
 
+(That fallback is no longer *exercised*: `desktop/noctalia-greeter.bst` — like
+`desktop/cage.bst` — now build-depends on `components/mesa-headers.bst` since wlroots
+flipped to `-Drenderers=gles2,vulkan`, so both `dependency()` calls succeed. See § wlroots
+renderers below. The point here is that its source *could* have coped without it.)
+
 `umbrielfx/meson.build` has no such fallback — `dependency('egl')`,
 `dependency('gbm')`, and `dependency('glesv2')` are called directly, required
-by default, with zero optionality. Reading `bst.md`'s existing "fdsdk mesa
-doesn't expose `egl.pc`/`glesv2.pc`" note and stopping there would wrongly
-conclude umbriel can't be packaged at all. The actual fix, found by cloning
-the pinned `freedesktop-sdk` ref locally and grepping its own element tree
-(`elements/components/mesa-headers.bst`) rather than trusting the letter of an
-existing doc note: `freedesktop-sdk.bst:components/mesa-headers.bst` exists
+by default, with zero optionality. At the time of #775 `bst.md`'s note stopped at the gap
+("fdsdk mesa doesn't expose `egl.pc`/`glesv2.pc`"), and reading only that would have
+wrongly concluded umbriel can't be packaged at all — `bst.md` now carries the fix in the
+same section (§ fdsdk mesa doesn't expose `egl.pc` / `glesv2.pc` — `components/mesa-headers.bst`
+puts them back), so the trap is closed there too. The fix was found by cloning the pinned
+`freedesktop-sdk` ref locally and grepping its own element tree (freedesktop-sdk's own
+`components/mesa-headers.bst`) rather than trusting the letter of an existing doc note:
+`freedesktop-sdk.bst:components/mesa-headers.bst` exists
 specifically to regenerate `egl.pc`/`glesv2.pc`/`gl.pc` (standard
 `%{libdir}/pkgconfig`, *not* mesa's namespaced `GL/default` split) plus the
 matching `EGL/`/`GLES2/`/`GLES3/`/`KHR/` headers — `components/libglvnd.bst`
@@ -174,7 +181,12 @@ or `track-mise` CI job is needed. A matrix entry in the `track` job in
 
 ## noctalia (shell) build dependencies
 
-`desktop/noctalia.bst` also uses `git_repo` + `track: v*`. The v5.0.0-beta2 re-pin
+`desktop/noctalia.bst` also uses `git_repo`, but **not** `track: v*` today: it carries a
+fork pin, `github:kitten-lily/noctalia.git` `track: feat/system-prompter`
+(`ref: v5.0.1-2-g0b4ae36c`), for the native `org.gnome.keyring.SystemPrompter` provider oo7
+needs. The upstream `noctalia-dev/noctalia` + `track: v*` source is kept commented out in the
+element, to revert to once the feature lands upstream or is dropped; branch tracking means
+`bst source track` follows the branch head, not releases. The v5.0.0-beta2 re-pin
 (99 commits past the old `main` pin) changed the upstream dependency surface —
 upstream un-vendored `md4c`/`tomlplusplus` from `third_party/` and added
 `nlohmann_json` and stb header requirements. The v5.0.0-beta.4 re-pin (#352)
@@ -749,9 +761,16 @@ from running here.
 
 ## niri vs wlroots
 
-niri uses **smithay** (pure Rust), not wlroots. Its rendering stack handles EGL/GPU failures
-differently — smithay falls back more gracefully, which is why niri works from a TTY on amdgpu
-even when wlroots-based compositors (noctalia-greeter-compositor) fail.
+niri uses **smithay** (pure Rust), not wlroots — a genuinely different rendering stack, so a
+renderer conclusion drawn from one does not carry to the other.
+
+This section used to end "which is why niri works from a TTY on amdgpu even when
+wlroots-based compositors (noctalia-greeter-compositor) fail." That is no longer true and
+was retracted by the re-measurement in § GLES2 with fdsdk mesa (#775): wlroots GLES2 comes
+up on amdgpu with fdsdk's mesa, and `mise run compositor-smoke` brings up
+noctalia-greeter-compositor, umbriel and cage out of the shipped image. The greeter's
+`WLR_RENDERER=pixman` pin is a Vulkan DMA-BUF size limit plus "pixman is adequate for a
+login screen", not a broken GL stack.
 
 ## bootc BLS Entry Title and os-release Fields
 
@@ -773,11 +792,17 @@ bootc constructs the BLS (Boot Loader Specification) entry title from os-release
 
 Result: boot entry shows `StarlitOS Krytis (25.08.202606201613)`.
 
-## iio-niri releases ship stale Cargo.lock — regenerate
+## A release tarball's shipped `Cargo.lock` may be stale — regenerate it
 
 *Source: zirconium-hawaii `a516e31` — `fix(iio-niri): generate cargo lock file once more`*
 
-iio-niri's released `Cargo.lock` is frequently out of date. BST must generate its own Cargo.lock during the build rather than trusting the one shipped in the release tarball. This is a recurring issue (zirconium-hawaii has hit it multiple times). If packaging iio-niri and the build fails with cargo dependency resolution errors, generate the lock file in `build-commands` before `cargo build`.
+**krytis does not package iio-niri** — this is an imported lesson, and iio-niri lives in
+zirconium-hawaii's element tree, not here. The lesson transfers to any element that builds
+Rust from a release tarball rather than a `git_repo` + `cargo2` vendoring pass: the
+`Cargo.lock` inside an upstream release asset is frequently out of date relative to the
+sources beside it, and zirconium-hawaii has hit this on iio-niri more than once. If a cargo
+build fails with dependency-resolution errors against a lock file you did not generate,
+regenerate it in `build-commands` before `cargo build` instead of trusting the shipped one.
 
 ## niri Config Layout (modular, ported from dotfiles)
 
@@ -913,8 +938,11 @@ libcamera + PipeWire + WirePlumber are wired in `stacks/desktop.bst`. Key facts:
 - `wireplumber.bst` is the required session manager — pipewire-daemon alone does not route streams.
 - The xdg-desktop-portal camera portal is built into `xdg-desktop-portal` base (already in stack);
   no separate portal element needed.
-- **v4l2loopback** (virtual V4L2 device kernel module) is out-of-tree. It requires a prebuilt
-  CachyOS package vendored like `core/linux-cachyos.bst`. Not yet implemented (see issue #86).
+- **v4l2loopback** (virtual V4L2 device kernel module) is not packaged and is not tracked by
+  an open issue: #86 ("Add camera support stack") shipped the libcamera/PipeWire half and
+  closed 2026-06-23 without it. It is out-of-tree, so adding it means vendoring a prebuilt
+  CachyOS package the way `core/linux-cachyos.bst` does — file a fresh issue rather than
+  reopening #86.
 
 Diagnostic:
 ```bash
@@ -1056,7 +1084,7 @@ config:
   - make -j1 -C scripts DESTDIR="%{install-root}" install
 ```
 
-**Why not `make install` at top level?** Top-level `make` builds HTML/man docs requiring `xmlto`/`xsltproc` (absent from fdsdk). Top-level `make install` also has no `install-exec` target — `scripts/Makefile.in` is hand-written with only `install`/`uninstall`. Installing from `-C scripts` skips all doc targets; the `install` target guards absent man pages with `if [ -f $x ]`.
+**Why not `make install` at top level?** Top-level `make` builds HTML/man docs requiring `xmlto`/`xsltproc` (absent from fdsdk). Top-level `make install` also has no `install-exec` target — xdg-utils' own `scripts/Makefile.in` (upstream's source tree, not this repo's `scripts/`) is hand-written with only `install`/`uninstall`. Installing from `-C scripts` skips all doc targets; the `install` target guards absent man pages with `if [ -f $x ]`.
 
 **Why stub `.txt` files?** `generate-help-script.awk` reads each script's `.txt` (produced by `xmlto txt desc/*.xml`) for the one-line synopsis in `--help` output. Without `.txt` files, `make scripts` fails. Stubbing them with `printf 'Name\n\n%s\n\nDescription\n' "$base"` satisfies the prerequisite — scripts are fully functional; `--help` just shows the script name as synopsis instead of the docbook description. Avoids pulling in xmlto + docbook-xml + docbook-xsl + lynx (no text browser exists in fdsdk).
 
@@ -1074,7 +1102,7 @@ Current locales: `sv_SE.UTF-8` and `en_SE.UTF-8`. `en_US.UTF-8` and `C.UTF-8` ar
 
 **Check the source locale exists before adding one.** `localedef` fails the build outright on a missing `/usr/share/i18n/locales/<name>`, and finding that out costs a full build round trip. One `ls` against a booted image, or `bst shell` into the element, answers it first.
 
-**Verify locales with `locale -k`, never with `date`.** krytis ships uutils-coreutils, so `/usr/bin/date` is uutils (`date --version` → `date 0.8.0`), and it does not honour `LC_TIME` for `%A`/`%B` — it prints English day and month names under *every* locale. Testing a Swedish locale with `date +%A` therefore "fails" identically whether the locale works or not. Read the compiled data instead:
+**Verify locales with `locale -k`, never with `date`.** krytis ships uutils-coreutils, so `/usr/bin/date` is uutils, not GNU coreutils. Observed on uutils 0.8.0: it does not honour `LC_TIME` for `%A`/`%B` — it prints English day and month names under *every* locale, so testing a Swedish locale with `date +%A` "fails" identically whether the locale works or not. `elements/core/uutils-coreutils.bst` is pinned at 0.12.0 today; re-check `date +%A` against the current pin before concluding uutils still ignores `LC_TIME`, but read the compiled data either way:
 
 ```bash
 # against a built artifact, no image needed
@@ -1180,7 +1208,11 @@ gst-launch-1.0 filesrc location=/tmp/test.mp4 ! qtdemux ! h264parse ! vah264dec 
 
 Notes:
 - `strings ... | grep VAProfileH264` is unreliable — VA-API profiles are enum integers, not string literals in the `.so`. Skip it.
-- `vainfo` is not in the image (`libva-utils` not packaged). `gst-inspect-1.0 va` is sufficient.
+- `vainfo` **is** in the image — `desktop/vainfo.bst`, in `stacks/codecs.bst` (#183). Neither
+  junction ships `libva-utils`, so krytis builds it itself (`intel/libva-utils`, `kind: meson`,
+  `-Dx11=false`). It used to be genuinely absent, which is why this section reaches for
+  `gst-inspect-1.0 va`; that check is still sufficient, but `vainfo` now answers the
+  profile/entrypoint question directly.
 - `libx264` encoder not in ffmpeg build; use `h264_vaapi` to generate test clips on the device.
 
 ## Plymouth Boot Splash
@@ -1307,9 +1339,10 @@ system-db:local
 [org/gnome/desktop/interface]
 icon-theme='Papirus'
 color-scheme='prefer-dark'
+gtk-theme='adw-gtk3-dark'
 ```
 
-**3. Compile** — run `dconf update` after all elements are staged. Place in `oci/krytis/stack.bst` integration-commands (same pattern as `fc-cache -f /usr/share/fonts/` for fonts):
+**3. Compile** — run `dconf update` after all elements are staged. Place in `oci/krytis/stack.bst` integration-commands. (`fc-cache` is *not* the parallel here despite both being post-staging cache builds: it runs in `oci/krytis/image.bst` under `FONTCONFIG_SYSROOT=/layer` — see § Fontconfig: fc-cache in the OCI Build.)
 ```yaml
 # Compile dconf system database from /etc/dconf/db/local.d/ keyfiles.
 # Must run after all elements are staged so the keyfiles exist.
@@ -1325,6 +1358,7 @@ GTK3 has no `color-scheme` key. Dark mode requires `gtk-application-prefer-dark-
 ```ini
 [Settings]
 gtk-icon-theme-name=Papirus
+gtk-theme-name=adw-gtk3-dark
 gtk-application-prefer-dark-theme=true
 ```
 
@@ -1351,11 +1385,15 @@ Available in `gnome-build-meta.bst:core-deps/power-profiles-daemon.bst` — one 
 
 noctalia's power-profile UI is a genuine bidirectional D-Bus client of this — verified
 live both directions (UI clicks land on `ActiveProfile`, and external `powerprofilesctl
-set` calls reflect back into the UI). No krytis glue code needed there. What's missing:
-nothing in the stack (ppd, falcond, or noctalia) watches AC/battery state to
-auto-switch profiles — ppd is a pure mechanism with no policy of its own, and grepping
-noctalia's `power_profiles_service.cpp`/`power_tab.cpp` shows its UPower integration is
-read-only telemetry only. Tracked as a Design Gate item in #261.
+set` calls reflect back into the UI). No krytis glue code needed there. Nothing in the
+stack *itself* auto-switches on AC/battery — ppd is a pure mechanism with no policy of its
+own, and noctalia's `power_profiles_service.cpp`/`power_tab.cpp` UPower integration is
+read-only telemetry. #261 closed 2026-08-04 by routing the policy through noctalia's
+generic `[hooks]` mechanism instead: `config/battery-power-profile-hook.bst` ships
+`/usr/libexec/krytis/battery-power-profile-hook.sh`, which a user pastes into Settings ->
+Hooks (`battery_charging`/`battery_discharging`). Deliberately opt-in — krytis sets no hook
+command by default, so behaviour is unchanged until a user wires it up. See
+`docs/design/power-profile-auto-switch.md` and § noctalia has a generic Hooks system above.
 
 ### systemd-oomd
 
@@ -1456,11 +1494,11 @@ job in `.github/workflows/track-bst-sources.yml`, same `track-mise` pattern as e
 `docs/skills/bst.md` § Element update path).
 
 `LOADED_PROFILES` should read `9` with default `profile_mode: none` (the root profiles;
-`handheld`/`htpc` variants only load when that config key is set) — see the
-`fix/falcond-user-profiles-dir` branch (#262) for why it read `0` before the
-profiles-dir bug fix landed (falcond's compiled-in `-Duser-profiles-dir` default,
-`/usr/share/falcond/profiles/user`, wasn't being created at build time). This branch
-supersedes #262's single `proton.conf` vendoring — the full tarball already contains it.
+`handheld`/`htpc` variants only load when that config key is set). It read `0` before PR
+#262 (`fix/falcond-user-profiles-dir`, merged 2026-07-04) created falcond's compiled-in
+`-Duser-profiles-dir` default `/usr/share/falcond/profiles/user` at build time. The
+vendored tarball here superseded that PR's single hand-vendored `proton.conf` — the full
+profile set already contains it.
 
 ### Verification (on booted image)
 
@@ -1523,7 +1561,10 @@ This makes matching launcher-dependent, not just "is it Wine":
   matching, only the *absence* of a wine/proton needle in the surviving ancestry does).
 
 Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
-invocation puts one of those literal needles in cmdline/comm within 10 hops.
+invocation puts one of those literal needles in cmdline/comm within 10 hops. This
+applies to every profile in the vendored set, not just `proton.conf` — native-game
+profiles (`cs2.conf` etc.) match on exact process name and don't need any of this, but
+anything relying on the Proton fallback does.
 
 ### dmem_protect is a no-op, and `Delegate=` cannot fix it (#260)
 
@@ -1564,38 +1605,6 @@ possible: any amdgpu desktop exposes the controller (numbers above are from one)
 check inside a container, where the root cgroup exposes only `cpu memory pids`; do not
 repeat that measurement from a container.
 
-### Proton-catch-all matching depends on launcher process ancestry, not filename
-
-Ground truth from upstream source (`matcher.zig`/`scanner.zig`, cloned from
-`git.pika-os.com/general-packages/falcond`), verified live against real games across
-four launchers (Bottles, Faugus, Heroic, Steam):
-
-1. Exact/case-insensitive hash-map hit: process name == a `.conf` filename stem (e.g.
-   `cs2.conf` matches process `cs2`). Wins immediately, no ancestry walk.
-2. Proton catch-all (`proton.conf`) only fires if the process name ends in `.exe`, is
-   NOT in `system.conf`'s ignore-list (Wine launcher/updater helper exes), AND walking
-   up to 10 parent PIDs via `/proc/<pid>/status` `PPid:`, some ancestor's `comm`
-   contains `wine`/`reaper`/`umu-run` **or** its `/proc/<pid>/cmdline` contains the
-   literal substring `proton`.
-
-This makes matching launcher-dependent, not just "is it Wine":
-
-- **Bottles-direct** (`bottles-cli run -p ... -b ...`) — MISS. Bottles bundles its own
-  runner; nothing in its cmdline says `proton`, and `bwrap` (which Bottles always
-  sandboxes through) reparents the game exe as `wineserver`'s *sibling*, not its
-  descendant — severing the ancestry link entirely.
-- **Faugus, Heroic, Steam** — HIT. All three either run a direct wine ancestor or
-  invoke a Steam Proton compat tool (`.../Proton-CachyOS.../proton waitforexitandrun`)
-  whose cmdline satisfies the substring fallback, even when also sandboxed through
-  `bwrap`/pressure-vessel (Faugus/Steam both are — bwrap by itself does not break
-  matching, only the *absence* of a wine/proton needle in the surviving ancestry does).
-
-Don't assume "it's Wine so falcond will catch it" — check whether the launcher's own
-invocation puts one of those literal needles in cmdline/comm within 10 hops. This
-applies to every profile in this vendored set, not just `proton.conf` — native-game
-profiles (`cs2.conf` etc.) match on exact process name and don't need any of this, but
-anything relying on the Proton fallback does.
-
 ### dmem_protect cgroup delegation gap (#260)
 
 `dmem_protect = true` is set on every profile in this vendored set and does nothing on
@@ -1631,7 +1640,7 @@ leads to the wrong conclusion that fmt isn't shipped at all. Real runtime `.so`
 `tomlplusplus` elsewhere in this file.
 
 **`desktop/spdlog.bst` and `desktop/pcre2.bst` are both absent from fdsdk entirely** —
-confirmed by paginating the full `elements/components/` tree via the GitLab API rather
+confirmed by paginating freedesktop-sdk's own full `components/` element tree via the GitLab API rather
 than trusting web search (which came up empty/unreliable for both): spdlog is missing
 alphabetically between `swig.bst` and `systemd-hwdb-maybe.bst`; pcre2 is missing
 between `pciutils.bst` and `pcsc-lite.bst`. Both vendored here the same way
@@ -1688,7 +1697,7 @@ check follow-up; the earlier claim is preserved as a lesson, not repeated.
 
 **pcre2 is not a real fdsdk gap — it's shipped under `bootstrap/`, not
 `components/`.** The original plan vendored `desktop/pcre2.bst` on the strength of
-"absent from `elements/components/`" alone. fdsdk ships pcre2 as
+"absent from freedesktop-sdk's `components/`" alone. fdsdk ships pcre2 as
 `freedesktop-sdk.bst:bootstrap/pcre2.bst` (autotools, JIT-enabled, pinned
 `pcre2-10.47` with its own `exclude: ['*-RC*']` — the same RC-exclusion trap
 documented in `docs/skills/bst.md` § excluding a bad tag, discovered independently
@@ -1696,8 +1705,8 @@ here before finding fdsdk already does it) — pulled into literally every image
 `runtime-gnu.bst` → `bootstrap/grep.bst` (`grep -P`). A second vendored pcre2
 collides at build time ("not permitted to overlap", every header/`.so`/man page) —
 caught by actually building the element, not by `mise validate` (which only resolves
-the graph, it doesn't stage a sandbox). **Check `elements/bootstrap/` as well as
-`elements/components/` before concluding fdsdk doesn't ship something.** Depend on
+the graph, it doesn't stage a sandbox). **Check freedesktop-sdk's `bootstrap/` element
+directory as well as its `components/` before concluding fdsdk doesn't ship something.** Depend on
 the existing bootstrap element directly instead (`core/openssh.bst`'s
 `bootstrap/libxcrypt.bst` dependency is the existing precedent for this). The
 vulnerable 10.47 pin this surfaced is tracked separately — issue #812, not fixed by
@@ -1791,8 +1800,9 @@ falcond comment already names — plus `scx_cosmos`, upstream's own `default_sch
 recommendation. `cargo build -p scx_lavd -p scx_bpfland -p scx_cosmos`, not `--workspace`.
 
 **Pinned to v1.1.2, not the newer v1.1.3.** v1.1.3's `scx_lavd` causes massive freezes on 7.2.x
-kernels — krytis ships `linux-cachyos` 7.2.2 (`elements/core/linux-cachyos.bst`), an exact match
-for the affected line. Sibling fork zirconium-hawaii's `gamerslop/scx-scheds.bst` hit this first
+kernels — krytis ships `linux-cachyos` 7.2.6 (`elements/core/linux-cachyos.bst`'s `version:`
+variable; it was 7.2.2 when this was written), still on the affected line. Sibling fork
+zirconium-hawaii's `gamerslop/scx-scheds.bst` hit this first
 and carries the same `exclude: [v1.1.3]` on its `git_repo` source with the same comment — verify
 independently before ever dropping the exclude, don't just trust that a later scx release fixed
 it without re-checking against whatever kernel line krytis is on by then.
@@ -1864,10 +1874,10 @@ which the build made possible to verify.
 
 | Directory | Install path | Purpose |
 |---|---|---|
-| `udev/` | `/usr/lib/udev/rules.d/` | Audio PM, HPET perms, SATA link power, I/O schedulers |
+| `udev/` | `/usr/lib/udev/rules.d/` | Audio PM, HPET perms, SATA link power, I/O schedulers, `cpu_dma_latency` perms |
 | `modprobe.d/` | `/usr/lib/modprobe.d/` | amdgpu force-load for GCN 1.0+ |
 | `modules-load.d/` | `/usr/lib/modules-load.d/` | ntsync autoload |
-| `tmpfiles.d/` | `/usr/lib/tmpfiles.d/` | THP tuning |
+| `tmpfiles.d/` | `/usr/lib/tmpfiles.d/` | THP tuning (`thp.conf`, `thp-shrinker.conf`) and the amd-pstate EPP hint (`amd-pstate-epp.conf`, #220) |
 | `sysctl.d/` | `/usr/lib/sysctl.d/` | Kernel parameter overrides |
 
 **CachyOS sysctl overrides.** CachyOS ships a hardened kernel with `kernel.unprivileged_userns_clone=0`. This disables the sandbox in Flatpak apps (bubblewrap) and Chromium/Electron. `files/desktop-tweaks/sysctl.d/99-userns.conf` re-enables it. The pattern for any future CachyOS sysctl override is the same: add a `.conf` file under `files/desktop-tweaks/sysctl.d/` and it is installed automatically by the loop in `desktop-udev.bst` — except the current element installs `sysctl.d/99-userns.conf` explicitly (no glob loop yet). Add a glob loop if a second sysctl file is needed.

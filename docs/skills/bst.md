@@ -21,7 +21,7 @@ The podman container fallback has no host dep requirements beyond podman itself.
 BST_CONTAINER = "true"
 ```
 
-The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only when `--container` is not passed on the command line — an explicit flag always wins. See `docs/skills/mise.md` § Propagating flags through tasks that call other tasks.
+The `bst`, `validate`, `load-image` and `sbom` tasks fall back to `BST_CONTAINER` only when `--container` is not passed on the command line — an explicit flag always wins. See `docs/skills/mise.md` § Propagating flags through tasks that call other tasks.
 
 **Agent guidance:** if a BST command fails with "Did not find 'patch' in PATH" (or another missing native-dep error), don't just retry with `--container` — recognise the pattern, explain the cause, and offer to write `BST_CONTAINER = "true"` to `.mise.local.toml` as a one-time fix for that workstation (issue #54).
 
@@ -41,9 +41,12 @@ The `bst`, `validate`, and `load-image` tasks fall back to `BST_CONTAINER` only 
 
 **Element names are relative to `element-path: elements` (project.conf), not to the repo
 root.** `mise bst build elements/desktop/equibop.bst` fails with `Could not find element
-… Did you mean 'desktop/equibop.bst'?` — pass `desktop/equibop.bst`. There is no
-`elements/krytis/` directory; elements live in `core/`, `desktop/`, `config/`, `stacks/`,
-`oci/`, `overrides/`, `deps/`, `dev/`, `plugins/`.
+… Did you mean 'desktop/equibop.bst'?` — pass `desktop/equibop.bst`. The element
+directories are exactly `core/`, `desktop/`, `config/`, `stacks/`, `oci/`,
+`overrides/`, `deps/`, `dev/`, `plugins/`. There is no per-distro top-level element
+directory here — a `krytis/` one has never existed, and neither has the `components/`
+or `bootstrap/` layout; those names belong to freedesktop-sdk's own tree, reachable
+only through the junction prefix.
 
 ## Variables
 
@@ -56,7 +59,7 @@ root.** `mise bst build elements/desktop/equibop.bst` fails with `Could not find
 | `%{indep-libdir}` | `/usr/lib` | Use for systemd units, presets, sysusers, tmpfiles |
 | `%{datadir}` | `/usr/share` | |
 | `%{sysconfdir}` | `/etc` | Avoid — prefer `/usr/lib` paths for image content |
-| `%{install-extra}` | fdsdk's license-file harvester (`include/install-extra.yml`), **not** a re-invocation of the plugin's real install step | For `cmake`/`autotools`/`make`/`makemaker`/`meson`/`pyproject`, fdsdk auto-appends it project-wide after whatever `install-commands` an element defines — don't add it yourself for those kinds. `kind: manual` is the one case that needs it written explicitly (absent from that auto-append list). See § Overriding `install-commands` on a buildsystem element below |
+| `%{install-extra}` | the license-file harvester from freedesktop-sdk's own `include/install-extra.yml` (that file lives in the junction, not in this repo), **not** a re-invocation of the plugin's real install step | For `cmake`/`autotools`/`make`/`makemaker`/`meson`/`pyproject`, fdsdk auto-appends it project-wide after whatever `install-commands` an element defines — don't add it yourself for those kinds. `kind: manual` is the one case that needs it written explicitly (absent from that auto-append list). See § Overriding `install-commands` on a buildsystem element below |
 | `%{go-arch}` | `amd64`/`arm64` | Defined in project.conf per-arch |
 | `%{arch}` | `x86_64`/`aarch64` | Raw architecture name |
 
@@ -72,6 +75,7 @@ elements:
       meson-global: >-
         --buildtype=debugoptimized
         -Db_ndebug=true
+        -Dwerror=false
 ```
 
 Putting the same key under the top-level `variables:` block **silently does nothing** when the
@@ -90,10 +94,11 @@ elements:
     (@): include/_private/meson-conf.yml
 ```
 
-### fdsdk's `include/_private/` config is not inherited across the junction
+### freedesktop-sdk's `include/_private/` config is not inherited across the junction
 
 krytis gets fdsdk's *elements* through the junction, but none of its `_private` build
-configuration. Concretely (#604): fdsdk sets `--buildtype=plain` for its own meson elements in
+configuration — that whole directory lives in freedesktop-sdk's tree, not in this repo.
+Concretely (#604): fdsdk sets `--buildtype=plain` for its own meson elements in its
 `include/_private/meson-conf.yml`, krytis inherited nothing, and krytis's 13 meson elements
 therefore used **meson's own default buildtype — `debug`** (`-O0`, and `b_ndebug=false`, so
 `NDEBUG` never defined). The image shipped unoptimised, assert-enabled binaries for a year
@@ -107,7 +112,8 @@ reached the image.
 **Do not fix this by copying fdsdk's line.** `--buildtype=plain` tells meson to emit no
 `-O`/`-g` of its own and defer to `CFLAGS`/`CXXFLAGS` — which fdsdk sets for its own builds and
 krytis does not (`bst show --format '%{environment}'` has neither). Copying it removes
-optimisation *and* debug info. krytis uses `--buildtype=debugoptimized -Db_ndebug=true`:
+optimisation *and* debug info. krytis uses `--buildtype=debugoptimized -Db_ndebug=true
+-Dwerror=false`:
 
 - `debugoptimized` = `-O2 -g`. The `-g` keeps `%{strip-binaries}` splitting debug info into
   `%{debugdir}` via `freedesktop-sdk-stripper`; `--buildtype=release` drops `-g` and quietly
@@ -118,6 +124,11 @@ optimisation *and* debug info. krytis uses `--buildtype=debugoptimized -Db_ndebu
   image size. Don't verify it against the image and conclude it broke.
 - `b_ndebug=true`, not `if-release`: `if-release` only fires for `release`/`plain` buildtypes,
   so it would do nothing under `debugoptimized`.
+- `werror=false` is a consequence of `b_ndebug`, not an unrelated opinion: with `NDEBUG`
+  defined, `assert()` expands to nothing, so any local that exists only to be asserted on
+  becomes an unused variable and an upstream built with `-Werror` then fails. wlroots 0.20.1
+  does exactly that in `render/pass.c:22`. Warnings are still printed; they just stop being
+  fatal.
 
 `b_ndebug=true` is not redundant with upstream's own defaults, and this is the subtle part.
 noctalia's `meson.build` declares `default_options: ['b_ndebug=if-release', …]` — which reads
@@ -195,7 +206,8 @@ this is the only way it gets the license-harvest step at all.
 *Discovered implementing #222's `desktop/ananicy-cpp.bst` — the build/link succeeded
 and `install-commands` "succeeded" while silently producing a near-empty artifact.*
 
-`%{install-extra}` is fdsdk's license-file harvester (`include/install-extra.yml`),
+`%{install-extra}` is the license-file harvester from freedesktop-sdk's own
+`include/install-extra.yml` (a junction-side file, not one of ours),
 not a re-invocation of a buildsystem plugin's real install step. For `cmake`,
 `autotools`, `make`, `makemaker`, `meson`, and `pyproject`, fdsdk's project-wide
 `elements: <kind>: config: install-commands: (>): ["%{install-extra}"]` override
@@ -315,7 +327,7 @@ description = "Enroll a FIDO2 security key for sudo / login"
 Key points:
 - `depends: core/mise.bst` — scripts are useless without mise; declaring the dep makes it explicit
 - Scripts must be executable (755) and have a `#MISE description="…"` header so `mise tasks` lists them
-- The `local` source path must be relative to the project root (`files/my-tasks/`, not absolute)
+- The `local` source path must be relative to the project root (`files/fido2-tasks`, not absolute)
 - Use this pattern for user-facing ops tasks shipped in the OCI image (enrollment, diagnostics, etc.)
 
 ## Prebuilt Binary Elements — Sandbox Tool Availability
@@ -451,7 +463,8 @@ override: sudo-rs).
 
 **No PR gate catches an element that stops building.** `Checks` is static-only — no `bst
 build` on PRs, as `checks.yml`'s own header comment states. The only scheduled job that
-compiles elements is `cache-warm.yml` (06:00 Mon–Fri), and until #741 its build step ended
+compiles elements is `cache-warm.yml` (`cron: '41 6 * * 1-5'`, i.e. 06:41 UTC Mon–Fri —
+deliberately off the hour), and until #741 its build step ended
 in `set +e` … `exit 0` with a `::warning::`, so run 33872185343 reported **success** nine
 minutes after the #735 break landed, then pushed the failed artifact to the shared cache
 for `publish` to pull and discard. That swallow is gone: a cache-warm build failure now
@@ -548,17 +561,27 @@ The `fido2:enroll` script detects capabilities automatically. If PAM config uses
 
 ## OCI Assembly Pipeline
 
-Krytis image assembly flows through three element kinds:
+Krytis image assembly flows through four element kinds, all under `elements/oci/krytis/`
+— there is no separate `deps.bst` aggregator and never was:
 
 ```
-elements/krytis/deps.bst              kind: stack  (dep aggregator — zero filesystem output)
-  └── lists all krytis/*.bst elements
+oci/krytis/stack.bst        kind: stack             (dep aggregator — zero filesystem output)
+  └── depends on stacks/{base-system,bootc,codecs,desktop,dev-tools}.bst
+      + core/linux-cachyos.bst + core/initramfs.bst; carries the
+      ostree-convention integration-commands (/home, /opt, /usr/local symlinks)
 
-elements/oci/krytis/filesystem.bst    kind: compose  (filters deps into /layer filesystem)
-  └── depends on: deps.bst + freedesktop-sdk runtime
+oci/krytis/runtime.bst      kind: compose           build-depends: stack.bst
+  └── exclude: devel, debug, static-blocklist; overlap-whitelist '**/*'
+oci/krytis/manifest.bst     kind: collect_manifest  build-depends: stack.bst
+  └── writes /usr/manifest.json
 
-elements/oci/krytis/image.bst         kind: script  (final OCI image)
-  └── runs: prepare-image.sh, systemd-sysusers, build-oci
+oci/krytis/filesystem.bst   kind: compose           build-depends: manifest.bst,
+  └── exclude: debug, extra, static-blocklist        runtime.bst,
+                                                     freedesktop-sdk.bst:components/gcc.bst
+
+oci/krytis/image.bst        kind: script            (final OCI image)
+  └── stages filesystem.bst + oci/os-release.bst at /layer, then runs the
+      assembly commands below
 ```
 
 ### OCI script assembly order (strict)
@@ -567,8 +590,11 @@ The `image.bst` script must run steps in this order:
 
 1. `prepare-image.sh` — sets up ostree-compatible filesystem layout, handles `/etc` → `/usr/etc` merging
 2. `systemd-sysusers --root /layer` — create system users from sysusers.d
-3. `glib-compile-schemas` (if any GLib schemas are installed)
-4. `build-oci` — assemble the OCI image
+3. the factory/cleanup `rm`s — swap in `core/os-release.bst`'s `issue`, drop the `pam.d/{other,system-auth}` factory copies, `/usr/bin/chsh` and `/var/db/Makefile`
+4. `glib-compile-schemas /layer/usr/share/glib-2.0/schemas`
+5. `ldconfig -r /layer -f /etc/ld.so.conf.build` (see § `ldconfig -r <root>` below)
+6. `FONTCONFIG_SYSROOT=/layer fc-cache -f`
+7. `build-oci` — assemble the OCI image
 
 Running `build-oci` before `systemd-sysusers` means the greeter user (`greeter`) won't exist in the image.
 
@@ -638,18 +664,39 @@ config:
 
 The `exclude:` list strips developer splits. `gcc.bst` provides devel files the compose needs and is a `build-depends` (not `depends`) since it's not shipped in the runtime image.
 
-## BST Weak-Key Caching Bug
+## Weak keys only bite under `--no-strict`, and krytis is strict by default
 
-**Symptom:** You added a package to `deps.bst`, the build succeeded, but the package is missing from the final image.
+**Symptom this section used to describe:** you added an element to the aggregating
+`kind: stack`, the build succeeded, and the package was missing from the final image.
 
-**Cause:** BST's non-strict mode computes weak keys for `kind: stack` elements from direct dependency names only — not their content. Adding an element to `deps.bst` doesn't change the stack's weak key, so the downstream compose is considered a cache hit and not rebuilt.
+**Mechanism:** in non-strict mode BST computes a *weak* cache key for a `kind: stack`
+element from its direct dependency **names** only, not their content — so adding an
+element to the stack does not move the key and the downstream compose is treated as a
+cache hit.
 
-**Fix:**
+**But it is not reachable here by default.** BuildStream 2's `strict` setting defaults to
+**true** (`buildstream/_context.py`: `overrides.get_bool("strict", default=True)`), and
+neither `project.conf` nor `mise/tasks/bst` turns it off — `mise/tasks/bst`'s
+`DEFAULT_FLAGS` is `-o x86_64_v3 true --no-interactive`. You only get weak keys by asking
+for them, with the **global** `--no-strict`.
+
+**And the old fix command was never valid.** `bst build --no-cache-buildtrees` errors with
+`No such option '--no-cache-buildtrees'`; `--cache-buildtrees [always|auto|never]` is a
+*global* option and controls build-tree capture, not cache keys. The strictness switch is
+the global `--strict` / `--no-strict`, and global options go before the subcommand — which
+`mise/tasks/bst` allows because it appends `"$@"` after its own flags:
+
 ```bash
-mise run bst build --no-cache-buildtrees oci/krytis/image.bst
+mise run bst -- --strict build oci/krytis/image.bst
 ```
 
-**When to expect this:** Any time a package is added to `deps.bst` and the build is run in default (non-strict) mode.
+**When to expect this:** only after an explicit `--no-strict`, or a user config setting
+`projects: krytis: strict: False`. The "built fine, missing from the image" symptom seen on
+`main` is far more often a *cached failed artifact being replayed* — see § A cached failed
+artifact is replayed, not rebuilt.
+
+There is also no `deps.bst` in this repo: a new element is wired in by adding it to one of
+`elements/stacks/*.bst`, which `oci/krytis/stack.bst` aggregates.
 
 ## Artifact Checkouts: Always Use `/tmp`
 
@@ -657,11 +704,11 @@ Large artifact checkouts expand to gigabytes and tens of thousands of files. Nev
 
 ```bash
 # ❌ pollutes git status, bloats the agent's file index
-mise run bst artifact checkout elements/krytis/something.bst --directory .build-out
+mise run bst -- artifact checkout desktop/<name>.bst --directory .build-out
 
 # ✅ always use /tmp
 OUTDIR=$(mktemp -d /tmp/krytis-checkout-XXXXXX)
-mise run bst artifact checkout elements/krytis/something.bst --directory "$OUTDIR"
+mise run bst -- artifact checkout desktop/<name>.bst --directory "$OUTDIR"
 rm -rf "$OUTDIR"   # clean up when done
 ```
 
@@ -685,7 +732,7 @@ If a stricter mode is a hard requirement (not just convention), it needs a boot-
 
 Verify the override actually resolves (not silently ignored) with `mise bst show freedesktop-sdk.bst:components/<name>.bst` — the dependency graph should list `core/<name>.bst`, not the upstream one, and it should show as `fetch needed`/uncached the first time.
 
-**Concrete case: openssh's missing `sysconfdir`.** freedesktop-sdk's `components/openssh.bst` never sets `sysconfdir` (autotools defaults to `/etc`). *Every* compiled-in openssh path derives from that one variable, so `sshd_config`, `moduli` and the `ssh_host_*` keys all land directly in `/etc/` instead of `/etc/ssh/`. `sshd` still works — it looks exactly where it was built to look — so the damage is that `/etc/ssh/sshd_config` is silently ignored, `ssh-keygen -A` writes `/etc/ssh_host_*`, and anything expecting the standard layout (admins, backup tooling, config-management) is wrong. Confirm the paths are compile-time, not runtime, with `strings /usr/bin/sshd | grep -E '^/etc/(ssh/)?(sshd_config|moduli|ssh_host)'`. gnome-build-meta already has `patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch` for this, so the local duplicate-with-one-change element above is the way to get it.
+**Concrete case: openssh's missing `sysconfdir`.** freedesktop-sdk's `components/openssh.bst` never sets `sysconfdir` (autotools defaults to `/etc`). *Every* compiled-in openssh path derives from that one variable, so `sshd_config`, `moduli` and the `ssh_host_*` keys all land directly in `/etc/` instead of `/etc/ssh/`. `sshd` still works — it looks exactly where it was built to look — so the damage is that `/etc/ssh/sshd_config` is silently ignored, `ssh-keygen -A` writes `/etc/ssh_host_*`, and anything expecting the standard layout (admins, backup tooling, config-management) is wrong. Confirm the paths are compile-time, not runtime, with `strings /usr/bin/sshd | grep -E '^/etc/(ssh/)?(sshd_config|moduli|ssh_host)'`. gnome-build-meta carries a fix in its own tree (`patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch`, a gnome-build-meta path, not one of ours) but does not expose the result as a referenceable element, so the local duplicate-with-one-change element above is the way to get it — `elements/core/openssh.bst`, wired in via `components/openssh.bst: core/openssh.bst` in `elements/freedesktop-sdk.bst`'s `overrides:`.
 
 > **Retracted claim.** This fix was first committed with the story that it repaired `kex_exchange_identification: read: Connection reset by peer` "under socket activation (`sshd@.service`)". Both halves were false: the image ships **no** `sshd.socket`/`sshd@.service` (only `sshd.service` with `ExecStart=/usr/bin/sshd -D`), and that reset was QEMU SLIRP `hostfwd` reporting a **closed guest port** — the real cause was the read-only `/etc` from #396 stopping `ssh-keygen -A`. Do not use "connection reset" as evidence for a config-path bug; see docs/skills/bootc-vm.md § `kex_exchange_identification: Connection reset` means nothing is listening.
 >
@@ -707,7 +754,7 @@ overrides/systemd-base.bst [line 15 column 0]: Dictionary did not contain expect
 
 pointing at the `(@)` line itself. Copy the body.
 
-**Override at the freedesktop-sdk junction even when the element lives in gnome-build-meta.** `components/systemd-base.bst` is already redirected to `gnome-build-meta.bst:core-deps/systemd-base.bst`; repoint that one entry at the local mirror instead of adding an override to `elements/gnome-build-meta.bst`. gnome-build-meta's own `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` are `kind: filter` elements over `freedesktop-sdk.bst:components/systemd-base.bst`, and gnome-build-meta resolves that through *krytis's* fdsdk junction (`overrides: freedesktop-sdk.bst: freedesktop-sdk.bst`), so a single entry redirects the whole graph. Verify:
+**Override at the freedesktop-sdk junction even when the element lives in gnome-build-meta.** The entry goes in `elements/freedesktop-sdk.bst`, never in `elements/gnome-build-meta.bst`. The live line is `components/_private/systemd-base.bst: overrides/systemd-base.bst` — fdsdk 26.08 privatised the path, so an override written against the pre-bump `components/systemd-base.bst` spelling matches nothing and is silently ignored (re-check it on every junction bump, per § Auditing a fdsdk major-version bump). gnome-build-meta's own `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` are `kind: filter` elements over freedesktop-sdk's systemd-base, and gnome-build-meta resolves that through *krytis's* fdsdk junction (`overrides: freedesktop-sdk.bst: freedesktop-sdk.bst`), so a single entry redirects the whole graph. Verify:
 
 ```shell
 mise bst show --deps all --format '%{name}' stacks/base-system.bst | grep systemd
@@ -716,7 +763,7 @@ mise bst show --deps all --format '%{name}' stacks/base-system.bst | grep system
 # (no gnome-build-meta.bst:core-deps/systemd-base.bst)
 ```
 
-**Moving an element between projects moves its licence tree, which breaks whitelists.** `project_licensedir` is `%{licensedir}/%{project-name}` (fdsdk `include/install-dirs.yml`), so a mirror built in krytis harvests licences to `/usr/share/licenses/krytis/<name>/` instead of the upstream project's directory — gnome-build-meta's project name is `gnome`, not `gnome-build-meta`. That alone is a fatal build break whenever the mirrored element is filtered: gnome-build-meta's `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` both carry the licence files and rely on an `overlap-whitelist` of `%{project_licensedir}/systemd/**`, expanded in *their* project's scope. At the moved path nothing matches, and every element that stages both filters dies with
+**Moving an element between projects moves its licence tree, which breaks whitelists.** `project_licensedir` is `%{licensedir}/%{project-name}` (defined in freedesktop-sdk's own `include/install-dirs.yml`, a junction-side file), so a mirror built in krytis harvests licences to `/usr/share/licenses/krytis/<name>/` instead of the upstream project's directory — gnome-build-meta's project name is `gnome`, not `gnome-build-meta`. That alone is a fatal build break whenever the mirrored element is filtered: gnome-build-meta's `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` both carry the licence files and rely on an `overlap-whitelist` of `%{project_licensedir}/systemd/**`, expanded in *their* project's scope. At the moved path nothing matches, and every element that stages both filters dies with
 
 ```
 /usr/share/licenses/krytis/systemd/LICENSE.GPL2: gnome-build-meta.bst:core-deps/systemd.bst is not permitted to overlap other elements …
@@ -748,7 +795,7 @@ Delete the mirror, its patch, the check task and the overrides entry as soon as 
 2. Add `desktop/<name>.bst` (or matching path) to `depends:` in the relevant `elements/stacks/*.bst` aggregator (e.g. `desktop.bst`)
 3. Add a URL alias to `include/aliases.yml` if the download domain is new
 4. Run `mise validate` (validates the full element graph)
-5. Run `mise bst build elements/desktop/<name>.bst`
+5. Run `mise bst build desktop/<name>.bst` — element names are relative to `elements/`, not the repo root (see § Quick Reference)
 6. Run `mise build` for a full image build
 7. **Wire up an update path** — see § Element update path below
 
@@ -891,7 +938,7 @@ Some upstream meson projects call `find_program('<tool>')` expecting a specific 
 
 Fix: add a tiny `kind: manual` element that installs a shim script under the expected binary name into `%{bindir}`, translating the call into the available tool's actual CLI, and list it under the consuming element's `build-depends:` (not `depends:` — it's a build-time-only tool, not part of the runtime image).
 
-**This only fixes a CLI-syntax mismatch, not a capability gap.** A shim can never make a substitute tool understand syntax it structurally doesn't implement — it just translates flags/positional args into a call the substitute *can* already handle. `elements/deps/sass-shim.bst` used to be the worked example here: it bridged `sass --no-source-map IN OUT` to `sassc IN OUT` for `desktop/adw-gtk3.bst`, which worked right up until adw-gtk3's SCSS turned out to use Dart Sass's `@use`/`@forward` module system throughout. `sassc` is built on `libsass`, which never implemented `@use`/`@forward` at all — the upstream feature request is permanently closed (`sass/libsass#2807`: "LibSass is now deprecated and we aren't expecting to add any additional features to it"). No flag translation fixes that; `sassc` silently mis-parsed every `@use` line, corrupting the compiled CSS in ways GTK's own strict CSS parser then rejected (`Theme parsing error: ...: unknown @ rule`) with real visual fallout (a `.background:backdrop` rule — the unfocused-window background — was among the casualties). The element now installs upstream's own prebuilt release tarball (built with a real Dart Sass toolchain) instead of building from source; see `elements/desktop/adw-gtk3.bst`'s header comment for the full account and `mise/tasks/tarball-update`'s TARGETS table for its update path.
+**This only fixes a CLI-syntax mismatch, not a capability gap.** A shim can never make a substitute tool understand syntax it structurally doesn't implement — it just translates flags/positional args into a call the substitute *can* already handle. The worked example here was a `deps/sass-shim.bst` element, added with adw-gtk3 in #271 and **deleted again** in `7a49269` — it does not exist in the tree today, and `elements/deps/` now holds only `i2c-tools.bst`. It bridged `sass --no-source-map IN OUT` to `sassc IN OUT` for `desktop/adw-gtk3.bst`, which worked right up until adw-gtk3's SCSS turned out to use Dart Sass's `@use`/`@forward` module system throughout. `sassc` is built on `libsass`, which never implemented `@use`/`@forward` at all — the upstream feature request is permanently closed (`sass/libsass#2807`: "LibSass is now deprecated and we aren't expecting to add any additional features to it"). No flag translation fixes that; `sassc` silently mis-parsed every `@use` line, corrupting the compiled CSS in ways GTK's own strict CSS parser then rejected (`Theme parsing error: ...: unknown @ rule`) with real visual fallout (a `.background:backdrop` rule — the unfocused-window background — was among the casualties). The element now installs upstream's own prebuilt release tarball (built with a real Dart Sass toolchain) instead of building from source; see `elements/desktop/adw-gtk3.bst`'s header comment for the full account and `mise/tasks/tarball-update`'s TARGETS table for its update path.
 
 Before reaching for this shim pattern, check whether the mismatch is "wrong flags/binary name" (shimmable) or "the substitute tool's implementation is missing a whole language feature the upstream build actually exercises" (not shimmable — the fix is a prebuilt-artifact source or vendoring the real tool, not a wrapper script).
 
@@ -957,8 +1004,9 @@ a `ref:` rollback.
 
 **Patching a junction's own vendored source pin lands a point-fix immediately, without
 waiting for the next full junction bump.** *Source: zirconium-hawaii `30febd5`, `5cb27df`.*
-A junction like `freedesktop-sdk.bst` vendors its own internal source pins (e.g.
-`elements/extensions/mesa/mesa-sources.yml`, `elements/include/ostree-source.yml`). If one
+A junction like `freedesktop-sdk.bst` vendors its own internal source pins in its own tree
+(e.g. freedesktop-sdk's `elements/extensions/mesa/mesa-sources.yml` and
+`elements/include/ostree-source.yml` — junction-side paths, not krytis ones). If one
 of those pinned versions has a known-bad regression, you don't have to wait for krytis's
 own `freedesktop-sdk.bst` ref to advance past it (which drags in every other unrelated
 change from the intervening period, and can be weeks out) — add a `patch_queue` entry
@@ -970,13 +1018,16 @@ own source list, not swapping an entire component element. Note dakota's separat
 above (Patch queues on junctions destroy upstream cache reuse, in `docs/skills/dakota.md`)
 about the cache-key cost of any junction-level patch — weigh that against the wait either
 way. (The two specific bugs that motivated this in zirconium-hawaii — mesa 26.1.6 and
-ostree v2026.3 — are both already fixed in krytis's current fdsdk pin (26.08rc.2 carries
-mesa-26.1.8 and ostree v2026.4), so there's nothing to backport today; record the
-technique for the next time this happens.)
+ostree v2026.3 — were already fixed at the fdsdk pin of the day, 26.08rc.2, which carried
+mesa-26.1.8 and ostree v2026.4; the pin is `freedesktop-sdk-26.08.1` today, i.e. strictly
+later, so there is still nothing to backport. Record the technique for the next time this
+happens.)
 
 ### One shared updater, not one script per element (#648)
 
-`mise/tasks/tarball-update` covers nine elements through four providers, because they differ
+`mise/tasks/tarball-update` covers ten elements through six providers today (`github-release`,
+`github-release-glued`, `github-tag`, `gitlab-fdo-tag`, `pypi`, `zig-series`) — it started at
+nine/four and grows by a row, not a script — because they differ
 only in where the version comes from and how the URL is spelled. `--list` prints the table;
 `tarball-update all` walks every entry and is the audit run — it keeps going past a failing
 upstream and reports at the end, since stopping at the first would hide the state of
@@ -1507,8 +1558,10 @@ Fix pattern — private libdir plus an `ld.so.conf.d` entry, **not** a dump into
   EOF
 ```
 
-`oci/krytis/image.bst` already runs `ldconfig -r /layer -f /layer/etc/ld.so.conf` at assembly
-time, so the cache is baked into the image and nothing runs at boot. Existing instance:
+`oci/krytis/image.bst` already runs `ldconfig -r /layer` at assembly time — via the
+build-only `-f /etc/ld.so.conf.build` form, not the naive `-f /layer/etc/ld.so.conf` that
+silently does nothing (§ `ldconfig -r <root>` in the BST sandbox needs a build-only config
+file) — so the cache is baked into the image and nothing runs at boot. Existing instance:
 `config/codecs-extra-ldconfig.bst`.
 
 Always `readelf -d <payload> | grep -E 'RPATH|RUNPATH|NEEDED'` before writing the element —
@@ -1722,13 +1775,13 @@ libfido2 ≥ 1.10 has a hard `libudev` dependency that the fdsdk `components/lib
 
 ```yaml
 build-depends:
-- components/libfido2.bst
+- freedesktop-sdk.bst:components/libfido2.bst
 
 depends:
-- components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
+- freedesktop-sdk.bst:components/systemd-libs.bst # libfido2 ≥1.10 hard libudev dep
 ```
 
-This is the same pattern used by `freedesktop-sdk.bst:components/openssh.bst` (line 12). It applies to any element that links against libfido2 — `pam-u2f`, security key middleware, etc.
+This is the same pattern `elements/core/openssh.bst` uses (line 12: `components/systemd-libs.bst # libfido2 depends on udev`) — note it is the krytis mirror that carries the dep, since `components/openssh.bst` is overridden to `core/openssh.bst`. It applies to any element that links against libfido2 — `core/pam-u2f.bst`, security key middleware, etc.
 
 ### Common mistakes
 
@@ -1742,7 +1795,7 @@ This is the same pattern used by `freedesktop-sdk.bst:components/openssh.bst` (l
 | `EnvironmentFile=/etc/default/...` | Remove from upstream service files — not used here |
 | Variable in source URL | BST doesn't expand variables in `url:` fields — use an alias from `include/aliases.yml` |
 | Missing `%{install-extra}` | Must be the last install-command |
-| Forgot to add element to `deps.bst` | Element builds but won't appear in the image |
+| Forgot to add the element to a stack | Element builds but won't appear in the image. Wire it into one of `elements/stacks/*.bst` — `oci/krytis/stack.bst` aggregates those, and nothing else pulls a loose element in |
 | Preset at `/etc/systemd/system-preset/` | Ignored at boot — must be `%{indep-libdir}/systemd/system-preset/` |
 | Adding `ostree-minimal.bst` when `ostree.bst` is already in the image | Causes non-whitelisted overlaps at `oci/krytis/runtime.bst` — `ostree.bst` (pulled in by `core/bootc.bst`) is a superset; omit `ostree-minimal.bst` entirely |
 | `touch /etc/machine-id` doesn't trigger first boot | `ConditionFirstBoot=yes` (used by `systemd-firstboot.service`) requires `/etc/machine-id` to contain the literal string `uninitialized\n`, not an empty file. Use `printf 'uninitialized\n' > /etc/machine-id` in the OCI stack integration-commands. |
@@ -1855,8 +1908,8 @@ python3 files/scripts/generate_cargo_sources.py /path/to/Cargo.lock
 ```
 
 To update after a version bump:
-1. `mise bst source track elements/krytis/<name>.bst`
-2. `mise bst shell --build elements/krytis/<name>.bst` — copy out the new Cargo.lock
+1. `mise run bst -- source track desktop/<name>.bst`
+2. `mise run bst -- shell --build desktop/<name>.bst` — copy out the new Cargo.lock
 3. Regenerate cargo2 sources and replace the block in the element
 
 **`url: crates:crates` is mandatory, and its absence is legal upstream.** The
@@ -1994,24 +2047,33 @@ config:
 dropped the full mesa extension from `build-depends` (keeping it only in `depends` for
 runtime linking) across 7 elements that already also had `mesa-headers.bst`, cutting build
 sandbox size/time with no behavior change. Krytis's `desktop/niri.bst`, `desktop/cage.bst`,
-`desktop/wlroots.bst`, and `desktop/noctalia-greeter.bst` all follow the "always both"
-rule above and build-depend on the full extension. **Do not apply this as a blanket
-change** — the rule above exists precisely because a header-only assumption already broke
-once in this file (`wlroots.bst`'s own `libdrm.pc`/`dependency('libdrm')` comment, and the
-`buildsystem-make.bst` linker case just above): some configure/build steps genuinely need
-real `.so`/`.pc` presence that headers alone don't provide. Worth a per-element spot-check
-swapping to `mesa-headers.bst` in `build-depends` and confirming the build still passes,
-not a mechanical find-and-replace.
+`desktop/wlroots.bst` and `desktop/noctalia-greeter.bst` all still follow the "always both"
+rule above and build-depend on the full extension. Three of them (`cage`, `wlroots`,
+`noctalia-greeter`) *also* build-depend on `components/mesa-headers.bst` — but as an
+**addition, not a substitution**: mesa-headers is what reinstates `egl.pc`/`glesv2.pc`/
+`gl.pc` at the standard `%{libdir}/pkgconfig` so wlroots can build `-Drenderers=gles2`
+(`e3edc13`, for umbrielfx). Do not read those three as a completed swap. **Do not apply
+the swap as a blanket change either** — the rule above exists precisely because a
+header-only assumption already broke once in this file (`wlroots.bst`'s own
+`libdrm.pc`/`dependency('libdrm')` comment, and the `buildsystem-make.bst` linker case just
+above): some configure/build steps genuinely need real `.so`/`.pc` presence that headers
+alone don't provide. Worth a per-element spot-check swapping to `mesa-headers.bst` in
+`build-depends` and confirming the build still passes, not a mechanical find-and-replace.
 
 **Runtime: mesa libs are not findable by default.** Mesa installs under `%{libdir}/GL/default/lib/` — a path the dynamic linker does not search. Two things are required in the image:
 
 1. Add `freedesktop-sdk.bst:vm/mesa-default.bst` to the desktop stack. This installs `/etc/ld.so.conf.d/00_mesa.conf` pointing at the GL/default path.
 
-2. Run `ldconfig` in `oci/krytis/image.bst` after all packages are staged:
+2. Run `ldconfig` in `oci/krytis/image.bst` after all packages are staged. The `-f` target
+   must be a build-only config carrying an **absolute** include, written and deleted in the
+   same command — `-f /layer/etc/ld.so.conf` is a silent no-op in the sandbox (§ `ldconfig
+   -r <root>` in the BST sandbox needs a build-only config file):
 
 ```yaml
 - |
-  ldconfig -r /layer -f /layer/etc/ld.so.conf
+  printf 'include /etc/ld.so.conf.d/*.conf\n' > /layer/etc/ld.so.conf.build
+  ldconfig -r /layer -f /etc/ld.so.conf.build
+  rm /layer/etc/ld.so.conf.build
 ```
 
 Without both, any binary linking against `libgbm`, `libEGL`, etc. fails at runtime with "cannot open shared object file". Mesa's DRI drivers and GBM backend modules have the GL/default prefix baked in at compile time, so `LIBGL_DRIVERS_PATH`/`GBM_BACKENDS_PATH` are not needed separately.
@@ -2097,7 +2159,7 @@ This tells BST these junctions are intentionally shared/internal so the multiple
 
 ## gnome-build-meta's `recc` option — krytis pins it to `passthrough`
 
-gnome-build-meta routes every compile through [recc](https://gitlab.com/BuildGrid/buildbox/recc): its `include/gcc-for-recc.yml` puts `/usr/recc/bin` first on `PATH`, and `files/recc-wrapper/recc-wrapper` re-execs `recc /usr/bin/<cc>`. The `recc` project option picks the mode, and it defaults to **`remote-execution`** — each compile becomes a REAPI action submitted to buildbox-casd over the sandbox's `/tmp/casd.sock` (`sandbox: remote-apis-socket` in `include/recc.yml`).
+gnome-build-meta routes every compile through [recc](https://gitlab.com/BuildGrid/buildbox/recc). All three files below live in **gnome-build-meta's own tree**, not in this repo: its `include/gcc-for-recc.yml` puts `/usr/recc/bin` first on `PATH`, and `files/recc-wrapper/recc-wrapper` re-execs `recc /usr/bin/<cc>`. The `recc` project option picks the mode, and it defaults to **`remote-execution`** — each compile becomes a REAPI action submitted to buildbox-casd over the sandbox's `/tmp/casd.sock` (`sandbox: remote-apis-socket` in gnome-build-meta's `include/recc.yml`).
 
 **krytis has no remote execution service** (`project.conf` declares artifact/source caches only; bow is CAS+AC), so casd executes each action itself and forks a FUSE stager per compile. With `scheduler.builders: 4` × `build.max-jobs: 4` on an 8-vCPU Blacksmith runner that exhausts the runner's process/thread budget partway through a big element:
 
@@ -2195,7 +2257,7 @@ BST validates `kind: local` paths at resolution time (before any build), so the 
 
 **Fix:** remove the `kind: local` source block from the element when you delete the last file it referenced. Don't leave the stale source entry expecting git to preserve an empty directory.
 
-**How it happened (#198):** `ebfb813` deleted `files/pangolin-cli/pangolin-cli.service` (the only file in that directory). The `kind: local` source in `core/pangolin-cli.bst` was not cleaned up, breaking all full-image builds on `main` until #198 landed.
+**How it happened (#198):** `ebfb813` deleted files/pangolin-cli/pangolin-cli.service, the only file in that directory — so the directory went with it, and neither path exists today. The `kind: local` source in `core/pangolin-cli.bst` was not cleaned up, breaking all full-image builds on `main` until #198 landed.
 
 ## Auditing a fdsdk major-version bump for silently-broken element refs (#305, 2026-08-12)
 
@@ -2207,7 +2269,7 @@ BST validates `kind: local` paths at resolution time (before any build), so the 
 2. **Renamed outright.** `pyelftools.bst` → `python3-pyelftools.bst` (fdsdk's changelog says "pyelftool" singular, but the actual removed filename was "pyelftools" plural — changelog prose and actual filenames can disagree by one character; verify the literal path, not the changelog wording).
 3. **Genuinely dropped, no replacement.** `unzip.bst` (info-zip 6.0/2009, 10 accumulated CVE patches — fdsdk declined to keep maintaining it) and `nlohmann-json.bst` (header-only lib, apparently just deemed out of scope). Neither renamed nor privatized — confirmed absent from the full `components/` and `components/_private/` trees. For a build-time header dependency still needed downstream (nlohmann-json), vendor it locally with the exact same source/config fdsdk carried (see `desktop/nlohmann-json.bst`, same pattern as the pre-existing `desktop/stb.bst`). For a runtime CLI convenience tool nobody else in the tree needs (unzip), just drop it and document substitutes — resurrecting abandonware upstream just dropped is going against their own signal, not "fixing" anything.
 
-   **A pre-release series is not one bump — re-audit at every tag.** `efitools.bst` survived `26.08beta.3` intact and was deleted in `26.08rc.1` (fdsdk commit `b39e7194`, "Remove EFI elements", taking `efitools-bin`, `efitools-bin-maybe`, `efitools-efi`, `include/efitools.yml` and `components/perl-slurp.bst` with it — that last one existed only to build efitools' man pages). Auditing once at beta.3 and treating 26.08 as "done" would have shipped a `mise run seal-uki` that cannot sign `.auth` files. Re-run the grep-and-batch-check on every re-track, not just the first.
+   **A pre-release series is not one bump — re-audit at every tag.** `efitools.bst` survived `26.08beta.3` intact and was deleted in `26.08rc.1` (fdsdk commit `b39e7194`, "Remove EFI elements", taking fdsdk's `efitools-bin`, `efitools-bin-maybe`, `efitools-efi`, `include/efitools.yml` and `components/perl-slurp.bst` with it — every one of those is a freedesktop-sdk path, and that last one existed only to build efitools' man pages). Auditing once at beta.3 and treating 26.08 as "done" would have shipped a `mise run seal-uki` that cannot sign `.auth` files. Re-run the grep-and-batch-check on every re-track, not just the first.
 
    **Vendoring is not always mirroring.** `desktop/nlohmann-json.bst` copies fdsdk's recipe verbatim because that recipe is one `cmake` invocation. `core/efitools.bst` deliberately does not: fdsdk's element built the whole upstream `all` target — nine signed EFI images, PK/KEK/DB key material, man pages — and then deleted the EFI half again in `install-commands`, which is what dragged in `gnu-efi`, `help2man`, generated boot keys and perl `File::Slurp`, two of which no longer exist at rc.1. krytis calls exactly one binary (`sign-efi-sig-list`), so the vendored element runs `make sign-efi-sig-list` and installs that. Copy upstream's *inputs* (source ref, patches that matter); copy their *build* only when it is already minimal. Two of fdsdk's four efitools patches touch only the `%.efi` objcopy path and were dropped rather than carried as dead weight.
 
@@ -2704,11 +2766,17 @@ Lesson: before porting a dakota element to krytis, check the target files agains
 
 Always verify the canonical URL when vendoring a source for the first time.
 
-## fdsdk mesa doesn't expose `egl.pc` / `glesv2.pc` via pkg-config
+## fdsdk mesa doesn't expose `egl.pc` / `glesv2.pc` — `components/mesa-headers.bst` puts them back
 
-Even with mesa built `-Degl=enabled -Dgles2=enabled`, a plain `dependency('egl')` or `dependency('glesv2')` in a consuming project's meson.build will fail to resolve, regardless of `PKG_CONFIG_PATH` pointing at mesa's `GL/default/lib/pkgconfig` (see the prepend-mesa-env pattern above). `freedesktop-sdk.bst:components/libglvnd.bst` deliberately `rm`s `egl.pc`, `gl.pc`, `glesv2.pc`, and `glesv1_cm.pc` from its own install output, and mesa's own `GL/default` split only ships `gbm.pc`/`libdrm*.pc` — no EGL/GLES2 `.pc` files exist anywhere in the dependency graph. Projects that need actual GPU-accelerated GL/EGL (wlroots, niri) sidestep this by using `libepoxy` (dlopen-based GL/EGL loading, no `.pc` needed at compile time) instead of linking `libEGL`/`libGLESv2` directly.
+Even with mesa built `-Degl=enabled -Dgles2=enabled`, a plain `dependency('egl')` or `dependency('glesv2')` in a consuming project's meson.build will fail to resolve, regardless of `PKG_CONFIG_PATH` pointing at mesa's `GL/default/lib/pkgconfig` (see the prepend-mesa-env pattern above). `freedesktop-sdk.bst:components/libglvnd.bst` deliberately `rm`s `egl.pc`, `gl.pc`, `glesv2.pc`, and `glesv1_cm.pc` from its own install output, and mesa's own `GL/default` split only ships `gbm.pc`/`libdrm*.pc`.
 
-If a new element's meson.build has a hard `dependency('egl')`/`dependency('glesv2')` requirement with no libepoxy option, the pragmatic fix is to disable the feature that pulls it in (e.g. kmscon's `video_drm3d`/`renderer_gltex`) and fall back to a software/DRM2D path instead, rather than trying to manufacture the missing `.pc` files. See `elements/desktop/kmscon.bst`.
+**But the `.pc` files are recoverable, and that is now the standing fix.** `freedesktop-sdk.bst:components/mesa-headers.bst` regenerates `egl.pc`, `glesv2.pc` and `gl.pc` (plus the EGL/GLES2/KHR headers) at the *standard* `%{libdir}/pkgconfig`, so `dependency('egl')`/`dependency('glesv2')` resolve with no `PKG_CONFIG_PATH` trickery. `libEGL.so.1`/`libGLESv2.so.2` themselves still come from `components/libglvnd.bst`, already a runtime dep of `extensions/mesa/mesa.bst`. `desktop/wlroots.bst` build-depends on it to compile `-Drenderers=gles2,vulkan` (`e3edc13`, needed by `desktop/umbriel.bst`'s umbrielfx, a GLES2-only renderer that `#include`s `<wlr/render/egl.h>`); `desktop/cage.bst` and `desktop/noctalia-greeter.bst` carry it for the same reason, since wlroots' `.pc` then lists `egl`/`glesv2` in `Requires.private`. Under `-Drenderers=auto` and without mesa-headers, gles2 was silently skipped — no error, just a missing renderer.
+
+`libepoxy` (dlopen-based GL/EGL loading, no `.pc` needed at compile time) is the other way out, and it is what upstreams reach for when they write `dependency('egl', required: false)`. It is no longer the branch krytis takes: since mesa-headers landed, noctalia-greeter's optional `dependency('egl')`/`dependency('glesv2')` **succeed**, so the greeter compositor links `libEGL.so.1`/`libGLESv2.so.2` directly (both already ship via `extensions/mesa/mesa.bst` → `components/libglvnd.bst`). `desktop/noctalia-greeter.bst` still lists `components/libepoxy.bst` in `depends:`, but the epoxy fallback is not exercised — don't read that dependency as evidence the gap is unfixed.
+
+If a new element's meson.build has a hard `dependency('egl')`/`dependency('glesv2')` requirement, reach for `mesa-headers.bst` first. Disabling the feature is the answer only when the element genuinely does not want GPU rendering — `elements/desktop/kmscon.bst` sets `-Dvideo_drm3d=disabled -Drenderer_gltex=disabled` and stays on the software DRM2D backend because a text console has no use for it, not because the `.pc` files are unobtainable.
+
+**That element's header comment gives two justifications, and only one of them rotted.** `elements/desktop/kmscon.bst:5-8` says (a) fdsdk's libglvnd strips `egl.pc`/`glesv2.pc` "so `dependency('egl')`/`dependency('glesv2')` can't resolve" and (b) "A text console has no need for GPU-accelerated rendering anyway". Claim (a) is the pre-`mesa-headers.bst` impossibility argument and is **false today**; claim (b) is independent and still holds. So the setting is now *unnecessary*, not *forced* — do not read the stale half as a reason to go "fix" kmscon by enabling DRM3D. Adding `components/mesa-headers.bst` there would buy a GPU path a text console does not want, at the cost of a bigger sandbox and a rebuild.
 
 ## Enabling one instance of a templated getty-replacement unit, never the bare template
 
@@ -2898,15 +2966,17 @@ options:
 
 ## Fontconfig Cache Must Be Baked into the Image
 
-Fontconfig does not auto-generate its cache on a bootc image. After installing font elements, `fc-list` returns nothing and apps can't find fonts until `fc-cache` is run manually. Fix: run `fc-cache` in `integration-commands` on the OCI stack element, which executes in the fully-staged image context where `fc-cache` is available:
+Fontconfig does not auto-generate its cache on a bootc image. After installing font elements, `fc-list` returns nothing and apps can't find fonts until `fc-cache` is run manually. Fix: run `fc-cache` in `oci/krytis/image.bst`, **not** in `oci/krytis/stack.bst`'s `integration-commands` — the cache has to be built after every font element has landed in the assembled sysroot, and `FONTCONFIG_SYSROOT` is what points `fc-cache` at `/layer`:
 
 ```yaml
-# elements/oci/krytis/stack.bst
-public:
-  bst:
-    integration-commands:
-      - fc-cache -f /usr/share/fonts/
+# elements/oci/krytis/image.bst, config.commands
+- |
+  # FONTCONFIG_SYSROOT makes fc-cache read /layer/etc/fonts/fonts.conf, scan
+  # /layer/usr/share/fonts/, and write /layer/usr/lib/fontconfig/cache/.
+  FONTCONFIG_SYSROOT=/layer fc-cache -f
 ```
+
+`image.bst` build-depends on `freedesktop-sdk.bst:components/fontconfig.bst` to get the binary.
 
 Discovered by symptom: font file present at `/usr/share/fonts/…` on booted image, but `fc-list | grep <family>` returned nothing until `sudo fc-cache -f` was run manually.
 
@@ -3121,11 +3191,11 @@ Run `mise trust` once in the new worktree directory before any `mise validate`, 
 
 The path is also FDSDK-version-specific. zirconium-hawaii hit a silent break from using a `26.08beta` path when the junction was actually `25.08`. Always verify the path against the current junction ref — don't copy a path from another project or branch without confirming the version segment matches.
 
-## lynx fails to build on FDSDK 25.08.13 — use w3m instead
+## lynx fails to build on FDSDK 25.08.13 — settled: does not apply to krytis
 
 *Source: zirconium-hawaii `92b9cae` — `fix(fdSDK 25.08.13): switch from lynx to w3m`*
 
-lynx completely fails to build on FDSDK 25.08.13 (no diagnostics, just a build failure). zirconium-hawaii switched to `w3m` as the text browser. Krytis currently uses lynx transitively via `elements/desktop/xdg-utils.bst` (the `xmlto`/docbook text-browser toolchain). When krytis bumps to FDSDK 25.08.13+, this may need the same switch — watch for a lynx build failure on the next junction bump.
+lynx completely fails to build on FDSDK 25.08.13 (no diagnostics, just a build failure). zirconium-hawaii switched to `w3m` as the text browser. Krytis is long past that junction — `elements/freedesktop-sdk.bst` pins `freedesktop-sdk-26.08.1` — and never hit it.
 
 **Does not apply to krytis.** `elements/desktop/xdg-utils.bst` (krytis's only transitive consumer of lynx-style doc tooling) never invokes `xmlto`/`docbook-xml`/`docbook-xsl`/`lynx` — its `build-commands` generate stub `.txt` synopsis files directly instead of running a real text-browser doc pipeline, and its `build-depends`/`depends` list has no lynx dependency. Confirmed 2026-07-21 while auditing issue #305's migration concerns. No w3m swap needed here (contrast with zirconium-hawaii, where this issue is real).
 

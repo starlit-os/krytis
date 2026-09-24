@@ -18,7 +18,7 @@ in §2.
 
 | You changed | Run | Why |
 |---|---|---|
-| Docs only | T0 | `docs-links` catches dead `docs/…` references |
+| Docs only | T0 | `docs-links` catches dead `docs/…` references, dead backticked repo paths, and `mise run <task>` names that no longer exist |
 | A `mise` task, `scripts/` | T0 + whatever that task gates | Task flags are silently ignorable — see trap T-6 |
 | An element that is not kernel/systemd/bootc | T1 | Composition and lint |
 | `elements/core/systemd*`, `elements/stacks/bootc.bst`, the kernel | T1 + T2 + T3 | systemd-boot and systemd-stub change, so the whole signed chain changes |
@@ -46,8 +46,12 @@ Runtimes are measured on the dev box (8-core Zen 3, KVM, btrfs), not estimated.
 
 Prerequisites for T2/T3: `/dev/kvm` readable and writable, `qemu-system-x86_64`,
 `edk2-ovmf` **secboot** variant, `virt-fw-vars`, `mtools`, `unsquashfs`, `python3`.
-On a Krytis host `sshpass`, `socat`, `xorriso` and `mksquashfs` are absent by design —
-the tooling already routes around all four. T3 needs ~60 GB free on `/var/tmp`
+On a Krytis host `sshpass`, `socat` and `xorriso` are absent by design — the tooling
+already routes around all three (`scripts/e2e-lib.sh` falls back to OpenSSH's
+`SSH_ASKPASS_REQUIRE=force` and a python HMP client; `xorriso` runs from the
+`iso-tools` container). `mksquashfs`/`unsquashfs` *are* present, from
+`stacks/dev-tools.bst`'s `squashfs-tools`.
+T3 needs ~60 GB free on `/var/tmp`
 (4.5 GB ISO, 7 GB payload archive, a 64 GB sparse install disk, a 16 GB scratch disk).
 
 ---
@@ -58,7 +62,7 @@ the tooling already routes around all four. T3 needs ~60 GB free on `/var/tmp`
 
 | Gate | Proves | Cannot prove |
 |---|---|---|
-| `mise run docs-links` | every `docs/…` reference resolves | nothing about behaviour |
+| `mise run docs-links` | every `docs/…` reference, markdown link, backticked repo-relative path and backticked `mise run <task>` resolves | nothing about behaviour |
 | `scripts/parse-efi-auth.py <f.auth>` | each signature list carries a parseable certificate, and prints its subject | that the firmware will *accept* the file (signature, timestamp ordering, variable name) |
 | `mise run generate-ovmf-vars` | the test varstore's db matches the sealed image's `db.auth` byte count, and refuses to finish when it does not | that either one is *correct* — only that they agree |
 | `mise run verify-iso-payload` | the ISO's embedded store holds the exact image ID expected | that the image boots |
@@ -291,12 +295,29 @@ Each of these cost real debugging time. They are ranked by how convincingly they
 
 ## 6. Coverage gaps, ranked
 
-### G-1 · No CI runs any of this (highest risk)
+### G-1 · CI coverage — partly closed, boot gates still manual
 
-`.github/workflows/` contains `publish.yml`, `track-bst-sources.yml` and
-`cache-warm.yml`. **Nothing** runs `lint`, `seal-uki`, `boot-test`, `enroll-test`,
-`build-iso` or any QEMU test — PR #445 adds the static gates, but every boot gate above
-is still a thing a human remembers to run.
+**Originally (2026-08): "No CI runs any of this", the highest-risk gap.** At the
+time `.github/workflows/` held only `publish.yml`, `track-bst-sources.yml` and
+`cache-warm.yml`, and nothing ran `lint`, `seal-uki`, `boot-test`, `enroll-test` or
+`build-iso`.
+
+**Today three of those gates run in CI:**
+
+- `checks.yml` (#445) runs the T0 static gates on every PR and push:
+  `mise run docs-links`, `mise run mise-lock --check`, `mise run mise-pin-check`,
+  plus shell and python syntax checks.
+- `verify-sealed.yml` (#457) runs `mise run enroll-test` against the **published**
+  `ghcr.io/starlit-os/krytis:sealed` after every successful `publish.yml` run,
+  installing QEMU/OVMF/virt-firmware and `chmod`ing `/dev/kvm` exactly as the
+  KVM probe below predicted.
+- `build-iso.yml` runs `mise run build-iso` + `mise run verify-iso-payload` on the
+  always-on VPS runner, on `workflow_dispatch`.
+
+**Still human-remembered:** every root-requiring boot gate — `boot-test` (and its
+`--secure`/`--expect-fail` arms), `iso-install-test`, `selfenroll-test`,
+`upgrade-test`, `luks-install-test`, `tpm-boot-test`. Those remain the real edge of
+this gap.
 
 **Resolved (#448, option A): `publish.yml` now builds and publishes the sealed image**
 after the unsigned one is pushed, signed and verified — deliberately last, because the
@@ -334,19 +355,18 @@ by hand. Anyone installing from a sealed ISO built against that tag inherits it 
 their upgrade target. Automating sealed publishing is therefore not a tidiness
 question — the manual tag is already behind the feature work by two issues.
 
-What could move to CI today, in order of value per minute:
+What could move to CI, and what since has, in order of value per minute:
 
 | Candidate | Feasible on a GitHub runner? |
 |---|---|
-| T0 static gates + `parse-efi-auth.py` | yes — seconds, no privileges |
+| T0 static gates + `parse-efi-auth.py` | **done** — `checks.yml` (#445). `parse-efi-auth.py` itself is still only run by hand |
 | `mise run lint` | **no** — it builds the Containerfile `FROM localhost/krytis-input`, which only exists after `mise run build`. That is publish.yml's 420-minute BST job, not a PR gate |
-| `mise run seal-uki` + `assert_esl` | yes, but needs the signing keys as secrets — a Security Gate decision |
-| `mise run enroll-test` | **KVM confirmed available**, see below. Blocked instead on having a sealed image worth testing |
-| `boot-test --secure` | needs KVM (available) **and** root for `generate-disk` |
-| T3 ISO E2E | needs KVM (available) + ~60 GB scratch + ~40 min |
+| `mise run seal-uki` + `assert_esl` | **done, in `publish.yml`** — the Proton Pass PAT (not raw key secrets) cleared the Security Gate; see #448 above |
+| `mise run enroll-test` | **done** — `verify-sealed.yml` (#457), against the published `:sealed` tag |
+| `boot-test --secure` | needs KVM (available) **and** root for `generate-disk` — still manual |
+| T3 ISO E2E | needs KVM (available) + ~60 GB scratch + ~40 min — `build-iso.yml` builds the ISO but does not install-test it |
 
-**KVM is usable on both runner types — measured, not assumed** (PR #445, since deleted
-from the workflow). On `ubuntu-24.04` and `blacksmith-8vcpu-ubuntu-2404` alike:
+**KVM is usable on both runner types — measured, not assumed** (PR #445's probe step, since deleted from the workflow). On `ubuntu-24.04` and `blacksmith-8vcpu-ubuntu-2404` alike:
 `/dev/kvm` exists as `crw-rw---- root:kvm`, the runner user is **not** in the `kvm`
 group, and `qemu-system-x86_64 -enable-kvm` works **under sudo**. A
 `sudo chmod 0666 /dev/kvm` (or an ACL) in a setup step is enough, after which the
@@ -354,15 +374,14 @@ mise tasks run unprivileged exactly as they do locally. Note the distinction tha
 made this worth probing: "Permission denied" means the device is there and reachable
 with a permission fix, where "No such file" would have meant no KVM at all.
 
-`enroll-test` remains the standout candidate — 8 seconds, no root, and it guards the
-failure mode that actually shipped — but it needs a sealed image, and that is where
-it is stuck. `podman pull ghcr.io/starlit-os/krytis:sealed` avoids both the BST build
-and the signing keys, and tests the artifact users actually receive, which is the
-better gate. Except the published tag is **stale**: built 2026-07-28, it carries the
-UKI but an *empty* `/usr/lib/bootc/install/` — no enrollment keys at all, predating
-#309. Pointing CI at it today would report a real problem for the wrong reason.
-Publishing a current sealed image is therefore a prerequisite for this gate, and is
-the same decision as G-1's "should CI build sealed images at all".
+`enroll-test` was the standout candidate and it is now the gate that runs: 8 seconds,
+no root, guarding the failure mode that actually shipped. What unblocked it was
+publishing a current sealed image (#448/#450) — before that,
+`podman pull ghcr.io/starlit-os/krytis:sealed` fetched a 2026-07-28 build carrying the
+UKI but an *empty* `/usr/lib/bootc/install/`, predating #309, so pointing CI at it
+would have reported a real problem for the wrong reason. `verify-sealed.yml` triggers
+on `workflow_run` after `publish.yml`, which is what keeps the tested artifact and the
+published one the same object.
 
 ### G-2 · ~~`bootc upgrade` on the published sealed stream~~ — closed (#448, #456)
 
@@ -440,8 +459,9 @@ tooling and bootc does not do it either.
 A test needs a mechanism, so #447 asks the prior question: does krytis support
 rotation at all? "No, a compromise means reinstall" is a legitimate answer for a
 desktop OS — it just needs writing down. Whoever does build it inherits the
-`sbvarsign` `tm_mon` trap (§ the fix in `docs/skills/secure-boot.md`), which is
-cosmetic today and becomes silent update rejection under rollback protection.
+`sbvarsign` `tm_mon` trap (`docs/skills/secure-boot.md` § *Every shipped `.auth`
+enrolled an empty allow-list*), which is cosmetic today and becomes silent update
+rejection under rollback protection.
 
 ### G-5 · ~~`dbx` is empty while the Microsoft CAs are trusted~~ — closed, #446
 

@@ -1,5 +1,10 @@
 # Plan: Native BST for Local Dev
 
+Status: **shipped.** `mise run bst` is native-by-default with a `--container`
+fallback, and `validate`/`load-image` forward the flag. Sections below are the
+design record; where the shipped code has moved past the sketch it is called out
+inline.
+
 ## Motivation
 
 The current `mise run bst` task wraps BuildStream in the upstream `bst2` podman
@@ -40,18 +45,17 @@ without editing task files. No separate `bst-container` task is needed.
 
 ### `mise.toml`
 
-Add to `[tools]`:
-```toml
-python = "3.12"
-uv = "latest"
-```
+`[tools]` gained `python` and `uv`. Both were sketched here as `python = "3.12"` /
+`uv = "latest"`; they are now **exact pins** (`python = "3.12.14"`,
+`uv = "0.12.18"`) because Renovate's `mise` manager cannot bump a `"latest"`
+literal — see `docs/design/renovate-expansion.md` (#24/#25).
 
-Add to `[settings]`:
+`[settings]`:
 ```toml
 python.uv_venv_auto = "create|source"
 ```
 
-Add `[deps.uv]`:
+`[deps.uv]`:
 ```toml
 [deps.uv]
 auto = true
@@ -65,7 +69,7 @@ referenced by the default native path.
 
 ### `mise/tasks/bst`
 
-Replace the podman invocation with a native-by-default task that accepts
+Replaced the podman invocation with a native-by-default task that accepts
 `--container` to fall back to podman:
 
 ```bash
@@ -93,6 +97,11 @@ fi
 # shellcheck disable=SC2086
 exec uv run bst --colors ${FLAGS} "$@"
 ```
+
+The shipped task has since grown past this sketch: `--push`/`--pull` flags that wire
+the Buildbarn remote cache, a `BST_CACHE_QUOTA` override, and
+`#MISE depends=["generate-image-version"]`. Read the file, not this snippet, before
+changing it.
 
 ### `mise/tasks/validate` and `mise/tasks/load-image`
 
@@ -124,8 +133,9 @@ ostree-libs    # BST artifact checkout (ostree backend)
 BST's Python deps (buildstream, dulwich, etc.) are provided by the venv — no
 system Python packages needed.
 
-Consider adding a `mise run check-deps` or documenting these in `README.md` or
-`AGENTS.md`.
+A `mise run check-deps` task was suggested here and **never built**; the host
+requirements are not listed in `README.md` or `AGENTS.md` either. Today the only
+record of them is this section.
 
 ## Considerations and open questions
 
@@ -137,17 +147,16 @@ version built from source. The venv pins `buildstream>=2.5.0` in
 
 - When the upstream bst2 image upgrades BST, evaluate whether `uv.lock` needs a
   bump to match.
-- Currently `click==8.2.1` is required due to a BST 2.5.x API break in Click
-  8.3.0 (see zirconium-hawaii's comment in `utils/requirements.txt`). Watch for a
-  new BST release that lifts this constraint and update `pyproject.toml` when it
-  does.
+- Currently `click` is hard-pinned (`click==8.5.0`) because Click 8.3.0 broke a BST
+  2.5.x internal API; `pyproject.toml` carries the warning. Renovate opens the PR but
+  never auto-merges it. Watch for a BST release that lifts the constraint.
 
 ### `dulwich` version stability
 
 `dulwich` is the Git implementation used by the `git_repo` source plugin
 (buildstream-plugins-community). The upstream project is known to break API in
-patch releases — pin a specific version in `pyproject.toml` (e.g.
-`dulwich==0.24.0`) and test after any bump.
+patch releases — it is pinned exactly in `pyproject.toml` (`dulwich==1.2.15` today)
+and excluded from Renovate auto-merge for that reason. Test after any bump.
 
 ### FUSE access and bubblewrap
 
@@ -185,10 +194,15 @@ The existing convention is preserved: `BST_FLAGS` appends to defaults,
 `BST_FLAGS_OVERRIDE` when they need clean flag sets (e.g. source track without
 `-o x86_64_v3 true`). This interface is unchanged.
 
-## Migration order
+## Migration order — completed
 
-1. Add `pyproject.toml` + `uv.lock` (required by CI plan — likely done first)
-2. Update `mise.toml` (`[tools]`, `[settings]`, `[deps.uv]`)
-3. Add `.venv/` to `.gitignore`
-4. Rewrite `mise/tasks/bst` with `--container` flag; update `validate` and `load-image` to accept and pass it through
-5. Verify `mise run validate` and `mise run load-image` still work (and with `--container`)
+1. ~~Add `pyproject.toml` + `uv.lock`~~ — both committed at the repo root.
+2. ~~Update `mise.toml` (`[tools]`, `[settings]`, `[deps.uv]`)~~ — done, with exact
+   version pins rather than `"latest"`.
+3. ~~Add `.venv/` to `.gitignore`~~ — done.
+4. ~~Rewrite `mise/tasks/bst` with `--container`; update `validate` and `load-image`
+   to accept and pass it through~~ — done; both carry
+   `#USAGE flag "--container"` and forward it as a positional arg (the forwarding is
+   load-bearing, see `docs/skills/mise.md` § Propagating flags through tasks that call
+   other tasks).
+5. ~~Verify `mise run validate` and `mise run load-image` still work~~ — done.

@@ -13,29 +13,26 @@ suppressing a first-run/onboarding UI element: write to `liveuser`'s home
 (`/home/liveuser/...`), never touch the shipped system config — installed
 systems must keep default behavior.
 
-### niri hotkey-overlay popup (2026-07-02)
+### niri hotkey-overlay popup (2026-07-02 — settled image-wide 2026-07-06, no live override left)
 
-**What:** krytis ships `/etc/niri/config.kdl` (from `files/niri/config.kdl`
-in the krytis repo) with `hotkey-overlay { // skip-at-startup }` commented
-out, so the "Important Hotkeys" cheat-sheet shows on first niri login —
-desired on installed systems, noise on the live ISO installer.
+**Historical.** krytis once shipped `/etc/niri/config.kdl` with
+`hotkey-overlay { // skip-at-startup }` commented out, so the "Important
+Hotkeys" cheat-sheet appeared on first niri login — wanted on installed
+systems, noise on the live ISO installer — and the live script shadowed it for
+`liveuser`. #278 replaced the niri defaults with the dotfiles config, splitting
+it into includes and enabling the skip for *everyone*: `files/niri/startup.kdl`
+now carries a bare `hotkey-overlay { skip-at-startup }` and is staged to
+`/etc/niri/` by `elements/config/niri-config.bst`, pulled in by
+`config.kdl`'s `include "startup.kdl"`. Nothing in
+`live/src/configure-live-krytis.sh` touches niri at all any more.
 
-**Why:** niri's config lookup order is `$XDG_CONFIG_HOME/niri/config.kdl` →
-`/etc/niri/config.kdl` (fallback). Editing `/etc/niri/config.kdl` in the live
-script would also require reverting it for the installed system — messier
-than just shadowing it for `liveuser`.
-
-**Fix:** copy the shipped `/etc/niri/config.kdl` into `liveuser`'s XDG config
-and uncomment `skip-at-startup` via `sed`, so the live override composes with
-the shipped config instead of hand-rolling a separate minimal one that could
-drift from it:
-
-```bash
-mkdir -p /home/liveuser/.config/niri
-sed 's/^    \/\/ skip-at-startup$/    skip-at-startup/' \
-    /etc/niri/config.kdl > /home/liveuser/.config/niri/config.kdl
-chown -R liveuser:liveuser /home/liveuser/.config
-```
+**What survives, for the next live-only desktop tweak:** niri's config lookup
+order is `$XDG_CONFIG_HOME/niri/config.kdl` → `/etc/niri/config.kdl`
+(fallback), so a live-only override belongs in `liveuser`'s XDG config —
+editing `/etc/niri/config.kdl` in the live script would have to be reverted for
+the installed system. And compose with the shipped config (copy it, `sed` the
+one line) rather than hand-rolling a separate minimal config that can drift
+from it.
 
 ### noctalia welcome/onboarding popup (2026-07-02)
 
@@ -47,9 +44,10 @@ guessable from the krytis repo alone — see
 [krytis#236](https://github.com/starlit-os/krytis/issues/236#issuecomment-4862419237)).
 
 **Fix:** pre-seed the marker for `liveuser`, mirroring how
-`gnome-initial-setup-done` is pre-seeded for GNOME-based live images upstream in
-`projectbluefin/dakota-iso` (`live/src/configure-live.sh` and `dakota/src/configure-live.sh`
-there — upstream paths, neither of which exists in this repo):
+`gnome-initial-setup-done` is pre-seeded for GNOME-based live images upstream —
+`projectbluefin/dakota-iso`'s own `live/src/configure-live.sh` and
+`dakota/src/configure-live.sh`. Both are upstream-only paths: neither exists in
+this tree, whose equivalent is `live/src/configure-live-krytis.sh`.
 
 ```bash
 mkdir -p /home/liveuser/.local/state/noctalia
@@ -80,8 +78,9 @@ collection **unlock** request still prompts.
 
 **Fix:** hand oo7 the secret as a systemd credential, live-squashfs only.
 `oo7-daemon.service` already carries `ImportCredential=oo7.keyring-encryption-password`
-upstream, and `read_secret_from_credentials_directory()` (`server/src/main.rs`)
-reads `$CREDENTIALS_DIRECTORY/oo7.keyring-encryption-password` whenever the
+upstream, and `read_secret_from_credentials_directory()` (oo7's own
+`server/src/main.rs`, not this tree) reads
+`$CREDENTIALS_DIRECTORY/oo7.keyring-encryption-password` whenever the
 login-helper socket yields nothing — so a drop-in is enough:
 
 ```bash
@@ -225,12 +224,16 @@ build `localhost/krytis-installer` — it must already exist before the script i
 image) and only then calls `iso-sd-boot.sh`; `iso-container-build` builds the same
 container independently for iteration.
 
-**payload-prep.sh is in-tree** at `live/iso-tools/payload-prep.sh`. `iso-sd-boot.sh` runs
-it on the host when buildah is present, and otherwise bind-mounts it into the
-`ISO_TOOLS_IMAGE` container (`-v …/payload-prep.sh:/payload-prep.sh:ro`, `STORAGE_DRIVER=vfs`)
-so the whole `buildah from → copy → commit` sequence survives in one `podman run`. Sealed
-payloads (`PAYLOAD_SEALED=1`) skip it entirely — see `docs/skills/secure-boot.md`
-§ A sealed ISO payload must be embedded byte-identically.
+**payload-prep.sh is in-tree** at `live/iso-tools/payload-prep.sh`. The gate is the
+`ISO_TOOLS_IMAGE` env var, not a buildah probe: when it is set `iso-sd-boot.sh`
+bind-mounts the script into that container (`-v …/payload-prep.sh:/payload-prep.sh:ro`,
+`STORAGE_DRIVER=vfs`) so the whole `buildah from → copy → commit` sequence survives in
+one `podman run`; unset, it runs on the host, which then needs buildah + skopeo +
+python3 itself. `build-iso` always sets it (defaulting to `localhost/iso-tools:latest`,
+which it builds first), so the host path only happens when `iso-sd-boot.sh` is
+driven by hand. Sealed payloads (`PAYLOAD_SEALED=1`) skip it entirely — see
+`docs/skills/secure-boot.md` § A sealed ISO payload must be embedded
+byte-identically.
 
 ### ISO test path now native in krytis (2026-09-14)
 

@@ -6,7 +6,7 @@ on:
     # delay :00-triggered crons under load, and this repo's own history
     # shows that delay growing from ~20min to ~4-5h over a few weeks (both
     # this and cache-warm.yml were on '0 6' and drifted in lockstep every
-    # day — see docs/skills/ci-runner.md § Scheduled cron drift). Also
+    # day — see docs/skills/ci-runner.md § *Scheduled Workflow Cron Delay*). Also
     # deliberately earlier than cache-warm.yml's 06:41: these tracking jobs
     # open PRs, cache-warm builds the image, and once tracking PRs
     # auto-merge (not yet — no auto-merge group exists today, see

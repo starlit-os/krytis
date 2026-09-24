@@ -16,8 +16,12 @@ token does not include it. Add it once:
 gh auth refresh -s project
 ```
 
-Without this, all `createProjectV2` / `addProjectV2ItemById` / `addSubIssue`
-mutations fail with `INSUFFICIENT_SCOPES`.
+Without this, `createProjectV2` / `addProjectV2ItemById` / `addSubIssue` mutations fail
+with `INSUFFICIENT_SCOPES` — and so does *reading* the board: a plain
+`organization(login:"starlit-os"){ projectV2(number:1) }` query is rejected field-by-field
+with `requires one of the following scopes: ['read:project']`. Confirmed 2026-09-24 against
+a token holding `gist, read:org, repo, workflow`. Assume every field ID in § Krytis project
+field IDs is unverifiable until the scope is added.
 
 **Sub-issue linking is the exception** — the REST endpoint needs only `repo`.
 See § Link native sub-issues. Do not burn a scope refresh on parenting alone.

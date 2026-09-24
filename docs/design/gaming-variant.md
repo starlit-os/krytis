@@ -106,9 +106,13 @@ gaming packages should start from that ref rather than re-porting from upstream.
   a list change there, not a new subsystem. dakota's `gaming-full` public stack
   is the same idea and a useful list to crib: protontricks, Heroic, Bottles,
   ProtonPlus, goverlay, Lutris.
-- **`gnomeos/reload-sysext.bst` remains plumbing with no consumer.** It sits in
-  `stacks/base-system.bst` today. Nothing here changes that; the first real
-  sysext consumer is still unwritten.
+- **`gnomeos/reload-sysext.bst` is gone entirely, and with it the only sysext
+  plumbing krytis had.** It sat in `stacks/base-system.bst` when this investigation
+  ran; the `gnome-51` bump (#646, 2026-08-27) dropped it, because
+  `gnome-build-meta` deleted the element from its own tree somewhere between
+  gnome-50 and master with no rename or replacement. `base-system.bst` keeps the
+  removal note. A future sysext consumer would have to re-vendor a reload trigger or
+  confirm systemd v261 (fdsdk 26.08) handles it natively.
 
 ## Two upstream models
 
@@ -181,7 +185,9 @@ something else.
 
 ## Krytis today (the facts that constrained every option)
 
-Each of these was verified when this investigation ran; they still hold.
+Each of these was verified when this investigation ran (2026-08-14). Two have since
+moved — the sysext reload element and the `project.conf` options list, both corrected
+in place below — and the rest still hold.
 
 - **CachyOS kernel is already unconditional** (`core/linux-cachyos.bst`,
   prebuilt v3 package). It already ships `sched_ext`
@@ -192,18 +198,23 @@ Each of these was verified when this investigation ran; they still hold.
 - **Gaming-adjacent packages are already unconditional** in
   `stacks/desktop.bst`: `freedesktop-sdk.bst:components/steam-devices.bst`,
   `desktop/game-devices-udev.bst`, `desktop/falcond.bst`,
-  `desktop/scx-loader.bst` — though the loader has no schedulers to load
-  (#590). Absent natively: Steam, gamescope, MangoHud, InputPlumber,
+  `desktop/scx-loader.bst`. The loader had no schedulers to load when this was
+  written; `desktop/scx-scheds.bst` closed that in #590. Absent natively: Steam,
+  gamescope, MangoHud, InputPlumber,
   scopebuddy, umu-launcher, 32-bit compat — all covered by Flathub, and the one
   thing Flathub cannot cover (`gamescope` as a session) is rejected outright.
-- **The sysext refresh mechanism is already wired** —
-  `gnome-build-meta.bst:gnomeos/reload-sysext.bst` sits in
-  `stacks/base-system.bst` today. It's plumbing with nothing plugged into it.
+- **The sysext refresh mechanism *was* already wired, and no longer is** —
+  `gnome-build-meta.bst:gnomeos/reload-sysext.bst` sat in `stacks/base-system.bst`
+  when this investigation ran, with nothing plugged into it. It was removed with the
+  gnome-51 bump (#646) after upstream deleted the element; see above.
 - **No i686/cross-compiler junction override exists** in
   `elements/freedesktop-sdk.bst` — any native lib32 element would need one
   added first.
-- **`project.conf` `options:` only has `arch`** — no build-time gaming toggle
-  exists (dakota's model would need one; neither chosen path does).
+- **`project.conf` `options:` has no gaming toggle.** It carries `arch` and
+  `x86_64_v3` (a bool, default true) and nothing else — dakota's model would need a
+  third option added; neither chosen path does. (This doc originally said `arch` was
+  the only option, which was never true: `x86_64_v3` has been there since the
+  project scaffold.)
 - **Single OCI variant**: `oci/krytis/*` → `localhost/krytis-input:latest` →
   `Containerfile` → `ghcr.io/starlit-os/krytis`. No nvidia variant, no second
   `publish.yml`/`checks.yml`/`cache-warm.yml` CI leg. Either native path was

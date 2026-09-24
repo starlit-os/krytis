@@ -1,17 +1,26 @@
-# Paths `mise run docs-links` must not treat as broken.
+# Paths and task names `mise run docs-links` must not treat as broken.
 #
-# Format: <path> [# reason]. Two legitimate categories only:
+# Format: <entry> [# reason]. Three legitimate categories only:
 #
 #   - Planned-but-unwritten docs a design doc or live plan forward-references.
 #     Remove the entry when the doc lands.
-#   - Paths that belong to an upstream repo (dakota, bootc), quoted here as a
-#     source citation. These will never exist in this tree.
+#   - Paths that belong to an upstream repo (freedesktop-sdk, gnome-build-meta,
+#     dakota, dakota-iso, zirconium-hawaii, bootc, and the odd third-party
+#     source tree), quoted here as a source citation. These will never exist in
+#     this tree. Prefer naming the owner in the prose too — a bare backticked
+#     upstream path reads as a first-party one.
+#   - Paths and tasks this repo deliberately cites as *absent*: deleted on
+#     purpose, or proposed and never built, where the citation is the record of
+#     that decision. Deleting the citation would destroy the record, so the
+#     entry goes here instead (added by the #860 rot audit).
 #
 # Anything else is rot — fix the reference instead of listing it here.
+#
+# An entry ending in `/` covers everything beneath it. An entry prefixed
+# `task:` is a mise task name, not a path.
 
 # Planned, not yet written
 docs/design/secure-boot-tpm-analysis.md   # output of docs/plans/2026-07-12-secure-boot.md Task 2 (#312)
-docs/design/mise-tool-versions.md         # forward-referenced by docs/design/self-build.md
 docs/verifying-signatures.md              # planned by docs/design/cosign-keyless-signing.md § 5
 docs/design/iso-distribution.md           # output of docs/plans/2026-09-16-r2-iso-hosting.md Task 5 (#867)
 docs/plans/done/2026-09-16-r2-iso-hosting.md  # self-archive target of docs/plans/2026-09-16-r2-iso-hosting.md Task 6, once R2 hosting ships (#867)
@@ -21,3 +30,44 @@ docs/skills/patch-junctions.md            # dakota's skill tree, quoted in docs/
 docs/skills/ci-reference.md               # dakota's skill tree, quoted in docs/skills/sbom.md
 docs/src/man/bootc-container-ukify.8.md   # bootc upstream, quoted in docs/design/secure-boot-uki.md
 docs/skills/ci.md                         # dakota's (pre-restructure) skill tree, quoted in AGENTS.md § Skill files rot too
+elements/components/                      # freedesktop-sdk's element tree; cited by bst.md, desktop.md, sbom.md, secure-boot.md
+elements/bootstrap/                       # freedesktop-sdk's; cited by desktop.md, sbom.md
+elements/extensions/                      # freedesktop-sdk's / zirconium-hawaii's; cited by bst.md, zirconium-hawaii.md
+elements/include/                         # freedesktop-sdk's; cited by bst.md, zirconium-hawaii.md
+elements/krytis/                          # a layout that has never existed here; named as such by bst.md and the skill-rot-audit skill
+elements/sysext/                          # zirconium-hawaii's jackrabbit sysext tree; cited by zirconium-hawaii.md
+elements/oci/zirconium/filesystem.bst     # zirconium-hawaii's; cited by zirconium-hawaii.md
+elements/zirconium/                       # zirconium-hawaii's element tree; cited by zirconium-hawaii.md and the skill-rot-audit skill
+elements/freedesktop-sdk-extra.bst        # zirconium-hawaii's; cited by zirconium-hawaii.md
+elements/bluefin/                         # dakota's element tree; cited by bst.md and the skill-rot-audit skill
+files/systemd-zirconium/10-zirconium.preset  # zirconium-hawaii's; cited by zirconium-hawaii.md
+files/recc-wrapper/recc-wrapper           # freedesktop-sdk's; cited by bst.md § recc
+include/_private/                         # freedesktop-sdk's include tree; cited by bst.md
+include/install-extra.yml                 # freedesktop-sdk's; cited by bst.md, desktop.md
+include/install-dirs.yml                  # freedesktop-sdk's; cited by bst.md
+include/efitools.yml                      # freedesktop-sdk's; cited by bst.md, secure-boot.md
+include/gcc-for-recc.yml                  # freedesktop-sdk's; cited by bst.md
+include/recc.yml                          # freedesktop-sdk's; cited by bst.md
+include/meson.build                       # wlroots' own source tree; cited by desktop.md
+patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch  # gnome-build-meta's patch set; cited by bst.md
+scripts/Makefile.in                       # xdg-utils' own source tree; cited by desktop.md
+scripts/build-live-squashfs.sh            # dakota-iso's; cited by dakota-iso.md, secure-boot.md
+scripts/uki.sh                            # travier/fedora-atomic-desktops-sealed's; cited by docs/design/secure-boot-uki.md
+live/src/configure-live.sh                # dakota-iso's, the original of live/src/configure-live-krytis.sh; cited by dakota-iso.md, krytis-live-config.md
+live/src/show-screenshot.sh               # dakota-iso's (krytis's own copy is scripts/show-screenshot.sh); cited by dakota-iso.md
+live/src/dracut/95dakota-isofile/         # dakota-iso's; cited by dakota-iso.md
+elements/gaming/                          # dakota's; docs/design/gaming-variant.md cites it as the tree krytis deliberately did not build
+
+# Deliberately cited as absent — deleted on purpose, or proposed and never built
+scripts/fisherman-install.sh              # deleted in 0d0aa53 once tuna-os/fisherman#219 landed; krytis-live-config.md cites it as the record
+patches/oo7/prompter-detect-session-type.patch  # deleted in #647 (d58aeb6) when oo7 fixed it upstream; pam.md and secrets-service.md cite the fired revisit-trigger
+files/noctalia-greeter/0001-show-pam-info-cue.patch  # deleted in #254 (9b0cb02) after upstream merged 26865dae; pam.md cites the history
+files/bootc-config/40-no-firstboot.toml   # deleted by #487; docs/design/first-boot-setup.md cites it as the record of why
+files/sysext/make-layer.py                # exists only in PR #522's head commit e2e871cd (closed unmerged); docs/design/gaming-variant.md
+mise/tasks/build-sysext-gaming            # same commit, same line; docs/design/gaming-variant.md
+elements/core/container-sigpolicy.bst     # unimplemented proposal tracked in #418; docs/design/cosign-keyless-signing.md
+task:cosign-sign                          # never built; superseded by mise/tasks/sign; docs/design/cosign-keyless-signing.md
+task:cosign-verify                        # never built; verification is inline in publish.yml; docs/design/cosign-keyless-signing.md
+task:cosign-generate-keys                 # never built; unnecessary without a static key; docs/design/cosign-keyless-signing.md
+task:check-deps                           # suggested in docs/design/native-bst-local-dev.md, never built
+task:fido2:enroll-local                   # a user-config test copy under ~/.config/mise/tasks, never a repo task; docs/skills/workflow.md § Testing Scripts Shipped in the Image

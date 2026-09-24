@@ -29,18 +29,23 @@ POST). Find the Secure Boot section (often under "Security" or "Boot"):
 
 ## 2. Boot krytis and select the key set in the systemd-boot menu
 
-With `secure-boot-enroll manual` set (krytis does this automatically on first boot —
-see `docs/skills/secure-boot.md` § First-boot loader.conf edits), systemd-boot shows
-an **"Enroll Secure Boot keys"** entry in its boot menu on every boot while the
-firmware remains in Setup Mode:
+systemd-boot shows an **"Enroll Secure Boot keys"** entry in its boot menu on every boot
+while the firmware remains in Setup Mode. Setup Mode is the only hard gate: discovery runs
+whenever `secure-boot-enroll != off`, and the compiled-in default is already `if-safe`, so
+the entry appears on the very first boot too — before the first-boot oneshot that writes
+`secure-boot-enroll manual` (`elements/config/secureboot-loader-conf.bst`) has run. See
+step 3 below for the source-level detail, and `docs/skills/secure-boot.md`
+§ `secure-boot-enroll manual` works — but not on the first boot after install (#444) for
+why the oneshot lands late and why that is accepted.
 
 1. At the systemd-boot menu, select **"Enroll Secure Boot keys"** (not the default
    krytis entry).
-2. Confirm the enrollment when prompted — systemd-boot writes krytis's PK, KEK, and
-   db (from `ESP/loader/keys/auto/*.auth`, placed there by `bootc install` from the
-   image's `/usr/lib/bootc/install/secureboot-keys/auto/` — see
-   `docs/skills/secure-boot.md` § `.auth` files land at `secureboot-keys/<keyset>/*.auth`)
-   into the firmware's PK/KEK/db variables.
+2. Confirm the enrollment when prompted — systemd-boot writes krytis's PK, KEK, db and
+   dbx (from `ESP/loader/keys/auto/*.auth`, placed there by `bootc install` from the
+   image's `/usr/lib/bootc/install/secureboot-keys/auto/`, where the Containerfile's
+   `SEAL_SECURE_BOOT` stage writes them — see `docs/design/secure-boot-uki.md`
+   § 3. Key enrollment: systemd-boot native (#309))
+   into the firmware's PK/KEK/db/dbx variables.
 3. Enrolling the PK exits Setup Mode and enters **User Mode** — Secure Boot begins
    enforcing immediately, including for the current boot.
 4. Reboot. Confirm in the firmware setup screen (or `bootctl status` from within
@@ -107,8 +112,12 @@ component).
 ## Recovering from a bad enrollment
 
 If the machine fails to boot after enrollment (extremely rare — this would mean the
-.auth files were malformed, which `mise run boot-test --secure` should have already
-caught in CI before this image was published): re-enter firmware setup and use the
+.auth files were malformed, which `mise run enroll-test` should have already caught in
+CI before this image was published; `.github/workflows/verify-sealed.yml` runs it
+against the published `ghcr.io/starlit-os/krytis:sealed`. Note it is *not*
+`boot-test --secure` that covers this: that boots a varstore `virt-fw-vars` pre-enrolled
+by hand and never touches `loader/keys/auto` at all — exactly the blind spot #438 hid
+in): re-enter firmware setup and use the
 vendor's "Restore Secure Boot to factory defaults" or "Clear Secure Boot keys" option
 again. This returns the firmware to Setup Mode, from which you can either re-enroll
 or leave Secure Boot disabled.
@@ -451,7 +460,7 @@ done
 ```
 
 Compare with step 1. Expected, in the same order as the sizes `virt-fw-vars` reports
-in the VM tests: `PK` 1254, `KEK` 1263, `db` 8891, `dbx` 21292 — krytis's own, *not*
+in the VM tests: `PK` 1254, `KEK` 1263, `db` 8891, `dbx` 23304 — krytis's own, *not*
 the OEM's, and `dbx` **present** (that is #446 landing on real firmware; a missing
 dbx means every revoked Microsoft-signed binary still verifies).
 
@@ -464,7 +473,7 @@ out both answers *before* you enrol, so the post-enrollment read is a lookup:
 
 | | reads (efivars, incl. +4) |
 |---|---|
-| replaced | `PK` 1258 · `KEK` 1267 · `db` 8895 · `dbx` 21296 |
+| replaced | `PK` 1258 · `KEK` 1267 · `db` 8895 · `dbx` 23308 |
 | merged | step-1 data size + krytis's payload + 4 |
 
 Worked example from a real machine whose step 1 read `KEK 2549, db 8079, dbx 18352`:
@@ -481,8 +490,12 @@ Before #464 krytis shipped only two of the five, so this step's expected `db` wa
 and enrolling made a dual-boot machine's Windows unbootable. If you are reading an
 older image, that is still true of it.
 
-`dbx` normally *grows* (krytis ships 443 revocations, typically more than the firmware
-shipped with), which is the one direction where replacing is strictly an improvement.
+`dbx` normally *grows* (krytis ships 447 entries — 445 revoked image hashes plus the 2
+revoked signing certificates #502 restored — typically more than the firmware shipped
+with), which is the one direction where replacing is strictly an improvement. The `dbx`
+size is `files/microsoft-uefi-certs/dbx.esl`'s own byte count, which `mise run enroll-test`
+asserts byte-exactly (#757), so re-read it there rather than trusting the number above if
+the file has moved since.
 
 Then diff the device list against step 1's baseline, and capture the post state for the
 same reason step 1 captured the pre state — the certificate-level analysis needs bytes:
@@ -621,7 +634,7 @@ dbx holds PE Authenticode hashes, not file checksums:
 ```bash
 # on the desk, not the test machine
 python3 scripts/parse-efi-auth.py --count-esl files/microsoft-uefi-certs/dbx.esl
-#  -> 443            (--count-esl takes the BARE esl; on a .auth it reports
+#  -> 447            (--count-esl takes the BARE esl; on a .auth it reports
 #                     "malformed signature list", which is the wrapper, not a fault)
 
 pesign --hash --in candidate.efi --digest_type sha256   # pesign package
@@ -638,8 +651,10 @@ If you cannot source one, record that as untested rather than passed.
 
 ## 7. FIDO2 LUKS unlock under a sealed UKI
 
-Needs the LUKS install from step 2. The `rd.luks.options=fido2-device=auto` bake is
-verified statically; the unlock never has been.
+Needs the LUKS install from step 2. The root volume's FIDO2 path is verified statically —
+`elements/core/initramfs.bst` asserts `libfido2.so.1`, the LUKS2 token plugin and
+`krytis-fido2-root-unlock.service` are all in the initrd at build time — but the unlock
+itself never has been on hardware.
 
 **Check the image first — this step was impossible until #476.** `libfido2.so.1` was
 missing from every initrd we built (dracut cannot see a `dlopen`), so FIDO2 unlock
@@ -647,9 +662,11 @@ silently fell back to a passphrase on every machine. Confirm the image you insta
 actually carries it, or this step tests nothing:
 
 ```bash
-# On the installed system:
-lsinitrd /boot/EFI/Linux/*.efi 2>/dev/null | grep libfido2 || \
-  echo "MISSING — image predates #476, re-test with a newer sealed build"
+# On the installed system — all four must be present:
+lsinitrd /boot/EFI/Linux/*.efi 2>/dev/null |
+  grep -e libfido2 -e libcryptsetup-token-systemd-fido2 \
+       -e krytis-fido2-root-unlock -e 50-krytis-fido2-root ||
+  echo "MISSING — image predates #476/#250, re-test with a newer sealed build"
 ```
 
 ```bash
@@ -661,17 +678,26 @@ mise fido2:enroll-luks     # then reboot
 *Failure signature:* a passphrase prompt has **two** possible causes, and they need
 different fixes:
 
-1. **`libfido2.so.1` absent from the initrd** (#473) — `systemd-cryptsetup` `dlopen`s
-   it, fails, and falls through to a passphrase. `cryptsetup.c` returns `EAGAIN` and
-   clears the FIDO2 args, so the fallback is silent by design. Check with the command
-   above *before* suspecting anything else; the build-time assertion in
-   `elements/core/initramfs.bst` makes this impossible on images built after #476.
-2. **The cmdline bake did not take effect** — and because a UKI freezes its cmdline,
-   that cannot be fixed on the installed system; it needs a new sealed image.
+1. **A piece of the FIDO2 path is absent from the initrd** (#473, #250) —
+   `systemd-cryptsetup` `dlopen`s `libfido2.so.1`, fails, and falls through to a
+   passphrase. `cryptsetup.c` returns `EAGAIN` and clears the FIDO2 args, so the
+   fallback is silent by design. The same silence applies to a missing LUKS2 token
+   plugin, and to a missing `krytis-fido2-root-unlock.service` /
+   `50-krytis-fido2-root.conf` pair. Check with the command above *before* suspecting
+   anything else; `elements/core/initramfs.bst` asserts all four at build time, so this
+   is impossible on images built after #476.
+2. **No FIDO2 token is enrolled in the header on this machine** — `mise fido2:enroll-luks`
+   writes it per-machine; it is not something the image can ship.
 
-Distinguish them by reading the frozen cmdline: `cat /proc/cmdline | tr ' ' '\n' |
-grep luks`. If `rd.luks.options=fido2-device=auto` is there, the bake worked and cause
-1 is the one to chase.
+Do **not** diagnose this from `/proc/cmdline`. `rd.luks.options=fido2-device=auto`
+(`files/bootc-config/30-fido2-luks.toml`) is baked into the frozen cmdline, but
+`systemd-gpt-auto-generator` builds the root volume's own option string and ignores that
+karg entirely — measured on hardware, where the boot log showed only
+`No valid TPM2 token data found` with the karg present throughout (#250). Its presence
+proves nothing about root unlock; the karg is there for non-root LUKS volumes that reach
+`/etc/crypttab`. Read the boot journal for an actual FIDO2 attempt instead
+(`journalctl -b -u krytis-fido2-root-unlock.service`). See `docs/skills/fido2.md`
+§ `gpt-auto-generator` owns the root's crypt options, and only ever adds TPM2.
 
 ## 8. Upgrade and rollback, still enforcing
 

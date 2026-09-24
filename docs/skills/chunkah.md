@@ -69,15 +69,16 @@ element's true own-artifact contents, matching the docstring's claim.
 `/usr/manifest.json` doesn't record which junction owns them.** Element
 names in the manifest are bare in-project paths (e.g. `components/curl.bst`,
 `core-deps/upower.bst`) even when the element actually lives inside
-`freedesktop-sdk.bst` or `gnome-build-meta.bst` — of the 565 elements in a
-real krytis manifest, only ~96 are natively krytis's own (`config/*`,
-`core/*`, `desktop/*`, `deps/*`, `integration/*`, `oci/*`, `overrides/*`,
-`public-stacks/*`, `stacks/*`); the rest need `freedesktop-sdk.bst:` or
-`gnome-build-meta.bst:` prepended to resolve
+`freedesktop-sdk.bst` or `gnome-build-meta.bst`. Only the `config/*`, `core/*`,
+`deps/*`, `desktop/*`, `dev/*`, `oci/*` and `overrides/*` namespaces are natively krytis's
+own — everything else (`components/*`, `bootstrap/*`, `core-deps/*`, `extensions/*`,
+`integration/*`, `public-stacks/*`, `sdk*/*`, `gnomeos*/*`, `vm/*`) belongs to one of the
+two junctions and needs the junction prefix to resolve
 (`bst artifact checkout ... components/curl.bst` 404s;
 `bst artifact checkout ... freedesktop-sdk.bst:components/curl.bst`
-succeeds). `scripts/generate-fakecap-manifest.py` handles this by trying
-the bare name first, then each of `JUNCTION_PREFIXES = ["freedesktop-sdk.bst:",
+succeeds). In the committed `files/fakecap-manifest.tsv` that split is 85 krytis-owned
+elements out of 584 distinct ones. `scripts/generate-fakecap-manifest.py` handles this by
+trying the bare name first, then each of `JUNCTION_PREFIXES = ["freedesktop-sdk.bst:",
 "gnome-build-meta.bst:"]` in order, before giving up — this repo only has
 two content junctions (confirmed via `kind: junction` in `elements/*.bst`),
 so a small hardcoded list is deliberate, not a stand-in for a general
@@ -88,7 +89,9 @@ elements) attributed 539/565 (357043 rows); the remaining 26 are elements
 with no own content under `--deps none` (e.g. `oci/krytis/stack.bst`,
 `kind: stack` — pure dependency grouping with nothing of its own to check
 out) plus a couple of `kind: script`-style elements — expected misses, not
-a regression.
+a regression. The committed TSV has since grown to 367,869 rows over 584
+distinct elements (fdsdk 26.08rc.1 + gnome-51, `eee241c`) — same shape, more
+graph.
 
 **Known low-severity risks, worth knowing but not worth fixing:** ~4.6% of
 distinct paths in `files/fakecap-manifest.tsv` are attributed to more than
@@ -107,8 +110,9 @@ element with the same relative path existing in both junctions), files
 would be silently misattributed to the wrong owning element. This hasn't
 been observed in practice — the two junctions' element namespaces are
 cleanly segregated by convention (`components/*`, `core-deps/*`,
-`bootstrap/*` → freedesktop-sdk; `gnomeos*/*`, `vm/*`, `extensions/*` →
-gnome-build-meta) — but nothing in the code enforces it. Both risks share
+`bootstrap/*`, `integration/*`, `public-stacks/*` → freedesktop-sdk;
+`gnomeos*/*`, `sdk*/*`, `vm/*`, `extensions/*` → gnome-build-meta) — but nothing in the
+code enforces it. Both risks share
 the same blast radius: at most a shared/ambiguous file lands in a
 suboptimal but still-valid composefs layer for OTA-delta purposes — never
 a boot failure or a missing/corrupted xattr.
@@ -128,8 +132,8 @@ reading the TSV.
 runs `fakecap-restore` to physically set `user.component` xattrs from
 `files/fakecap-manifest.tsv`, then runs the pinned `chunkah` container
 against the overlay and re-tags the result back onto the same image tag —
-no new tag, so `mise generate-disk`'s existing `--composefs-backend` flag
-(`mise/tasks/generate-disk:39`) needed no change.
+no new tag, so the `--composefs-backend` flag `mise generate-disk` already
+passes to `bootc install to-disk` needed no change.
 
 **Overlay tmpdir disk-pressure fix**, ported from dakota's `e0b5a52`
 (upstream `projectbluefin/dakota`, 2026-06-13 — confirmed via `git log

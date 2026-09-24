@@ -11,12 +11,18 @@ So enabling secure boot / switching to a signed UKI (which flips PCR 7 and chang
 
 **Decision rule:** when a boot-chain change "breaks TPM PCRs," first enumerate which enrolled unlock mechanisms actually read those PCRs. If the answer is none, the PCR delta is a non-issue — don't build mitigations for a population of zero.
 
-## Under a UKI, the LUKS regression risk is the cmdline bake, not PCRs
+## Under a UKI, the LUKS regression risk is what got frozen at seal time, not PCRs
 
-With a UKI the kernel cmdline is **frozen inside the signed PE** — `bootc kargs` and post-install `kargs.d` edits have no effect. `rd.luks.options=fido2-device=auto` (`files/bootc-config/30-fido2-luks.toml`) must be baked into `.cmdline` at seal time by `bootc container ukify`'s `get_kargs_in_root()`, or FIDO2 unlock silently regresses to passphrase fallback. Verify on every sealed build:
+With a UKI the kernel cmdline **and the initrd** are frozen inside the signed PE — `bootc kargs` and post-install `kargs.d` edits have no effect. Both halves of FIDO2 LUKS unlock are therefore seal-time decisions:
+
+- **Non-root volumes** ride the cmdline: `rd.luks.options=fido2-device=auto` (`files/bootc-config/30-fido2-luks.toml`) is resolved into `.cmdline` at seal time by `bootc container ukify`'s `get_kargs_in_root()`.
+- **The root volume ignores that karg entirely.** `systemd-gpt-auto-generator` creates the root's unit and builds its own option string — measured on hardware with the karg present on `/proc/cmdline` and no FIDO2 attempt in the log (#250). Root unlock comes from `elements/config/fido2-root-unlock.bst`'s `krytis-fido2-root-unlock.service` + `50-krytis-fido2-root.conf`, which `elements/core/initramfs.bst` names in `install_items+=` so they reach the **initrd** — and the initrd is frozen in the same signed PE. See `docs/skills/fido2.md` § `gpt-auto-generator` owns the root's crypt options, and only ever adds TPM2.
+
+So a sealed build that drops either one regresses silently to a passphrase prompt, and neither can be repaired on the installed system. Verify both on every sealed build:
 
 ```bash
 ukify inspect /boot/EFI/Linux/krytis.efi    # or: objdump -s -j .cmdline <uki>
+lsinitrd /boot/EFI/Linux/krytis.efi | grep -e libfido2 -e krytis-fido2-root-unlock
 ```
 
 …then confirm on real hardware: enroll via `mise fido2:enroll-luks`, reboot, expect key-touch unlock with no passphrase prompt.
@@ -117,7 +123,11 @@ the file and reports every entry's certificate subject, exiting non-zero on an e
 Verified this way when the recipe was written: `PK.auth`/`KEK.auth`/`db.auth` all generate
 without error, and the pre-signing `db.esl` carried exactly 3 X509 entries — krytis's own db
 cert plus the 2 bundled Microsoft CAs — confirming the Microsoft-cert-bundling
-loop concatenates into the same `db.esl` correctly. This does **not** substitute for a full
+loop concatenates into the same `db.esl` correctly. Run the same recipe today and the count
+is **6**: `files/microsoft-uefi-certs/` has held all five Microsoft db CAs since #464. The
+recipe covers PK/KEK/db only; `dbx.auth` goes through the same `sign-efi-sig-list` call in the
+Containerfile, which also runs an `assert_esl` gate the recipe above predates. This does
+**not** substitute for a full
 `mise run seal-uki` + `sbverify` + firmware-enrollment run (still required before considering
 the Containerfile change fully verified), but it does isolate "is my new shell logic correct"
 from "does `ukify` work in this environment" when the two would otherwise be conflated by one
@@ -139,8 +149,8 @@ failing `RUN` step.
 > payloads. Byte sizes are the cheap check — an `EFI_SIGNATURE_LIST` holding one X509 cert is
 > `28 + 16 + len(DER)` bytes, so anything near 44 is empty by construction.
 >
-> See § `loader/keys/auto` self-enrollment below and #438 for the full root cause and the
-> `sbsiglist`/`sbvarsign` fix.
+> See § Every shipped `.auth` enrolled an empty allow-list — `cert-to-efi-sig-list` wants PEM
+> below and #438 for the full root cause and the `sbsiglist`/`sbvarsign` fix.
 
 ## `bootc container ukify` must run in a throwaway stage, never the final image
 
@@ -205,10 +215,14 @@ for krytis — so a tmpfs mount trades a build failure for an OOM. The scratch d
 created under `/var/tmp` (on-disk on both CachyOS and the runners) rather than `/tmp`,
 which is tmpfs on some hosts.
 
-Upstream fixes this: composefs-rs `5a227a0` falls back to a named tmpfile on
-`ENOTSUP`. It is **not in any bootc release yet** — [bootc#2340](https://github.com/bootc-dev/bootc/issues/2340),
-[composefs-rs#368](https://github.com/composefs/composefs-rs/pull/368). Drop the
-workaround once a bootc carrying it lands in the image.
+Upstream fixed this and krytis already carries the fix: composefs-rs `5a227a0` falls back
+to a named tmpfile on `ENOTSUP` ([composefs-rs#368](https://github.com/composefs/composefs-rs/pull/368),
+merged 2026-07-29; [bootc#2340](https://github.com/bootc-dev/bootc/issues/2340) closed
+2026-08-04), `5a227a0` is an ancestor of composefs-rs `v0.9.2`, and `elements/core/bootc.bst`
+pins bootc `v1.16.14` against exactly that `v0.9.2`. The `/var/tmp` bind-mount stays anyway —
+see the correction below: #528 showed the failure is not purely an "does this filesystem
+support `O_TMPFILE`" question, so the bind-mount is now an unconditional invariant rather
+than a workaround waiting to be dropped.
 
 > **Correction/extension (#528).** *"This is invisible on a workstation whose podman
 > uses native kernel overlayfs"* is not the whole picture. `bootc container
@@ -256,7 +270,7 @@ podman build --squash-all -t localhost/krytis:sealed \
     --secret id=db_key,src=... -f Containerfile.seal-uki .
 ```
 
-`mise/tasks/seal-uki` implements this as its two `[1/2]`/`[2/2]` steps. `localhost/krytis:sealed-base` is a legitimate, kept intermediate artifact (not cleaned up) — it's the stable reference the digest was computed against, and rebuilding it before phase 2 would risk a fresh, non-matching squash pass.
+`mise/tasks/seal-uki` implements this as its `[1/3]`/`[2/3]` steps (`[3/3]` is the digest verification below). `localhost/krytis:sealed-base` is a legitimate, kept intermediate artifact (not cleaned up) — it's the stable reference the digest was computed against, and rebuilding it before phase 2 would risk a fresh, non-matching squash pass.
 
 `Containerfile.seal-uki` hardcodes the `localhost/krytis:sealed-base` reference in its `--mount=type=bind,from=...` (rather than parameterizing via `ARG`) because ARG-expansion inside `--mount=from=` wasn't verified against the pinned podman/buildah version — if the intermediate tag name ever needs to change, update both `FROM`/`--mount=from=` occurrences together.
 
@@ -264,12 +278,13 @@ podman build --squash-all -t localhost/krytis:sealed \
 
 ### Verifying the baked digest against an already-published image, no rebuild, no root
 
-#528 asks for exactly the check `mise/tasks/seal-uki` is missing: after the two-phase
+#528 asked for exactly this check, and `mise/tasks/verify-composefs-digest` is it: after the
+two-phase
 build, confirm the digest baked into the UKI's `.cmdline` still matches the committed
 image, without rebuilding (a rebuild can produce a *different* correct digest and prove
-nothing — see the empirical procedure above). Verified this works end-to-end against the
-**currently published** `ghcr.io/starlit-os/krytis:sealed` (#528 investigation, no
-mismatch found — the check just doesn't exist yet to catch a future one):
+nothing — see the empirical procedure above). The by-hand procedure below is what the task
+automates; it was verified end-to-end against the **then-published**
+`ghcr.io/starlit-os/krytis:sealed` during the #528 investigation, which found no mismatch:
 
 ```bash
 # 1. Extract the baked digest — no ukify/objcopy needed, .cmdline is a plain string
@@ -294,7 +309,7 @@ The two outputs matched byte-for-byte on the 2026-08-09 published image.
 
 `--mount type=image` (podman core since ~2.2, unrelated to the `--mount=type=bind,from=`
 Containerfile directive used elsewhere in this doc) is the load-bearing choice over the
-`docs/skills/secure-boot.md`-adjacent `podman mount`/`podman unshare` pairing used in the
+`podman mount`/`podman unshare` pairing used in the
 original by-hand procedure: on this project's rootless podman (5.4.2, `overlay` graph
 driver), `podman image mount` only makes its merged directory visible **inside** the
 `podman unshare` mount namespace that created it — a sibling `podman run` outside that
@@ -324,7 +339,7 @@ The consequence for tagging is unchanged, and it is the point of this section: s
 
 `mise lint` builds `Containerfile` with a single `podman build --squash-all` pass for the unsigned `:latest` image. `mise run seal-uki` also ends up squashed (see § `--composefs-backend` requires a single layer above) but via two separate squash passes across two Containerfiles, not one — the *order* matters there (squash the rootfs-prep stage first, bake the digest against that, squash again for the final image), not just whether squashing happens. Either way, squashing collapses every stage into one layer and drops `.Parent`/`.History` entries that would otherwise reference the `localhost/krytis-input:latest` digest each was built from — `podman inspect --format '{{.Parent}}'` on the result is empty, and `.RootFS.Layers` for `:latest`/`:sealed` share no prefix with `krytis-input`'s own layer list. So there is no queryable link back to "which `krytis-input` build produced this."
 
-`mise run push --sealed` instead compares `podman inspect --format '{{.Created}}'` between `localhost/krytis:latest` and `localhost/krytis:sealed`, auto-running `seal-uki` when `:sealed` is missing or older. This works because podman build is content-addressed: rebuilding `:latest` from byte-identical inputs (same `krytis-input`, same `Containerfile`) reuses the existing image ID and its **original** `Created` timestamp — confirmed by rebuilding twice in a row and seeing an unchanged `Id`/`Created`. Only a genuine content change (new `krytis-input` build, edited `Containerfile`) produces a new image ID with a fresh, current `Created`. That's what makes the comparison a real staleness signal rather than "was the build command merely re-invoked" — don't swap it for wall-clock/`mise run` invocation tracking, which would false-positive on every no-op rebuild.
+`mise run push --sealed` instead compares each image's `.Created` between `localhost/krytis:latest` and `localhost/krytis:sealed`, auto-running `seal-uki` when `:sealed` is missing or older. The comparison itself lives in `scripts/ensure-sealed-image.sh`, shared with `mise run build-iso --sealed`. This works because podman build is content-addressed: rebuilding `:latest` from byte-identical inputs (same `krytis-input`, same `Containerfile`) reuses the existing image ID and its **original** `Created` timestamp — confirmed by rebuilding twice in a row and seeing an unchanged `Id`/`Created`. Only a genuine content change (new `krytis-input` build, edited `Containerfile`) produces a new image ID with a fresh, current `Created`. That's what makes the comparison a real staleness signal rather than "was the build command merely re-invoked" — don't swap it for wall-clock/`mise run` invocation tracking, which would false-positive on every no-op rebuild.
 
 Scope note: this only tracks drift in `:latest`'s content (kernel, base image, etc.), not signing-key freshness — rotating `files/boot-keys/` without any other content change won't trigger an automatic re-seal.
 
@@ -662,7 +677,8 @@ that silently no-ops on wrong-format input.
 
 The paragraph above says `sign-efi-sig-list` "must stay". freedesktop-sdk disagreed:
 commit `b39e7194` ("Remove EFI elements", 2026-08-17, first shipped in
-`freedesktop-sdk-26.08rc.1`) deleted `components/efitools.bst`, `efitools-bin.bst`,
+`freedesktop-sdk-26.08rc.1`) deleted, from **its own tree**, `components/efitools.bst`,
+`efitools-bin.bst`,
 `efitools-bin-maybe.bst`, `efitools-efi.bst` and `include/efitools.yml` outright — no
 rename, no replacement, they just dropped it from their own
 `vm/boot/efi-secure/deps.bst`. `components/perl-slurp.bst` went with it.

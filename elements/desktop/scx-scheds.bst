@@ -3,7 +3,7 @@ kind: manual
 # scx_lavd/scx_bpfland/scx_cosmos v1.1.2 — sched-ext CPU scheduler binaries for
 # scx_loader (desktop/scx-loader.bst) to load over org.scx.Loader. Source is the
 # sched-ext/scx monorepo — a *separate* repo from sched-ext/scx-loader (see
-# docs/skills/desktop.md § scx_loader repo disambiguation). Ships a 3-scheduler
+# docs/skills/desktop.md § *scx_loader (sched-ext D-Bus scheduler loader)*, Repo disambiguation). Ships a 3-scheduler
 # subset, not all 13: scx_lavd (gaming/latency, named in stacks/desktop.bst's
 # falcond comment) and scx_bpfland (interactive, same comment) plus scx_cosmos
 # (upstream's own default_sched recommendation). Closes #590.

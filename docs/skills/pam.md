@@ -1,12 +1,13 @@
 # PAM & Keyring Skills
 
-## noctalia native SystemPrompter: pinning a fork branch, not a tag, and keeping gcr-3 alongside gcr-4
+## noctalia native SystemPrompter: pinning a fork branch, not a tag — and why gcr-3 is no longer a fallback
 
-`elements/desktop/noctalia.bst` was pinned to `kitten-lily/noctalia`'s
-`feat/system-prompter` branch (not upstream `noctalia-dev/noctalia`) to test a
-native `org.gnome.keyring.SystemPrompter` provider (see PR #568) against the
-*currently shipping* gnome-keyring backend, ahead of any oo7 cutover decision
-(#84) and ahead of upstreaming. Two non-obvious mechanics from doing this:
+`elements/desktop/noctalia.bst` is pinned to `kitten-lily/noctalia`'s
+`feat/system-prompter` branch (not upstream `noctalia-dev/noctalia`) for a native
+`org.gnome.keyring.SystemPrompter` provider. It went in as an interim step over the
+*then*-shipping gnome-keyring backend (PR #574) and shipped for real alongside the oo7
+cutover in #594 (2026-08-15); #84 was closed as completed on 2026-09-04. The branch is still unupstreamed. Two non-obvious
+mechanics from doing this:
 
 **`git_repo` sources can pin `track:` to a branch name, not just a tag glob.**
 BuildStream doesn't care whether the `track:` value resolves to a tag or a
@@ -18,23 +19,30 @@ element already (`fix/wifi-persist-polkit-async`, dropped once upstream
 shipped the equivalent fix independently) — same playbook: pin, test, drop
 once upstreamed or supersede.
 
-**gcr-3 and gcr-4 coexist without conflict.** `gnome-keyring.bst` still pulls
-`sdk/gcr-3.bst` transitively (for `gcr-base-3`, unrelated to the prompter
-binary — confirmed against gnome-keyring's own `meson.build`, it's a genuine
-build dependency, not a leftover). Adding `sdk/gcr.bst` (gcr-4) alongside it
-for noctalia's `GcrSecretExchange` link does not conflict: different sonames
-(`libgcr-base-3.so`/`libgcr-3.so` vs `libgcr-4.so`), different D-Bus surface.
-`gcr-prompter` (from gcr-3) stays installed and its
-`org.gnome.keyring.SystemPrompter.service` D-Bus activation file stays in the
-image too — noctalia's `SecretPrompter` constructor calls `requestName()` and
-throws if the name is already owned, so it's a graceful first-come-first-served
-handoff, not an exclusive takeover. That means no BST change is needed to keep
-`gcr-prompter` as an inert fallback: if noctalia's prompter is ever disabled,
-crashes, or loses a startup race, `gcr-prompter` activates exactly as before.
-In krytis specifically, the race is a non-issue: `files/niri/startup.kdl` only
-`spawn-at-startup`s `noctalia`, and every manual-unlock scenario (secondary
-keyring, `CreateCollection`, `ChangePassword`) is an interactive, mid-session
-action — noctalia has been running the whole session by the time any of those
+**gcr-3 and gcr-4 coexist without conflict — but gcr-3 is no longer in the image.** The
+coexistence finding was real, and it is what made the interim step possible: different
+sonames (`libgcr-base-3.so`/`libgcr-3.so` vs `libgcr-4.so`), different D-Bus surface, so
+adding `sdk/gcr.bst` (gcr-4) for noctalia's `GcrSecretExchange` link alongside
+gnome-keyring's transitive `sdk/gcr-3.bst` broke nothing. **That arrangement lasted one
+commit.** The next commit in the same PR (#594) swapped gnome-keyring for oo7 in
+`stacks/desktop.bst`, taking gcr-3 — and with it the `gcr-prompter` binary and its
+`org.gnome.keyring.SystemPrompter.service` D-Bus activation file — out of the image
+entirely. Confirmed against `files/fakecap-manifest.tsv`: `/usr/libexec/gcr-ssh-agent`
+and `/usr/libexec/gcr4-ssh-askpass` are present (both from `sdk/gcr.bst`, gcr-4),
+`gcr-prompter` is not.
+
+**So noctalia's prompter owns the name outright; it is not a first-come overlay on an
+inert fallback.** The handoff mechanic itself still holds — noctalia's `SecretPrompter`
+constructor calls `requestName()` and throws if the name is already owned, so it declines
+gracefully rather than forcing a takeover — but on krytis there is nothing left to
+decline to. If noctalia's prompter is disabled, crashes, or loses a startup race, nothing
+answers `org.gnome.keyring.SystemPrompter` at all, and per § *No prompter on the bus means
+libsecret callers hang* below that is an indefinite hang in every libsecret caller, not a
+degraded mode. Both `elements/stacks/desktop.bst` and `elements/desktop/noctalia.bst`
+carry that warning in-tree. The startup race is still a non-issue in krytis specifically:
+`files/niri/startup.kdl` only `spawn-at-startup`s `noctalia`, and every manual-unlock
+scenario (secondary keyring, `CreateCollection`, `ChangePassword`) is an interactive,
+mid-session action — noctalia has been running the whole session by the time any of those
 fire.
 
 **`secret_prompter = true` in `/etc/skel` reaches new accounts only — every existing user
@@ -110,7 +118,7 @@ This is also the concrete instance of the hazard that rules out a central pam_u2
 
 **Verifying a PAM stack edit without root or a reboot.** Extract the heredoc from the `.bst` element, drop it into `/etc/pam.d/` inside a `podman run` of the built image, and drive real `pam_authenticate()`/`pam_acct_mgmt()` calls with a `ctypes` conversation function. Always include a **negative control** — corrupt one token in the jump spec (`authtok_err=bogus`) and confirm the run flips to `PAM_SERVICE_ERR (3)`; without it a "Success" proves nothing, since libpam happily ignores plenty of mistakes. Two ctypes gotchas: set `libc.calloc`/`libc.strdup` `restype` to `c_void_p` (the default `c_int` truncates the pointer and segfaults), and remember `strings` defaults to a 4-char minimum, so libpam's short action tokens `ok`/`bad`/`die` only show up under `strings -n 2`.
 
-**Test against a LIVE homed, not just an absent one.** A plain `podman run` has no homed at all, so `pam_systemd_home` takes the *no-bus* path — `acquire_user_record` never reaches homed and returns `PAM_USER_UNKNOWN` early. That is a different code path from the one a real krytis box exercises, where homed **is** running (`vm/config/systemd-homed-firstboot.bst`) and returns `BUS_ERROR_NO_SUCH_HOME` for a non-homed user. Both end at `PAM_USER_UNKNOWN`, so `default=ignore` covers both — but proving the second one needs homed actually on the bus. You do not need PID-1 systemd, a VM, LUKS, a loop device, or a security key for that; a rootless container is enough:
+**Test against a LIVE homed, not just an absent one.** A plain `podman run` has no homed at all, so `pam_systemd_home` takes the *no-bus* path — `acquire_user_record` never reaches homed and returns `PAM_USER_UNKNOWN` early. That is a different code path from the one a real krytis box exercises, where homed **is** running (freedesktop-sdk's `vm/config/systemd-homed-firstboot.bst`, pulled in by `elements/stacks/base-system.bst`; krytis's own `elements/config/systemd-firstboot.bst` only drops a `10-krytis.conf` override on top of it) and returns `BUS_ERROR_NO_SUCH_HOME` for a non-homed user. Both end at `PAM_USER_UNKNOWN`, so `default=ignore` covers both — but proving the second one needs homed actually on the bus. You do not need PID-1 systemd, a VM, LUKS, a loop device, or a security key for that; a rootless container is enough:
 
 ```bash
 mkdir -p /run/dbus /var/lib/systemd/home
@@ -128,7 +136,7 @@ busctl --system call org.freedesktop.home1 /org/freedesktop/home1 \
 
 **Also drive `sudo` and `login`, not just `system-auth` directly** — they `include` it, and an ordering mistake can show up only through the wrapper. One caveat: a `sudo` probe run as root returns `Success` for *any* password because `pam_rootok.so` is first, so that row proves nothing; test `sudo` as an unprivileged user, or rely on the `system-auth` row it includes.
 
-**Known gap, not a regression — but NOT moot for homed login, contrary to what this section used to say (see #782).** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close the FIDO2-specific case by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set on the pam handle. That much was verified against `pam_systemd_home.c` source. What #759/#532 did **not** fix, and what this file previously claimed it did: `pam_oo7.so`'s own `auth`-phase line still never runs for a homed user, because `-auth [success=done …] pam_systemd_home.so` terminates the whole auth phase on success regardless of *why* it succeeded — password or FIDO2 makes no difference to that jump. See the dedicated section below (#782) for the mechanics and the fix. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
+**Known gap, not a regression — but NOT moot for homed login, contrary to what this section used to say (see #782).** `pam_systemd_home` sets `PAM_AUTHTOK` for downstream modules *only if a password was actually used*. A FIDO2-only homed login therefore left `pam_gnome_keyring`/`pam_oo7` with no token and the keyring locked — the same shape as the pam_oo7 problem below, tracked in #129. #759/#532 close the FIDO2-specific case by retiring the homed FIDO2 login credential entirely, so a homed login is always a password login and `PAM_AUTHTOK` is always set on the pam handle. That much was verified against `pam_systemd_home.c` source. What #759/#532 did **not** fix, and what this file previously claimed it did: `pam_oo7.so`'s own `auth`-phase line *still* never ran for a homed user, because `-auth [success=done …] pam_systemd_home.so` terminated the whole auth phase on success regardless of *why* it succeeded — password or FIDO2 makes no difference to that jump. #782 fixed that separately by moving greetd's jump to `success=1`; see the dedicated section below for the mechanics. The general pam_oo7-needs-a-password gap tracked in #129 still applies to anything else that can authenticate without one.
 
 ## #759/#532 — retired the homed FIDO2 login credential; homed login is password-only
 
@@ -184,7 +192,8 @@ b true
 ```
 
 Audit trail for the login showed why: `op=PAM:authentication grantors=pam_systemd_home` —
-`pam_unix` and `pam_oo7` are absent from the grantor list. The greetd auth stack is:
+`pam_unix` and `pam_oo7` are absent from the grantor list. The greetd auth stack read, at
+that point (the relevant lines only — `auth required pam_nologin.so` sits above them):
 
 ```
 -auth  [success=done authtok_err=bad perm_denied=bad maxtries=bad default=ignore] pam_systemd_home.so
@@ -314,12 +323,12 @@ Re-checked this against current `linux-credentials/oo7` `main` (post-0.7.0-alpha
 - This is genuinely unresolved upstream, not just untriaged: [oo7#506](https://github.com/linux-credentials/oo7/issues/506) is a maintainer discussion on passwordless/FIDO2 keyring unlock, still active as of 2026-08-02. Maintainer's stance is to wait on `credentiald` and a systemd PR to mature before deciding a direction — there is no near-term fix in flight.
 - **Not a regression vs. gnome-keyring** — the "Known gap, not a regression" note above already covers this: gnome-keyring has the identical gap on FIDO2-only login, since neither module gets a password to unlock with. Switching to oo7 does not make this worse; it also does not fix it.
 
-**New gap found via oo7#506** (2026-08-03 comment, not previously documented here): the *unlocked* Login collection can re-lock with **no explicit `Lock()` call** if `oo7-daemon.service` restarts mid-session — the one-shot PAM helper's memfd doesn't survive the restart, and there is no FD-store/credential-based resume yet. Reporter's trigger was a package update restarting the daemon without ending the session. Lower risk for krytis specifically since bootc updates are reboot-driven rather than live in-place restarts, but still applies to `systemctl --user restart oo7-daemon` or a crash-restart mid-session — worth a boot-test scenario if #84 is re-attempted.
+**New gap found via oo7#506** (2026-08-03 comment, not previously documented here): the *unlocked* Login collection can re-lock with **no explicit `Lock()` call** if `oo7-daemon.service` restarts mid-session — the one-shot PAM helper's memfd doesn't survive the restart, and there is no FD-store/credential-based resume yet. Reporter's trigger was a package update restarting the daemon without ending the session. Lower risk for krytis specifically since bootc updates are reboot-driven rather than live in-place restarts, but still applies to `systemctl --user restart oo7-daemon` or a crash-restart mid-session. oo7 shipped in #594 and #84 is closed, so this is a live property of the image, not a hypothetical — it is still not covered by a boot-test scenario.
 
-**Two corrections to carry into any future #84 attempt** (upstream `pam/README.md`, read 2026-08-12):
+**Three corrections, carried into the #594 cutover** (upstream `pam/README.md`, read 2026-08-12; written while #84 was still open, kept because each one is still the live answer):
 - ~~The PAM socket is `$XDG_RUNTIME_DIR/oo7/pam.sock` (`OO7_PAM_SOCKET`-configurable) — not `oo7-pam.sock` as ArchWiki has it.~~ **Wrong — corrected 2026-08-12.** ArchWiki was right. The socket is `/run/user/<uid>/oo7-pam.sock`, still `OO7_PAM_SOCKET`-configurable. Verified three ways: read from source on **both** the 0.6.0 tag (`server/src/pam_listener/mod.rs:59`, `pam/src/socket.rs:195`) and current `main` (`server/src/pam_listener/mod.rs:100`, `pam/src/socket.rs:273`) — both sides hardcode the same `format!("/run/user/{uid}/oo7-pam.sock")` default — and observed at runtime on a built krytis image: `INFO oo7_daemon::pam_listener: PAM listener started on /run/user/1000/oo7-pam.sock`. The daemon and the PAM module agree, which is what actually matters; the earlier note would have sent a debugger to a path that never exists.
-- Upstream's own `password` stack example is `password optional pam_oo7.so`, with **no `use_authtok`**. Krytis's current gnome-keyring line is `-password optional pam_gnome_keyring.so use_authtok` — don't carry `use_authtok` over by habit; pam_oo7's password-stack path captures old+new tokens itself. Confirm whether it needs/uses the flag before porting.
-- oo7 ships no ssh-agent component at all (repo layout: cargo-credential, cli, client, git-credential, pam, portal, server, kwallet — no ssh_agent crate). This isn't "a different SSH_AUTH_SOCK path to switch to" — whatever provides `SSH_AUTH_SOCK` today has to keep existing independent of this migration.
+- Upstream's own `password` stack example is `password optional pam_oo7.so`, with **no `use_authtok`**. This was the correction to make: the gnome-keyring line it replaced was `-password optional pam_gnome_keyring.so use_authtok`, and `config/greetd-config.bst` now ships `-password optional pam_oo7.so` with no `use_authtok` and a comment saying why (pam_oo7's password-stack path captures old+new tokens itself; `use_authtok` would only constrain where it may read from).
+- oo7 ships no ssh-agent component at all (repo layout: cargo-credential, cli, client, git-credential, pam, portal, server, kwallet — no ssh_agent crate). This was never "a different SSH_AUTH_SOCK path to switch to", and after the cutover the agent is still gcr's — `/usr/libexec/gcr-ssh-agent` from gcr-4 (`sdk/gcr.bst`), reached transitively via `desktop/noctalia.bst`, listening on `/run/user/<uid>/gcr/ssh`. See `docs/skills/fido2.md` § Point `user.signingkey` at the handle file.
 
 **`oo7-daemon` startup capability behaviour — the scary warning is the normal case.** On a
 real user session the daemon logs
@@ -454,7 +463,7 @@ computed range matching the anchor formula by hand.
 
 **Symptom.** After an ordinary password login the `login` collection is locked for the entire
 session. Every libsecret caller is told the secret does not exist rather than being offered an
-unlock (oo7#585), so `gh` fails with `HTTP 401`, `flatpak` logs `Unable to unlock default
+unlock (krytis#585 — there is no oo7#585; this cited the wrong tracker until #860), so `gh` fails with `HTTP 401`, `flatpak` logs `Unable to unlock default
 keyring`, and nothing in the journal reads as an error — `pam_oo7` reports success.
 
 **Confirmed on hardware 2026-09-10** against oo7 pinned at `da576e43`. The window is ~38 ms:
@@ -570,8 +579,16 @@ Two traps the task had to work around, both worth knowing before writing anythin
 **Version-specific — check before hardcoding either.** On **0.6.0** oo7 derived the collection
 object path from the keyring *label*, giving `/org/freedesktop/secrets/collection/Login` with a
 capital L. **0.7.0.alpha uses lowercase `login`**, matching gnome-keyring, and logs
-`Setting up collection 'login' (alias: default)` at startup. The rest of this section describes
-the 0.6.0 behaviour, which is what an image pinned to that tag still exhibits.
+`Setting up collection 'login' (alias: default)` at startup.
+
+**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks `refs/heads/main`
+(`ref: v0.6.0-alpha-256-g886813eb…`; that describe prefix is misleading — 0.7.0.alpha is a
+lightweight tag git-describe ignores, and the element says so), which is well past
+0.7.0.alpha. So on a current image the path is `/org/freedesktop/secrets/collection/login`
+and `secret-tool lock --collection=login`, which is what every command elsewhere in this
+file uses. **The rest of this section is the 0.6.0 behaviour, kept as version history** —
+read `Login` as `login` when running any of it against a current krytis, and read the
+capital-L examples as what you will see if you ever attach to a 0.6.0-pinned image.
 
 gnome-keyring exposes the login keyring at `/org/freedesktop/secrets/collection/login`. oo7
 derives the path from the keyring *label*, so it is **`/org/freedesktop/secrets/collection/Login`**.
@@ -675,7 +692,9 @@ bind — therefore costs nothing and is one of the candidate fixes for the race 
 auto-unlock is lost to a race … above. Only a delay past 120 s would actually lose the login
 secret.
 
-**oo7 has now got this wrong twice, in two different ways, and krytis has to patch both.**
+**oo7 has now got this wrong twice, in two different ways. krytis patched the first, and
+upstream fixed the second — so the tree carries no prompter-detection patch today.** All
+three attempts below are history; what survives is `mise run oo7-prompter-test`, the gate.
 
 ### Attempt 1 — the daemon's own environment (`0.7.0.alpha`)
 
@@ -724,7 +743,7 @@ settles it.
 
 krytis carried `patches/oo7/prompter-detect-session-type.patch` from 2026-08-16 until
 2026-08-27, adding a `SessionType::from_env()` fallback that read `XDG_SESSION_TYPE`.
-**It has been dropped.** Upstream solved the same problem, better, in `f6a8624a`
+**It was deleted in #647 and that path no longer exists in the tree.** Upstream solved the same problem, better, in `f6a8624a`
 ("server: detect graphical sessions under systemd --user compositors", oo7#558).
 
 `SessionType::detect()` now cascades, stopping at the first check that places the peer in a
@@ -769,8 +788,9 @@ the attempt-1 patch, and it only bites if a secret is requested over ssh.
 ### `mise run oo7-prompter-test` gates it
 
 Because oo7 has now broken this twice and then fixed it once, all via unrelated mechanisms,
-the check is a task rather than an investigation. It runs the built `oo7-daemon` on a
-with its own `XDG_DATA_HOME`/`XDG_RUNTIME_DIR`, stands a stub in noctalia's place as the owner
+the check is a task rather than an investigation. It runs the built `oo7-daemon` on a private
+D-Bus session (`dbus-run-session`) with its own `XDG_DATA_HOME`/`XDG_RUNTIME_DIR`, stands a
+stub in noctalia's place as the owner
 of `org.gnome.keyring.SystemPrompter`, and stores a secret into the fresh (locked) `login`
 collection to force a prompt. A pass is the stub being called; a fail is `CliPrompter`
 appearing in the daemon or client log.
@@ -807,7 +827,7 @@ patch was *needed* now passes without it. Keep the task — it is the regression
 behaviour upstream has already broken twice, and its value does not depend on krytis carrying
 a patch.
 
-krytis#588 can be closed on this. The Upstream Gate note that used to sit here — reporting
+krytis#588 was closed on this, 2026-08-27. The Upstream Gate note that used to sit here — reporting
 the gap to oo7 needing an explicit go-ahead — is moot: upstream found and fixed it
 independently in oo7#558.
 
@@ -834,9 +854,9 @@ Consequences when debugging:
 Full reproduction, source references and the effect on the #84 decision:
 `docs/design/secrets-service.md` § *New blocker found while testing*.
 
-**Shipped anyway, deliberately (2026-08-14).** krytis moved to oo7 with this bug accepted, on the basis that FIDO2 login is disabled so `pam_oo7 auto_start` unlocks at login and the collection is never locked in normal use. That removes the *usual* route to a locked collection, not the only one: a mid-session `systemctl --user restart oo7-daemon`, an explicit `secret-tool lock`, or an oo7 crash all re-lock it, and from that point every read is a silent "no such secret" until the session restarts. **When triaging "my saved passwords vanished", check `Locked` on the collection first.** See `docs/design/secrets-service.md` § Decision for the accepted-risk table and the exit conditions.
+**Shipped anyway, deliberately (2026-08-14).** krytis moved to oo7 with this bug accepted, on the basis that FIDO2 login is disabled so `pam_oo7 auto_start` unlocks at login and the collection is never locked in normal use. That removes the *usual* route to a locked collection, not the only one: a mid-session `systemctl --user restart oo7-daemon`, an explicit `secret-tool lock`, or an oo7 crash all re-lock it, and from that point every read is a silent "no such secret" until the session restarts. **When triaging "my saved passwords vanished", check `Locked` on the collection first.** See `docs/design/secrets-service.md` § *Decision* — for the accepted-risk table and the exit conditions.
 
-## Manual unlock on niri needs `gcr-3` (gcr-prompter) — same for oo7 and gnome-keyring, easy to drop by accident
+## Manual unlock on niri needs a GCR SystemPrompter — and since #594 nothing upstream provides one
 
 Traced through `linux-credentials/oo7`'s prompter backend selection (`server/src/service/mod.rs::prompter_type`, 2026-08-12) to answer "what shows the unlock dialog on niri, a non-GNOME/non-KDE compositor, when PAM auto-unlock doesn't apply?" (secondary/locked collections, `CreateCollection`, `ChangePassword`, or any manual `Unlock()` call).
 
@@ -853,23 +873,23 @@ niri sets `WAYLAND_DISPLAY`, so oo7 always resolves to `PrompterType::GNOME` the
 
 **"GNOME" here means `gcr-prompter`, not GNOME Shell.** The GNOME path calls `org.gnome.keyring.SystemPrompter` (`server/src/gnome/prompter.rs`), which is a D-Bus-activated well-known name owned by `gcr-prompter` — a standalone GTK binary shipped by GCR, not part of gnome-shell. It works on any Wayland compositor, D-Bus-activates on demand (no `no_autostart` on this proxy, unlike the CLI one), and shows a plain GTK dialog. Confirmed by community reports for Sway/Hyprland: it works, but fails with "No Gcr System Prompter available" if `WAYLAND_DISPLAY`/`DISPLAY` aren't visible to the D-Bus session when it activates.
 
-**krytis already ships this, transitively — verify it stays if #84 is re-attempted.** `gnome-keyring.bst` (`gnome-build-meta.bst:core/gnome-keyring.bst`) has a **runtime** `depends: sdk/gcr-3.bst` (checked against the staged junction source, not a local grep — see AGENTS.md's transitive-dependency warning). That's how `gcr-prompter` gets into the image today. If oo7 replaces gnome-keyring in `stacks/desktop.bst`, that dependency disappears unless `oo7.bst` (or the stack) adds `sdk/gcr-3.bst` explicitly — gh178's plan never mentioned it, so the prior attempt would have shipped a manual-unlock path that silently fails.
+**krytis used to ship `gcr-prompter` transitively; since #594 it does not.** `gnome-keyring.bst` (`gnome-build-meta.bst:core/gnome-keyring.bst`) has a **runtime** `depends: sdk/gcr-3.bst` (checked against the staged junction source, not a local grep — see AGENTS.md's transitive-dependency warning), and that is how `gcr-prompter` reached the image for as long as gnome-keyring was the Secret Service. #594 replaced gnome-keyring with oo7 in `stacks/desktop.bst` and deliberately did **not** add `sdk/gcr-3.bst` back, so gcr-3 and `gcr-prompter` are out of the image — confirmed against `files/fakecap-manifest.tsv`, which carries no `gcr-prompter` binary. The hazard this paragraph used to warn about was real (gh178's plan never mentioned the dependency, so that attempt would have shipped a silently-failing manual-unlock path); it was closed not by re-adding gcr-3 but by shipping noctalia's native provider in the same PR. See § *Writing an `org.gnome.keyring.SystemPrompter` provider* below.
 
 **`gcr-4` (`sdk/gcr.bst`) is not a substitute for `gcr-3` here — by upstream design, not by accident.** GCR's own `NEWS` file says it outright: `gcr 3.90.0` — *"All deprecated API has been removed, as well as most UI-related code."* / `gcr 3.92.0` — *"gcr4 will no longer ship UI libraries, i.e. gcr-gtk3 or gcr-gtk4."* Confirmed by diffing the actual tarballs krytis's junction pins (`gcr-4.4.0.1.tar.xz` vs `gcr-3.41.2.tar.xz`): GCR3 has a `ui/` directory that builds `executable('gcr-prompter', 'gcr-prompter-tool.c', …)` plus `gcr/org.gnome.keyring.SystemPrompter.service.in` (`Exec=@libexecdir@/gcr-prompter`) — a generic, D-Bus-activatable, desktop-agnostic prompter binary. **GCR4 dropped the `ui/` directory and the `.service.in` file entirely**, keeping only the library-side base class (`gcr-system-prompter.c`/`.h`, exposed as `Gcr.SystemPrompter`) and the D-Bus interface XML.
 
-**The prompter didn't disappear in GCR4 — it moved into each desktop shell, which is the part that matters for niri.** `gnome-shell`'s `js/ui/components/keyring.js` subclasses `Gcr.SystemPrompter` directly: `class KeyringPrompter extends Gcr.SystemPrompter`, and `enable()` calls `Gio.DBus.session.own_name('org.gnome.keyring.SystemPrompter', …)` itself — gnome-shell *is* the D-Bus service under real GNOME, built on top of GCR4 as a library, not a separate process. KDE Plasma has its own equivalent (this is exactly why oo7's `Plasma` prompter type is a separate code path from `GNOME` in `prompt/mod.rs`). **niri has no such component.** There is no third-party or generic shell-level `Gcr.SystemPrompter` implementation for wlroots/smithay compositors — the only thing standing in for it is the legacy GCR3 `gcr-prompter` binary, which upstream GNOME itself no longer builds by default (GCR4 is what ships in current GNOME; GCR3 survives only as a compatibility package for consumers — like gnome-keyring, and krytis — that still need the old prompter binary).
+**The prompter didn't disappear in GCR4 — it moved into each desktop shell, which is the part that matters for niri.** `gnome-shell`'s `js/ui/components/keyring.js` subclasses `Gcr.SystemPrompter` directly: `class KeyringPrompter extends Gcr.SystemPrompter`, and `enable()` calls `Gio.DBus.session.own_name('org.gnome.keyring.SystemPrompter', …)` itself — gnome-shell *is* the D-Bus service under real GNOME, built on top of GCR4 as a library, not a separate process. KDE Plasma has its own equivalent (this is exactly why oo7's `Plasma` prompter type is a separate code path from `GNOME` in `prompt/mod.rs`). **niri has no such component.** There is no third-party or generic shell-level `Gcr.SystemPrompter` implementation for wlroots/smithay compositors — the only thing standing in for it is the legacy GCR3 `gcr-prompter` binary, which upstream GNOME itself no longer builds by default (GCR4 is what ships in current GNOME; GCR3 survives only as a compatibility package for consumers like gnome-keyring that still need the old prompter binary — krytis was one of those until #594, and is not any more).
 
-**This is not a theoretical risk — it is a confirmed, currently-open failure mode on a structurally similar non-shell compositor.** [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453) (COSMIC, wlroots-adjacent, no gnome-shell) reports exactly this: `gcr-prompter` (GCR3) *is* installed and its `.service` file *is* present, login-time PAM auto-unlock works fine, but a **mid-session** daemon restart (e.g. a package upgrade) leaves the login keyring locked with no path back — the prompter fails to activate in COSMIC's session D-Bus environment (reporter's suspected cause: missing `WAYLAND_DISPLAY`/`DISPLAY` in the D-Bus activation environment, unconfirmed), `gnome-keyring-daemon` times out after ~25s waiting on `create system prompt`, then **crashes**, leaving the libsecret caller wedged forever rather than returning a clean error. This downgrades the "Low risk" framing in the section above — the env-timing hazard is real and reproduced in the wild on a peer environment, not just theoretically low-probability from `import-environment` timing. **Do not ship #84 (or trust the current gnome-keyring setup) without an explicit boot test**: lock a non-login collection, kill/restart the keyring daemon mid-session, and confirm a GTK unlock dialog actually appears rather than hanging.
+**This is not a theoretical risk — it is a confirmed, still-open failure mode on a structurally similar non-shell compositor** (re-checked 2026-09-24). [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453) (COSMIC, wlroots-adjacent, no gnome-shell) reports exactly this: `gcr-prompter` (GCR3) *is* installed and its `.service` file *is* present, login-time PAM auto-unlock works fine, but a **mid-session** daemon restart (e.g. a package upgrade) leaves the login keyring locked with no path back — the prompter fails to activate in COSMIC's session D-Bus environment (reporter's suspected cause: missing `WAYLAND_DISPLAY`/`DISPLAY` in the D-Bus activation environment, unconfirmed), `gnome-keyring-daemon` times out after ~25s waiting on `create system prompt`, then **crashes**, leaving the libsecret caller wedged forever rather than returning a clean error. This downgrades the "Low risk" framing in the section above — the env-timing hazard is real and reproduced in the wild on a peer environment, not just theoretically low-probability from `import-environment` timing. **The boot test this asks for is still owed**, and post-#594 it is a test of noctalia's prompter, not of gcr-prompter or gnome-keyring: lock a non-login collection, restart `oo7-daemon` mid-session, and confirm an unlock panel actually appears rather than hanging.
 
-**Longer-term architectural question, not blocking today:** krytis's manual-unlock path depends indefinitely on a component (`gcr-3`/`gcr-prompter`) that upstream GNOME has already deprecated in favor of shell-owned prompters. There is no krytis-owned alternative today — building one would mean wiring `Gcr.SystemPrompter` (GCR4) into noctalia-greeter or a niri-adjacent component, mirroring what `keyring.js` does for gnome-shell. Not worth doing speculatively, but worth knowing this is the eventual answer if `gcr-3` ever stops being packaged upstream.
+**Longer-term architectural question, since answered by building one.** The reasoning above lands on "krytis would depend indefinitely on a component upstream GNOME has already deprecated in favour of shell-owned prompters", and the answer krytis took was to stop depending on it: noctalia reimplements the small `org.gnome.keyring.SystemPrompter` D-Bus surface itself and links only `GcrSecretExchange` from gcr-4 — see § *Writing an `org.gnome.keyring.SystemPrompter` provider* below. What stays true is the *diagnosis*: there is still no third-party or generic shell-level `Gcr.SystemPrompter` implementation for wlroots/smithay compositors, so anything that disables noctalia's has nothing to fall back to.
 
-**The env-timing risk documented in `docs/skills/desktop.md` § Toolkit Vulkan / Wayland Environment mostly doesn't apply here.** That section warns `niri-session`'s `systemctl --user import-environment` fires too late for *early* D-Bus-activated services (pipewire, xdg-desktop-portal). `gcr-prompter` isn't early — it activates lazily whenever a prompt is actually needed, which in practice is well after session startup and therefore after `import-environment` has already run. Low risk, but worth an explicit boot-test assertion (`secret-tool lock` a non-login collection, then trigger `Unlock()` and confirm a GTK window actually appears) rather than assuming it from this reasoning alone.
+**The env-timing risk documented in `docs/skills/desktop.md` § *Toolkit Vulkan / Wayland Environment* does not reach the prompter krytis actually ships.** That section warns `niri-session`'s `systemctl --user import-environment` fires too late for *early* D-Bus-activated services (pipewire, xdg-desktop-portal). The original argument here was about `gcr-prompter`, which activated lazily and so ran long after `import-environment`; that binary is no longer in the image. noctalia's prompter is not D-Bus-activated at all — `files/niri/startup.kdl` `spawn-at-startup`s `noctalia`, so it is already running and already owns the bus name before any prompt can happen. The boot-test assertion that paragraph asked for is still worth having: `secret-tool lock` a non-login collection, trigger `Unlock()`, and confirm noctalia's panel actually appears.
 
 ## Writing an `org.gnome.keyring.SystemPrompter` provider: reply ordering is the whole game
 
 The "eventual answer" above was built. A native prompter now exists on the noctalia fork
 (`kitten-lily/noctalia`, branch `feat/system-prompter`, commit `ba821c7da`) — see
-`docs/design/secrets-service.md` § Status for scope and verification. Lessons that will
+`docs/design/secrets-service.md` § *Status: implemented on a fork* — for scope and verification. Lessons that will
 outlive that branch:
 
 **The `BeginPrompting` method reply MUST reach the bus before the `PromptReady` it triggers.**
@@ -928,9 +948,9 @@ Wrong key: `org.freedesktop.secrets.collection.Label` (lowercase, plural) → pa
 
 ## noctalia-greeter: PAM_TEXT_INFO (FIDO2 cue) display — fixed upstream
 
-`driveAuthConversation` in `greeter_surface.cpp` used to ACK `Info` messages with an empty response but not call `updateStatus` for them — the "Please touch your security key" cue was silently dropped. Krytis carried a local patch (`files/noctalia-greeter/0001-show-pam-info-cue.patch`) fixing this via `updateStatus` for both Info/Error, a `layoutScene` `hasStatus` check, and a `commitImmediateFrame(true)` before the blocking `postAuthData("")` recv (same pattern as `tryAuthenticate()`).
+`driveAuthConversation` in `greeter_surface.cpp` used to ACK `Info` messages with an empty response but not call `updateStatus` for them — the "Please touch your security key" cue was silently dropped. Krytis carried a local patch at `files/noctalia-greeter/0001-show-pam-info-cue.patch` (#133/#202; **deleted in #254, that directory no longer exists**) fixing this via `updateStatus` for both Info/Error, a `layoutScene` `hasStatus` check, and a `commitImmediateFrame(true)` before the blocking `postAuthData("")` recv (same pattern as `tryAuthenticate()`).
 
-Merged upstream in noctalia-dev/main commit `26865dae` ("always allow empty passwords and surface PAM info messages"). `desktop/noctalia-greeter.bst` is now pinned to upstream `main` directly — the local patch and fork pin are gone. If a future `bst source track` update on this element regresses the cue, check whether `26865dae`'s equivalent logic survived the change.
+Merged upstream in noctalia-dev/main commit `26865dae` ("always allow empty passwords and surface PAM info messages"), and #254 dropped both the patch and the `kitten-lily` fork pin. `desktop/noctalia-greeter.bst` then briefly pinned upstream `main`; since #299 it uses `git_repo` with `track: v*`, i.e. upstream **release tags** — `ref: v1.5.0-0-g5a450b89` as of this writing. If a future `bst source track` update on this element regresses the cue, check whether `26865dae`'s equivalent logic survived the change.
 
 ## polkit's sandboxed PAM helper hides the FIDO2 token (polkit ≥ 127)
 
@@ -1210,7 +1230,10 @@ timeout 10 ssh -o ConnectTimeout=2 -o BatchMode=yes …
 and the surrounding loop MUST measure wall-clock (`date +%s` deadline), not iteration
 count — iteration count silently multiplies the advertised budget by the per-probe cap.
 
-**Still open:** why `systemd-userdbd` stops answering is not diagnosed. It is not caused by
+**Undiagnosed, and no longer tracked:** why `systemd-userdbd` stops answering was never
+established. #848 was closed as completed on 2026-09-15 by the harness fix below, which
+routes `boot-test` around the call rather than fixing it, and no successor issue was
+opened — so this is a known, untracked bug. It is not caused by
 secure boot (reproduced with enforcement off), not by the sealed payload (reproduced with
 the unsigned one), and not by a dirty disk (reproduced on a fresh install). Suspected
 socket-activation race — it is intermittent. If a boot-test run fails with SSH never coming
@@ -1254,6 +1277,7 @@ SSH stall after this change.
 
 **Scope note:** this fixes the *test harness's* dependency on `userdbctl`, not the
 underlying `systemd-userdbd` intermittency, which is a real bug for any interactive
-user hitting SSH on a booted guest and remains open (issue #848). If a `boot-test` run
-still stalls at the SSH wait step after this fix, the cause is something else — this
-specific fallthrough is closed.
+user hitting SSH on a booted guest. #848 was closed as completed on this fix alone
+(2026-09-15) and nothing tracks the underlying bug now — see the previous entry. If a
+`boot-test` run still stalls at the SSH wait step after this fix, the cause is something
+else — this specific fallthrough is closed.

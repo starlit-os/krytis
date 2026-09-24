@@ -17,7 +17,7 @@
 # flatpak that bundles its own libvirt, so /app/bin/virsh inside the sandbox
 # talks to the same qemu:///session instance Boxes itself uses.
 #
-# See docs/skills/bootc-vm.md § Reaching tty5 (and other VTs) in GNOME Boxes.
+# See docs/skills/bootc-vm.md § *Boxes cannot send Ctrl+Alt+F5, so the first-boot wizard is unreachable*.
 
 set -euo pipefail
 
