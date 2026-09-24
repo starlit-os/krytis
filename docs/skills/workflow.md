@@ -102,21 +102,27 @@ mise run prune-worktrees --yes       # remove without the prompt — required fr
 
 It removes a worktree and its branch only when GitHub says the branch's newest PR is `MERGED`. Do not hand-roll the `git worktree remove` / `git branch -D` pair — the task encodes four things that are easy to get wrong:
 
-**Ancestry checks are trustworthy again — but only back to 2026-09-02.** Since #697 switched `main` to merge-commit-only, a merged branch's tip is a parent of `main`'s merge commit, so `git branch -d`, `git branch --merged main` and `git log --merged` all report it as merged. Anything merged *before* that date was squashed and shares no ancestry with `main`, so those branches refuse `-d` permanently. The task keeps using `-D` to cover both eras, and gates the delete on the PR state plus a tip-vs-PR-head match rather than on git's ancestry check.
+**Ancestry checks are trustworthy again — but only back to 2026-09-02.** Since #697 switched `main` to merge-commit-only, a merged branch's tip is a parent of `main`'s merge commit, so `git branch -d`, `git branch --merged main` and `git log --merged` all report it as merged. Anything merged *before* that date was squashed and shares no ancestry with `main`, so those branches refuse `-d` permanently. The task keeps using `-D` to cover both eras, and gates the delete on the PR state plus either a tip-vs-PR-head match **or** containment in `origin/main`.
 
 **`include/image-version.yml` is always locally modified.** `mise generate-image-version` writes a timestamp and commit SHA into it, so any worktree that ran a build carries it dirty and `git worktree remove` refuses. The task ignores that one path and refuses on anything else, rather than blanket-forcing.
 
 **Empty parent dirs survive their children.** Worktrees under `<cc-type>/` (`feat/`, `fix/`, …) or `gh<number>/` leave the parent directory behind. The task runs `git worktree prune` and deletes empty parents; `git worktree list` shows `prunable` next to stale entries if you are checking by hand.
 
-**A diverged tip is held back on purpose.** A local tip that does not match the merged PR's head means the branch was reused, force-pushed, or carries unpushed commits — the task reports it and keeps it:
+**A diverged tip is held back on purpose — unless `main` already has it.** The task first tries the cheap test (local tip == the merged PR's head), then falls back to `git merge-base --is-ancestor <tip> origin/main`. A tip reachable from `origin/main` holds nothing `main` lacks, whatever commit the PR head happens to be, so it is removed and the report says why:
 
 ```
-.worktrees/fido-dropin    tip c62ebb1 != #543 head 3e02894 (--allow-diverged to override)
+.worktrees/gh867-host-iso…    867-host-iso-downloads-via-r2 (#868, tip 7c7dd53 already in main)
 ```
 
-Verify before overriding, by whichever of these two routes applies:
+Only a tip in *neither* is kept:
 
-- **The tip is an ancestor of a branch you are keeping.** `git merge-base --is-ancestor <tip> <kept-branch>` exiting 0 means every commit stays reachable after the delete, so nothing can be lost regardless of what the diff looks like. This is the common shape for an investigation branch whose PR merged while a longer-running branch continued from its tip.
+```
+.worktrees/fido-dropin    tip c62ebb1 != #543 head 3e02894, and not in main (--allow-diverged to override)
+```
+
+That means the branch was reused, force-pushed, or carries unpushed commits. Verify before overriding, by whichever of these two routes applies:
+
+- **The tip is an ancestor of a branch you are keeping.** `git merge-base --is-ancestor <tip> <kept-branch>` exiting 0 means every commit stays reachable after the delete, so nothing can be lost regardless of what the diff looks like. This is the common shape for an investigation branch whose PR merged while a longer-running branch continued from its tip. (Against `origin/main` specifically, the task now runs this for you — the manual step survives for every *other* kept branch.)
 - **Otherwise, compare against `main`.** `git diff origin/main <branch>` must show only content `main` already has — deletions relative to `main`, no additions of the branch's own.
 
 `git diff <pr-head> <tip>` **is** available, contrary to what the deleted head ref suggests: GitHub retains every PR's head commit at `refs/pull/<n>/head` after the branch is gone, for merged and closed PRs alike. Fetch it, then diff against a real local object:
@@ -129,6 +135,8 @@ git diff FETCH_HEAD <tip>
 Fetching the bare OID (`git fetch origin <headRefOid>`) works too. Both were verified from a clean clone against merged #584 and closed #522, whose branches were both deleted. Comparing against `main` or a kept branch remains the better check when the question is "is anything lost" — but "the head is unfetchable" is not the reason.
 
 Then re-run with `--allow-diverged`.
+
+**Where this check came from, and the shape to watch for.** The manual verification route above documented `git merge-base --is-ancestor` from the start; the task itself only ever compared the tip to the PR head. So the automation kept parking branches whose containment a reader was being told to confirm by hand — a whole class of false holds (#867's worktree, kept for eight days on a tip that was an ordinary `main` commit). **When a task's docs tell a human to run a check the task could run, that gap is the bug** — the prose is the specification the code drifted from, not a workaround to keep writing down.
 
 ### Abandoning a PR: extract the lessons, then delete the branch
 

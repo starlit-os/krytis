@@ -16,8 +16,18 @@
 #
 # So this task asks GitHub for the PR state instead, and keeps `git branch -D`
 # (below) to cover both eras uniformly — the PR-state check plus the
-# tip-vs-PR-head comparison already provide the safety `-d` would. See
+# containment check provide the safety `-d` would. See
 # docs/skills/workflow.md § Cleaning Up Merged Worktrees and Branches.
+#
+# The tip does not have to *equal* the merged PR's head to be spent. A branch
+# whose tip is an ancestor of origin/main holds nothing that main does not
+# already have — which is exactly what `git branch -d` would check, and is
+# decidable for everything merged in the merge-commit era. Requiring equality
+# instead parks those forever: a branch left on any commit that later reached
+# main (a `main` sync, a CI fix cherry-picked ahead, a PR whose head is a merge
+# commit) reads as "diverged" while carrying nothing. #867's worktree sat that
+# way. Equality is still the cheap path; containment is the fallback, and
+# --allow-diverged remains for tips that are in neither.
 
 set -euo pipefail
 
@@ -45,10 +55,23 @@ git fetch --prune --quiet origin
 # Newest PR for the branch wins: a head ref can be reused across PRs (a reverted
 # change re-landed, a branch recycled), and only the latest one describes the
 # state the local tip is in.
+# `select(. != null)` matters: on a branch with no PR at all, `last` yields
+# null and the interpolation prints the literal "null null null", which sails
+# past the empty-check below and reports the branch as "#null is null" instead
+# of "no PR". Emit nothing instead, so the caller's `-z` test fires.
 pr_for_branch() {
     gh pr list --head "$1" --state all --limit 20 \
         --json number,state,headRefOid,updatedAt \
-        -q 'sort_by(.updatedAt) | last | "\(.number) \(.state) \(.headRefOid)"' 2>/dev/null
+        -q 'sort_by(.updatedAt) | last | select(. != null) | "\(.number) \(.state) \(.headRefOid)"' 2>/dev/null
+}
+
+# Is this commit already reachable from origin/main? `git fetch --prune` above
+# means origin/main is current. Nothing unique can hide behind a yes: that is
+# the definition of reachability, and it is the same question `git branch -d`
+# asks — just asked against the remote-tracking ref, so it also holds in a
+# worktree that has not pulled.
+contained_in_main() {
+    git merge-base --is-ancestor "$1" origin/main 2>/dev/null
 }
 
 # Only `include/image-version.yml` may be dirty: `mise generate-image-version`
@@ -86,9 +109,14 @@ while read -r wt; do
     fi
 
     tip=$(git -C "$wt" rev-parse HEAD)
-    if [ "$tip" != "$oid" ] && [ -z "$ALLOW_DIVERGED" ]; then
-        SKIP+=("$wt|tip ${tip:0:7} != #$num head ${oid:0:7} (--allow-diverged to override)")
-        continue
+    why="#$num"
+    if [ "$tip" != "$oid" ]; then
+        if contained_in_main "$tip"; then
+            why="#$num, tip ${tip:0:7} already in main"
+        elif [ -z "$ALLOW_DIVERGED" ]; then
+            SKIP+=("$wt|tip ${tip:0:7} != #$num head ${oid:0:7}, and not in main (--allow-diverged to override)")
+            continue
+        fi
     fi
 
     leftover=$(dirty_beyond_generated "$wt")
@@ -97,7 +125,7 @@ while read -r wt; do
         continue
     fi
 
-    REMOVE_WT+=("$wt|$branch|#$num")
+    REMOVE_WT+=("$wt|$branch|$why")
 done < <(git worktree list --porcelain | sed -n 's/^worktree //p')
 
 # ── Branches with no worktree ─────────────────────────────────────────────────
@@ -118,8 +146,8 @@ while read -r branch; do
         SKIP+=("$branch|no PR")
     elif [ "$state" != "MERGED" ]; then
         SKIP+=("$branch|#$num is $state")
-    elif [ "$(git rev-parse "$branch")" != "$oid" ] && [ -z "$ALLOW_DIVERGED" ]; then
-        SKIP+=("$branch|tip != #$num head ${oid:0:7} (--allow-diverged to override)")
+    elif [ "$(git rev-parse "$branch")" != "$oid" ] && ! contained_in_main "$branch" && [ -z "$ALLOW_DIVERGED" ]; then
+        SKIP+=("$branch|tip != #$num head ${oid:0:7}, and not in main (--allow-diverged to override)")
     else
         REMOVE_BR+=("$branch|#$num merged")
     fi
