@@ -34,6 +34,7 @@ Ranked by how often it has bitten, and by how expensive the bite was:
 | Drifted default | A documented `#USAGE` default, flag, or config key that the task/config no longer has | The task file is the executable truth; the doc is a copy that was never re-derived |
 | Phantom count | "this exists in **three** places — grep for `X`" where three is the upstream's count | Nobody re-runs the grep; the number reads as authoritative |
 | Orphaned `§` citation | A heading is renamed; every `docs/…md § Old Title` pointing at it goes stale | The damage is entirely *outside* the file the renaming commit touched. #647 renamed one `pam.md` heading and orphaned three citers (`docs/SKILL.md`, `mise/tasks/oo7-prompter-test`, `docs/design/secrets-service.md`) for four weeks with zero signal |
+| Half-dead rationale | A comment or section justifies something with two reasons; a change falsifies one and leaves the other standing | Nothing breaks — the conclusion stays correct — and the surviving clause makes the whole rationale read as verified. `elements/desktop/kmscon.bst` carried a dead "the `.pc` files are unobtainable" clause beside a live "a text console needs no GPU" one until #860. Grep for the *claim*, not for a symptom |
 
 The common root is not carelessness. It is that **every one of these was true when
 written**, and the change that falsified it lived in a different directory. Rot is the
