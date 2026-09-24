@@ -580,8 +580,7 @@ oci/krytis/filesystem.bst   kind: compose           build-depends: manifest.bst,
                                                      freedesktop-sdk.bst:components/gcc.bst
 
 oci/krytis/init-scripts.bst kind: collect_initial_scripts
-  └── build-depends: stacks/{base-system,bootc}.bst; writes /initial_scripts
-      (should be stack.bst — see below)
+  └── build-depends: oci/krytis/stack.bst; writes /initial_scripts
 
 oci/krytis/image.bst        kind: script            (final OCI image)
   └── stages filesystem.bst + oci/os-release.bst at /layer, then runs the
@@ -602,15 +601,25 @@ zirconium-hawaii `e823d7d` repointed its own `init-scripts.bst` from
 commit body calls the original "a dumb mistake that so far hasn't costed me
 anything, but it definitely could cause issues down the line".
 
-**krytis has the same mismatch, unfixed.** `elements/oci/krytis/init-scripts.bst:3-5`
-build-depends `stacks/base-system.bst` + `stacks/bootc.bst`, while the composed
+**krytis had the same mismatch until #934.** `elements/oci/krytis/init-scripts.bst`
+build-depended `stacks/base-system.bst` + `stacks/bootc.bst`, while the composed
 root is `oci/krytis/filesystem.bst` → `oci/krytis/runtime.bst` →
 `oci/krytis/stack.bst`, and that stack also pulls `stacks/{codecs,desktop,dev-tools}.bst`,
 `core/linux-cachyos.bst` and `core/initramfs.bst` (`elements/oci/krytis/stack.bst:3-10`).
-Presets, sysusers and tmpfiles contributed by those five are collected by nothing.
-The fix is one substitution — `build-depends: [oci/krytis/stack.bst]` — and the
-symptom it prevents (a preset or sysuser that exists in an element and not in the
-image) is invisible to `mise run validate` and to every build log.
+Presets, sysusers and tmpfiles contributed by those five were collected by nothing.
+The fix was one substitution — `build-depends: [oci/krytis/stack.bst]`.
+
+Its sibling collector was right all along: `oci/krytis/manifest.bst`
+(`kind: collect_manifest`) has build-depended on `stack.bst` since it was written,
+so the SBOM covered the whole image while `/initial_scripts` covered two stacks of
+it. Two collectors over the same image with different dep roots is the shape to
+grep for — they should agree, and the one that disagrees is the bug.
+
+**The class is undetectable without comparing artifacts.** The symptom is a preset
+or sysuser that exists in an element and not in the image: no error, no missing-file
+diagnostic, nothing in a build log, and `mise run validate` resolves the graph
+without ever composing it. Checking it means diffing `/initial_scripts` between the
+two dep roots, which is what #934's PR records.
 
 ### OCI script assembly order (strict)
 
