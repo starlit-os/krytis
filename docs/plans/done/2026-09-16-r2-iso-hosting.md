@@ -297,24 +297,24 @@ git commit -m "docs: document R2 ISO hosting design (#867)"
 
 **Files:** none — verification only.
 
-- [ ] **Step 1: Push the branch and open the PR**
+- [x] **Step 1: Push the branch and open the PR** — PR #930
 
 ```bash
 git push -u origin <branch>
 gh pr create --repo starlit-os/krytis --title "feat(ci): host sealed ISO downloads via Cloudflare R2" --body "Closes #867"
 ```
 
-- [ ] **Step 2: Merge it**
+- [x] **Step 2: Merge it** — merged 2026-09-24T12:28:31Z, `0240595`
 
 Merge Gate — human clicks merge. `build-iso.yml` can only be dispatched with the new inputs once they're live on `main` (agents cannot dispatch a workflow_dispatch run using inputs that only exist on an unmerged branch).
 
-- [ ] **Step 3: Dispatch with `sealed=true, publish_r2=true`**
+- [x] **Step 3: Dispatch with `sealed=true, publish_r2=true`** — run 35999308963, `compression=release`
 
 ```bash
 gh workflow run build-iso.yml --repo starlit-os/krytis --ref main -f sealed=true -f publish_r2=true -f compression=release
 ```
 
-- [ ] **Step 4: Confirm the run's own verification step passed**
+- [x] **Step 4: Confirm the run's own verification step passed** — `conclusion: success` in 26m10s. Step outcomes: `Publish sealed ISO to R2` ✓, `Verify the public download` ✓, `Upload ISO artifact` **skipped** (the artifact-suppression conditional added in Task 4 Step 6, on its first live exercise), `Reject publish_r2 without sealed` skipped.
 
 ```bash
 gh run list --repo starlit-os/krytis --workflow build-iso.yml --limit 1 --json databaseId,conclusion
@@ -322,7 +322,7 @@ gh run list --repo starlit-os/krytis --workflow build-iso.yml --limit 1 --json d
 
 Expected: `conclusion: success` — which already proves the same-run size+checksum check (Task 4 Step 3) passed, so this step and the next are belt-and-braces, not the only evidence.
 
-- [ ] **Step 5: Independently confirm from outside CI**
+- [x] **Step 5: Independently confirm from outside CI** — `HTTP/2 200`, `content-type: application/x-iso9660-image`, `content-length: 4953403392` (4.61 GB), `cache-control: public, max-age=3600, must-revalidate` (the header the upload step sets, so the Cache Rule has a TTL to respect), `last-modified: 2026-09-24T12:54:47Z`. Checksum object served `d4cc3c26bbe44781afd71b5950c3afd96ab489dee595ecb9129c81e2d6cc9447`. The etag `"3f42779585aca748a47e0e6dc299037e-945"` carries a `-945` multipart suffix — direct evidence the 945-part upload completed, which is exactly the path an Object-scoped token fails without `no_check_bucket`.
 
 ```bash
 curl -sI https://iso.ririi.dev/krytis-live-sealed.iso | head -5
@@ -331,7 +331,7 @@ curl -sL https://iso.ririi.dev/krytis-live-sealed.iso.sha256
 
 Expected: `HTTP/2 200`, a `content-type: application/x-iso9660-image`, and a 64-char hex checksum. Optionally download the full ISO and verify `sha256sum` locally against the printed checksum for full confidence beyond the CI job's own self-check.
 
-- [ ] **Step 6: Archive this plan and close the issue**
+- [x] **Step 6: Archive this plan and close the issue**
 
 ```bash
 git mv docs/plans/2026-09-16-r2-iso-hosting.md docs/plans/done/2026-09-16-r2-iso-hosting.md
