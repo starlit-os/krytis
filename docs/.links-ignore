@@ -56,6 +56,10 @@ live/src/configure-live.sh                # dakota-iso's, the original of live/s
 live/src/show-screenshot.sh               # dakota-iso's (krytis's own copy is scripts/show-screenshot.sh); cited by dakota-iso.md
 live/src/dracut/95dakota-isofile/         # dakota-iso's; cited by dakota-iso.md
 elements/gaming/                          # dakota's; docs/design/gaming-variant.md cites it as the tree krytis deliberately did not build
+docs/build.md                             # dakota-iso's; cited by dakota-iso.md as the prose that failed to keep dakota/src/ in sync
+scripts/build-offline-store.sh            # dakota-iso's, deleted upstream in 7c9d6c6f; cited by dakota-iso.md for the overlay-vs-VFS reason it died
+patches/freedesktop-sdk/                  # gnome-build-meta's patch set; cited by dakota.md § nested-junction ref-consistency
+elements/gamerslop/linux-ogc.bst          # zirconium-hawaii's gaming-tree kernel; cited by zirconium-hawaii.md as the provenance of the /sys/fs/selinux lesson
 
 # Deliberately cited as absent — deleted on purpose, or proposed and never built
 scripts/fisherman-install.sh              # deleted in 0d0aa53 once tuna-os/fisherman#219 landed; krytis-live-config.md cites it as the record

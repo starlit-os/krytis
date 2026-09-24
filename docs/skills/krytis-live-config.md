@@ -371,6 +371,60 @@ there is no local `:latest` (the `--payload-image` release-validation case).
 | dracut messages, then `dracut-initqueue timeout` | Squashfs/label mismatch — check `LiveOS/squashfs.img` and `krytis/live_label` |
 | `Permission denied (publickey)` in the harness | ISO built without `--debug` |
 
+### Live media want `dracut --omit shutdown` (2026-09-24, upstream dakota-iso `8ff32cc0`)
+
+**What:** the dracut `shutdown` module re-execs into the initramfs at poweroff/reboot. On a
+read-only live root that hangs the shutdown transaction instead of powering the machine off.
+Upstream added `--omit "shutdown"` to its Debian cross-build with a comment that the flag
+"applies to every ISO, not only test builds" — a production-media fix that a CI gate merely
+happened to surface, not a CI workaround.
+
+**krytis exposure:** `live/Containerfile` stage 2b (107-110) runs `DRACUT_NO_XATTR=1 dracut
+-v --force --zstd --reproducible --no-hostonly --add "dmsquash-live" --add-drivers "squashfs
+overlay loop iso9660 sr_mod cdrom"` with no `--omit`; stage 2a's native invocation (70-72)
+has none either.
+
+**Latent rather than observed, and the reason is the interesting part:** krytis's E2E gate
+powers the live VM down through the QEMU monitor and then quits it —
+`scripts/iso-install-fisherman.sh:121-123`, `system_powerdown`, `sleep 5`, `quit` — and that
+`quit` kills QEMU whether or not the guest ever completed its shutdown transaction. The gate
+structurally cannot see this hang. A human powering off real live media would.
+
+**Not the same thing as the note at `live/Containerfile:47`.** That comment is about
+*native* dracut failing at **build** time because its shutdown module cannot find
+poweroff/reboot/halt symlinks in a container build context — a build-time symptom, on a path
+krytis never takes. It is also plausibly why the omit was never added to the cross-build:
+the word "shutdown" was already in the file, attached to a different problem.
+
+### `iso9660` vs `isofs`, `--filesystems` vs `--add-drivers` (2026-09-24, upstream dakota-iso `8ff32cc0`)
+
+**What:** two things that read as interchangeable and are not.
+
+- `--filesystems "iso9660 squashfs"` is dracut's **filesystem set** — it controls which
+  mount helpers and filesystem modules get installed into the initramfs.
+- `isofs` is a **driver name**. On kernels that build ISO 9660 support as `isofs` rather
+  than `iso9660`, asking for `iso9660` alone installs nothing at all.
+
+After roughly ten CI iterations on "dropped to the dracut shell" / "could not mount the live
+image", upstream converged on `--filesystems "iso9660 squashfs" --add-drivers "squashfs
+overlay loop iso9660 isofs sr_mod cdrom" --force-drivers "isofs"` on **both** the native and
+the cross-build path, plus `instmods loop iso9660 isofs squashfs overlay` in its dracut
+module. `--force-drivers` — not `--add-drivers` — is what loads `isofs` during initramfs
+startup rather than leaving it to late module discovery.
+
+**krytis exposure:** `live/Containerfile:109` passes `--add-drivers "squashfs overlay loop
+iso9660 sr_mod cdrom"`: `iso9660` but no `isofs`, no `--force-drivers`, and no
+`--filesystems` on either stage 2a (70-72) or stage 2b (107-110).
+
+**This records a fragile line; it is not an instruction to change it blind.** krytis ISOs
+boot, so its kernel currently exposes the module under the name dracut is being asked for
+and discovery is fast enough. The exposure is a kernel-config change renaming it — krytis
+ships a prebuilt CachyOS kernel (`elements/core/linux-cachyos.bst`), whose config is not
+krytis's to freeze. The failure would present as exactly the mute drop to the dracut shell
+in the symptom table above, with the `--add-drivers` line still reading as correct. If that
+ever appears, check the module name in the reference image's
+`/usr/lib/modules/<kver>/modules.builtin` and `modules.dep` before touching anything else.
+
 ### The installer flatpak carries fisherman — pull it from tuna-os (2026-09-19)
 
 **What:** `live/src/install-flatpaks.sh` downloads `org.bootcinstaller.Installer.flatpak`
