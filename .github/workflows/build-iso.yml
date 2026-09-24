@@ -20,6 +20,16 @@ name: Build ISO
 # image as-is via `scripts/ensure-sealed-image.sh`'s explicit-ref path,
 # which only requires the ref to exist locally and asserts it's genuinely
 # sealed (`/boot/EFI/Linux/krytis.efi` present) — it never re-seals.
+#
+# publish_r2=true additionally uploads the sealed ISO to Cloudflare R2,
+# which is what https://iso.ririi.dev/krytis-live-sealed.iso serves (#867).
+# It is a separate input from sealed, not implied by it, so a sealed test
+# dispatch does not have to overwrite the object the public download URL
+# points at. There is no unsealed-to-R2 path at all: publishing an
+# unsigned, non-Secure-Boot image at a "download Krytis here" URL would
+# invert the trust model the sealed build exists to establish, so the
+# combination fails the job immediately rather than silently doing
+# something reasonable-looking.
 
 on:
   workflow_dispatch:
@@ -33,6 +43,10 @@ on:
         default: fast
       sealed:
         description: 'Install the sealed (signed UKI) image, pulled from ghcr — not re-sealed locally (#862)'
+        type: boolean
+        default: false
+      publish_r2:
+        description: 'Upload the sealed ISO to Cloudflare R2 as the public "latest" download (iso.ririi.dev) — only valid with sealed=true (#867)'
         type: boolean
         default: false
 
@@ -50,11 +64,20 @@ jobs:
     # runner (mise.toml RUNNER_LABELS) whenever both happen to be online.
     # No Blacksmith fallback (unlike cache-warm/publish) — Blacksmith has
     # none of the host packages this job needs (mksquashfs, mtools,
-    # dosfstools) and provisioning an ephemeral runner for those on every
+    # dosfstools, rclone) and provisioning an ephemeral runner for those on every
     # run is wasted work the always-on VPS doesn't have to repeat.
     runs-on: [self-hosted, linux, x64, krytis-vps]
     timeout-minutes: 60
     steps:
+      # Kept ahead of checkout deliberately: an invalid input combination
+      # should cost seconds, not the ~40 minutes of build this job would
+      # otherwise spend before reaching the upload step and failing there.
+      - name: Reject publish_r2 without sealed
+        if: ${{ inputs.publish_r2 && !inputs.sealed }}
+        run: |
+          echo "::error::publish_r2=true requires sealed=true — there is no unsealed-to-R2 publish path (#867)."
+          exit 1
+
       # Default `clean: true` runs `git clean -ffdx` after checkout, which
       # wipes the untracked `output/` dir this job builds into — including
       # any squashfs staging tree (`output/krytis-sfs-root`) a killed
@@ -126,16 +149,100 @@ jobs:
         if: ${{ !inputs.sealed }}
         run: mise run verify-iso-payload --iso output/krytis-live.iso --image localhost/krytis:latest
 
+      - name: Publish sealed ISO to R2
+        # Credentials arrive as RCLONE_CONFIG_* env vars scoped to this one
+        # step, which is rclone's documented way to define a remote with no
+        # config file — nothing is written to the VPS runner's persistent
+        # disk, so a compromised later job on this always-on box finds no
+        # rclone.conf to read. The remote is named `r2`, hence the
+        # RCLONE_CONFIG_R2_* prefix.
+        if: ${{ inputs.sealed && inputs.publish_r2 }}
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          RCLONE_CONFIG_R2_REGION: auto
+          # Required, not an optimisation. rclone checks a bucket exists
+          # (and would create it) before its first upload, which an
+          # Object-Read-&-Write-scoped token has no permission to do —
+          # bucket-level calls are Admin scope. rclone's own S3 docs say so
+          # under Cloudflare R2: "For R2 tokens with the 'Object Read &
+          # Write' permission, you may also need to add no_check_bucket =
+          # true for object uploads to work correctly." Without it the
+          # upload fails after the ~40-minute build has already run.
+          RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
+        run: |
+          ISO=output/krytis-live-sealed.iso
+          sha256sum "${ISO}" | awk '{print $1}' > "${ISO}.sha256"
+
+          echo "==> Uploading ${ISO} to r2://krytis-iso/krytis-live-sealed.iso..."
+          rclone copyto "${ISO}" r2:krytis-iso/krytis-live-sealed.iso \
+            --header-upload "Content-Type: application/x-iso9660-image" \
+            --header-upload "Cache-Control: public, max-age=3600, must-revalidate" \
+            --progress
+
+          echo "==> Uploading checksum..."
+          rclone copyto "${ISO}.sha256" r2:krytis-iso/krytis-live-sealed.iso.sha256 \
+            --header-upload "Content-Type: text/plain" \
+            --header-upload "Cache-Control: public, max-age=3600, must-revalidate"
+
+      - name: Verify the public download
+        # Proves the URL users are pointed at serves *this* run's bytes, not
+        # a stale edge-cached copy or a truncated upload. Checking size and
+        # checksum separately is not redundant: a content-length match with
+        # a checksum mismatch means Cloudflare served an equally-sized older
+        # object, which is exactly the failure a size-only check misses.
+        if: ${{ inputs.sealed && inputs.publish_r2 }}
+        run: |
+          LOCAL_SIZE=$(stat -c%s output/krytis-live-sealed.iso)
+          REMOTE_SIZE=$(curl -sI https://iso.ririi.dev/krytis-live-sealed.iso | awk 'BEGIN{IGNORECASE=1} /^content-length:/{print $2}' | tr -d '\r')
+          echo "local=${LOCAL_SIZE} remote=${REMOTE_SIZE}"
+          [ "${LOCAL_SIZE}" = "${REMOTE_SIZE}" ] || { echo "::error::Published object size does not match the built ISO — upload may have been served from stale edge cache or truncated." >&2; exit 1; }
+
+          REMOTE_SHA=$(curl -sL https://iso.ririi.dev/krytis-live-sealed.iso.sha256)
+          LOCAL_SHA=$(cat output/krytis-live-sealed.iso.sha256)
+          [ "${REMOTE_SHA}" = "${LOCAL_SHA}" ] || { echo "::error::Published checksum does not match the built ISO." >&2; exit 1; }
+          echo "==> iso.ririi.dev serves the ISO this run built (size + checksum both match)."
+
       - name: Print disk usage after build
         if: always()
         run: df -h -x fuse || true
 
       - name: Upload ISO artifact
+        # Skipped when this run published to R2: iso.ririi.dev already
+        # serves those exact bytes, so the artifact would be a redundant
+        # 4.5 GB copy of a publicly fetchable file, billed against Actions
+        # storage. Every other path still uploads — the unsealed
+        # build has no other distribution route (#867 keeps it as an
+        # internal-testing artifact deliberately), and a sealed build with
+        # publish_r2=false is a test dispatch that must stay retrievable.
+        #
+        # The `|| failure()` is what makes the skip safe rather than a
+        # data-loss path. Steps default to running only on success, so
+        # without it a failed upload or a failed public-download check
+        # would discard a 4.5 GB ISO that took ~40 minutes to build, and
+        # the next run's `git clean -ffdx` wipes output/ before a retry
+        # could reuse it. With it, a publish failure falls back to the
+        # artifact and the rebuild is avoidable. If the *build* itself
+        # failed there is no ISO to find, and upload-artifact's default
+        # if-no-files-found: warn leaves the real error as the only one
+        # reported.
+        if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: krytis-live-iso-${{ github.run_id }}
           path: ${{ inputs.sealed && 'output/krytis-live-sealed.iso' || 'output/krytis-live.iso' }}
-          retention-days: 7
+          # 1, not #844's original 7. At 4.5 GB per run this is the
+          # difference between an ISO costing a day of Actions storage and
+          # a week of it, and nothing here is a durable artifact: every
+          # remaining upload is a same-session internal test (unsealed
+          # build, sealed dry-run, or a publish-failure rescue copy),
+          # fetched within minutes or not at all. Anything meant to
+          # outlive the session belongs on R2, which is what publish_r2
+          # exists for.
+          retention-days: 1
 
       - name: Clean up local images
         # Best-effort, never fails the job (§ "does this decide anything?"

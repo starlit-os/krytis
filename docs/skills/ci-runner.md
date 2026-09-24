@@ -368,7 +368,8 @@ re-asserts the service and the drop-in. Re-key by running
 Manual trigger only (`workflow_dispatch`, no push/schedule) as of #844. Runs
 `mise run build-iso` on this same `krytis-vps` runner, not Blacksmith — the
 VPS is the only runner provisioned with the host tools the job needs
-(`squashfs-tools`, `mtools`, `dosfstools`, all in `provision.sh`), and
+(`squashfs-tools`, `mtools`, `dosfstools`, plus `rclone` for the R2
+publish path — all in `provision.sh`), and
 provisioning an ephemeral Blacksmith runner for those on every dispatch would
 repeat work the always-on box doesn't have to.
 
@@ -440,6 +441,80 @@ after assembly (`mise/tasks/build-iso`'s own tail), so `build-iso.yml`'s
 separate "Verify ISO payload" step is gated `if: ${{ !inputs.sealed }}` —
 running it again for the sealed path would just re-check what the task
 itself already asserted, against the same local tag.
+
+### R2 publish (`publish_r2`, issue #867)
+
+`publish_r2: true` uploads the sealed ISO to the `krytis-iso` Cloudflare R2
+bucket, which is what `https://iso.ririi.dev/krytis-live-sealed.iso` serves.
+Design rationale, cost model and the credential inventory live in
+`docs/design/iso-distribution.md`; what follows is only what matters when
+editing this workflow.
+
+**It is a separate input from `sealed`, and `publish_r2` without `sealed`
+fails the job in its first step — before checkout.** There is no
+unsealed-to-R2 path: the unsealed ISO installs an image whose UKI is not
+signed by the project's Secure Boot keys, and a user cannot tell the two
+apart from the filename. The gate runs ahead of checkout deliberately, so an
+invalid dispatch costs seconds rather than ~40 minutes of build before
+failing at the upload step. Keeping the inputs independent also means a
+sealed *test* dispatch does not overwrite the public download.
+
+**Credentials are plain GitHub Actions secrets** (`R2_ACCOUNT_ID`,
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`), not Proton Pass/fnox. Same
+split as `TRACKING_APP_*` (#699/#793): Proton Pass is for credentials a
+human also needs locally (signing keys, Buildbarn tokens, the VPS SSH
+host), and nothing outside this workflow ever uploads to this bucket. They
+reach `rclone` as `RCLONE_CONFIG_R2_*` environment variables scoped to the
+single upload step, so no `rclone.conf` is written — which matters more here
+than on an ephemeral runner, since this box is persistent and a config file
+would outlive the job that needed it.
+
+**`RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"` is required, not a
+transaction-count optimisation.** rclone checks that a bucket exists —
+and would create it — before its first upload. Those are bucket-level
+calls, which an **Object** Read & Write token cannot make; that scope
+covers objects only. rclone's own S3 documentation states it under
+Cloudflare R2: *"For R2 tokens with the 'Object Read & Write' permission,
+you may also need to add `no_check_bucket = true` for object uploads to
+work correctly."* Drop the setting and the publish fails **after** the
+~40-minute build, at the upload step. The alternative — widening the
+token to Admin Read & Write so the check succeeds — trades a one-line
+config for a CI credential that can delete buckets, which is the wrong
+trade.
+
+**The job verifies its own publish before going green**, comparing both the
+published object's `content-length` and the published `.sha256` against the
+ISO it just built. Both checks, not one: a size match with a checksum
+mismatch means Cloudflare served an equally-sized *older* object, which is
+precisely what a size-only check cannot see.
+
+**A successful publish suppresses the artifact upload, and the `failure()`
+clause in that condition is not decoration.** The step carries
+`if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}`. Skipping
+is the point — once `iso.ririi.dev` serves those bytes the artifact is a
+redundant 4.5 GB copy billed against Actions storage — but GitHub steps
+run on success by default, so the skip condition alone would *also*
+discard the ISO whenever the upload or the public-download check failed.
+That is the expensive case: ~40 minutes of build, and the next run's
+`git clean -ffdx` wipes `output/` before a retry could reuse it. Every
+other path still uploads: the unsealed build has no other route off the
+runner, and a sealed dispatch with `publish_r2=false` is a test that must
+stay retrievable.
+
+**Do not use DNS resolution or a bare 200 to decide whether
+`iso.ririi.dev` is wired up.** The `ririi.dev` zone carries a wildcard
+`*.ririi.dev` A record pointing at materia, so the hostname resolved and
+answered requests before the R2 Custom Domain existed at all. The R2
+dashboard's "Active" status, or a `content-type:
+application/x-iso9660-image` on the response, is what distinguishes the
+bucket from the wildcard.
+
+**If the bucket is ever recreated, recreate its lifecycle rule too.**
+Unfinished multipart uploads bill as storage and are invisible in the
+object listing, so a cancelled run or a dead runner strands ~4.5 GB
+indefinitely while the bucket still shows exactly two objects. The rule
+(abort incomplete multipart uploads after 1 day) is the only thing keeping
+a repeatedly-failing publish from quietly eating the 10 GB-month free tier.
 
 ## Scheduled Workflow Cron Delay
 
@@ -1390,7 +1465,7 @@ autonomously.
 |---|---|---|
 | `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
 | `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Still Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml`: this job is `workflow_dispatch`-only (no schedule), so nothing recurs unattended, and its escape hatch is for debugging a publish failure on the real hardware or falling back when Blacksmith is degraded. Dispatch-only also means the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard, unlike `cache-warm.yml`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
-| `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
+| `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
 

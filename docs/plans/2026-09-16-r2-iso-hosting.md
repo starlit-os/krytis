@@ -15,7 +15,7 @@
 
 ## Global Constraints
 
-- R2 credentials are a scoped API token — **Object Read & Write on the `krytis-iso` bucket only**, never an account-wide token. Create it from the bucket's own "Manage API tokens" panel, not the account-level R2 API Overview page (the latter defaults to all-buckets scope).
+- R2 credentials are a scoped API token — **Object Read & Write, scoped to the `krytis-iso` bucket only**, never an account-wide token and never `Admin Read & Write` (which can create and delete buckets). Bucket scoping is a step *inside* the account-level token flow, not a separate bucket-scoped panel — see Task 1 Step 3.
 - Secrets (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are GitHub Actions repo secrets, matching the `TRACKING_APP_*` precedent (#699/#793) for CI-only credentials with no local-dev use case — not Proton Pass/fnox, which this repo reserves for credentials a human also needs locally (signing keys, Buildbarn tokens, the VPS SSH host). Bucket name (`krytis-iso`) is not sensitive and is hardcoded in the workflow, not a secret.
 - `publish_r2: true` with `sealed: false` must fail the job loudly at the top, before any build work — there is no unsealed-to-R2 path, ever (see Scope decision above).
 - `rclone` runs with credentials passed as `RCLONE_CONFIG_*` environment variables scoped to the single upload step — no `rclone.conf` file written to the runner's persistent disk.
@@ -30,21 +30,31 @@ Per AGENTS.md, provisioning auth/secrets is a human decision point. Do this in t
 
 **Files:** none — this is entirely in the Cloudflare dashboard.
 
-- [ ] **Step 1: Enable R2 on the Cloudflare account** (if not already)
+- [x] **Step 1: Enable R2 on the Cloudflare account** (if not already)
 
 Dashboard → R2 → follow the enablement flow. R2 requires a payment method on file even though a single ~3-5GB ISO overwritten in place costs well under R2's free tier (10GB-month storage, 1M Class A / 10M Class B ops free) — actual spend should round to $0.
 
-- [ ] **Step 2: Create the bucket**
+- [x] **Step 2: Create the bucket**
 
 R2 → Create bucket → name `krytis-iso` → Location: Automatic → Storage class: Standard.
 
-- [ ] **Step 3: Create a bucket-scoped API token**
+Then, on the new bucket: Settings → **Object lifecycle rules** → Create rule → *Abort incomplete multipart uploads* after **1 day**, applied to the whole bucket (no prefix filter).
 
-From the `krytis-iso` bucket's page → Settings → **Manage API tokens** (bucket-scoped panel, not the account-level R2 API Overview — that one defaults to all-buckets access) → Create API token → Permissions: **Object Read & Write** → TTL: no expiry (rotate manually per Task 6's note) → Create.
+This is the one way the "one ISO at a time" assumption can silently stop holding. R2's free tier is 10 GB-month billed as the monthly average of each day's *peak* storage, and a 4.5 GB ISO (`docs/design/secure-boot-testing.md`) leaves roughly 2x headroom — a publish briefly peaks near 9 GB (old object still live while the new upload's parts accumulate) and that spike costs 9/30 = 0.3 GB-month, which is nothing. But **unfinished multipart uploads are billed as storage and do not appear in the bucket's object listing.** A cancelled workflow run or a dead runner leaves ~4.5 GB of orphaned parts behind forever; the bucket still shows exactly two objects while storage climbs per failed run. `AbortMultipartUpload` is a free operation, so the lifecycle rule costs nothing to run.
+
+- [x] **Step 3: Create a bucket-scoped API token**
+
+R2 Object Storage → **Overview** ([direct link](https://dash.cloudflare.com/?to=/:account/r2/overview)) → **Account Details** panel → **API Tokens** → **Manage** → **Create Account API token** → Permissions: **Object Read & Write** → a bucket selector unfolds once that permission is chosen: select **`krytis-iso`** (not "all buckets") → Create.
+
+**This is not the bucket's own settings page.** An earlier revision of this plan sent the reader to a per-bucket "Manage API tokens" panel; that panel is gone from the dashboard, and scoping now lives at step 5 of the account-level flow instead (Cloudflare's own docs at `developers.cloudflare.com/r2/api/tokens/`, as of their 2026-08-18 revision, document only the account flow). The *intent* of the original instruction still holds exactly — the token must not be all-buckets — the UI location for satisfying it moved.
+
+Choose **Account** API token, not **User** API token. A user token is tied to your individual Cloudflare user, inherits your personal permissions, and goes inactive if that user is ever removed from the account — unacceptable for a credential CI depends on. Account tokens stay valid until manually revoked and require the Super Administrator role to create or view.
+
+`Object Read & Write` is supported by the S3-compatible API only, not Cloudflare's REST API. That is the correct choice here: `rclone` speaks S3 to `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
 
 Record the three values shown **once**: Access Key ID, Secret Access Key, and the Account ID (also visible in the dashboard sidebar / any existing R2 endpoint URL, format `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`).
 
-- [ ] **Step 4: Provision as GitHub Actions secrets**
+- [x] **Step 4: Provision as GitHub Actions secrets**
 
 ```bash
 gh secret set R2_ACCOUNT_ID --repo starlit-os/krytis --body "<Account ID from Step 3>"
@@ -52,7 +62,7 @@ gh secret set R2_ACCESS_KEY_ID --repo starlit-os/krytis --body "<Access Key ID f
 gh secret set R2_SECRET_ACCESS_KEY --repo starlit-os/krytis --body "<Secret Access Key from Step 3>"
 ```
 
-- [ ] **Step 5: Verify (names only — GitHub never returns secret values)**
+- [x] **Step 5: Verify (names only — GitHub never returns secret values)** — confirmed 2026-09-24: all three present, set 09:37–09:38.
 
 ```bash
 gh secret list --repo starlit-os/krytis
@@ -64,7 +74,7 @@ Expected: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` all listed
 
 **Files:** none — Cloudflare dashboard only.
 
-- [ ] **Step 1: Confirm `ririi.dev` is on Cloudflare DNS**
+- [x] **Step 1: Confirm `ririi.dev` is on Cloudflare DNS** — done 2026-09-24: `austin.ns.cloudflare.com`, `tara.ns.cloudflare.com`. The zone is Cloudflare-managed, so the blocking branch below does not apply.
 
 ```bash
 dig NS ririi.dev +short
@@ -72,28 +82,38 @@ dig NS ririi.dev +short
 
 Expected: Cloudflare nameservers (`*.ns.cloudflare.com`). `bst-cache.ririi.dev` already resolves for bow, but confirm rather than assume — that record could in principle be a plain CNAME/A record on a non-Cloudflare DNS provider with TLS terminated by materia's own reverse proxy, which would NOT satisfy R2 Custom Domain's requirement that Cloudflare manage the zone. If the zone is not on Cloudflare, this task blocks on adding it there first (out of scope for this plan — coordinate with whoever owns `ririi.dev`'s registrar/DNS, likely via the `materia` repo/infra, before continuing).
 
-- [ ] **Step 2: Connect the custom domain to the bucket**
+- [x] **Step 2: Connect the custom domain to the bucket**
 
 R2 → `krytis-iso` bucket → Settings → **Custom Domains** → Connect Domain → `iso.ririi.dev` → Continue. Cloudflare auto-creates the proxied CNAME record in the zone and issues a managed TLS certificate.
 
-- [ ] **Step 3: Wait for Active status**
+- [x] **Step 3: Wait for Active status** — verified from outside the dashboard 2026-09-24: `iso.ririi.dev` now resolves to Cloudflare anycast (`172.67.130.180`, `104.21.3.126`), not materia's `46.62.242.208`, and returns `HTTP/2 404` with `server: cloudflare` — the correct response for a bucket with nothing published yet. Control: `nonexistent-probe-8712.ririi.dev` now fails TLS outright, since materia holds no certificate for it, which is what distinguishes a real Custom Domain from the wildcard that previously answered here.
 
 The custom domain's status shows "Initializing" → "Active" (usually under a few minutes since the zone is already on Cloudflare — no external DNS propagation wait). Do not proceed to Task 6 until it reads Active.
 
-- [ ] **Step 4: Add a Cache Rule for edge caching**
+**While waiting, the dashboard status is the only valid readiness signal — do not substitute `dig` or `curl`.** The `ririi.dev` zone carries a wildcard `*.ririi.dev` A record pointing at materia (`46.62.242.208`), verified 2026-09-24 by resolving a name that cannot exist: `nonexistent-probe-8712.ririi.dev` returned that same address. So `iso.ririi.dev` already resolved, and already answered requests, before this bucket existed. A 200 during the wait proves nothing.
 
-R2 serves the origin correctly without this, but a multi-GB file repeatedly downloaded by users worldwide benefits from Cloudflare's edge cache, not just R2's zero-egress-to-Cloudflare pricing. Dashboard → `ririi.dev` zone → Rules → Cache Rules → Create rule:
-- When incoming requests match: Hostname equals `iso.ririi.dev`
-- Then: Eligible for cache = **Eligible**, Edge TTL = **Respect origin TTL** (this defers to the `Cache-Control` header the upload step sets in Task 4 — no separate TTL to keep in sync by hand)
+*After* the cutover, DNS does become a valid confirmation — the name resolves to Cloudflare anycast instead of materia, as Step 3 records — but that is a post-hoc check, not a way to tell "not ready yet" from "ready". Both look alike from outside until the switch actually happens.
+
+- [x] **Step 4: Add a Cache Rule for edge caching**
+
+R2 serves the origin correctly without this, but a multi-GB file repeatedly downloaded by users worldwide benefits from Cloudflare's edge cache, not just R2's zero-egress-to-Cloudflare pricing. Dashboard → `ririi.dev` zone → **Caching** → **Cache Rules** → Create rule ([direct link](https://dash.cloudflare.com/?to=/:account/:zone/caching/cache-rules)). Not `Rules` → `Cache Rules`, which is where an earlier revision of this step sent the reader.
+- When incoming requests match: **Custom filter expression**, Hostname equals `iso.ririi.dev`. Not "All incoming requests" — that would apply the rule to the whole zone, including everything the `*.ririi.dev` wildcard serves from materia.
+- Then: Cache eligibility = **Eligible for cache**; Edge TTL = **"Use cache-control header if present, use default Cloudflare caching behavior if not"**.
+
+That Edge TTL wording is the UI label; **"Respect origin TTL"**, which this step said previously, is the *API* value (`respect_origin`) and appears nowhere in the dropdown. The intent is unchanged — defer to the `Cache-Control: public, max-age=3600, must-revalidate` header Task 4's upload sets, so there is no second TTL to keep in sync by hand. Take care not to pick the adjacent **"Use cache control-header if present, bypass cache if not"**: it reads almost identically and skips caching entirely for any response without the header.
+
+At Deploy, Cloudflare may offer to create a proxied DNS record for the hostname in the expression. Seeing that prompt means Step 2 has not been done — go connect the Custom Domain rather than hand-creating the record here.
 
 ### Task 3: Provision `rclone` on the VPS runner — agent
 
 **Files:**
 - Modify: `files/runner-vps/provision.sh`
 
-Mirrors the `squashfs-tools`/`mtools`/`dosfstools` addition in #861 — same file, same `apt-get install` line, same "whatever Debian trixie's apt carries is fine" reasoning (no known R2-compatibility version floor for `rclone`; Cloudflare's R2 docs target `rclone`'s generic S3-provider config, which has been stable for years).
+Mirrors the `squashfs-tools`/`mtools`/`dosfstools` addition in #861 — same file, same `apt-get install` line, same "whatever Debian trixie's apt carries is fine" reasoning.
 
-- [ ] **Step 1: Add `rclone` to the package list**
+**Correction to that reasoning:** there *is* a version floor, unlike the rest of that package list. The `provider = Cloudflare` value Task 4 sets was added in rclone **v1.59.0** (2022-07-09, "New S3 providers" in the upstream changelog). Trixie ships **1.60.1**, which clears it — verified on the live box after Step 2 — so the conclusion holds, but "no known floor" was wrong and an older base image would have broken quietly: an unrecognised provider value degrades to generic-S3 behaviour rather than failing loudly.
+
+- [x] **Step 1: Add `rclone` to the package list**
 
 ```diff
      podman \
@@ -104,7 +124,7 @@ Mirrors the `squashfs-tools`/`mtools`/`dosfstools` addition in #861 — same fil
 +    rclone
 ```
 
-- [ ] **Step 2: Re-run provisioning against the live VPS**
+- [x] **Step 2: Re-run provisioning against the live VPS** — done 2026-09-24, `rclone 1.60.1+dfsg-4` newly installed; swap and runner binary steps correctly skipped as already-present (the script is idempotent).
 
 ```bash
 mise run runner-vps:install
@@ -112,7 +132,7 @@ mise run runner-vps:install
 
 FIDO2 resident key required (touch, sometimes PIN — retry on failure per the standing instruction: pause and ask the operator to stay ready after two consecutive failures rather than silently retrying a third time).
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify** — `/usr/bin/rclone`, `rclone v1.60.1-DEV`, debian 13.7.
 
 ```bash
 . scripts/runner-vps-host.sh && ssh_vps 'command -v rclone && rclone version'
@@ -120,7 +140,7 @@ FIDO2 resident key required (touch, sometimes PIN — retry on failure per the s
 
 Expected: a path under `/usr/bin/rclone` and a version banner.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** — `c523e78`
 
 ```bash
 git add files/runner-vps/provision.sh
@@ -136,7 +156,7 @@ required."
 **Files:**
 - Modify: `.github/workflows/build-iso.yml`
 
-- [ ] **Step 1: Add the `publish_r2` input**
+- [x] **Step 1: Add the `publish_r2` input**
 
 In the `workflow_dispatch.inputs` block, after `sealed`:
 
@@ -147,7 +167,7 @@ In the `workflow_dispatch.inputs` block, after `sealed`:
         default: false
 ```
 
-- [ ] **Step 2: Gate the invalid combination at the top of the job**
+- [x] **Step 2: Gate the invalid combination at the top of the job**
 
 New first step, before "Checkout repository":
 
@@ -159,7 +179,7 @@ New first step, before "Checkout repository":
           exit 1
 ```
 
-- [ ] **Step 3: Add the upload step after "Build ISO", before "Print disk usage after build"**
+- [x] **Step 3: Add the upload step after "Build ISO", before "Print disk usage after build"**
 
 ```yaml
       - name: Publish sealed ISO to R2
@@ -202,7 +222,7 @@ New first step, before "Checkout repository":
 
 **Known limitation, deliberately not engineered around for this "latest only" MVP:** the upload is a plain object overwrite, not atomic-swap-via-new-key-then-redirect. A client mid-download across a very long-lived connection (or one that re-issues HTTP Range requests without `If-Range`) during the brief window of a new publish could theoretically mix bytes from two builds. Mitigated today by the `.sha256` file every download should be checked against (the ISO also carries an embedded `implantisomd5` checksum, checkable from the boot menu) — not eliminated. If this ever bites in practice, the fix is: upload to a content-addressed key (e g. `builds/<sha256>.iso`), then flip `krytis-live-sealed.iso` to a 302 redirect (Cloudflare Bulk Redirect or a tiny Worker) — deferred, not built now, since the "latest only" decision was made explicitly to avoid this complexity for v1.
 
-- [ ] **Step 4: Validate YAML**
+- [x] **Step 4: Validate YAML**
 
 ```bash
 python3 -c "
@@ -216,7 +236,7 @@ print('YAML OK, inputs:', list(inputs.keys()))
 
 Expected: `YAML OK, inputs: ['compression', 'sealed', 'publish_r2']`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — `b206c2d`
 
 ```bash
 git add .github/workflows/build-iso.yml
@@ -230,21 +250,35 @@ verification step confirms iso.ririi.dev serves an object matching
 this build's size and checksum before the job is considered green."
 ```
 
+- [x] **Step 6: Stop uploading an ISO artifact when the run published one** (added 2026-09-24, after the plan was written)
+
+The original plan left the `Upload ISO artifact` step untouched, so a publishing run produced the ISO twice: once at `iso.ririi.dev` and once as a 4.5 GB Actions artifact retained for a week, of a file anyone can now fetch anonymously. The step is now conditional, and the uploads that remain retain for **1 day** rather than #844's 7 — each is a same-session internal artifact (unsealed build under test, sealed dry-run, or a rescue copy from a failed publish), fetched within minutes of the run or not at all:
+
+```yaml
+        if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}
+```
+
+Scope is narrower than "no ISO artifacts": unsealed builds and sealed dispatches with `publish_r2=false` still upload, because neither has another route off the runner and #867's recorded scope decision keeps the unsealed artifact for internal testing.
+
+The `|| failure()` clause is the part worth remembering. GitHub steps run on success by default, so the skip condition on its own would also throw the ISO away when the *upload* or the public-download check failed — the one case where a 4.5 GB build artifact is most valuable, since the next run's `git clean -ffdx` wipes `output/` before a retry could reuse it. With the clause, a failed publish falls back to the artifact and a retry need not rebuild. A failed *build* produces no file, and `upload-artifact`'s default `if-no-files-found: warn` leaves the genuine error as the only one reported.
+
 ### Task 5: Document the design — agent, same-commit skill mandate
 
 **Files:**
 - Create: `docs/design/iso-distribution.md`
 - Modify: `docs/skills/ci-runner.md`
 
-- [ ] **Step 1: Write the living-reference design doc**
+- [x] **Step 1: Write the living-reference design doc**
 
 `docs/design/iso-distribution.md` — why R2 (zero egress vs S3/GCS for a repeatedly-downloaded multi-GB file), the sealed-only trust-model decision, the latest-only/no-archive decision and its known limitation (cross-reference Task 4's note), the bucket/domain/credential inventory (`krytis-iso` bucket, `iso.ririi.dev` custom domain, `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` GH secrets), and the rotation procedure (create a new bucket-scoped token in the Cloudflare dashboard, `gh secret set` the three values, revoke the old token — no in-flight upload to invalidate since `rclone` runs a single short-lived job).
 
-- [ ] **Step 2: Add the CI-facing operational notes to the skill file**
+Also record the cost model, because it is the constraint that makes "latest only" viable rather than merely simple: 4.5 GB of steady-state storage against a 10 GB-month free tier billed as the monthly average of daily peaks, with the abort-incomplete-multipart-uploads lifecycle rule (Task 1 Step 2) as the guard against orphaned parts — invisible in the object listing, billed as storage — accumulating from cancelled runs. Anyone later proposing a dated archive needs those numbers to see that it moves the bucket off the free tier at the third ISO.
 
-Append a `## build-iso.yml — R2 publish (issue #867)` section to `docs/skills/ci-runner.md`, cross-referencing the existing `build-iso.yml` section (#844/#862): the `publish_r2`-requires-`sealed` gate, why credentials are plain GH secrets rather than Proton Pass/fnox (no local-dev use case, matching the `TRACKING_APP_*` precedent), and the same-run size+checksum verification step's rationale.
+- [x] **Step 2: Add the CI-facing operational notes to the skill file**
 
-- [ ] **Step 3: Verify docs links**
+Added as `### R2 publish (\`publish_r2\`, issue #867)` — a **subsection of the existing `## \`build-iso.yml\`** section, not the new top-level `##` this step originally specified. It is the same workflow, and someone editing that job needs both halves together rather than finding them 80 lines apart. Covers the `publish_r2`-requires-`sealed` gate, why credentials are plain GH secrets rather than Proton Pass/fnox (no local-dev use case, matching the `TRACKING_APP_*` precedent), the same-run size+checksum verification rationale, the wildcard-DNS trap from Task 2 Step 3, and the lifecycle rule to recreate if the bucket ever is.
+
+- [x] **Step 3: Verify docs links**
 
 ```bash
 mise run docs-links
@@ -252,7 +286,7 @@ mise run docs-links
 
 Expected: `docs-links passed.`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** — `244dd21`
 
 ```bash
 git add docs/design/iso-distribution.md docs/skills/ci-runner.md
