@@ -82,6 +82,31 @@ rm -rf .venv && mise deps
 File the issue before creating the worktree and this never comes up. Once the venv exists,
 recreating it is the only fix — nothing rewrites those shebangs in place.
 
+### A relative edit path lands in the main checkout, silently
+
+An agent editing a file by relative path (`docs/skills/<name>.md`) while working in a worktree
+writes to **the main checkout**, because relative paths resolve against the session's cwd,
+not against the worktree it was told to work in. Nothing errors. The two trees hold
+byte-identical copies of an untouched file, so a content hash taken from one matches the
+other, the write succeeds, and the tool reports success against the path it actually wrote.
+
+The damage is silent and one-directional: the branch gets committed from the worktree, the
+edit is not in it, and the main checkout is left dirty on `main`. Found twice within minutes
+of each other during the 2026-09-24 upstream-lessons pass, by two different subagents editing
+`docs/skills/{signing,dakota}.md`.
+
+**Use an absolute worktree path in every edit when a worktree is in play**, and before
+yielding, prove nothing leaked:
+
+```shell
+git -C <main-checkout> status --short -- docs/ AGENTS.md   # MUST be empty
+git -C <worktree> status --short                            # your files, here
+```
+
+This bites hardest with parallel subagents: each one inherits the session cwd, so "work in
+the worktree at `<path>`" in a prompt does not change where a relative write goes. State the
+absolute path in the task, and have each agent report both `status` results back.
+
 ## Slug Derivation
 
 Issue title → lowercase → spaces and non-alphanumeric chars → hyphens → consecutive hyphens collapsed → leading/trailing hyphens stripped.

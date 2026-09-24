@@ -153,3 +153,55 @@ express, signed alongside the keyless signature — means storing and rotating a
 exact thing keyless signing was chosen to avoid. That is a Security Gate tradeoff under
 AGENTS.md, tracked in **#418**, not a pending chore. The original design for it is at
 `docs/design/cosign-keyless-signing.md` §§ 3–4.
+
+## Where a `policy.json` has to live, and why the sketched path is wrong
+
+*Source: zirconium-hawaii `4229691` → `d4e641b` → `f251073` — three commits, one thread.*
+
+Prerequisites for the day #418's static-key half is actually built. zirconium-hawaii does
+ship a container signature policy, and learned all three of these the hard way.
+
+**1. Ship it at `%{datadir}/containers` (`/usr/share/containers`), not `/etc/containers`.**
+Podman 6.0 — the version freedesktop-sdk 26.08 ships — and current bootc both read the
+`/usr/share` path. `/etc` is mutable state on a bootc system; image-owned policy belongs
+in `/usr`.
+
+**2. fdsdk's own `/etc/containers/policy.json` overrides yours.** zirconium shipped
+`/usr/share/containers/policy.json`, saw no error, and unsigned `zirconium-dev` images
+stayed pullable anyway — the `/etc` copy wins at runtime and nothing warns you. The fix
+is `integration-commands` that delete and relocate the inherited files:
+
+```yaml
+integration-commands:
+- rm /etc/containers/policy.json
+- mv /etc/containers/registries.conf /usr/share/containers/registries.conf
+- mkdir -p /usr/share/containers/registries.d /usr/share/containers/registries.conf.d
+# … plus mv of registries.d/* and registries.conf.d/*
+```
+
+The same commit dropped two Red Hat registry entries from the policy whose referenced
+keys did not exist on the image. Not cosmetic: a policy entry naming an absent `keyPath`
+is a hard failure for that scope, and it had broken pulls from those registries outright.
+
+**3. bootc on the ostree backend breaks when `"default"` is `insecureAcceptAnything`.**
+The workaround is `"default": [{"type": "reject"}]` plus an explicit
+`insecureAcceptAnything` entry under *every* transport — `docker`, `docker-daemon`,
+`atomic`, `containers-storage`, `dir`, `oci`, `oci-archive`, `docker-archive`,
+`tarball`. Semantically identical, "just a lot uglier" in the commit's own words.
+
+**krytis exposure.** `docs/design/cosign-keyless-signing.md:189` opens the host-side
+enforcement design with "No existing element manages `/etc/containers/` config", then
+sketches a never-written `elements/core/container-sigpolicy.bst` writing
+`/etc/containers/policy.json` and `/etc/containers/registries.d/ghcr-starlit-os.yaml`.
+Both halves are wrong. `files/fakecap-manifest.tsv:353-356` shows krytis already inherits
+`/etc/containers/{policy.json,registries.conf,registries.conf.d/000-shortnames.conf,registries.d/default.yaml}`
+from `components/containers-common.bst` (plus `toolbox.conf` from
+`gnomeos-deps/toolbox.bst`) — so that element would land on an already-owned mutable
+path, which is also the wrong destination per point 1. Rewrite the sketch against
+`%{datadir}/containers` plus the `rm`/`mv` integration commands before anyone builds it.
+
+Point 3 is the one thing the design already got right: it uses
+`"default": [{"type": "reject"}]`. What is missing is *why* that is mandatory rather than
+merely strict — a permissive default is what breaks bootc's ostree backend, so the
+per-transport `insecureAcceptAnything` expansion is load-bearing verbosity, not something
+to simplify away later.

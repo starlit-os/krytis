@@ -159,7 +159,7 @@ not a live break.
 
 ### Automating the nested-junction ref-consistency check (follow-up to the entry above)
 
-*Source: dakota `57a70d3` — `ci(next): derive fdsdk pin and patches from tracked gnome-build-meta`*
+*Sources: dakota `57a70d3` — `ci(next): derive fdsdk pin and patches from tracked gnome-build-meta`; `5005f85` — `feat: GNOME 51 and freedesktop-sdk 26.08 on testing (#1579)` (the `track-bst-sources.yml` hunk)*
 
 The "Verify nested-junction ref consistency before merging a bump" entry above records a
 *manual* check (hand-run `curl` comparing krytis's `freedesktop-sdk.bst` ref against what
@@ -170,10 +170,35 @@ local `freedesktop-sdk.bst` ref to match — failing loudly if the pin can't be 
 rather than silently drifting. Krytis went half-way (`8533568`): `track-bst-sources.yml`
 now has a `track-core-junctions` job that runs `bst source track` on
 `gnome-build-meta.bst` and `freedesktop-sdk.bst` in the same step and commits both refs
-in one `auto/track-core-junctions` PR, so the two can no longer land separately. It still
-tracks fdsdk independently (`track: freedesktop-sdk-26.08*`) rather than deriving the pin
-from the tracked gbm commit, so fdsdk can still race ahead of what gbm expects *within*
-one atomic bump — the manual `curl` comparison above is still what catches that.
+in one `auto/track-core-junctions` PR, so the two can no longer land separately — but
+it tracks fdsdk independently rather than deriving it
+(`.github/workflows/track-bst-sources.yml:1157-1158` is two back-to-back `bst source
+track` calls, one per junction, and `elements/freedesktop-sdk.bst` still carries
+`track: freedesktop-sdk-26.08*`), so fdsdk can still race ahead of what gbm expects
+*within* one atomic bump.
+
+`5005f85` is the mechanism that closes that. Dakota's `track-core-junctions` now tracks
+`gnome-build-meta.bst` **only** and derives the fdsdk pin from whatever that track
+resolved:
+
+1. `awk '/^[[:space:]]*ref: / { print $2; exit }' elements/gnome-build-meta.bst` reads
+   back the git-describe ref, and a `BASH_REMATCH` on its `-g<sha>` suffix yields the
+   resolved GBM commit.
+2. `curl` fetches *that commit's own* `elements/freedesktop-sdk.bst` from the GitLab
+   files API —
+   `https://gitlab.gnome.org/api/v4/projects/GNOME%2Fgnome-build-meta/repository/files/elements%2Ffreedesktop-sdk.bst/raw?ref=<sha>`
+   — and `awk`s the `ref:` under `url: gitlab:freedesktop-sdk`. Pinning the API read to
+   the sha, not to a branch, is the whole point: a branch read reintroduces the race.
+3. `sed -i` rewrites the local `elements/freedesktop-sdk.bst` ref to match.
+
+Either extraction coming back empty is `exit 1`, never a skip — a silent no-op here
+leaves exactly the drift the job exists to prevent, and looks like a clean run. One
+detail worth copying on its own: the commit step `git add`s first and then tests
+`git diff --cached --quiet`, because a derived sync can *remove* files (dakota also syncs
+`patches/freedesktop-sdk/`) and a worktree-only `git diff --quiet` reports "no changes"
+for a pure deletion. Krytis's gate is the worktree-only form
+(`.github/workflows/track-bst-sources.yml:1165`); harmless while the job only rewrites
+two `ref:` lines, wrong the moment it starts syncing a directory.
 
 ### Documentation discipline: "Docs Are the Model" and "Scoped Documentation"
 
@@ -186,6 +211,91 @@ Two documentation discipline invariants added to dakota's AGENTS.md that complem
 **Scoped Documentation:** When work reveals a guidance error, correct it — but don't manufacture doc changes for every session, and don't expand a read-only task into writes. The discipline is "update the skill file when you discover something worth capturing", not "touch the skill file on every session regardless."
 
 Dakota also added a PR checklist item from this commit: *"Existing guidance affected by the change is corrected; no unrelated documentation writeback is required."* Krytis's own checklist (§ Self-diagnosis) focuses on the write-back case; this is the symmetric guard against spurious writeback.
+
+### Staging order, not the whitelist, picks the overlap winner
+
+*Source: dakota `42af692` — `fix(image): vendor libvirt and make shadowed packages actually ship (#1651)`*
+
+An `overlap-whitelist` only *permits* an overlap — it does not decide who wins. The file
+that survives a compose is the one written by whichever element stages **last**, and
+staging follows dependency order. So an element that deliberately shadows a junction file
+wins only incidentally unless it takes a runtime `depends:` on the element that owns the
+stock copy. Dakota's uutils-coreutils had a complete, correct whitelist and still stopped
+shipping its `/usr/bin/*` symlinks when fdsdk 26.08 moved GNU coreutils out of
+`public-stacks/runtime-minimal.bst`: coreutils began staging *after* uutils and the
+whitelist obligingly let it overwrite. No error at any point — the whitelist is what
+guarantees silence.
+
+The fix is one `depends:` line per shadowing element, with the reasoning in-comment:
+`uutils-coreutils.bst` → `bootstrap/coreutils.bst`, `sudo-rs.bst` → `vm/config/sudo.bst`,
+`common.bst` → `components/containers-common.bst`, each annotated *"a compose keeps
+whichever element stages last, so depend on it to stage first and let X win"*. The
+`depends:` is what makes the order explicit instead of an accident of how the junction
+arranges its stacks — which is precisely what changed under dakota.
+
+`docs/skills/bst.md` § `overlap-whitelist` permits an overlap; staging order picks the
+winner carries the rule itself and krytis's live exposure (`elements/config/u2f-config.bst`
+whitelists the two PAM files but nothing in the runtime graph orders it after the element
+installing the stock ones). Don't restate it here.
+
+### Pinning an element *ahead* of its newest release tag needs `track:` on the branch
+
+*Source: dakota `e835b88` — `feat: NVIDIA 615.71.09 and freedesktop-sdk 26.08.1 on testing (#1588)` (the `dash-to-dock.bst` hunk)*
+
+When the fix you need has landed on upstream master but is unreleased, bumping `ref:`
+alone does not hold. A `track: <glob>` still matches only tags, so the next nightly
+`bst source track` resolves the newest *tag* and rolls the ref **backwards** — undoing the
+pin inside an ordinary-looking automated tracking commit, with the element reverting to
+the bug you just fixed. `exclude:` does not help: the tag is not bad, it is merely older
+than the commit you need, and excluding it just promotes the tag before it.
+
+The fix is to move `track:` onto the branch for the duration, with the exit condition
+written into the element so it is not a permanent float:
+
+```yaml
+  # ... but unreleased; restore `track: extensions.gnome.org-v*` once a tag
+  # lists "51" in metadata.json, so the tracker stops rolling back to v106.
+  track: master
+```
+
+Without that written condition the element silently stays on a moving branch forever,
+which is the opposite failure. The adjacent case — a *bad* tag rather than an old one,
+fixed with `ref:` downgrade plus `exclude:` — is `docs/skills/bst.md` § `git_repo`
+tracking: excluding a bad tag, and patching ahead of a vendored ref; neither that entry
+nor the glob-breadth one covers pinning forward of the tag stream. Krytis drives a nightly
+track matrix over ~32 `git_repo` elements with a globbed `track:`, so this is reachable
+the first time any of them needs an unreleased upstream fix.
+
+### Take artifact identity from a receipt the producer wrote, never re-derive it
+
+*Source: dakota `fa13c5b` — `fix(ci): smoke-test the image Publish built, not the default-branch tip (#1605)`*
+
+`github.event.workflow_run.head_sha` is not the commit that was built once the chain is
+more than one hop deep. For a `workflow_run`-triggered producer, *its own* head is the
+default-branch tip at trigger time rather than the commit it built — so a consumer hanging
+off that producer inherits the tip. The two coincide whenever nothing landed in between,
+which is why this passes every quiet-repo test and only misfires under load.
+
+The rule that outlives the `head_sha` specifics: **a downstream workflow must take
+artifact identity from a receipt the producer wrote, never re-derive it from event context
+and never re-resolve a mutable tag.** Dakota's consumer now downloads the producer's
+`digest-default` artifact, validates its `.sha` against `^[0-9a-f]{40}$`, fails loudly when
+it is absent instead of falling back to the event sha, and emits a `::notice::` when
+receipt and event sha disagree — so the divergence is visible rather than assumed away.
+
+**Krytis exposure.** `.github/workflows/verify-sealed.yml:22-24` triggers on
+`workflow_run` off `"Publish krytis image"`, and then at `:71`/`:74` runs
+`podman pull ghcr.io/starlit-os/krytis:sealed` and hands the same **mutable tag** to
+`mise run enroll-test` — re-resolved at pull time, with nothing tying it to the run that
+triggered it. The producer already computes the receipt: `publish.yml:284-286` pushes the
+sealed image via `mise run push --sealed --digest-file krytis-sealed-digests.env`, and
+`publish.yml:295` feeds that same file to `mise run sign`, with the verify step resolving
+`ghcr.io/starlit-os/krytis@${image_digest}` from it. It is just never uploaded (`publish.yml`
+has no `upload-artifact` step at all), so the consumer cannot read it. Two publishes in
+quick succession and `verify-sealed` gates on an image the triggering run did not produce
+— and reports green against that run. The narrower multi-hop `head_sha` trap does not bite
+today, because `publish.yml` is `workflow_dispatch`-triggered and `verify-sealed` is
+therefore a first hop; the mutable-tag half is live now.
 
 ## Referencing This Project
 

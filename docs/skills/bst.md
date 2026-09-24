@@ -509,7 +509,7 @@ When overriding PAM config files, verify which file each service actually reads 
 | `sshd` | `/etc/pam.d/password-auth` | fdsdk `linux-pam.bst` default |
 | `greetd` | `/etc/pam.d/greetd` | `config/greetd-config.bst` (self-contained) |
 
-**`image.bst` strips factory copies, not runtime files.** It removes `/usr/share/factory/etc/pam.d/{other,system-auth}` — the deploy-time `/etc/pam.d/system-auth` is unaffected and present at runtime. Overriding it via an element with `overlap-whitelist` works.
+**`image.bst` strips factory copies, not runtime files.** It removes `/usr/share/factory/etc/pam.d/{other,system-auth}` — the deploy-time `/etc/pam.d/system-auth` is unaffected and present at runtime. An element can override it, but `overlap-whitelist` alone is not the override: the whitelist only permits the collision, and the copy that survives is the one staged last, i.e. the one further down the dependency order. The overriding element also needs a runtime `depends:` on `freedesktop-sdk.bst:components/linux-pam.bst` — see § `overlap-whitelist` permits an overlap; staging order picks the winner.
 
 To add a PAM module to sudo: override `system-auth`, not `password-auth`.
 To add a PAM module to greetd: edit `config/greetd-config.bst` directly and add `core/pam-u2f.bst` (or the relevant module) to its `depends:`.
@@ -579,10 +579,38 @@ oci/krytis/filesystem.bst   kind: compose           build-depends: manifest.bst,
   └── exclude: debug, extra, static-blocklist        runtime.bst,
                                                      freedesktop-sdk.bst:components/gcc.bst
 
+oci/krytis/init-scripts.bst kind: collect_initial_scripts
+  └── build-depends: stacks/{base-system,bootc}.bst; writes /initial_scripts
+      (should be stack.bst — see below)
+
 oci/krytis/image.bst        kind: script            (final OCI image)
   └── stages filesystem.bst + oci/os-release.bst at /layer, then runs the
       assembly commands below
 ```
+
+### `collect_initial_scripts` must build-depend on the element the image composes from
+
+The plugin collects systemd presets, sysusers and tmpfiles from the dependency
+subtree of **its own** `build-depends:`. Anything contributed by an element that
+is in the OCI stack's subtree but not in that one is silently absent from
+`/initial_scripts`, and `prepare-image.sh --initscripts` then applies a partial
+set with no error and no missing-file diagnostic. So the dep root must be the
+same element the image actually composes from, never an inner stack.
+
+zirconium-hawaii `e823d7d` repointed its own `init-scripts.bst` from
+`stacks/zirconium.bst` to `oci/zirconium/stack.bst` for exactly this reason; the
+commit body calls the original "a dumb mistake that so far hasn't costed me
+anything, but it definitely could cause issues down the line".
+
+**krytis has the same mismatch, unfixed.** `elements/oci/krytis/init-scripts.bst:3-5`
+build-depends `stacks/base-system.bst` + `stacks/bootc.bst`, while the composed
+root is `oci/krytis/filesystem.bst` → `oci/krytis/runtime.bst` →
+`oci/krytis/stack.bst`, and that stack also pulls `stacks/{codecs,desktop,dev-tools}.bst`,
+`core/linux-cachyos.bst` and `core/initramfs.bst` (`elements/oci/krytis/stack.bst:3-10`).
+Presets, sysusers and tmpfiles contributed by those five are collected by nothing.
+The fix is one substitution — `build-depends: [oci/krytis/stack.bst]` — and the
+symptom it prevents (a preset or sysuser that exists in an element and not in the
+image) is invisible to `mise run validate` and to every build log.
 
 ### OCI script assembly order (strict)
 
@@ -644,6 +672,38 @@ podman run --rm --entrypoint= localhost/krytis:latest \
 To experiment with ldconfig under the same constraints the assembly script has, use
 `mise run bst shell --build oci/krytis/image.bst -- sh -c '…'` — a privileged container is
 not a valid stand-in.
+
+### Stage a dependency into the install root instead of re-installing its files
+
+A derived element that needs everything a base element produces should stage that
+element *at the install root* rather than copying files out of it by hand:
+
+```yaml
+build-depends:
+  - filename: core/os-release.bst
+    config:
+      location: "%{install-root}"
+```
+
+Everything the base element installs is then carried into the derived artifact as
+that element's own content — which removes the hand-written `install -D`/`ln -sf`
+lines *and* the `overlap-whitelist` they require, because there is no second copy
+to collide. zirconium-hawaii `793e241` deleted a five-path whitelist, three
+`install -Dm0644` lines and two `ln -sf` lines in one refactor.
+
+**Drift is the argument, not line count.** With the manual copy, adding a file to
+the base element silently fails to reach the image: the base element builds, the
+derived element installs exactly the paths it always did, nothing warns.
+
+`elements/oci/os-release.bst` is the exact pre-refactor shape: a five-path
+`overlap-whitelist` (`/etc/{os-release,system-release,issue}`,
+`/usr/lib/{os-release,system-release}`, lines 3-10), three `install -Dm0644`
+copies out of `core/os-release.bst`'s output (lines 26-28) and two `ln -sf`
+(lines 38-39) — with the only genuinely local work being the two
+`IMAGE_VERSION`/`KRYTIS_COMMIT` lines appended to `os-release`, which survive a
+`location:` rewrite unchanged. The mechanism is already in-tree:
+`oci/krytis/image.bst:10-15` stages `filesystem.bst` and `os-release.bst` at
+`location: /layer`. Only this application of it is missing.
 
 ## Compose Element Structure
 
@@ -2199,6 +2259,37 @@ mise run bst artifact log "$REF" > /tmp/build.log
 
 The artifact-ref form is `<project-name>/<element-path-with-slashes-as-dashes>/<full-key>` — `gnome` for gnome-build-meta, `freedesktop-sdk` for fdsdk, `krytis` for our own. Passing the element name instead (`bst artifact log gnome-build-meta.bst:core-deps/libmediainfo.bst`) only works when the *current* checkout resolves to the same key; a junction bump or a stale `elements/freedesktop-sdk.bst` ref will silently compute a different key and report "is not cached".
 
+## Remote cache declarations in `project.conf` are project-scoped
+
+An `artifacts:`/`source-caches:` entry in your own `project.conf` governs *your*
+project's elements. An element resolved through a junction is an element of the
+junctioned project and uses **that** project's cache configuration — so declaring
+another project's cache at your top level does not make it serve that project's
+elements; it only adds a round trip per artifact query. zirconium-hawaii
+`f833afe` removed its `gbm.gnome.org` entries on that reasoning: a top-level
+declaration "will never have any artifacts from [this project] cached" and is
+useful only "for the junctions that already have it patched in".
+
+**Audit item for krytis, not a mechanical deletion.** `project.conf` declares
+`https://gbm.gnome.org:11003` in both `artifacts:` (line 57) and `source-caches:`
+(line 85), and the long comments around both blocks explain only why *bow* is
+deliberately absent — neither says why gbm is present. krytis overrides no
+junction's cache config, so under the rule above gbm's own elements are already
+served by gbm's own config and the top-level entry can only ever hit on a krytis
+element whose resolved cache key coincides with something gbm built, which
+`x86_64_v3` makes very unlikely (§ Why every freedesktop-sdk artifact pull missed
+in `ci-runner.md`).
+
+Settle one contradiction before acting on this. That same `ci-runner.md` entry
+records `bst build -o x86_64_v3 false core/gum.bst` "against `gbm.gnome.org:11003`
+alone" pulling all 16 FDSDK bootstrap/component artifacts — i.e. junctioned
+elements apparently served by a cache named at krytis's top level, which is what
+the scoping rule says cannot happen (the pulls may in fact have come from the
+fdsdk junction's own configured remote and been misattributed). Measure it —
+build one junctioned element with each remote configured in isolation and read
+which remote answers — then either delete the two gbm entries or write down why
+they stay.
+
 ## A cached failed artifact is replayed, not rebuilt — build with `--retry-failed`
 
 A failed build is a normal artifact: BuildStream caches it under the element's ordinary cache key and pushes it to bow like a successful one. Every later run then *pulls the failure and re-reports it*, with no build attempt at all:
@@ -2216,9 +2307,9 @@ Consequence: **any fix that does not move the element's cache key cannot prove i
 
 bubblewrap + user namespaces work inside a bootc composefs-mounted root without any sysctl override. Verified by running `mise load-image --container` inside a booted Krytis VM. No `kernel.unprivileged_userns_clone` drop-in is needed.
 
-## Additive Rust replacements: overlap-whitelist
+## `overlap-whitelist` permits an overlap; staging order picks the winner
 
-When a new element installs files to paths already owned by an upstream element (e.g. uutils-coreutils overwriting GNU coreutils bins), BST errors at assembly time unless every overlapping path appears in `overlap-whitelist`.
+When a new element installs files to paths already owned by an upstream element (e.g. uutils-coreutils overwriting GNU coreutils bins), BST errors at assembly time unless every overlapping path appears in `overlap-whitelist`:
 
 ```yaml
 public:
@@ -2236,6 +2327,43 @@ overlap-whitelist:
   - '/usr/lib/x86_64-linux-gnu/GL/default/lib/dri/*_drv_video.so'  # all VA-API drivers
   - '**/*'  # used in oci/krytis/runtime.bst to whitelist all compose output
 ```
+
+**That is all the whitelist does. It does not decide whose copy survives.** A
+compose keeps whichever element stages *last*, and staging order follows
+dependency order — so an element that deliberately shadows a file must take a
+runtime `depends:` on the element owning the stock copy. Without that edge the
+shadow wins only incidentally, and it flips the moment a junction reshuffles its
+stacks: whitelist still complete, build still green, file silently reverted.
+
+dakota `42af692` is the demonstration. fdsdk 26.08 moved GNU coreutils out of
+`public-stacks/runtime-minimal.bst`; GNU coreutils then staged *after* uutils and
+uutils' plain-name `/usr/bin/*` symlinks stopped shipping, with a correct
+whitelist and no error. The fix was three one-line `depends:` additions —
+uutils → `bootstrap/coreutils.bst`, sudo-rs → `vm/config/sudo.bst`, their
+`common.bst` → `components/containers-common.bst` — each annotated "a compose
+keeps whichever element stages last, so depend on it to stage first and let X
+win".
+
+krytis exposure, re-checked in this tree:
+
+- **`elements/config/u2f-config.bst` is unpinned.** It whitelists
+  `/etc/pam.d/{system-auth,password-auth}` (lines 64-68) and its only `depends:`
+  is `core/pam-u2f.bst` (lines 61-62); `core/pam-u2f.bst` depends on
+  `runtime-gnu.bst` + `components/systemd-libs.bst` and carries
+  `components/linux-pam.bst` in **build-depends only** (lines 3-11). Nothing in
+  the runtime graph puts krytis's PAM stacks after the element that installs the
+  stock ones, so shipping them is ordering luck. Add
+  `freedesktop-sdk.bst:components/linux-pam.bst` to `u2f-config.bst`'s `depends:`.
+- **`elements/core/uutils-coreutils.bst` is safe by accident.** Its `depends:` is
+  `freedesktop-sdk.bst:public-stacks/runtime-gnu.bst` alone — and runtime-gnu *is*
+  `runtime-minimal` + `bash` + `coreutils` (§ `kind: manual` sandbox commands need
+  `runtime-gnu.bst`), so the GNU copy is a transitive runtime dep and stages
+  first. dakota's explicit `bootstrap/coreutils.bst` edge is that same guarantee
+  written down, instead of inherited from a stack that upstream is free to re-cut.
+
+Add the `depends:` in the same commit as the whitelist, with the reason in a
+comment. A whitelist on its own documents that a collision is expected; it
+documents nothing about who is meant to win.
 
 **uutils-coreutils pattern** (additive, not a junction override): fdsdk has no `components/coreutils.bst` — only a bootstrap-chain `bootstrap/coreutils.bst` that cannot be overridden. uutils is added as a new `elements/core/uutils-coreutils.bst` that layers on top.
 
@@ -2315,7 +2443,7 @@ BST validates `kind: local` paths at resolution time (before any build), so the 
 
    `mise run validate` cannot see this — it resolves the graph, it never composes it. Neither can any drift or reference check. **It arrives last, after everything compiles**, which means a bump is not clear of this class until the image itself assembles, and fixing an earlier element can be what exposes it.
 
-   Resolve with a one-entry `overlap-whitelist` on the element that should win (see § Additive Rust replacements). Decide *which* should win on provenance: ghostty's terminfo is compiled from the source shipped with that exact release, ncurses carries a database snapshot that lags whatever the terminal implements, so ghostty's copy is the correct one. **Scope the whitelist from evidence, not from the error message** — `bst artifact list-contents` on both artifacts showed exactly one colliding path, since ghostty's `/usr/share/terminfo/x/xterm-ghostty` is unique to it. One line, not a glob over the terminfo tree. A glob here would silently absorb the *next* collision too, which is precisely the warning you want to keep.
+   Resolve with a one-entry `overlap-whitelist` on the element whose copy should survive **plus a runtime `depends:` from that element onto the one owning the stock copy** — the whitelist only permits the overlap, staging order decides it (see § `overlap-whitelist` permits an overlap; staging order picks the winner). `desktop/ghostty.bst`'s `depends:` (lines 30-34) carries no edge onto `freedesktop-sdk.bst:bootstrap/ncurses.bst`, so which `/usr/share/terminfo/g/ghostty` ships is still incidental here. Decide *which* should win on provenance: ghostty's terminfo is compiled from the source shipped with that exact release, ncurses carries a database snapshot that lags whatever the terminal implements, so ghostty's copy is the correct one. **Scope the whitelist from evidence, not from the error message** — `bst artifact list-contents` on both artifacts showed exactly one colliding path, since ghostty's `/usr/share/terminfo/x/xterm-ghostty` is unique to it. One line, not a glob over the terminfo tree. A glob here would silently absorb the *next* collision too, which is precisely the warning you want to keep.
 
 ## System Tool Requirements for `bst source track`
 

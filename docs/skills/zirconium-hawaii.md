@@ -159,6 +159,33 @@ When a zirconium-hawaii element has a `kind: local` source referencing `files/<n
 
 Example: `deps/i2c-tools.bst` brings three files — `45-i2c-tools.rules` (udev), `i2c-tools.conf` (modules-load.d), `i2c-tools.sysusers` (sysusers.d).
 
+## Ported-element drift — upstream keeps editing the element you copied
+
+*Source: zirconium-hawaii `87e2291` — "chore: use buildsystem stacks for elements it applies to"*
+
+A ported element freezes in the shape it had on copy day. Upstream's copy does not. This
+is the failure mode of the section above: porting is a one-shot fork, and nothing tells
+you later that the original moved.
+
+Concrete instance in this range. fdsdk 26.08 added `public-stacks/buildsystem-rust.bst`
+and `public-stacks/buildsystem-python-{setuptools,hatchling}.bst`, so a hand-rolled
+build-dep list (`stripper` plus `python3-build`, `python3-installer`,
+`python3-setuptools`, `python3-wheel`) collapses to one line. zirconium migrated 19
+elements in this commit, `deps/i2c-tools.bst` among them — its build-depends are now
+just `public-stacks/buildsystem-make.bst` plus
+`public-stacks/buildsystem-python-setuptools.bst`.
+
+krytis's `elements/deps/i2c-tools.bst:11-19` — the port named in the section above —
+still carries the pre-migration eight-entry list (`runtime-gnu`, `make`, `gcc`,
+`stripper`, and the four `python3-*` components). `elements/dev/virt-firmware.bst:10`
+already build-depends on `freedesktop-sdk.bst:public-stacks/buildsystem-python-setuptools.bst`,
+so the stack resolves on krytis's current fdsdk pin — this is a simplification available
+today, not a version gate.
+
+The general move for an `upstream-lessons` pass: for each element krytis ported, diff it
+against upstream's current copy rather than only reading new commits. Drift accumulates
+in elements that never appear in a changed-file list you are looking at.
+
 ## ddcutil X11 Dependencies
 
 ddcutil links against X11 at build time if `xorg-lib-x11`, `xorg-lib-xext`, and `xorg-lib-xrandr` are present. On a pure Wayland image these are already available transitively via xwayland. The krytis port includes them explicitly (matching zirconium-hawaii); an `--disable-x11` configure pass could drop them if X11 is confirmed unused at runtime.
@@ -280,20 +307,78 @@ deps and Mesa. Krytis's `desktop/niri.bst`, `desktop/cage.bst`, `desktop/wlroots
 `desktop/noctalia-greeter.bst` all build-depend on full `mesa.bst` per this file's own
 documented "always both" rule — worth a per-element spot-check, not a mechanical change.
 
-## xwayland-satellite 0.8.2 breaks Steam drop-down menus — pin to 0.8.1
+## xwayland-satellite: patch the regression, don't pin behind it
 
-*Source: zirconium-hawaii `4a3f63a` — "fix(desktop): pin xwayland-satellite to 0.8.1"*
+*Source: zirconium-hawaii `9cf2c6a`, `de344f0` — "Update xwayland-satellite to 0.8.2 with patches"*
 
-xwayland-satellite 0.8.2 introduces a regression that breaks Steam drop-down menus under
-rootless XWayland ([upstream issue #468](https://github.com/Supreeeme/xwayland-satellite/issues/468)).
-Zirconium-hawaii pinned to v0.8.1 and commented out `track:` with a FIXME until upstream
-fixes the regression.
+**This supersedes the earlier "pin to 0.8.1" guidance** (zirconium `4a3f63a`), which is no
+longer upstream's position. 0.8.2 carries fixes worth having over 0.8.1, and both of its
+regressions are patchable, so zirconium moved to `ref: v0.8.2-0-g8d135d3…`, re-enabled
+`track: v*`, and added a `kind: patch_queue` source on `patches/xwayland-satellite/`
+holding two patches cherry-picked from upstream `main`:
 
-**Krytis is affected.** `elements/desktop/xwayland-satellite.bst` was on v0.8.2 (#499).
-Downgraded to v0.8.1 in the same commit as this skill entry.
+| Patch | Fixes |
+|---|---|
+| `0002-fix-never-focus-override-redirect-popups-offer-WM_TA.patch` | Steam drop-downs closing immediately — upstream [#468](https://github.com/Supreeeme/xwayland-satellite/issues/468), i.e. the exact bug the 0.8.1 pin existed for. Originally upstream PR 494; `de344f0` re-pointed the patch at the commit as merged to `main`. |
+| `0001-fix-classify-resizable-DIALOG-windows-as-toplevel-no.patch` | Resizable `DIALOG` windows classified as popup instead of toplevel, so DaVinci Resolve's Project Manager and Qt/GTK file dialogs never appear — upstream #470. |
 
-Tracking approach: comment out `track: v*` and add `exclude: [v0.8.2]` — do not re-enable
-tracking or remove the exclude until issue #468 is resolved upstream and a new tag ships
-the fix. The removal condition already noted in the element's comment (drop it and revert
-to the gnome-build-meta pin when the `time` CVE is also fixed) becomes: revert *and* skip
-v0.8.2, or wait for a v0.8.3+ that fixes both.
+**krytis has not moved.** `elements/desktop/xwayland-satellite.bst` is still
+`ref: v0.8.1-0-g536bd32…` (`:81`) with `exclude: [v0.8.2]` (`:79-80`) and
+`# track: 'v*'` commented out behind a FIXME (`:76-78`). The only file in
+`patches/xwayland-satellite/` is `bump-time-ghsa-r6v5-fh4h-64xc.patch`; neither upstream
+patch is present. Adopting them means switching that `kind: patch` to a `kind: patch_queue`
+over the whole directory — which then also carries the `time` GHSA patch, so ordering in
+the directory matters and the dir must stay patch-files-only (§ Custom Plugin: patch_queue
+above). The `VERGEN_GIT_DESCRIBE` handling in that element is unaffected: it already
+neutralises the `-dirty` marker any number of patches would produce.
+
+**The real lesson is the exit condition.** That element's header comment (`:13-19`) says
+to re-enable tracking "once issue #468 is fixed and a new release ships the fix", and
+gates dropping the vendored element entirely on "#468 is fixed (meaning v0.8.2 is no
+longer the latest)". #468 *is* fixed — as a commit merged to `main`. No tag carries it,
+and v0.8.2 is still the latest release. A condition written against a *release event*
+cannot be discharged by a *merged fix*, so the workaround outlives its
+cause and nobody re-reads it, because on its own terms it is still unmet. Write removal
+conditions against the fix being available in a form you can consume — merged commit,
+backportable patch, or tag — not against upstream cutting a release.
+
+## Arch-derived kernel configs don't create `/sys/fs/selinux`
+
+*Source: zirconium-hawaii `df54ad2` — "linux-ogc: Use fedora's kernel config as the base"*
+
+A kernel built from Arch's config never creates `/sys/fs/selinux`. On a system that does
+not use SELinux this is invisible — until a podman container **created on a Fedora host**
+is moved over. Such containers record `/sys/fs/selinux` as a bind-mounted volume, and with
+the directory absent the container cannot start at all. That makes it a distrobox/toolbox
+failure, not a kernel one, which is why it is hard to trace back to the kernel config.
+freedesktop-sdk's own kernel config *does* create the directory, so an eventual switch to
+the fdsdk config closes this without any explicit fix.
+
+**krytis exposure.** `elements/core/linux-cachyos.bst` unpacks prebuilt CachyOS
+`.pkg.tar.zst` packages — an Arch-derived config, with no config step krytis controls —
+and krytis ships toolbox (`gnome-build-meta.bst:gnomeos-deps/toolbox.bst` via
+`elements/stacks/base-system.bst:139`). Grep across `elements/`, `docs/` and
+`files/fakecap-manifest.tsv` for `fs/selinux` returns exactly one hit, a Rust source path
+inside bootc's debug split — nothing creates or expects the directory. Upstream's own
+element here is `elements/gamerslop/linux-ogc.bst`, in the gaming tree krytis deliberately
+does not port, but the config lineage and the failure are the same.
+
+Worth knowing for its own sake: this lesson is four paragraphs into the body of a commit
+whose subject is only "use Fedora's kernel config as the base". **zirconium-hawaii has no
+`docs/` tree, no `AGENTS.md`, and no skills directory** — its entire distilled knowledge
+lives in commit bodies, and several of them contradict or retract their own subject lines.
+Reading only subjects and diffs on this upstream loses most of what it knows.
+
+## Container signature policy belongs in `/usr/share/containers`
+
+*Source: zirconium-hawaii `4229691`, `d4e641b`, `f251073`*
+
+zirconium ships a container `policy.json` and learned three things doing it: use
+`%{datadir}/containers`, not the mutable `/etc/containers`; fdsdk's own
+`/etc/containers/policy.json` silently overrides yours (its unsigned images stayed
+pullable because of it); and bootc's ostree backend breaks on a `"default"` of
+`insecureAcceptAnything`. All three bear directly on krytis #418 and on the never-written
+`container-sigpolicy.bst` sketched in `docs/design/cosign-keyless-signing.md` §4. Full
+writeup, including the `integration-commands` fix and krytis's own inherited
+`/etc/containers` files, in `docs/skills/signing.md` § Where a `policy.json` has to live,
+and why the sketched path is wrong.
