@@ -82,17 +82,19 @@ dig NS ririi.dev +short
 
 Expected: Cloudflare nameservers (`*.ns.cloudflare.com`). `bst-cache.ririi.dev` already resolves for bow, but confirm rather than assume — that record could in principle be a plain CNAME/A record on a non-Cloudflare DNS provider with TLS terminated by materia's own reverse proxy, which would NOT satisfy R2 Custom Domain's requirement that Cloudflare manage the zone. If the zone is not on Cloudflare, this task blocks on adding it there first (out of scope for this plan — coordinate with whoever owns `ririi.dev`'s registrar/DNS, likely via the `materia` repo/infra, before continuing).
 
-- [ ] **Step 2: Connect the custom domain to the bucket**
+- [x] **Step 2: Connect the custom domain to the bucket**
 
 R2 → `krytis-iso` bucket → Settings → **Custom Domains** → Connect Domain → `iso.ririi.dev` → Continue. Cloudflare auto-creates the proxied CNAME record in the zone and issues a managed TLS certificate.
 
-- [ ] **Step 3: Wait for Active status**
+- [x] **Step 3: Wait for Active status** — verified from outside the dashboard 2026-09-24: `iso.ririi.dev` now resolves to Cloudflare anycast (`172.67.130.180`, `104.21.3.126`), not materia's `46.62.242.208`, and returns `HTTP/2 404` with `server: cloudflare` — the correct response for a bucket with nothing published yet. Control: `nonexistent-probe-8712.ririi.dev` now fails TLS outright, since materia holds no certificate for it, which is what distinguishes a real Custom Domain from the wildcard that previously answered here.
 
 The custom domain's status shows "Initializing" → "Active" (usually under a few minutes since the zone is already on Cloudflare — no external DNS propagation wait). Do not proceed to Task 6 until it reads Active.
 
-**The dashboard status is the only valid readiness signal here — do not substitute `dig` or `curl`.** The `ririi.dev` zone carries a wildcard `*.ririi.dev` A record pointing at materia (`46.62.242.208`), verified 2026-09-24 by resolving a name that cannot exist: `nonexistent-probe-8712.ririi.dev` returns that same address. So `iso.ririi.dev` already resolved, and already answered requests, before this bucket existed. A 200 proves nothing. Once Active, the tell is `content-type: application/x-iso9660-image` on the ISO object — the wildcard host has no such path.
+**While waiting, the dashboard status is the only valid readiness signal — do not substitute `dig` or `curl`.** The `ririi.dev` zone carries a wildcard `*.ririi.dev` A record pointing at materia (`46.62.242.208`), verified 2026-09-24 by resolving a name that cannot exist: `nonexistent-probe-8712.ririi.dev` returned that same address. So `iso.ririi.dev` already resolved, and already answered requests, before this bucket existed. A 200 during the wait proves nothing.
 
-- [ ] **Step 4: Add a Cache Rule for edge caching**
+*After* the cutover, DNS does become a valid confirmation — the name resolves to Cloudflare anycast instead of materia, as Step 3 records — but that is a post-hoc check, not a way to tell "not ready yet" from "ready". Both look alike from outside until the switch actually happens.
+
+- [x] **Step 4: Add a Cache Rule for edge caching**
 
 R2 serves the origin correctly without this, but a multi-GB file repeatedly downloaded by users worldwide benefits from Cloudflare's edge cache, not just R2's zero-egress-to-Cloudflare pricing. Dashboard → `ririi.dev` zone → **Caching** → **Cache Rules** → Create rule ([direct link](https://dash.cloudflare.com/?to=/:account/:zone/caching/cache-rules)). Not `Rules` → `Cache Rules`, which is where an earlier revision of this step sent the reader.
 - When incoming requests match: **Custom filter expression**, Hostname equals `iso.ririi.dev`. Not "All incoming requests" — that would apply the rule to the whole zone, including everything the `*.ririi.dev` wildcard serves from materia.
