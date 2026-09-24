@@ -94,9 +94,13 @@ The custom domain's status shows "Initializing" → "Active" (usually under a fe
 
 - [ ] **Step 4: Add a Cache Rule for edge caching**
 
-R2 serves the origin correctly without this, but a multi-GB file repeatedly downloaded by users worldwide benefits from Cloudflare's edge cache, not just R2's zero-egress-to-Cloudflare pricing. Dashboard → `ririi.dev` zone → Rules → Cache Rules → Create rule:
-- When incoming requests match: Hostname equals `iso.ririi.dev`
-- Then: Eligible for cache = **Eligible**, Edge TTL = **Respect origin TTL** (this defers to the `Cache-Control` header the upload step sets in Task 4 — no separate TTL to keep in sync by hand)
+R2 serves the origin correctly without this, but a multi-GB file repeatedly downloaded by users worldwide benefits from Cloudflare's edge cache, not just R2's zero-egress-to-Cloudflare pricing. Dashboard → `ririi.dev` zone → **Caching** → **Cache Rules** → Create rule ([direct link](https://dash.cloudflare.com/?to=/:account/:zone/caching/cache-rules)). Not `Rules` → `Cache Rules`, which is where an earlier revision of this step sent the reader.
+- When incoming requests match: **Custom filter expression**, Hostname equals `iso.ririi.dev`. Not "All incoming requests" — that would apply the rule to the whole zone, including everything the `*.ririi.dev` wildcard serves from materia.
+- Then: Cache eligibility = **Eligible for cache**; Edge TTL = **"Use cache-control header if present, use default Cloudflare caching behavior if not"**.
+
+That Edge TTL wording is the UI label; **"Respect origin TTL"**, which this step said previously, is the *API* value (`respect_origin`) and appears nowhere in the dropdown. The intent is unchanged — defer to the `Cache-Control: public, max-age=3600, must-revalidate` header Task 4's upload sets, so there is no second TTL to keep in sync by hand. Take care not to pick the adjacent **"Use cache control-header if present, bypass cache if not"**: it reads almost identically and skips caching entirely for any response without the header.
+
+At Deploy, Cloudflare may offer to create a proxied DNS record for the hostname in the expression. Seeing that prompt means Step 2 has not been done — go connect the Custom Domain rather than hand-creating the record here.
 
 ### Task 3: Provision `rclone` on the VPS runner — agent
 

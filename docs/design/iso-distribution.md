@@ -123,7 +123,7 @@ proposal: the third retained ISO leaves the free tier.
 | Bucket | `krytis-iso` | Cloudflare R2, Standard storage class, Automatic location |
 | Lifecycle rule | abort incomplete multipart uploads after 1 day | bucket → Settings |
 | Public hostname | `iso.ririi.dev` | R2 Custom Domain, proxied, Cloudflare-managed TLS |
-| Cache rule | Hostname = `iso.ririi.dev` → Eligible, Respect origin TTL | `ririi.dev` zone → Rules → Cache Rules |
+| Cache rule | Hostname = `iso.ririi.dev` → Eligible for cache; Edge TTL "use cache-control header if present, use default Cloudflare caching behavior if not" (API `respect_origin`) | `ririi.dev` zone → Caching → Cache Rules |
 | S3 endpoint | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` | derived from `R2_ACCOUNT_ID` |
 | `R2_ACCOUNT_ID` | Cloudflare account ID | GitHub Actions repo secret |
 | `R2_ACCESS_KEY_ID` | token's Access Key ID | GitHub Actions repo secret |
