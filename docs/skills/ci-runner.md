@@ -381,6 +381,20 @@ must not decommission the runner: two OOM kills inside 24h). That 24G
 accounts for essentially the entire ratchet visible in the `Print disk
 usage` steps — 91G used on 2026-09-17, 115G by 2026-09-24, never falling.
 
+**First real run, 2026-09-24: 49424 MB reclaimed, 115G → 71G used (38%).**
+`cas/objects` still read 47G afterwards, which is the check that matters —
+it proves the `find` stayed inside `tmp/`. The journal vacuum freed `0B`,
+correctly, since 137M is under its 200M cap; a maintenance script that
+"reclaims" something every time it runs is usually lying about one of its
+targets.
+
+One number in that report is not a sum: `podman image prune -f` deleted 19
+layer IDs while only 4 dangling images were listed, because pruning an
+untagged leaf cascades to parents it was the last reference for. The
+per-image sizes podman prints are cumulative and share layers, so adding
+them up overcounts. Treat the dangling listing as "what will go", not as
+"how much".
+
 The lesson generalises past this one directory: **when a diagnosis says
 "the quota is not holding", check whether the thing that grew is even
 inside the quota's accounting.** The obvious reading of "74G cache, 50G
