@@ -106,12 +106,12 @@ url = "https://github.com/jdx/usage/releases/download/v6.11.0/usage-x86_64-unkno
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [[tools.uv]]
-version = "0.12.17"
+version = "0.12.18"
 backend = "aqua:astral-sh/uv"
-specifiers = ["0.12.17"]
+specifiers = ["0.12.18"]
 
 [tools.uv."platforms.linux-x64"]
-checksum = "sha256:fa82fd8dde8e8eefdecada6aa0889666556cfceb690d06e0c3bca49eb3070a63"
-url = "https://github.com/astral-sh/uv/releases/download/0.12.17/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/573253080"
+checksum = "sha256:89eadd7c76fc063887959510d5ba0ab1264dfd5f1143b925ddb73021a40acf16"
+url = "https://github.com/astral-sh/uv/releases/download/0.12.18/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/582430671"
 provenance = "github-attestations"
