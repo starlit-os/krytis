@@ -2,10 +2,17 @@
 #
 # Upstream moved from the Aetf personal fork to the kmscon org
 # (github.com/kmscon/kmscon). Meson build. Uses the DRM2D (software-rendered)
-# backend, not DRM3D — fdsdk's libglvnd strips egl.pc/glesv2.pc from the
-# standard pkgconfig path and mesa's own GL/default split doesn't reinstate
-# them, so dependency('egl')/dependency('glesv2') can't resolve. A text
-# console has no need for GPU-accelerated rendering anyway.
+# backend, not DRM3D: a text console has no use for GPU-accelerated rendering,
+# so the GL path is declined on purpose, not for want of a way to build it.
+#
+# This comment used to give a second reason — that fdsdk's libglvnd strips
+# egl.pc/glesv2.pc, so dependency('egl')/dependency('glesv2') could not
+# resolve. That was true when written and is false since
+# freedesktop-sdk.bst:components/mesa-headers.bst reinstated those .pc files
+# at the standard pkgconfig path. Do not read its absence as an invitation to
+# "fix" this by enabling DRM3D/gltex: adding mesa-headers here would buy a
+# GPU path this element does not want, for a bigger sandbox and a rebuild.
+# See docs/skills/bst.md § *fdsdk mesa doesn't expose `egl.pc` / `glesv2.pc`*.
 
 kind: meson
 
