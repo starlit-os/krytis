@@ -34,9 +34,12 @@ apt-get update -qq
 #     Credentials never reach this box's disk — the workflow passes them as
 #     RCLONE_CONFIG_* environment variables scoped to that single step, so
 #     there is no rclone.conf to provision, protect, or rotate here.
-#     Unpinned for the same reason as the rest of this list: Cloudflare's
-#     R2 docs target rclone's generic S3-provider config, which has been
-#     stable for years, so whatever trixie carries works.
+#     Unpinned, but not floorless, unlike the rest of this list: the
+#     `provider = Cloudflare` value the workflow sets arrived in rclone
+#     v1.59.0 (2022-07-09, "New S3 providers"). Trixie ships 1.60.1, which
+#     clears it. If this box is ever rebuilt on an older base, check that
+#     first — an unsupported provider value degrades to generic-S3
+#     behaviour rather than failing loudly.
 # xorriso/implantisomd5 are deliberately NOT installed here — build-iso.yml
 # routes both through the iso-tools container it builds itself
 # (ISO_TOOLS_IMAGE), so the host never needs them.
