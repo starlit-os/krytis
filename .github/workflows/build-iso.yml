@@ -164,6 +164,15 @@ jobs:
           RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           RCLONE_CONFIG_R2_REGION: auto
+          # Required, not an optimisation. rclone checks a bucket exists
+          # (and would create it) before its first upload, which an
+          # Object-Read-&-Write-scoped token has no permission to do —
+          # bucket-level calls are Admin scope. rclone's own S3 docs say so
+          # under Cloudflare R2: "For R2 tokens with the 'Object Read &
+          # Write' permission, you may also need to add no_check_bucket =
+          # true for object uploads to work correctly." Without it the
+          # upload fails after the ~40-minute build has already run.
+          RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
         run: |
           ISO=output/krytis-live-sealed.iso
           sha256sum "${ISO}" | awk '{print $1}' > "${ISO}.sha256"

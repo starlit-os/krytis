@@ -469,6 +469,19 @@ single upload step, so no `rclone.conf` is written — which matters more here
 than on an ephemeral runner, since this box is persistent and a config file
 would outlive the job that needed it.
 
+**`RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"` is required, not a
+transaction-count optimisation.** rclone checks that a bucket exists —
+and would create it — before its first upload. Those are bucket-level
+calls, which an **Object** Read & Write token cannot make; that scope
+covers objects only. rclone's own S3 documentation states it under
+Cloudflare R2: *"For R2 tokens with the 'Object Read & Write' permission,
+you may also need to add `no_check_bucket = true` for object uploads to
+work correctly."* Drop the setting and the publish fails **after** the
+~40-minute build, at the upload step. The alternative — widening the
+token to Admin Read & Write so the check succeeds — trades a one-line
+config for a CI credential that can delete buckets, which is the wrong
+trade.
+
 **The job verifies its own publish before going green**, comparing both the
 published object's `content-length` and the published `.sha256` against the
 ISO it just built. Both checks, not one: a size match with a checksum

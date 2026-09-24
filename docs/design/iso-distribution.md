@@ -155,6 +155,16 @@ the single upload step. No `rclone.conf` is ever written, which matters more
 than usual here: the VPS runner is an always-on persistent box, so a config file
 would outlive the job that needed it.
 
+The upload step also sets `RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"`. This
+is a direct consequence of the scoping decision above rather than a tuning
+choice: rclone verifies a bucket exists (and would create it) before its
+first upload, and those are bucket-level operations an **Object**-scoped
+token deliberately cannot perform. rclone's S3 documentation calls this out
+specifically for R2 tokens with the Object Read & Write permission. The
+alternative way to satisfy the check is to widen the token to Admin Read &
+Write — trading one line of config for a CI credential that can delete
+buckets.
+
 ### Rotation
 
 1. Create a replacement Account API token (same Object Read & Write scope on
