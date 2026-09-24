@@ -1186,6 +1186,11 @@ vendor_conf.d/some-tool.fish ← loads after, mise already active
 
 `elements/core/mise.bst` installs mise's fish integration to `vendor_conf.d/01-mise.fish` so any tool conf sorting after `01-` sees a fully initialised mise environment.
 
+Other krytis-owned files in that directory: `ssh-agent.fish`
+(`elements/config/ssh-agent-env.bst`, exports `SSH_AUTH_SOCK` — see
+`docs/skills/desktop.md` § SSH agent). It needs no ordering guarantee, so it
+carries no numeric prefix.
+
 **Known limitation:** fish [#8553](https://github.com/fish-shell/fish-shell/issues/8553) — `vendor_conf.d` load order is not guaranteed to be stable across all fish versions. The numeric prefix is a best-effort workaround; no complete fix available until upstream resolves this.
 
 ## ISO build task (`mise run build-iso`)
