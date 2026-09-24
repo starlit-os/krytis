@@ -351,6 +351,96 @@ with the `fuse` package, and buildbox-fuse carries its own binary, so
 `fusermount -u` always failed and only the `umount -l` fallback ever ran.
 The order is now reversed so the working call is tried first.
 
+### A killed casd leaks `cas/tmp`, and it is the box's disk ratchet (#938)
+
+Same failure family as the stale FUSE mounts above — killed process,
+residue nothing later cleans — but it consumes disk instead of failing
+`df`, so it accumulated silently for weeks before anyone looked.
+
+Measured 2026-09-24 with no build running:
+
+```
+/root/.cache/buildstream/cas/objects   47G
+/root/.cache/buildstream/cas/tmp       24G
+/root/.cache/buildstream/cas/staging   56K
+```
+
+**`objects/` is fine and must never be touched by hand.** 47G sits under the
+`cache: quota: 50G` that `cache-warm.yml` writes into
+`~/.config/buildstream.conf`, so casd is enforcing its cap exactly as
+configured. It is content-addressed storage: deleting a blob some artifact
+still references breaks the "referenced digest is present" invariant, and
+the damage surfaces later as a corrupt-cache error in an unrelated build.
+There is no safe incremental command either — see § Clearing the CAS, BST
+has no `artifact gc`.
+
+**`tmp/` is casd's per-session scratch, and 24G of it was orphaned.** casd
+unlinks these on clean shutdown; a killed casd never does, and nothing else
+ever will. This box has a documented history of precisely that (§ An OOM
+must not decommission the runner: two OOM kills inside 24h). That 24G
+accounts for essentially the entire ratchet visible in the `Print disk
+usage` steps — 91G used on 2026-09-17, 115G by 2026-09-24, never falling.
+
+**First real run, 2026-09-24: 49424 MB reclaimed, 115G → 71G used (38%).**
+`cas/objects` still read 47G afterwards, which is the check that matters —
+it proves the `find` stayed inside `tmp/`. The journal vacuum freed `0B`,
+correctly, since 137M is under its 200M cap; a maintenance script that
+"reclaims" something every time it runs is usually lying about one of its
+targets.
+
+One number in that report is not a sum: `podman image prune -f` deleted 19
+layer IDs while only 4 dangling images were listed, because pruning an
+untagged leaf cascades to parents it was the last reference for. The
+per-image sizes podman prints are cumulative and share layers, so adding
+them up overcounts. Treat the dangling listing as "what will go", not as
+"how much".
+
+The lesson generalises past this one directory: **when a diagnosis says
+"the quota is not holding", check whether the thing that grew is even
+inside the quota's accounting.** The obvious reading of "74G cache, 50G
+quota" is a broken cap, and it is wrong — the cap works, and a sibling
+directory outside it was the entire overage. Splitting the `du` one level
+deeper was the difference between the real fix and a plausible non-fix.
+
+`files/runner-vps/gc.sh` clears `tmp/` only when `pgrep -x buildbox-casd`
+finds nothing, and deletes its *contents* rather than the directory, which
+casd expects to exist with its own owner and mode.
+
+### Weekly GC on the VPS runner (#938)
+
+`.github/workflows/runner-vps-gc.yml` (`cron: '27 4 * * 0'`) runs
+`files/runner-vps/gc.sh`; `mise run runner-vps:gc` runs the identical script
+over SSH, copy-and-run, exactly as `runner-vps:install` ships `provision.sh`.
+`mise run runner-vps:gc -- --dry-run` reports without deleting.
+
+Two design points worth not relitigating:
+
+**It is a workflow job, not a systemd timer on the box.** A self-hosted
+runner executes one job at a time, so a GC *job* cannot overlap a build. A
+timer can, and would eventually delete casd scratch out from under a live
+BuildStream.
+
+**That argument does not cover `mise run runner-vps:gc`**, which arrives
+over SSH and knows nothing about the runner's scheduling — and the gap bit
+immediately. The very first dry run, executed while an ISO build was in
+flight, correctly proposed deleting `localhost/krytis-installer:latest` and
+`localhost/iso-tools:latest`, both of which that build had just created and
+was still using. Only the dry run's existence prevented it. The script now
+refuses to delete when `pgrep -f 'Runner\.Worker'` finds a job running,
+unless `GITHUB_ACTIONS=true` says the worker in question is its own. Worth
+generalising: a safety property that holds because of *how something is
+scheduled* stops holding the moment a second entry point exists, and the
+second entry point here was one this very change added.
+
+**It never runs `podman system prune -a`.** This box is shared — it also
+carries `ghcr.io/stryan/materia:stable`, `henrygd/beszel-agent`,
+`fedora-minimal`, `debian:bookworm` and `busybox`. A blanket prune deletes
+another project's images. The script prunes *dangling* images only, plus
+krytis-owned tags named explicitly.
+
+Sunday is deliberate: `cache-warm.yml` is `41 6 * * 1-5`, so a weekend slot
+misses it by a day rather than by minutes (§ Scheduled Workflow Cron Delay).
+
 ### `register` is re-runnable
 
 It used to be a strict one-shot — `config.sh` refuses with

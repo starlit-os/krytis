@@ -252,8 +252,16 @@ jobs:
         # unsealed tags unconditionally is simpler than branching on
         # inputs.sealed here — podman rmi on a nonexistent tag is already
         # swallowed by the 2>/dev/null || true below.
+        #
+        # localhost/krytis:iso-payload (8.23G) was missing from this list
+        # until #938 and survived every run, which is most of what the
+        # weekly GC found stranded. If a future change adds another
+        # intermediate tag, add it here too — files/runner-vps/gc.sh is the
+        # backstop for runs killed before this step, not a substitute for
+        # listing what the job creates.
         if: always()
         run: |
           podman rmi -f localhost/krytis-installer localhost/iso-tools:latest \
-            localhost/krytis:latest ghcr.io/starlit-os/krytis:latest \
+            localhost/krytis:latest localhost/krytis:iso-payload \
+            ghcr.io/starlit-os/krytis:latest \
             ghcr.io/starlit-os/krytis:sealed 2>/dev/null || true
