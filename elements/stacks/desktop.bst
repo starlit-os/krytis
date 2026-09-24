@@ -157,6 +157,22 @@ depends:
   # xdg-terminal-exec: XDG terminal execution spec — allows apps and the desktop
   # to open a terminal without hardcoding a specific emulator. Closes #171.
   - desktop/xdg-terminal-exec.bst
+  # desktop-file-utils: provides update-desktop-database, which builds the
+  # mimeinfo.cache that GIO reads to answer "which app handles this MIME type
+  # or URL scheme". Needed in two places, both of which were broken without it
+  # (#945):
+  #   1. At compose time — the fdsdk element's integration-command bakes
+  #      /usr/share/applications/mimeinfo.cache, without which GIO sees zero
+  #      registered apps for anything the image's own desktop files claim
+  #      (zen-browser's http/https, equibop's discord:).
+  #   2. At runtime — /usr/share/flatpak/triggers/desktop-database.trigger is
+  #      `command -v update-desktop-database`-gated, so with the binary absent
+  #      it silently no-ops and no Flatpak's MIME/scheme claims (Steam's
+  #      steam:, …) ever reach GIO.
+  # xdg-mime/xdg-open hide the breakage: xdg-utils' generic backend greps
+  # desktop files directly, so it answers correctly while every GIO-based
+  # caller (browsers, portals, gio open) fails.
+  - freedesktop-sdk.bst:components/desktop-file-utils.bst
 
   # ── Monitor control ────────────────────────────────────────────────────
   # ddcutil: reads and writes monitor settings (brightness, contrast, colour
