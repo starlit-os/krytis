@@ -969,8 +969,11 @@ remount could not run there at all.
 (merged in PR #224, released as v0.4.0): the type is written when the partition table is
 created, which covers both layouts, and it is architecture-aware — the old constant was
 x86-64 only, so an aarch64 install would have been tagged with a GUID the generator
-ignores there. krytis's own [#72](https://github.com/tuna-os/fisherman/pull/72), which
-proposed the same partition-time approach, was closed 2026-08-06 and is superseded.
+ignores there. krytis proposed the same partition-time approach first, as two copies of one
+branch: [tuna-os/fisherman#72](https://github.com/tuna-os/fisherman/pull/72), closed
+2026-08-06, and [projectbluefin/fisherman#19](https://github.com/projectbluefin/fisherman/pull/19),
+which stayed open until 2026-09-24 because its base repo had been archived in the meantime —
+see `docs/skills/workflow.md` § Archiving an upstream freezes its PRs. Both are superseded.
 
 ### The encrypted-root GUID fix, and where it actually comes from
 

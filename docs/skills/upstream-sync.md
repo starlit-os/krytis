@@ -71,14 +71,22 @@ while onboarding `dakota-iso` (#841): `../dakota`'s `origin` was `starlit-os/dak
 `upstream/testing` at that moment — 57 commits the lesson-mining pass never saw, reported
 as "up to date at 1cf9ef65…" because that *was* the fork's tip.
 
-All three checkouts are now wired the documented way: `../dakota`'s remotes were swapped
-(`origin` = `projectbluefin/dakota`, the unused `starlit-os/dakota` kept as `fork`, the
-duplicate `upstream` remote removed) and its `testing` branch retargeted at
-`origin/testing`; `../dakota-iso` was cloned from the fork but repointed at
-`projectbluefin/dakota-iso` when that fork was deleted (#841); `zirconium-hawaii` never had
-a fork at all. **No tracked repo goes through a fork any more.** If you add one, clone from
-the upstream — and check `git -C <local_path> remote -v` before trusting an "up to date"
-line on an existing one.
+Every fork is now gone rather than merely bypassed: `../dakota`'s remotes were swapped to
+the upstream in #841, and `starlit-os/dakota` plus `starlit-os/zirconium-hawaii` were
+**deleted** on 2026-09-24 once nothing had read them for a month; `kitten-lily/dakota-iso`
+went the same way in #841; `zirconium-hawaii` never had a fork at all. **No tracked repo
+can go through a fork any more** — `mise upstream-sync` clones a missing checkout itself,
+from `upstream:`, so the one step that used to hand a fork URL to `git clone` no longer
+exists. On a checkout you did not create, still run `git -C <local_path> remote -v` before
+trusting an "up to date" line.
+
+**Deleting a fork also deletes any history only it had.** `starlit-os/dakota`'s `main`
+carried `2063be5` (`docs(skills): document bst overlap-whitelist requirement`), reachable
+from no upstream branch — upstream's `main` reset dropped it. That is why a mined lesson is
+quoted *verbatim* into `docs/skills/<repo>.md` rather than linked: the text survives in
+`dakota.md` § `overlap-whitelist` required for base system file replacement, while the SHA
+beside it resolves only for as long as GitHub keeps the deleted fork's objects in the
+network. Quote the lesson; treat the SHA as provenance, not as the copy of record.
 
 ## `docs/upstreams.yml` Values Must Not Carry Inline Comments
 
@@ -105,9 +113,13 @@ the upstream repo. `--check` still runs the `git fetch` (there is no way to meas
 pending range without it) and compares `origin/<branch>` instead of `HEAD` — it skips only
 the `--ff-only` merge, so it never moves the local checkout.
 
-A repo whose `local_path` has no checkout on this machine is **skipped with a warning on
-stderr**, not an error: `==> <name>: no checkout at <path>, skipping`. A clean exit
-therefore does not mean every tracked repo was actually measured — read the per-repo lines.
+A repo whose `local_path` has no checkout is **cloned** — `git clone --branch <branch>
+https://github.com/<upstream>`, full depth, in both normal and `--check` mode. It used to
+be skipped with a warning instead, which made the task a silent no-op on any machine that
+never had the siblings: three `skipping` lines, exit 0, nothing measured — and because
+`--check` behaved identically, the output read as "nothing new upstream" rather than
+"nothing was looked at". Full depth is required, not incidental: the mining pass runs
+`git log <old>..<new>` and `git show`, neither of which works on a shallow clone.
 
 Output per repo is otherwise either "up to date" or an `old_sha..new_sha (N commits)`
 range — that range is what the `upstream-lessons` skill mines. The task deliberately does

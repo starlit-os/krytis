@@ -434,6 +434,39 @@ loop while `git rev-parse` resolved them fine a moment later, and the loop silen
 empty strings — reporting `IDENTICAL` for everything. Any comparison loop that can pass by
 comparing nothing must print the hash it compared, so an empty compare is visible.
 
+## Archiving an Upstream Freezes Its PRs — Deleting the Head Fork Is the Only Exit
+
+A PR whose **base** repo gets archived becomes immutable for everyone, author included.
+Not a permissions problem — GitHub locks the whole issue/PR surface:
+
+```console
+$ gh pr close 19 --repo projectbluefin/fisherman --comment "superseded by …"
+GraphQL: Repository was archived so is read-only and unable to create comment
+  because issue is locked (addComment)
+
+$ gh pr close 19 --repo projectbluefin/fisherman
+API call failed: GraphQL: Repository was archived so is read-only (closePullRequest)
+```
+
+So "close it with a pointer to the superseding fix" is not available, and neither is
+leaving a comment saying where the work went. The PR sits `OPEN` forever against a repo
+that can never merge it.
+
+**Deleting the head fork does close it.** `projectbluefin/fisherman#19` flipped to
+`CLOSED` the moment `starlit-os/fisherman` was deleted (2026-09-24), despite the archived
+base refusing the direct close a few minutes earlier. Deleting the head *branch* alone
+does not — the PR just renders "head ref deleted" and stays open.
+
+Two consequences worth planning around:
+
+- **Record the supersession somewhere you own.** The pointer cannot live on the PR, so it
+  belongs in the skill file that describes the fix — here, `docs/skills/secure-boot.md`
+  § A sealed UKI's frozen cmdline, which names both PR copies and the `tuna-os/fisherman#219`
+  that replaced them.
+- **Check for open PRs before deleting a fork**, since deletion is how they get closed and
+  the tombstone is all that remains: `gh search prs --author <you> --state open` across
+  every repo, not just the one you are thinking about.
+
 ## Where Plan and Design Docs Go
 
 `docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.
@@ -524,7 +557,7 @@ A committer that isn't `github-actions[bot]` on a commit whose message/author st
 
 `required_signatures` has no bypass, so a commit that cannot be signed cannot be made
 at all — `git commit` aborts with `fatal: failed to write commit object`. Distinguish
-the two causes before doing anything, because only one of them is fixable in software:
+the two causes before doing anything, because only one of them is unfixable locally:
 
 ```bash
 ssh-add -l                                         # key listed by the agent?
@@ -536,9 +569,19 @@ env -u SSH_AUTH_SOCK ssh-keygen -Y sign \
   direct probe → the token holding the resident credential is physically absent (a
   *different* YubiKey being plugged in still lists fine via the agent, since the agent
   lists key handles, not devices). No local workaround exists.
-- `agent refused operation` but the direct probe prompts for presence → the gcr-ssh-agent
-  proxy at `$SSH_AUTH_SOCK` is the problem; retry against the inner plain agent it spawns
-  (`ps -eo args | grep ssh-agent` shows `-a /run/user/1000/gcr/.ssh`, note the leading dot).
+- `agent refused operation` but the direct probe prompts for presence → an agent is
+  refusing a key it can see. Bypass every agent instead of hunting for a better one:
+  `env -u SSH_AUTH_SOCK git commit …` makes `ssh-keygen -Y sign` open the token directly,
+  which works because `user.signingkey` is a key **file path** — check
+  `git config user.signingkey` before relying on it, since a `key::`-style value or a bare
+  public key would need the agent.
+
+Do not bother retrying against the inner plain agent gcr spawns
+(`ps -eo args | grep ssh-agent` → `-a <gcr-base-dir>/.ssh`, note the leading dot). On
+2026-09-24 both the gcr proxy at `$SSH_AUTH_SOCK` and that inner agent refused the same
+key, 58 s apiece, while direct file signing succeeded in 10 s. Derive the base dir from
+`$SSH_AUTH_SOCK` if you do look — it is `/run/user/<uid>/gcr`, and the uid is not always
+`1000` (it was `60339` on that host).
 
 For the first case, `createCommitOnBranch` is not bot-only: GitHub signs **any** commit it
 creates through that mutation, so a human with an authenticated `gh` can land a verified
