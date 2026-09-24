@@ -128,7 +128,7 @@ byte-identical embedding, or the single-owner `EXIT` trap registry came from the
 and now lives in krytis. Do not expect a fix for those areas to appear upstream, and do not
 file one there.
 
-### The `--store` flag in `build-iso.sh` is dead code, and krytis ported it verbatim
+### The `--store` flag in `build-iso.sh` was dead code, ported verbatim and now removed
 
 *Source: dakota-iso `7c9d6c6f` — "fix(live): remove dead superiso-store script and --store
 flag from build-iso.sh (#171)".*
@@ -142,12 +142,12 @@ squashfs, loop-mounted at `/var/lib/superiso-store` and registered as
 primary store" and was never fully wired into CI. So passing `--store` does not add an
 offline store; it **double-embeds** the payload and produces an oversized ISO.
 
-**krytis carries the whole thing verbatim** in `live/src/build-iso.sh`: usage strings at
-lines 2-3 and 80-82, option documentation at 20-22 and 38 — which names a
-`superiso-store.mount` unit that does not exist in krytis either, this file being the only
+**krytis carried the whole thing verbatim** in `live/src/build-iso.sh` until #935: usage
+strings at lines 2-3 and 80-82, option documentation at 20-22 and 38 — which named a
+`superiso-store.mount` unit that never existed in krytis either, this file being the only
 hit for `superiso` outside an archived plan — `STORE_SFS=""` at 48, the `--store)` case arm
-at 53, and the copy block at 326-329. Nothing passes it: no `mise/tasks/iso-*` call site and
-no `scripts/iso-sd-boot.sh` one. Krytis embeds its payload the same VFS way —
+at 53, and the copy block at 326-329. Nothing ever passed it: no `mise/tasks/iso-*` call
+site and no `scripts/iso-sd-boot.sh` one. Krytis embeds its payload the same VFS way —
 `scripts/iso-sd-boot.sh:170-174` writes a `driver = "vfs"` store into
 `${CS_STAGING}/var/lib/containers/storage` and copies it to
 `${SQUASHFS_ROOT}/var/lib/containers/storage` at 224-226, the branch krytis always takes
@@ -156,9 +156,12 @@ because `live/src/krytis/composefs` is `true`, and the live image's own
 (`live/src/configure-live-krytis.sh:222-230`). Dead here for the same reason it was dead
 upstream.
 
-`docs/plans/done/2026-08-06-hard-fork-dakota-iso.md:358` explicitly told the port to *keep*
-`--store`. That plan is archived and frozen — it is not edited — but that instruction is
-**superseded**: the flag should go the way upstream's did.
+**How it survived the fork:** `docs/plans/done/2026-08-06-hard-fork-dakota-iso.md:358`
+explicitly told the port to *keep* `--store`. A port instruction written against a
+then-current upstream carries that upstream's dead code forward silently — the plan was
+right on the day it was written and wrong three weeks later, and nothing in the port
+re-asked whether each flag was reachable. That plan is archived and frozen, so it is not
+edited; the instruction is simply superseded.
 
 **The method half of the commit:** upstream found its own docs quoting a "~17 GB with both
 offline stores" size estimate *derived* from the phantom line item, plus a component-table

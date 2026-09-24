@@ -244,7 +244,20 @@ AGENTS.md § Verification requires every PR to confirm the image booted, and `mi
 sudo: A terminal is required to authenticate
 ```
 
-There is nothing to retry: `sudo -n true` also fails (no `NOPASSWD` rule for these commands), and a `sudo` timestamp primed in the human's own terminal is not visible to the agent's shell. Do not try to work around it — hand it off.
+There is nothing to retry: `sudo -n true` also fails (no `NOPASSWD` rule for these
+commands), and a `sudo` timestamp primed in the human's own terminal is not visible to
+the agent's shell — sudo scopes timestamps per tty (`tty_tickets`), so *every* agent
+call re-authenticates even seconds apart.
+
+**A PTY does not rescue it, and the near-miss is worth knowing.** Allocating a PTY for
+the call (omp's `bash` tool, `pty: true`) does put the real prompt in front of the human
+— on a FIDO2-enrolled host that is PIN → touch → password, three answers — but the
+harness's foreground window is finite (300 s in omp) and it SIGTERMs the task when it
+expires. Confirmed 2026-09-24 while verifying #937: authentication succeeded, then
+`load-image-root` was killed mid-`podman load` of the 8 GB image, twice. Backgrounding
+instead (`async: true`) puts the prompt where nobody can answer it and fails with the
+same `A terminal is required to authenticate`. Do not try to work around it — hand it
+off.
 
 **The privileged part is one step, not the whole gate.** `bootc install to-disk --via-loopback` has to create a loop device and mount the new filesystem, which requires `CAP_SYS_ADMIN` in the initial user namespace (see the comment block at `mise/tasks/boot-test:76`). Everything after it — the QEMU boot, the serial-console assertions, the verdict — is unprivileged, and `boot-test` exposes the split via `--reuse-disk`:
 
@@ -262,6 +275,41 @@ mise run boot-test --reuse-disk /var/tmp/krytis-test.raw
 **Sequence the handoff so it is the last thing outstanding.** Run every gate that works unprivileged first — `mise run build` (which ends in `bootc container lint`), `mise run validate`, `mise run docs-links`, `mise run vuln-scan`, the element build, and any in-sandbox smoke check via `bst shell` — then open the PR with that evidence and exactly one named command left for the maintainer. When they report the result, **edit the PR body** to record it; AGENTS.md § PR Comment Policy forbids a follow-up comment for a new observation.
 
 The same root requirement applies to `mise run chunkify` and to `mise/tasks/load-image-root` (which `generate-disk` calls to copy the image into the root podman store, invisible to rootless podman).
+
+### The ISO path needs no host root at all
+
+`mise run boot-test` is the gate an agent cannot run. It is **not** the only way to get
+install-and-boot evidence. The entire live-ISO pipeline is unprivileged end to end:
+
+```shell
+mise run build-iso --debug      # podman + the iso-tools container; no sudo
+mise run iso-install-test       # QEMU install from the ISO, then the boot verdict
+```
+
+Three things that look like they need root do not:
+
+- `mise/tasks/iso-boot-live:81-86` only reaches for `sudo` when `/dev/kvm` is
+  unreadable. It is `crw-rw-rw-` on a normal desktop, so the branch never fires.
+- The `sudo` calls in `scripts/iso-install-fisherman.sh` run **inside the live guest**
+  over SSH, not on the host.
+- `iso-install-test`'s verdict arm is `boot-test --reuse-disk /var/tmp/krytis-install.img`
+  — the `--reuse-disk` split above, so it skips `generate-disk` entirely.
+
+Run on 2026-09-24 (#940): `build-iso --debug` 12m → 4.9 GB ISO, `iso-install-test` 3m44s
+→ `==> PASS`, both as detached background jobs with no human present.
+
+**What it does and does not substitute for.** The installed system it boots carries
+`localhost/krytis:latest` as the ISO's offline payload, so a green run *is* real evidence
+that the current image boots — useful when the image-affecting PR is blocked on the
+handoff. It exercises fisherman's install path, not `bootc install to-disk`, so it does
+not discharge `mise run boot-test`; cite it as corroboration and leave the owed item
+standing.
+
+**Long builds must be detached, not merely backgrounded.** `hub start` without
+`detached: true` ties the process to the broker: a broker restart killed a `build-iso`
+run at the 8-minute mark on 2026-09-24, leaving ~20 GB of podman scratch and a half-built
+payload behind (`podman image prune -f` reclaimed it). Pass `detached: true` for anything
+measured in tens of minutes.
 
 ## Skip `mise lint`/`boot-test` When the Diff Can't Touch the Image
 
