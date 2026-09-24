@@ -65,10 +65,13 @@ from the 2026-08-12 pass that don't block anything but matter for a future attem
   collection (no FD-store/credential-based resume yet — oo7#506, 2026-08-03 comment).
   Lower risk for krytis than for traditional Fedora, since bootc updates are reboot-driven
   rather than live in-place daemon restarts, but still worth a boot-test scenario.
-- oo7 ships no ssh-agent component at all. Whatever provides `SSH_AUTH_SOCK` today
-  (`~/.config/fish/conf.d/ssh-agent.fish`, currently pointed at gnome-keyring's
-  `$XDG_RUNTIME_DIR/gcr/ssh`) has to keep existing independent of this migration — it isn't
-  a "different path to switch to" question.
+- oo7 ships no ssh-agent component at all, and this stays true after the migration —
+  it is not a "different path to switch to" question. **Resolved 2026-09-24:** the agent
+  is gcr-4's `gcr-ssh-agent` (socket-activated user unit on `$XDG_RUNTIME_DIR/gcr/ssh`,
+  reaching the image transitively via `desktop/noctalia.bst`), and
+  `elements/config/ssh-agent-env.bst` now exports `SSH_AUTH_SOCK` to it from
+  `/usr/share/fish/vendor_conf.d/ssh-agent.fish` instead of leaving it to a user dotfile.
+  Independent of oo7 in both directions. See `docs/skills/desktop.md` § SSH agent.
 - Manual unlock UI on niri (secondary keyrings, `CreateCollection`, `ChangePassword`) needs
   `gcr-prompter` (`sdk/gcr-3.bst`) — oo7 has no niri/wlroots-native prompter, and a
   Wayland session always resolves to the GNOME (`org.gnome.keyring.SystemPrompter`) path,

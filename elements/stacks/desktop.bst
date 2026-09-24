@@ -66,6 +66,13 @@ depends:
   # it on purpose so manual unlock exercises noctalia's own
   # org.gnome.keyring.SystemPrompter instead. See docs/design/secrets-service.md.
   - desktop/oo7.bst
+  #
+  # ssh-agent-env: exports SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/gcr/ssh for fish.
+  # gcr-4 arrives transitively via desktop/noctalia.bst and brings
+  # gcr-ssh-agent.socket with it, but nothing pointed clients at it; oo7 has
+  # no ssh-agent of its own. Guarded on the variable being unset and the
+  # socket existing, so it is inert outside a live user session.
+  - config/ssh-agent-env.bst
 
   # ── User accounts ──────────────────────────────────────────────────────
   # accounts-daemon: AccountsService D-Bus daemon. noctalia-greeter queries

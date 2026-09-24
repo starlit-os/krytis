@@ -604,6 +604,66 @@ GTK client and cause its UI to render black (GTK Vulkan GSK renderer fails silen
 Toolkit env hints (`GSK_RENDERER`, `SDL_VIDEODRIVER`) belong only in `environment.d` (user
 systemd sessions), not in `/etc/environment` (which is read by the greeter PAM session too).
 
+## SSH agent: gcr-ssh-agent and `SSH_AUTH_SOCK`
+
+Krytis has an ssh-agent and had no way for anything to find it until `config/ssh-agent-env.bst` (2026-09-24).
+
+**Who provides the agent.** `gcr-4` (`gnome-build-meta.bst:sdk/gcr.bst`), pulled in
+transitively by `desktop/noctalia.bst` for `libgcr-4.so`. It carries
+`/usr/libexec/gcr-ssh-agent` plus `gcr-ssh-agent.socket` / `gcr-ssh-agent.service`
+as **user** units, socket-activated on `$XDG_RUNTIME_DIR/gcr/ssh`. This is a live
+example of the transitive-dependency gap AGENTS.md warns about: no `.bst` file in
+this repo names `gcr-ssh-agent`, yet it is running on the booted image —
+
+```console
+$ systemctl --user list-units --all 'gcr*'
+gcr-ssh-agent.service loaded active running GCR ssh-agent wrapper
+gcr-ssh-agent.socket  loaded active running GCR ssh-agent wrapper
+$ ls -l /run/user/$(id -u)/gcr/
+srw-------  .ssh
+srw-rw-rw-  ssh
+```
+
+oo7 contributes nothing here — it ships no ssh-agent crate at all
+(`docs/skills/pam.md` § pam_oo7). gcr's agent is not a keyring component; it is an
+independent `ssh-agent(1)` wrapper that happens to arrive in the same tarball.
+
+**Who exports the variable.** `elements/config/ssh-agent-env.bst` →
+`/usr/share/fish/vendor_conf.d/ssh-agent.fish`. Two guards, both load-bearing:
+
+```fish
+if not set -q SSH_AUTH_SOCK
+    and test -S "$XDG_RUNTIME_DIR/gcr/ssh"
+    set -gx SSH_AUTH_SOCK "$XDG_RUNTIME_DIR/gcr/ssh"
+end
+```
+
+- `set -q` guard — an inherited `SSH_AUTH_SOCK` always beats a system default:
+  `ssh -A` forwarding, a hand-started `ssh-agent`, `env -u SSH_AUTH_SOCK` workflows
+  (`docs/skills/fido2.md` § signing), or a per-shell override.
+- `test -S` guard — the path only exists once the systemd `--user` manager has
+  the socket unit up. Absent in containers, on a tty login racing the user manager,
+  and in any build without gcr-4. Exporting a dead path is strictly worse than
+  exporting nothing: `ssh` then reports `Error connecting to agent` instead of
+  falling through to on-disk keys.
+
+Quoting matters for the second guard. `"$XDG_RUNTIME_DIR/gcr/ssh"` with
+`XDG_RUNTIME_DIR` unset expands to the single word `/gcr/ssh`, so `test -S` gets one
+argument and returns false. Unquoted, fish would expand it to *zero* words and
+`test -S` would error. Verified all four paths against real fish before committing:
+unset+socket → set; preset → untouched; socket missing → unset; `XDG_RUNTIME_DIR`
+unset → unset.
+
+**Fish only, deliberately.** `vendor_conf.d` is fish's package-owned config dir:
+auto-loaded for every user with no write to `$XDG_CONFIG_HOME`, and a user's own
+`~/.config/fish/conf.d/ssh-agent.fish` shadows it by filename. Bash and zsh get
+nothing — if they ever need it, the equivalent is `/etc/profile.d/ssh-agent.sh`
+with `[ -n "$SSH_AUTH_SOCK" ] || [ ! -S … ] || export …`, following
+`elements/core/mise.bst`'s three-file pattern.
+
+Load order is a non-issue here (no mise dependency), but the name still sorts after
+`01-mise.fish` — see `docs/skills/mise.md` § Fish vendor_conf.d load order.
+
 ## Passing Environment Variables to the Greeter Compositor
 
 **Do NOT use a systemd `Environment=` drop-in on `greetd.service` to pass env vars to the compositor.**
