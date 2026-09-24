@@ -609,18 +609,22 @@ key, 58 s apiece, while direct file signing succeeded in 10 s. Derive the base d
 `$SSH_AUTH_SOCK` if you do look — it is `/run/user/<uid>/gcr`, and the uid is not always
 `1000` (it was `60339` on that host).
 
-**A third cause, and the one that actually bit on 2026-09-24: no controlling terminal.**
-`Confirm user presence for key …` prints, ~29 s pass, and it fails with
-`Couldn't sign message: incorrect passphrase supplied to decrypt private key?` — which is
-not about a passphrase at all. `ssh-keygen -Y sign` against an `sk` key wants a terminal to
-talk to the token through; run from a captured-output context with no PTY it cannot, and
-reports the failure as a passphrase error after the presence timeout. The same `git commit
---amend -S`, byte for byte, succeeded in 24 s the moment it was given a PTY.
+**A third cause, and the common one: nobody touched the key.** `Confirm user presence for
+key …` prints, ~29 s pass, and it fails with `Couldn't sign message: incorrect passphrase
+supplied to decrypt private key?` — which has nothing to do with a passphrase. That is
+simply how OpenSSH reports an `sk` key's presence timeout. If the operator is away from the
+token, every retry costs another 29 s and looks like a new fault each time.
 
-The tell is the **fixed ~29 s** and the passphrase wording on a key that has no passphrase.
-A genuine untouched-token timeout and an agent refusal both say `agent refused operation`.
-An agent-authoring harness must allocate a PTY for any command that may sign; four
-consecutive failures were spent bypassing agents that were never the problem.
+The tell is the **fixed ~29 s** plus passphrase wording on a key that has no passphrase. An
+agent refusal says `agent refused operation`; an absent token says `device not found`. A
+timeout says neither — it says "passphrase", and means "ask the human to touch".
+
+*Do not repeat the mis-diagnosis this entry originally carried.* On 2026-09-24 one attempt
+was retried under a PTY, succeeded, and the PTY was written up here as the fix. It was not:
+the next PTY-allocated commit failed identically at 29 s. The confound was the operator —
+the successes were the two attempts they happened to be at the key for. One success after
+one change is not a cause; before recording a fix, re-run the *failing* configuration and
+confirm it still fails.
 
 **`createCommitOnBranch` cannot carry a file mode.** The mutation's `FileAddition` has
 `path` and `contents` and nothing else, so a new file lands `100644`. That makes the
