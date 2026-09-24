@@ -38,6 +38,10 @@ Dashboard → R2 → follow the enablement flow. R2 requires a payment method on
 
 R2 → Create bucket → name `krytis-iso` → Location: Automatic → Storage class: Standard.
 
+Then, on the new bucket: Settings → **Object lifecycle rules** → Create rule → *Abort incomplete multipart uploads* after **1 day**, applied to the whole bucket (no prefix filter).
+
+This is the one way the "one ISO at a time" assumption can silently stop holding. R2's free tier is 10 GB-month billed as the monthly average of each day's *peak* storage, and a 4.5 GB ISO (`docs/design/secure-boot-testing.md`) leaves roughly 2x headroom — a publish briefly peaks near 9 GB (old object still live while the new upload's parts accumulate) and that spike costs 9/30 = 0.3 GB-month, which is nothing. But **unfinished multipart uploads are billed as storage and do not appear in the bucket's object listing.** A cancelled workflow run or a dead runner leaves ~4.5 GB of orphaned parts behind forever; the bucket still shows exactly two objects while storage climbs per failed run. `AbortMultipartUpload` is a free operation, so the lifecycle rule costs nothing to run.
+
 - [ ] **Step 3: Create a bucket-scoped API token**
 
 From the `krytis-iso` bucket's page → Settings → **Manage API tokens** (bucket-scoped panel, not the account-level R2 API Overview — that one defaults to all-buckets access) → Create API token → Permissions: **Object Read & Write** → TTL: no expiry (rotate manually per Task 6's note) → Create.
@@ -239,6 +243,8 @@ this build's size and checksum before the job is considered green."
 - [ ] **Step 1: Write the living-reference design doc**
 
 `docs/design/iso-distribution.md` — why R2 (zero egress vs S3/GCS for a repeatedly-downloaded multi-GB file), the sealed-only trust-model decision, the latest-only/no-archive decision and its known limitation (cross-reference Task 4's note), the bucket/domain/credential inventory (`krytis-iso` bucket, `iso.ririi.dev` custom domain, `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` GH secrets), and the rotation procedure (create a new bucket-scoped token in the Cloudflare dashboard, `gh secret set` the three values, revoke the old token — no in-flight upload to invalidate since `rclone` runs a single short-lived job).
+
+Also record the cost model, because it is the constraint that makes "latest only" viable rather than merely simple: 4.5 GB of steady-state storage against a 10 GB-month free tier billed as the monthly average of daily peaks, with the abort-incomplete-multipart-uploads lifecycle rule (Task 1 Step 2) as the guard against orphaned parts — invisible in the object listing, billed as storage — accumulating from cancelled runs. Anyone later proposing a dated archive needs those numbers to see that it moves the bucket off the free tier at the third ISO.
 
 - [ ] **Step 2: Add the CI-facing operational notes to the skill file**
 
