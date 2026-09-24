@@ -88,7 +88,7 @@ jobs:
         # (#703). hastd/free-disk-space is properly tagged, actively
         # maintained, and its bare defaults already free more space than the
         # old action's fixed removal list ever did with these inputs — see
-        # docs/skills/ci-runner.md § remove-unwanted-software migration for
+        # docs/skills/ci-runner.md § *`remove-unwanted-software` → `free-disk-space` migration* for
         # the full path-by-path comparison.
         #
         # Deliberately pinned to v0.1.1, not the newest v0.1.2: the two

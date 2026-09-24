@@ -1,6 +1,9 @@
 # Secure Boot + Unified Kernel Image (UKI)
 
-Tracking epic: #16
+Tracking epic: #16 — **closed 2026-08-02.** Everything in "What needs to happen"
+below shipped; where the shipped shape differs from the design it is corrected in
+place. For how to *operate* and *test* any of it, read `docs/skills/secure-boot.md`
+and `docs/design/secure-boot-testing.md`.
 
 ## Threat model
 
@@ -153,7 +156,7 @@ mise run seal-uki    → podman build --build-arg SEAL_SECURE_BOOT=true --secret
 mise run generate-disk → bootc install to-disk (from sealed image)
 ```
 
-**Runtime deps to add to the image:** `freedesktop-sdk.bst:components/systemd-ukify.bst` (provides `ukify` + EFI stub), `freedesktop-sdk.bst:components/sbsigntools.bst` (provides `sbsign`), `freedesktop-sdk.bst:components/efitools.bst` (provides `cert-to-efi-sig-list` / `sign-efi-sig-list` for #309). Verify the EFI stub (`/usr/lib/systemd/boot/efi/linuxx64.efi.stub`) is present — `systemd-ukify.bst` is a filter over `systemd-base.bst` which builds with `-Defi=true -Dbootloader=true` on x86_64.
+**Runtime deps added to the image:** `freedesktop-sdk.bst:components/systemd-ukify.bst` (provides `ukify` + EFI stub) and `freedesktop-sdk.bst:components/sbsigntools-maybe.bst` (provides `sbsign`), both in `stacks/bootc.bst`. efitools turned out **not** to be available from the junction — freedesktop-sdk removed every EFI element in `b39e7194` ("Remove EFI elements"), so krytis vendors it as `elements/core/efitools.bst` (patched for c99 and gcc15) for `sign-efi-sig-list` (#309). The EFI stub (`/usr/lib/systemd/boot/efi/linuxx64.efi.stub`) is present — `systemd-ukify.bst` is a filter over `systemd-base.bst`, which builds with `-Defi=true -Dbootloader=true` on x86_64.
 
 ### kargs immutability
 
@@ -179,13 +182,15 @@ See `docs/secure-boot-enrollment.md` for the real-hardware step-by-step.
 
 bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section): place signed EFI signature lists (`.auth` files) at `/usr/lib/bootc/install/secureboot-keys/auto/` in the image. At `bootc install --bootloader systemd` time, bootc copies them to `ESP/loader/keys/auto/`. systemd-boot enrolls them at first boot.
 
-**`.auth` file generation** uses efitools (`cert-to-efi-sig-list` + `sign-efi-sig-list`), available as `freedesktop-sdk.bst:components/efitools.bst`. NOT `efi-keytool` from `efivar` — that was an incorrect tool identification in an earlier draft.
+**`.auth` file generation** was designed around efitools (`cert-to-efi-sig-list` + `sign-efi-sig-list`) — NOT `efi-keytool` from `efivar`, an incorrect tool identification in an earlier draft. Half of that survived contact with reality: #438 found that `cert-to-efi-sig-list` takes PEM, and given DER writes a well-formed but **empty** signature list and exits 0, so every `.auth` krytis shipped before #438 enrolled an allow-list containing no certificates. The shipped split is therefore deliberate and asymmetric: signature **lists** come from sbsigntools' `sbsiglist`, signature **wrapping** from efitools' `sign-efi-sig-list` (sbsigntools' `sbvarsign` writes the `EFI_TIME` month from a 0-based `tm_mon`). efitools is also not in the junction — freedesktop-sdk removed its EFI elements, so krytis vendors `elements/core/efitools.bst`. Full reasoning in `Containerfile`'s `sealed` stage header and `docs/skills/secure-boot.md`.
 
 **Enrollment replaces, not merges.** systemd-boot's `loader/keys/auto` enrollment **replaces** PK/KEK/db with exactly what's in the `.auth` files — it is not `sbctl enroll-keys --microsoft --firmware-builtin`, which merges the firmware's existing `dbDefault`/`KEKDefault`. Microsoft's CA certs (2011 + 2023) **can** be retained by explicitly bundling them into the `db.auth` signature list. OEM-specific keys from `dbDefault` **cannot** be generically preserved (they're per-machine). Bundling Microsoft's well-known CAs is sufficient for most users (Option ROMs, third-party bootloaders).
 
 **`secure-boot-enroll` in `loader.conf`:** systemd-boot does **not** auto-enroll on real hardware by default. The default `secure-boot-enroll=if-safe` only auto-enrolls in recognized VMs. On real hardware, the user must manually select the key set in the boot menu, or enrollment is a silent no-op. Set `secure-boot-enroll manual` in `loader.conf` and document the firmware-setup-mode + boot-menu flow.
 
 **No `mokutil` or `sbctl` needed** in the image — build-time signing uses `sbsign`/`ukify` directly, and enrollment is handled by systemd-boot natively. Neither `mokutil` nor `sbctl` exists in the fdsdk junction.
+
+**`secure-boot-enroll manual` cannot be baked into `/usr`.** `loader.conf` lives on the ESP, which `bootc install` writes. `elements/config/secureboot-loader-conf.bst` ships a first-boot oneshot (`secure-boot-enroll.service`) that appends the line to `/boot/loader/loader.conf` instead — which is why the enrollment policy a guest reads back can post-date the firmware's own decision (trap T-4 in `docs/design/secure-boot-testing.md`).
 
 **QEMU testing:** Use `virt-fw-vars --secure-boot --set-pk … --add-kek … --add-db …` to bake keys directly into an OVMF vars file (reference: travier `generate-ovmf-vars` recipe). This is the test path; `loader/keys/` is the real-hardware path.
 
@@ -196,13 +201,15 @@ bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section)
 | `mokutil --import` | Not in fdsdk junction (would need new element). Interactive prompt at first boot. Not bootc-integrated. |
 | `sbctl enroll-keys` | Not in fdsdk junction (would need new element). Manual command from running system. Not bootc-integrated. |
 
-### 4. CI signing strategy: prerequisite for registry publishes
+### 4. CI signing strategy: prerequisite for registry publishes — **shipped (#448, #450)**
 
 **CI signing is a hard prerequisite for publishing to a registry that secure-boot users track.** If CI publishes unsigned images, a secure-boot user who runs `bootc upgrade` pulls an unsigned UKI → firmware rejects it → unbootable. This is not a "future nicety" — it's required from day one.
 
-**Resolution:** CI signs from day one using a single `PROTON_PASS_PERSONAL_ACCESS_TOKEN` as a GitHub Actions secret. CI runs `pass-cli login --personal-access-token $TOKEN` → `mise run pull-keys` → `mise run seal-uki` → publishes the **signed** image. One token instead of 6 key files.
+**Resolution:** CI signs using a single Proton Pass personal access token as a GitHub Actions secret. `publish.yml` runs `pass-cli login --pat "${PROTON_PASS_PAT}"` → `mise run pull-keys` → `mise run seal-uki` → publishes the **signed** image. One token instead of 6 key files. The secret shipped as `PROTON_PASS_PAT`, not the longer `PROTON_PASS_PERSONAL_ACCESS_TOKEN` this design sketched, and the sealed leg is on by default with a `publish_sealed=false` opt-out per run.
 
-If CI signing is not ready, the unsigned image must **not** be published to the public registry — it stays as `localhost/krytis-input:latest` (the BST output) and `localhost/krytis:latest` (lint-only). Only the sealed image is published.
+Both images are published: the unsigned one first (`:latest` + a version tag), then the sealed one (`:sealed`) only after the first is pushed, signed and verified — deliberately last, so a failure in the newer sealed path cannot cost the primary artifact.
+
+The fallback rule that applied until this shipped: if CI signing were not ready, the unsigned image must **not** be published to the public registry. That is no longer the operating state — both `:latest` and `:sealed` are published, and `:latest` is deliberately *not* signed with a UKI (it is the unsealed stream).
 
 ### 5. Breakage gate: fido2-luks / TPM (#312) — RESOLVED
 
@@ -227,9 +234,9 @@ Enabling secure boot and switching to a signed UKI flips PCR 7 (and changes PCR 
 
 ## Status in sibling / reference projects
 
-- **fdsdk** (`vm/minimal-secure/`): complete reference implementation — `ukify build` + `sbsign` for shim/bootloader. Good signing-mechanics reference, but **different boot flow** (standalone disk image, not bootc + composefs). Uses build-time signing and replaces firmware keys entirely — not the model here.
-- **travier / fedora-atomic-desktops-sealed** (<https://github.com/travier/fedora-atomic-desktops-sealed>): **primary analog** — bootc + composefs + UKI + secure boot. Uses `Containerfile.uki` with `FROM` the base image, `--secret` mounts for keys, `bootc container ukify` + `sbsign` inside the container. See `scripts/uki.sh`, `Containerfile.uki`, `justfile`. Note: travier's `uki.sh` marks `bootc container ukify` as FIXME/disabled — that was an older bootc; v1.16.3 makes it production-ready.
-- **zirconium-hawaii**: key scaffolding in place (`files/boot-keys/`, `core/linux-module-cert.bst`, `files/boot-keys/` in `.gitignore`) but signing not yet wired up. `generate-keys` Justfile recipe is the reference for #31.
+- **fdsdk** (`vm/minimal-secure/`): complete reference implementation — `ukify build` + `sbsign` for shim/bootloader. Good signing-mechanics reference, but **different boot flow** (standalone disk image, not bootc + composefs). Uses build-time signing and replaces firmware keys entirely — not the model here. Note fdsdk has since removed its EFI elements entirely (`b39e7194`), which is why krytis vendors `core/efitools.bst`.
+- **travier / fedora-atomic-desktops-sealed** (<https://github.com/travier/fedora-atomic-desktops-sealed>): **primary analog** — bootc + composefs + UKI + secure boot. Uses `Containerfile.uki` with `FROM` the base image, `--secret` mounts for keys, `bootc container ukify` + `sbsign` inside the container. See that repo's `scripts/uki.sh`, `Containerfile.uki` and `justfile` — none of those paths exist in krytis. Note: travier's `uki.sh` marks `bootc container ukify` as FIXME/disabled — that was an older bootc; v1.16.3 makes it production-ready.
+- **zirconium-hawaii**: key scaffolding only (`files/boot-keys/` gitignored, `core/linux-module-cert.bst`), signing never wired up on the branch krytis tracks. Its `generate-keys` Justfile recipe was the reference for #31; krytis's own `mise/tasks/generate-keys` has long since outgrown it (it pulls from Proton Pass via fnox first and only generates as a fallback).
 - **dakota**: no secure boot. Uses `bluefin/unsigned-modules.bst` (extracts fdsdk kernel modules as-is).
 - **bootc** (`contrib/packaging/seal-uki`, `contrib/packaging/finalize-uki`): bootc's own reference scripts for sealed UKI images. `seal-uki` wraps `bootc container ukify` as a one-liner.
 
@@ -255,13 +262,13 @@ Guard: skip generation if `.key` + `.crt` already exist (reuse developer's exist
 
 ### 3. UKI assembly + bootloader signing (`mise run seal-uki`) — #32, #33
 
-Expand the existing `Containerfile` with a conditional `SEAL_SECURE_BOOT` build arg. When enabled, `bootc container ukify` builds and signs the UKI, and `sbsign` signs `systemd-boot` — all inside the image, with keys passed via `--secret` mounts. See the Containerfile snippet in decision 1 above.
+Shipped as **two** Containerfiles, not one expanded `Containerfile`: the `sealed` stage in `Containerfile` does `sbsign` on systemd-boot plus `.auth` generation and the `assert_esl` gate, and `Containerfile.seal-uki` runs `bootc container ukify` in a throwaway stage. Running ukify in the final image makes install fail with "The UKI has the wrong composefs= parameter" (#443). Keys are passed via `--secret` mounts in both.
 
-**Runtime deps to add:** `components/systemd-ukify.bst`, `components/sbsigntools.bst`, `components/efitools.bst`. Verify EFI stub (`linuxx64.efi.stub`) present.
+**Runtime deps added:** `components/systemd-ukify.bst`, `components/sbsigntools-maybe.bst` (both from the junction, in `stacks/bootc.bst`) and the vendored `core/efitools.bst`. EFI stub (`linuxx64.efi.stub`) confirmed present.
 
 ### 4. Firmware key enrollment — #309
 
-Generate `.auth` files from PEM keys using efitools (`cert-to-efi-sig-list` + `sign-efi-sig-list`). Bundle Microsoft CA certs in db.auth. Place at `/usr/lib/bootc/install/secureboot-keys/auto/` in the image via a BST element. Set `secure-boot-enroll manual` in `loader.conf`. bootc + systemd-boot handle the rest at install/boot time.
+Generate `.auth` files from the PEM keys — `sbsiglist` for the signature lists, `sign-efi-sig-list` to sign them (see decision 3 for why the toolkits are split). Bundle Microsoft's five db CAs. Place at `/usr/lib/bootc/install/secureboot-keys/auto/` — done in the Containerfile's `sealed` stage, not a BST element, because it needs the PK/KEK private keys. `secure-boot-enroll manual` is written to the ESP's `loader.conf` by `config/secureboot-loader-conf.bst`'s first-boot oneshot. bootc + systemd-boot handle the rest at install/boot time.
 
 For QEMU testing: `virt-fw-vars` to bake keys into OVMF vars.
 
@@ -307,30 +314,62 @@ Gate cleared: no TPM-bound deployments exist, so signed-UKI PCR changes cannot l
 
 ~~MOK enrolment of CachyOS's signing cert.~~ Closed as based on a false premise — see "Threat model" above and #34 for the full analysis.
 
-## Suggested element / task layout
+## Element / task layout — as shipped
+
+The sketch in earlier drafts named three new elements and one Containerfile. What
+actually landed is different in every one of those places:
 
 ```
-# BST elements (runtime deps for signing/enrollment tools)
-elements/core/secure-boot-tools.bst   # systemd-ukify + sbsigntools + efitools (runtime dep)
-elements/config/secureboot-keys.bst   # .auth files → /usr/lib/bootc/install/secureboot-keys/auto/
-elements/config/loader-config.bst     # secure-boot-enroll manual in loader.conf
+# BST elements
+elements/core/efitools.bst             # vendored (fdsdk removed its EFI elements);
+                                       #   systemd-ukify + sbsigntools-maybe come
+                                       #   straight from the junction. There is no
+                                       #   core/secure-boot-tools.bst — the three
+                                       #   deps sit directly in stacks/bootc.bst.
+elements/config/secureboot-loader-conf.bst
+                                       # NOT the sketched config/loader-config.bst.
+                                       #   Ships secure-boot-enroll.service, a
+                                       #   first-boot oneshot that appends
+                                       #   `secure-boot-enroll manual` to the ESP's
+                                       #   loader.conf — the ESP is written by
+                                       #   `bootc install`, so the file cannot be
+                                       #   baked into /usr.
+
+# No config/secureboot-keys.bst exists. The .auth files are generated at seal time
+# in the Containerfile's `sealed` stage, straight into
+# /usr/lib/bootc/install/secureboot-keys/auto/, because they need the PK/KEK private
+# keys — which only exist inside a `--secret` mount, never in a BST source.
 
 # Config (committed — references only, no secrets)
 fnox.toml                              # #311 — Proton Pass secret references
 
-# Containerfile (expanded — conditional signing)
-Containerfile                          # existing lint + conditional SEAL_SECURE_BOOT step
+# Containerfiles — two, not one
+Containerfile                          # lint + the `sealed` stage: sbsign on
+                                       #   systemd-boot, .auth generation, assert_esl
+Containerfile.seal-uki                 # `bootc container ukify` in a throwaway stage.
+                                       #   Split out because running ukify in the final
+                                       #   image makes install fail with "The UKI has
+                                       #   the wrong composefs= parameter" (#443)
 
 # Mise tasks
-mise/tasks/pull-keys                  # #311 — fnox get → files/boot-keys/ (validated)
-mise/tasks/generate-keys              # #31 — idempotent key generation (fallback)
-mise/tasks/seal-uki                   # #32 + #33 — podman build --build-arg SEAL_SECURE_BOOT=true --secret …
+mise/tasks/pull-keys                   # #311 — fnox get → files/boot-keys/ (validated)
+mise/tasks/generate-keys               # #31 — pull-or-generate, idempotent
+mise/tasks/seal-uki                    # #32 + #33 — drives both Containerfiles
+mise/tasks/fetch-microsoft-certs       # #464 — the five db CAs
+mise/tasks/fetch-microsoft-dbx         # #446 — the revocation list
 ```
 
-`oci/krytis/image.bst` gains `secure-boot-tools.bst`, `secureboot-keys.bst`, and `loader-config.bst` as depends. The `seal-uki` task runs `podman build` against the expanded `Containerfile`.
+`stacks/bootc.bst` carries `config/secureboot-loader-conf.bst` and the three signing
+tools; `oci/krytis/stack.bst` pulls the stack in.
 
-## CI signing strategy
+## CI signing strategy — resolved (#448, #450)
 
-**Prerequisite for registry publishes.** CI signs from day one using a single `PROTON_PASS_PERSONAL_ACCESS_TOKEN` as a GitHub Actions secret. CI runs `pass-cli login --personal-access-token $TOKEN` → `mise run pull-keys` → `mise run seal-uki` → publishes the signed image. One CI secret replaces 6 key files.
-
-If CI signing is not ready, the unsigned image must not be published to the public registry.
+**Prerequisite for registry publishes**, and it is met. `publish.yml` builds and
+publishes the sealed image after the unsigned one is pushed, signed and verified,
+opt-out per run with `publish_sealed=false` (the input defaults to `true`). Key
+custody took the *variant* of the plan in decision 4 above: the six UEFI keys are
+**not** GitHub secrets — they stay in the Proton
+Pass vault `fnox.toml` points at, and CI holds one `PROTON_PASS_PAT` to reach them.
+Keys touch the runner's disk only inside that job and are shredded `always()`.
+`verify-sealed.yml` (#457) then runs `mise run enroll-test` against the published
+`:sealed` tag. See `docs/design/secure-boot-testing.md` § G-1.

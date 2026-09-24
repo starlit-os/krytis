@@ -14,8 +14,11 @@ squashfs + systemd-boot ESP + hybrid ISO, and a `plain-boot-qemu-live` /
 `plain-install-qemu` / `plain-boot-qemu-installed` chain drives a QEMU install gate.
 
 Multi-target by a **file-per-value** convention: `<target>/{payload_ref,live_target,tag,
-registry,live_title,live_label}`, one line each, read by the justfile. `live/Containerfile`
-then builds `FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}` and runs `src/configure-live.sh`.
+registry,live_title,live_label}`, one line each, read by the justfile. dakota-iso's
+`live/Containerfile` then builds `FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}` and runs its
+`live/src/configure-live.sh`. Krytis's own equivalents — `live/Containerfile` and
+`live/src/configure-live-krytis.sh` — share the filenames, so always check which tree a
+path in this file belongs to before acting on it.
 
 Krytis's installer ISO was built by this project until #838/#839 ported the whole call
 graph in-tree ([#519](https://github.com/starlit-os/krytis/issues/519) has the file-by-file
@@ -56,44 +59,55 @@ carries all three refs and not just `main`. Restore with
 
 ### The payload mutation exists three times; only one copy is on any given path
 
-*Source: upstream `scripts/iso-sd-boot.sh:91`, `scripts/build-live-squashfs.sh`,
-`live/iso-tools/payload-prep.sh` — all three inject `/usr/lib/bootc/install/00-defaults.toml`*
+*Source: dakota-iso's `scripts/iso-sd-boot.sh:91`, `scripts/build-live-squashfs.sh` and
+`live/iso-tools/payload-prep.sh` — all three inject
+`/usr/lib/bootc/install/00-defaults.toml`. Every path in this entry is dakota-iso's unless
+it says krytis.*
 
-`iso-sd-boot.sh` has its own inline `buildah run … 00-defaults.toml` injection,
-`build-live-squashfs.sh` is a *separate* entry point with a duplicate of the same logic, and
-`live/iso-tools/payload-prep.sh` is a third copy for hosts with no host-side buildah. A fix
+dakota-iso's `scripts/iso-sd-boot.sh` has its own inline `buildah run … 00-defaults.toml`
+injection, its `scripts/build-live-squashfs.sh` is a *separate* entry point with a
+duplicate of the same logic, and its `live/iso-tools/payload-prep.sh` is a third copy for
+hosts with no host-side buildah. A fix
 applied to one is invisible to the other two. Before porting or trusting any payload-prep
-behaviour from this repo, `grep -rln 00-defaults.toml` and work out which copy your entry
-point actually reaches. Krytis deliberately ported only `payload-prep.sh`, so it has exactly
-one — see [`secure-boot.md`](secure-boot.md) § A sealed ISO payload must be embedded
-byte-identically.
+behaviour from that repo, `grep -rln 00-defaults.toml` there and work out which copy your
+entry point actually reaches. Krytis deliberately ported only `payload-prep.sh`, so it has
+exactly one *payload* mutator: `live/iso-tools/payload-prep.sh`. There is no
+`scripts/build-live-squashfs.sh` in krytis, and krytis's own `scripts/iso-sd-boot.sh` does
+not touch `00-defaults.toml`. (`live/src/configure-live-krytis.sh` also writes that path,
+but into the *live environment* image, not the payload — different image, not a fourth
+copy of this logic.) See [`secure-boot.md`](secure-boot.md) § A sealed ISO payload must be
+embedded byte-identically.
 
-### `dakota/src/` is a second, divergent copy of `live/src/`
+### dakota-iso's `dakota/src/` is a second, divergent copy of its `live/src/`
 
-*Source: upstream `dakota/src/build-iso.sh` vs `live/src/build-iso.sh` (different content,
-18855 vs 19386 bytes); `dakota/src/show-screenshot.sh` vs `live/src/show-screenshot.sh`
-(byte-identical)*
+*Source: dakota-iso's `dakota/src/build-iso.sh` vs its `live/src/build-iso.sh` (different
+content, 18855 vs 19386 bytes); its `dakota/src/show-screenshot.sh` vs its
+`live/src/show-screenshot.sh` (byte-identical). Neither `src/` tree exists in krytis —
+krytis has `live/src/build-iso.sh` and `scripts/show-screenshot.sh`.*
 
-The live image's build context is `./live`, so nothing under `dakota/src/` reaches the ISO
+The live image's build context there is `./live`, so nothing under dakota-iso's
+`dakota/src/` reaches the ISO
 build at all — yet it holds a full, drifted copy of `build-iso.sh` plus its own duplicate of
 the dracut module below. A commit landing "in build-iso.sh" may have landed in the
-unreachable one. Check the path, not the filename, when mining a change from here.
+unreachable one. Check the path, not the filename, when mining a change from there.
 
-### The `95dakota-isofile` dracut module is orphaned in both trees
+### The `95dakota-isofile` dracut module is orphaned in both of dakota-iso's trees
 
-*Source: upstream `live/src/dracut/95dakota-isofile/`, `dakota/src/dracut/95dakota-isofile/`
-vs `live/Containerfile:47,87`*
+*Source: dakota-iso's `live/src/dracut/95dakota-isofile/` and
+`dakota/src/dracut/95dakota-isofile/`, vs its `live/Containerfile:47,87`. Krytis has no
+dracut module directory at all; its own `live/Containerfile` is a different file.*
 
 Both copies define a complete dracut module with an `inst_hook initqueue` line, and nothing
-adds it: the Containerfile's two `dracut --add` invocations pass `dmsquash-live` only, and no
-`dracut.conf`/`modules.d` entry references it for any target. It is dead code upstream, not
-a krytis omission — which is why #519 excluded it from the port. Don't read it as the
+adds it: that Containerfile's two `dracut --add` invocations pass `dmsquash-live` only, and
+no `dracut.conf`/`modules.d` entry references it for any target. It is dead code upstream,
+not a krytis omission — which is why #519 excluded it from the port. Don't read it as the
 mechanism by which live media finds its ISO.
 
 ### `PAYLOAD_SEALED`, `e2e-lib.sh` and the sealed test chain are not upstream concepts
 
-*Source: upstream `justfile`, `scripts/` — no `sealed-test-qemu` recipe, no `PAYLOAD_SEALED`
-handling, no `scripts/e2e-lib.sh`*
+*Source: dakota-iso's `justfile` and `scripts/` — no `sealed-test-qemu` recipe, no
+`PAYLOAD_SEALED` handling, no `scripts/e2e-lib.sh` there. Krytis's own
+`scripts/e2e-lib.sh` is the fork's copy, kept.*
 
 Upstream's install gate greps the installed system's serial console for
 `Reached target Graphical Interface`, which a sealed (signed-UKI) system can never produce —

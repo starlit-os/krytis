@@ -1,5 +1,11 @@
 # First-Boot Setup: Initial User, Keymap, Timezone
 
+Status: **shipped** in #487 — `files/systemd-firstboot/krytis-firstboot.service`,
+`firstboot-wizard.sh`, and the two neutralising drop-ins, all installed by
+`elements/config/systemd-firstboot.bst`. Later fixes: #523 (wizard diagnostics go to
+the journal, not only the VT) and the `--auto-resize-mode=shrink-and-grow` addition.
+The "Problem" section below describes the state this replaced.
+
 ## Problem
 
 Krytis ships with no first-boot user creation. `root` is locked
@@ -12,11 +18,12 @@ systemd already ships the tooling for this (`systemd-firstboot.service`,
 `systemd-homed-firstboot.service`), and krytis already has both in the
 image (`base-system.bst` depends on `freedesktop-sdk.bst:vm/config/
 systemd-homed-firstboot.bst` and krytis's own `config/systemd-firstboot.bst`).
-Neither runs today, and neither is usable as shipped:
+Neither ran, and neither was usable as shipped:
 
-- `systemd-firstboot.service` is neutered by the kernel arg
-  `systemd.firstboot=no` (`files/bootc-config/40-no-firstboot.toml`). It was
-  added because the unit's default `ExecStart` passes
+- `systemd-firstboot.service` was neutered by the kernel arg
+  `systemd.firstboot=no`, shipped as `files/bootc-config/40-no-firstboot.toml`
+  until this design deleted it. The karg was added because the unit's default
+  `ExecStart` passes
   `--prompt-root-password`, and `root:!unprovisioned` reads as "no password
   set" — the prompt then waits forever (`TimeoutStartSec=infinity`) on a
   console nothing answers, and because the unit is `Before=sysinit.target`,
@@ -109,10 +116,10 @@ Key properties of `krytis-firstboot.service`:
   `homectl firstboot` returns without prompting once a regular user exists
   (`homectl.c`, `has_regular_user()`).
 
-`files/bootc-config/40-no-firstboot.toml` (the `systemd.firstboot=no` karg) is
-deleted. This is now required rather than merely tidy: `homectl firstboot`
-honours that karg too (`homectl.c`, `verb_firstboot()` sets
-`arg_prompt_new_user = false`), so leaving it in place would silence krytis's
+`files/bootc-config/40-no-firstboot.toml` (the `systemd.firstboot=no` karg) was
+deleted as part of this change. That was required rather than merely tidy:
+`homectl firstboot` honours that karg too (`homectl.c`, `verb_firstboot()` sets
+`arg_prompt_new_user = false`), so leaving it in place would have silenced krytis's
 own wizard as well as upstream's.
 
 ## Consequence: the greeter is reachable before any account exists

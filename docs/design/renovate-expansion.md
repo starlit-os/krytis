@@ -26,6 +26,7 @@ default.
 | `mise.toml` `[tools]` + `mise.lock` | `mise` | No — the lockfile needs `mise run mise-lock` first |
 | `pass-cli` pin in `mise.toml` | `custom.regex` | No — same lockfile reason |
 | `RUNNER_VERSION` in `mise.toml` + `Containerfile.runner` | `custom.regex` | Yes (patch/minor) |
+| `jdx/mise-action` SHA pins in every workflow | `custom.regex` | Yes (digest/patch/minor) — `mise run mise-pin-check` asserts every step agrees |
 
 Config changes are verified with `mise run renovate-check` (`--explain` resolves
 every rule to its enabled/auto-merge verdict; `--dry-run` lists pending
@@ -37,11 +38,12 @@ updates). Operational detail lives in `docs/skills/renovate.md`.
 
 ### mise tools (`mise.toml` `[tools]`) — pinned (#24)
 
-All ten tools now carry exact versions instead of `"latest"`, and `mise.lock` is
+All eleven tools now carry exact versions instead of `"latest"`, and `mise.lock` is
 committed (`mise run mise-lock` writes and `--check` verifies it). This was the
 stated prerequisite for the `mise` manager (#25): Renovate extracts `"latest"`
 as a literal string and has nothing to bump, so an unpinned tool is invisible to
-it.
+it. (`jq` joined the list later, in #494, when `mise run sbom` grew a hard
+dependency on it.)
 
 Two tools do not fit the plain pattern:
 

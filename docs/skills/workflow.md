@@ -46,7 +46,7 @@ Read the `parent:` field in the output. This determines which path form to use.
 | Issue with parent | `<base>/gh<parent-number>/<number>-<slug>` | `<number>-<slug>` |
 | No issue | `<base>/<branch-name>` | `<branch-name>` (Conventional Commits style) |
 
-`<cc-type>` is the Conventional Commits type (`feat`, `fix`, `ci`, `chore`, `docs`, `refactor`, …). Branch name is always flat — no type prefix, no parent number encoding.
+`<cc-type>` is the Conventional Commits type (`feat`, `fix`, `ci`, `chore`, `docs`, `refactor`, …). An **issue-backed** branch name is flat — no type prefix, no parent-number encoding; the type only ever appears in the worktree path. The no-issue row is the exception: there the branch itself carries the Conventional Commits prefix (`docs/<slug>`, `feat/add-greetd-service`), and the worktree path is that same name under the base. AGENTS.md § Branch name is the authority.
 
 ### Step 4 — trust mise in the new worktree
 
@@ -193,7 +193,12 @@ on:
     types: [opened, synchronize, reopened, edited]
 ```
 
-Krytis's `.github/workflows/checks.yml` currently uses bare `pull_request:` with no `types:` — same gap. A PR retargeted here skips the static checks until the next `synchronize` event (a new push).
+`.github/workflows/checks.yml` carries the fix — `types: [opened, synchronize, reopened, edited]`,
+landed in `de1c304` (2026-09-14). `vuln-diff.yml` is the one merge-relevant workflow still on bare
+`pull_request:`: harmless while it is report-only, but it fails the job on a new match at or above
+`NEW_VULN_FAIL_ON` (`mise run vuln-gate --set <severity>`, see [`sbom.md`](sbom.md)), so give it
+`types:` before arming that gate — otherwise a retargeted PR merges without the diff ever running
+against the new base.
 
 ## The One Verification Gate an Agent Cannot Run: `generate-disk`
 
@@ -313,11 +318,11 @@ changed is accounted for.
 
 Rebuilding the OCI image to test a script change takes significant time. For scripts shipped via BST elements (e.g. `files/fido2-tasks/fido2/enroll`), iterate locally first:
 
-1. Write the script to `~/.mise/tasks/<path>` with a `-local` suffix (e.g. `~/.mise/tasks/fido2/enroll-local`).
+1. Write the script to `~/.config/mise/tasks/<path>` — mise's user-config file-task scanning picks it up as `mise <dir>:<name>` — with a `-local` suffix (e.g. `~/.config/mise/tasks/fido2/enroll-local` → `mise fido2:enroll-local`).
 2. Run it directly against the live system — no image rebuild needed.
 3. Once confirmed working, copy back to `files/` in the element and commit.
 
-The `-local` suffix distinguishes the test copy from the system version (which has no suffix). Never commit the `-local` copy to the element.
+The `-local` suffix distinguishes the test copy from the system version (which has no suffix). On a booted Krytis the shipped copies land at `/etc/mise/tasks/fido2/<name>` and are declared task-by-task in `/etc/mise/config.toml` (`config/fido2-tasks.bst`) — the system config gets no file-task directory scanning, unlike the user and project ones. Never commit the `-local` copy to the element.
 
 ## Referencing Sister Projects (Dakota, Zirconium Hawaii)
 
@@ -431,9 +436,11 @@ comparing nothing must print the hash it compared, so an empty compare is visibl
 
 **Live plans quote content destined for other files.** A plan that says "add this row to `docs/SKILL.md`" embeds the row with a relative link target of `skills/foo.md` — correct in `docs/SKILL.md`'s frame, broken in the plan's. Do not "fix" these. `mise run docs-links` excludes `docs/plans/` from markdown-link checking for exactly this reason, while still checking its repo-root-relative `docs/…` paths.
 
-**Run `mise run docs-links` before opening any PR that touches docs.** It resolves both repo-root-relative `docs/….md` references (including those in `.bst` files, mise tasks, and Containerfile comments — several exist) and markdown inline links. It is standalone, not wired into `mise lint`: `lint` is a full `podman build` of the image, and a text check has no business behind a container build.
+**Run `mise run docs-links` before opening any PR that touches docs.** It resolves five classes of reference: repo-root-relative `docs/….md` paths (including those in `.bst` files, mise tasks, and Containerfile comments — several exist), markdown inline links, backticked repo-relative paths under `elements/ files/ include/ live/ mise/ patches/ quadlet/ scripts/ .github/`, backticked `mise run <task>` names, and `<path>.md § <anchor>` section citations. The last three landed with the #860 rot audit; `.claude/skills/skill-rot-audit/` documents what each one can and cannot prove. It is standalone, not wired into `mise lint`: `lint` is a full `podman build` of the image, and a text check has no business behind a container build.
 
-Two categories may go in `docs/.links-ignore`: docs a design doc forward-references but that nobody has written yet, and paths belonging to an upstream repo (dakota, bootc) quoted as a source citation. Anything else is rot — fix the reference.
+When citing a section, **delimit the anchor** — `docs/skills/pam.md § *Login auto-unlock is lost to a race*` — so the checker can tell the heading text from the sentence that continues after it. An anchor may be a heading or a `**bold paragraph lead**`; both are cited in this repo and both resolve.
+
+Three categories may go in `docs/.links-ignore`: docs a design doc forward-references but that nobody has written yet; paths belonging to an upstream repo (freedesktop-sdk, dakota, dakota-iso, zirconium-hawaii, bootc) quoted as a source citation; and paths or tasks this repo deliberately cites as *absent* — deleted on purpose, or proposed and never built, where the citation is the record of that decision. Anything else is rot — fix the reference.
 
 ## Self-Improvement Loop
 

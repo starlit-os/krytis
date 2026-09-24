@@ -66,11 +66,11 @@ ssh-keygen -Y find-principals -f ~/.ssh/allowed_signers -s <sigfile>
 
 ### An agent cannot type the FIDO2 PIN for you
 
-`ssh-keygen -O resident` prompts for the token PIN, and on krytis that prompt cannot be delegated: `SSH_ASKPASS` is `/usr/bin/false` and **no askpass binary is installed anywhere on the image**. There is no GUI dialog to pop, so an agent driving the command over a PTY just holds the prompt open until it times out. Enrollment is a human-at-the-terminal step — script around it, not through it. This is the same constraint that makes `mise fido2:enroll` and `fido2:enroll-luks` interactive by design.
+`ssh-keygen -O resident` prompts for the token PIN, and on krytis that prompt cannot be delegated: nothing points `SSH_ASKPASS` at anything usable. The image does contain one askpass binary — `/usr/libexec/gcr4-ssh-askpass`, pulled in with gcr-4 by `desktop/noctalia.bst` — but it is not on `PATH`, nothing in the tree exports `SSH_ASKPASS`, and `ssh-keygen` will not find it on its own. There is no GUI dialog to pop, so an agent driving the command over a PTY just holds the prompt open until it times out. Enrollment is a human-at-the-terminal step — script around it, not through it. This is the same constraint that makes `mise fido2:enroll` and `fido2:enroll-luks` interactive by design.
 
 ### Point `user.signingkey` at the handle file, not the `.pub` — gcr's agent cannot sign
 
-The desktop session's agent is gnome-keyring's, at `/run/user/1000/gcr/ssh`, and it auto-loads new `~/.ssh` sk keys with no `ssh-add` — a freshly generated `ssh:Signing` shows up in `ssh-add -l` straight away. **Do not trust that listing.** gcr advertises `sk-ssh-ed25519` keys it cannot actually use: signing through it succeeds sometimes and then fails, instantly and without touching the token, with
+The desktop session's agent is gcr's — `/usr/libexec/gcr-ssh-agent` with its own `gcr-ssh-agent.socket`, from gcr-4 (`sdk/gcr.bst`, reaching the image transitively via `desktop/noctalia.bst`), listening on `/run/user/1000/gcr/ssh`. It is **not** gnome-keyring's; this entry said so when first written (#677, 2026-09-01) and was already wrong then — gnome-keyring left the image with #594's oo7 swap two weeks earlier, and the `gcr/ssh` path names its real owner. The behaviour below is gcr's and is unaffected. It auto-loads new `~/.ssh` sk keys with no `ssh-add` — a freshly generated `ssh:Signing` shows up in `ssh-add -l` straight away. **Do not trust that listing.** gcr advertises `sk-ssh-ed25519` keys it cannot actually use: signing through it succeeds sometimes and then fails, instantly and without touching the token, with
 
 ```
 Couldn't sign message (signer): agent refused operation?
@@ -410,8 +410,10 @@ enrolled key, so shipping it in the root's options breaks the default case.
 `elements/config/fido2-root-unlock.bst` ships two files instead:
 
 - `krytis-fido2-root-unlock.service` — attempts FIDO2 *before* the generated unit, with
-  an `ExecStart=-` prefix so failure is ignored. `token-timeout=20s` and `TimeoutSec=60`
-  bound it, because anything stalling here delays the passphrase prompt that follows.
+  an `ExecStart=-` prefix so failure is ignored. Three nested bounds hold it
+  (`token-timeout=10s`, `timeout=20s`, `TimeoutSec=30` — see the `timeout=` section
+  below, which is what set them), because anything stalling here delays the passphrase
+  prompt that follows.
 - `50-krytis-fido2-root.conf` — a drop-in carrying only `Wants=` and
   `ConditionPathExists=!/dev/mapper/root`.
 
@@ -458,6 +460,15 @@ The gate still passed — the real prompt appeared after the unit was killed —
 can only ever succeed via the token and never competes for the password agent. The
 consequence is that a credential enrolled **with** a client PIN cannot unlock at boot
 here: enroll touch-only (`--fido2-with-client-pin=no`).
+
+**`mise fido2:enroll-luks` does not pass that flag.** `files/fido2-tasks/fido2/enroll-luks`
+runs a bare `systemd-cryptenroll --fido2-device=auto "$DEVICE"`, and `--fido2-with-client-pin`
+defaults to `yes`, so a key that advertises `clientPin` in `fido2-token -I <dev>`'s
+`options:` line (which is what `files/fido2-tasks/fido2/enroll` greps for to decide
+`pamu2fcfg -N`) gets a PIN-requiring credential — exactly the one this unit cannot use.
+The enrollment still succeeds and `mise fido2:status` still lists the token slot; the only
+symptom is that boot keeps asking for the passphrase. Pass `--fido2-with-client-pin=no`
+by hand before concluding the unlock path is broken.
 
 ### `timeout=` must be shorter than `TimeoutSec=`, or the prompt is orphaned (#547)
 

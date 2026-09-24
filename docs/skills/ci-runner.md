@@ -309,9 +309,10 @@ build, with four such mounts left by the previous OOM kill. On an ephemeral
 runner this is invisible; on this box it persists until something unmounts
 it, and now that `OOMPolicy=continue` keeps the runner alive across a kill,
 the residue is *guaranteed* to reach the next job. `cache-warm.yml` has a
-self-hosted-only `Clear stale FUSE mounts` step that `stat`s each
-buildstream FUSE mountpoint and `fusermount -u`s (falling back to
-`umount -l`) the dead ones.
+self-hosted-only `Clear stale FUSE mounts` step that probes each buildstream
+FUSE mountpoint with `stat -f` and `umount -l`s (falling back to
+`fusermount -u`) the dead ones — both halves of that ordering are corrections
+to the step's first version, below.
 
 **But cleaning up at job start is not sufficient, and that was the more
 useful finding.** Run 34723320921 cleared one stale mount at 22:39:16 and
@@ -445,7 +446,7 @@ itself already asserted, against the same local tag.
 `cache-warm.yml` and `track-bst-sources.yml` were both `cron: '0 6 * * ...'`
 — same trigger minute, no relation to each other otherwise (different
 jobs, different runners, `track-bst-sources.yml` runs on GitHub-hosted
-`ubuntu-24.04` with no self-hosted/concurrency-group involvement at all).
+`ubuntu-26.04` with no self-hosted/concurrency-group involvement at all).
 Investigated 2026-09-11 after their actual fire times (`created_at` on the
 `schedule`-event run) looked "inconsistent." They weren't inconsistent —
 they were **delayed, in lockstep, by a growing amount**:
@@ -620,7 +621,9 @@ tag was ever cut (tags stop at `v9`), so Renovate's `github-tags` datasource
 couldn't resolve a digest for the pinned commit `695eb75b…` used in
 `cache-warm.yml`/`publish.yml`. Replaced with `hastd/free-disk-space`
 (properly tagged, actively maintained, same action `zirconium-hawaii` already
-uses) at `78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1`.
+uses), first at `78ec0490f953d89f024c95d0c293e6307ceac02e # v0.1.1` and now
+at `68572aeaadb7f76bd408246328e95926323402b5 # v0.1.2` — see the lag note
+below for why it landed one release behind on purpose.
 
 **The old action's per-tool boolean inputs were dead code.** Reading
 `action.yml` at the pinned commit shows the composite step reads only
@@ -644,20 +647,19 @@ Python via `uv`/mise), so the extra paths the new default also clears
 Net: both workflows now run the *identical* input-free step, and it frees
 more than either did before — no `include:`/`exclude:` mapping needed.
 
-**Pinned to `v0.1.1`, one release behind newest, on purpose.** Diffed
-`v0.1.1...v0.1.2` via GitHub's compare API: the only functional change is an
-opt-in `skip-if-available` input (default empty, unused here) — the default
-path-removal list is byte-identical between the two tags. So pinning the
-older tag costs nothing behaviorally, and leaves Renovate a real minor bump
-(`v0.1.1` → `v0.1.2`) to open once this merges. That bump is the actual
-end-to-end proof the fix works: `mise run renovate-check --dry-run` only
-proves extraction succeeds, not that Renovate can open and auto-merge a real
-PR for this dependency (it already falls under the blanket
-`digest`/`pin`/`patch`/`minor` automerge rule in `renovate.json5`, no
-exception needed). Confirm the bump PR actually appears and auto-merges
-before treating #703 as fully closed — if it doesn't, something about the
-new dependency's Renovate config is still wrong despite `--dry-run` looking
-clean.
+**The deliberate one-release lag was the proof, and it paid out.** `v0.1.1`
+was pinned on purpose, one release behind newest. Diffing `v0.1.1...v0.1.2`
+via GitHub's compare API showed the only functional change is an opt-in
+`skip-if-available` input (default empty, unused here) — the default
+path-removal list is byte-identical between the two tags — so the older pin
+cost nothing behaviorally and left Renovate a real minor bump to open. That
+bump was the actual end-to-end proof, which `mise run renovate-check
+--dry-run` cannot give: a dry run proves extraction succeeds, not that
+Renovate can open and auto-merge a real PR for the dependency. It did.
+`83df8ec` (`chore(deps): update hastd/free-disk-space action to v0.1.2`,
+renovate[bot], 2026-09-03) auto-merged under the blanket
+`digest`/`pin`/`patch`/`minor` rule with no exception needed, and both
+workflows now carry the v0.1.2 SHA. #703 closed the same day.
 
 ### Pin the mise version, not just the action
 
@@ -759,23 +761,28 @@ symlink directly inside `/run` as part of generation — confirm with
 lifecycle is just `systemctl --user start`/`stop`; there is no `enable`/
 `disable` step, and `mise buildbarn:install` no longer attempts one.
 
-### Rootless (`--user`) first, system-level later
+### Rootless (`--user`), and it stayed that way
 
-The units currently target **rootless, user-level** Quadlet
+The units target **rootless, user-level** Quadlet
 (`~/.config/containers/systemd/`, `WantedBy=default.target`,
 `systemctl --user`) rather than system-level
 (`/etc/containers/systemd/`, `WantedBy=multi-user.target`, `sudo systemctl`)
-— deliberately, so this can be brought up and torn down on a normal dev
-box with `mise buildbarn:install` / `buildbarn:uninstall` while the design
-is still being verified, with no `sudo` required. `%h` in a Quadlet unit
-resolves to the *running user's* home directory in both modes, so the unit
-files themselves don't need to change when this eventually moves to the
-shared runner box as a system-level service — only the install
-destination, `WantedBy=` target, and the `systemctl`/`journalctl` invocation
-(drop `--user`) change. When that migration happens, re-run the
-`quadlet -dryrun` check (below) against both modes, since the generator
+— deliberately, so this could be brought up and torn down on a normal dev
+box with `mise buildbarn:install` / `buildbarn:uninstall` with no `sudo`
+required while the design was being verified. The "system-level later" half
+never happened and is not planned: the design *was* verified here (§ First-
+deploy verification), and production then went to **bow on materia**
+(§ Deployed remote: bow), not to a system-level service on a krytis runner
+box. `mise/tasks/buildbarn/install` still installs to `$HOME` only. So these
+units are the local dev/test instance, full stop.
+
+If that ever changes, `%h` in a Quadlet unit resolves to the *running user's*
+home directory in both modes, so the unit files themselves would not need to
+change — only the install destination, `WantedBy=` target, and the
+`systemctl`/`journalctl` invocation (drop `--user`). Re-run the
+`quadlet -dryrun` check (below) against both modes if so, since the generator
 resolves `%h` differently for a system unit (root's home, not the invoking
-user's) if the service isn't given an explicit `User=`.
+user's) when the service has no explicit `User=`.
 
 Rootless user services stop when the login session ends unless
 `loginctl enable-linger <user>` has been run — not needed for interactive
@@ -895,10 +902,12 @@ actual gRPC call. Buildbarn's TLS client-cert policy operates at the gRPC
 interceptor layer (per the client-cert config's own docs: a validation
 failure returns gRPC `UNAUTHENTICATED`, not a TLS handshake abort) so the
 TCP/TLS layer deliberately completes even for an unauthenticated peer.
-Confirming the push/pull split actually holds requires a real gRPC call
-(e.g. `bst source push`/`bst artifact push` once #339/#340 wire
-`project.conf` at this remote) — a bare `openssl s_client` probe is not
-sufficient evidence either way.
+Confirming the push/pull split actually holds requires a real gRPC call, not
+a bare `openssl s_client` probe — which is what § First-deploy verification
+below did with `bst source push`/`bst artifact push` against a hand-written
+user-config override. `project.conf` was never the vehicle for it and now
+deliberately declares no krytis-owned remote at all (§ `project.conf`
+deliberately omits bow entries).
 
 ### Freshly created named volumes need `persistent_state` pre-created
 
@@ -968,15 +977,19 @@ entirely from `melog:7981`/`melog:7982` — zero requests to the upstream
 CachyOS CDN. This is the actual #233 resilience scenario, proven working
 end-to-end, not just plausible from reading the design.
 
-Still open: CI-side push wiring (`cache-warm.yml` generating a push-enabled
-`buildstream.conf` with CI's `ci-push` cert from a GitHub Actions secret)
-is deferred until Buildbarn is actually deployed on the shared runner box
-— that's a Security Gate item (secret provisioning) that needs a human
-decision, not something to wire silently. Local verification used a
-hand-written `~/.config/buildstream.conf` user-config override (not
-committed) with `type: index`/`type: storage` split entries mirroring
-`project.conf`, pointed at the same `ci-push` cert `certs-init` already
-generates locally.
+CI-side push wiring shipped — but never against *this* deployment, and not
+with a cert. The `ci-push`-cert design above assumed Buildbarn would be
+redeployed on the shared runner box; what actually happened is that krytis
+pointed at bow instead, whose auth model is a JWT bearer token (see
+§ Deployed remote: bow). `cache-warm.yml`'s "Configure BuildStream" step
+generates the push-enabled `buildstream.conf` from `BUILDBARN_PUSH_TOKEN`,
+falling back to `BUILDBARN_PULL_TOKEN` — see § `cache-warm.yml` wires bow
+via push token. The Security Gate part of the deferral held either way: both
+secrets were provisioned by a human through the repo settings UI, not wired
+silently. Local verification of the mTLS design used a hand-written
+`~/.config/buildstream.conf` user-config override (not committed) with
+`type: index`/`type: storage` split entries mirroring `project.conf`,
+pointed at the same `ci-push` cert `certs-init` already generates locally.
 
 ### Artifacts need the same `type: index`/`type: storage` split as sources
 
@@ -1241,11 +1254,13 @@ confirmed:
    generation order) which was the real fix, misattributed to the `max-jobs`
    line specifically because it was the one deliberately added.
 
-The pin itself (`build: { max-jobs: 4 }` in `cache-warm.yml`'s generated
-`buildstream.conf`) is harmless and can stay — it makes local build
-parallelism reproducible across runners, which is a reasonable thing to
-pin regardless — but do not cite "matches bow's cache key shape" as the
-reason going forward, and do not treat changing it as cache-busting.
+The pin itself is gone. `cache-warm.yml` no longer writes a fixed
+`build: { max-jobs: 4 }` — it derives `builders` and `max-jobs` from the
+cores and RAM of whichever runner it lands on (§ Build concurrency is
+`builders` x `max-jobs`), which is only safe *because* of this finding: if
+`max-jobs` fed the cache key, per-runner sizing would cache-bust every
+build. Do not cite "matches bow's cache key shape" as a reason to pin it,
+and do not treat changing it as cache-busting.
 
 **The "829/837 elements now match" and `expat.bst` findings below remain
 useful data points** (a real cache-key diff was run, real numbers came out
@@ -1373,11 +1388,13 @@ autonomously.
 
 | Workflow | Runner | Rationale |
 |---|---|---|
-| `cache-warm.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith by default since #351; self-hosted override exists to keep bow's cache-key shape aligned with the host that originally populated it (`VM_CPUS=4`), to prime bow ahead of a heavy element update, or to reproduce a build on the real hardware |
-| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Same escape hatch as `cache-warm.yml` — debug a publish failure on the real hardware, or fall back when Blacksmith is degraded/unavailable. `publish.yml` is `workflow_dispatch`-only (no schedule), so the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard needed, unlike `cache-warm.yml` which also has a `schedule` trigger. **Sealed builds belong on Blacksmith** — the self-hosted runner has no podman; see § The self-hosted runner container has no podman |
-| `track-bst-sources.yml` | `ubuntu-24.04` | Lightweight; must run when local machine is off |
+| `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
+| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Still Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml`: this job is `workflow_dispatch`-only (no schedule), so nothing recurs unattended, and its escape hatch is for debugging a publish failure on the real hardware or falling back when Blacksmith is degraded. Dispatch-only also means the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard, unlike `cache-warm.yml`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
+| `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
+| `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
+| `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
 
-The `force_self_hosted` input only takes effect on manual `workflow_dispatch` runs — scheduled (cron) runs always land on Blacksmith. `build.max-jobs` stays pinned to `4` regardless of which runner executes — this does not affect cache-key matching (`max-jobs` is excluded from cache keys, see above), it's kept purely for reproducible local build parallelism across runners.
+Each self-hosted/Blacksmith override only takes effect on a manual `workflow_dispatch` run. `cache-warm.yml` guards its ternary on `github.event_name == 'workflow_dispatch'` because it also has a `schedule` trigger, so **scheduled runs always land on the VPS**; `publish.yml` is dispatch-only and needs no guard. Build parallelism is no longer pinned in either workflow — `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above).
 
 ### Blacksmith container caching — not applicable here (evaluated 2026-08-06)
 
@@ -1511,13 +1528,17 @@ jobs:
 comment (or an upgrade) on the `concurrency:` block.
 
 **Krytis exposure:** `publish.yml` (`group: krytis-publish`), `cache-warm.yml`
-(`group: krytis-cache-warm`), and `verify-sealed.yml` (`group: verify-sealed`) all use
-`cancel-in-progress: false` with no `queue: max` — the identical landmine. `publish.yml` is
-`workflow_dispatch`-only today, so the exposure is currently "two manual dispatches close
-together, or a scheduled `cache-warm` racing a manual one, silently drops the earlier run
-with zero error surfaced." Add `queue: max` (+ a stale-check gate if/when these workflows
-trigger on `push` rather than only `workflow_dispatch`/`schedule`) before that becomes a
-real incident instead of a documented risk.
+(`group: krytis-cache-warm`), `build-iso.yml` (`group: krytis-build-iso`) and
+`verify-sealed.yml` (`group: verify-sealed`) all use `cancel-in-progress: false`
+with no `queue: max` — the identical landmine. The PR-triggered workflows
+(`checks.yml`, `vuln-diff.yml`, `vuln-scan.yml`) are not exposed: they set
+`cancel-in-progress: true`, where superseding a queued run is the intent.
+`publish.yml` and `build-iso.yml` are `workflow_dispatch`-only today, so the
+exposure is currently "two manual dispatches close together, or a scheduled
+`cache-warm` racing a manual one, silently drops the earlier run with zero
+error surfaced." Add `queue: max` (+ a stale-check gate if/when these workflows
+trigger on `push` rather than only `workflow_dispatch`/`schedule`) before that
+becomes a real incident instead of a documented risk.
 
 ## Use smaller/less-privileged CAS config for no-push phase
 
@@ -1531,5 +1552,5 @@ Each `track-<element>` job in this workflow is hand-written (no shared template)
 
 - **`gh` needs `GH_TOKEN` on the specific step that calls it.** `gh api`/`gh` CLI calls fail with `gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable` if the `env:` block is missing on that step — the job-level `permissions:` block does not supply it. Check whether the underlying `mise run <x>-update` task shells out to `gh` before assuming it's not needed (e.g. `falcond-profiles-update` uses `gh api` to get the latest commit SHA since the upstream repo has no releases; `falcond-update` also needs it now that it reads `PikaOS-Linux/falcond`'s releases via `gh api` — see the Cloudflare bullet below for why it moved off a raw `curl` call to git.pika-os.com).
 - **`bst source track` needs bubblewrap.** Only jobs that run `mise bootstrap --yes` (an "Install system dependencies" step) have `bwrap` on the runner. If a `<x>-update` mise task starts invoking `bst source track` (e.g. `scx-loader-update` added this to refresh a `cargo2` crate list), the job needs that step added — otherwise it fails with `Could not find bubblewrap command "bwrap"`.
-- **git.pika-os.com's Cloudflare 403s GitHub's own hosted-runner IP range, not just a User-Agent.** `falcond-update` sent a real, identifying `curl -A` User-Agent — the same request succeeds from an unrelated network — and still got a persistent (not flaky) 403 on every `ubuntu-24.04` scheduled run, four days running. `bst source track`/fetch of the same host from `blacksmith-8vcpu-ubuntu-2404` (the actual build runner in `publish.yml`/`cache-warm.yml`) and self-hosted runners is unaffected, which is what points at the GH-hosted runner's IP/ASN rather than the request itself. Don't spend more time tuning the User-Agent if this recurs on another `git.pika-os.com`-sourced element — check whether a verified GitHub mirror exists (same annotated tag object id as the Gitea origin) and route through that instead; `falcond.bst` and `falcond-profiles` both do.
+- **git.pika-os.com's Cloudflare 403s GitHub's own hosted-runner IP range, not just a User-Agent.** `falcond-update` sent a real, identifying `curl -A` User-Agent — the same request succeeds from an unrelated network — and still got a persistent (not flaky) 403 on every GitHub-hosted scheduled run, four days running. `bst source track`/fetch of the same host from `blacksmith-8vcpu-ubuntu-2404` (`publish.yml`'s build runner, and `cache-warm.yml`'s Blacksmith fallback) and self-hosted runners is unaffected, which is what points at the GH-hosted runner's IP/ASN rather than the request itself. Don't spend more time tuning the User-Agent if this recurs on another `git.pika-os.com`-sourced element — check whether a verified GitHub mirror exists (same annotated tag object id as the Gitea origin) and route through that instead; `falcond.bst`'s own source and the vendored `falcond-profiles` source in it both do (`github_files:` alias, `elements/desktop/falcond.bst`).
 - **Scope every version-detecting `grep` to the `url:` line, not the whole element.** `mise/tasks/tarball-update`'s `cur=$(grep -oP "..." "$element" | head -1)` originally scanned the whole file. wlroots' header comment still said "0.20.1" after PR #652 hand-bumped the `url:`/`ref:` pair to 0.20.2 (a doc omission, not a script bug by itself) — `head -1` picked up the comment's stale "0.20.1" as `cur`, and the later rewrite then found no `url:` line containing "0.20.1" to replace and failed outright (`no url line matching '0.20.1'`). Fixed by adding a `url_lines()` helper that isolates `^\s*url:\s*` lines first; every provider's `cur=` extraction (and the `gitlab-fdo-tag` tag-prefix sniff) greps that instead of the raw file. `falcond-update`'s own `CURRENT_TAG` extraction does the same.

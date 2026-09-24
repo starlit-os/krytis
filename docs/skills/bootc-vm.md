@@ -242,11 +242,17 @@ that assertion was worthless: `degraded` *was* the healthy state, so no future
 unit failure could have changed the verdict. The message
 never reaches the kernel: libaudit's `_get_commname()` rejects any `comm`
 argument of 16 bytes or more (`AUDIT_COMM_LEN`, the kernel's `TASK_COMM_LEN`)
-with `EINVAL` before it touches the netlink socket, and systemd ≤ v260 passes
-the 19-byte `"systemd-update-utmp"`. It only tolerates `EPERM`, so the unit
-exits 1. Upstream fix `b8968c49` shortens the literal to `"update-utmp"`;
-krytis backports it via `elements/overrides/systemd-base.bst` until the
-gnome-build-meta junction reaches v261.
+with `EINVAL` before it touches the netlink socket, and every released systemd
+through v261.2 passes the 19-byte `"systemd-update-utmp"`. It only tolerates
+`EPERM`, so the unit exits 1. Upstream fix `b8968c49` shortens the literal to
+`"update-utmp"`; krytis backports it via `elements/overrides/systemd-base.bst`
+until the gnome-build-meta junction reaches **v262** — *not* v261, which is the
+trap the element's own header calls out: `b8968c49` landed on systemd `main` on
+2026-07-29, after the whole v261 series was cut, and was never backported to the
+v261 stable branch, so dropping the override at v261 silently reinstates #417
+with no build error (#642). `mise run systemd-base-check` reports the junction's
+version but cannot tell whether the fix is in it — grep the tag's own
+`src/update-utmp/update-utmp.c` for the short literal instead.
 
 With the unit fixed, `boot-test` asserts `running` and nothing else, prints the
 state it observed, and lists the failed units when there are any — verified on
@@ -326,12 +332,20 @@ lsinitrd <initrd-path> | grep -E 'erofs|overlay'
     ├── deploy/
     │   └── <hash>/
     │       ├── etc/   writable /etc overlay for this deployment
-    │       └── var/   writable /var
+    │       └── var/   empty bind-mount target — nothing is ever written here
     └── os/
+        └── default/
+            └── var/  the live /var, shared by every deployment in the stateroot
 ```
 
 The full OS (`/usr/`, `/bin/`, etc.) exists only inside the composefs EROFS image.
 If composefs doesn't mount, `/sysroot` has no init and switch-root fails.
+
+**`/var` is not under `state/deploy/<hash>/`.** Only `/etc` is per-deployment;
+`/var` is per-*stateroot* and mounts from `state/os/default/var` (the findmnt
+topology in § `/etc` and `/var` need the `rw` karg shows both). Reading a guest's
+journal out of a mounted disk image is where this bites — see
+§ `journalctl -D <dir> -b` is broken for offline journals.
 
 **Modifying /etc from the host:** the overlay at
 `/run/media/lily/root/state/deploy/<hash>/etc/` is writable btrfs (root-owned).
@@ -477,30 +491,28 @@ sudo mkdir -p /mnt/krytis-probe
 sudo mount -o ro /dev/loopNpX /mnt/krytis-probe  # X = the root partition number
 ```
 
-The journal is **not** at a plain `/var/log/journal` — per § Btrfs disk layout above, the
-writable `/var` for a composefs deployment lives at `state/deploy/<hash>/var`:
+The journal is **not** at a plain `/var/log/journal`, and it is **not** under
+`state/deploy/<hash>/` either — per § Btrfs disk layout above, `state/deploy/<hash>/var`
+is an empty bind-mount target and the live `/var` is `state/os/default/var`:
 
 ```bash
-HASH=$(ls /mnt/krytis-probe/state/deploy)
-journalctl --directory="/mnt/krytis-probe/state/deploy/$HASH/var/log/journal" \
-  -u <unit> --no-pager -o short-precise --all
-journalctl --directory="/mnt/krytis-probe/state/deploy/$HASH/var/log/journal" \
-  -b --no-pager -o short-precise > /tmp/guest-journal.txt   # whole boot, then grep locally
+JDIR=/mnt/krytis-probe/state/os/default/var/log/journal
+journalctl --directory="$JDIR" -u <unit> --no-pager -o short-precise --all
+journalctl --directory="$JDIR" --no-pager -o short-precise > /tmp/guest-journal.txt
 ```
+
+No `-b`: it filters on the *host's* boot ID and matches nothing in an external
+journal — see § `journalctl -D <dir> -b` is broken for offline journals.
 
 Cleanup: `sudo umount /mnt/krytis-probe && sudo losetup -d /dev/loopN`.
 
 **Two mistakes that waste a round trip, both hit in practice:**
 
-- **A bare `ls /mnt/krytis-probe/state/deploy` prints the hash on its own line — don't
-  concatenate it with the next command's output.** Running `echo $HASH; ls
-  .../var/log/journal` in one shot and copy-pasting the *combined* output back into a path
-  produces a garbage hash-plus-machine-id string that silently resolves to nothing useful.
-  Keep the deployment hash (from `echo $HASH`, ~64-byte hex) and the machine-id
-  subdirectory `ls .../journal` lists (32-hex-char dir *inside* `journal/`, systemd's normal
-  per-machine layout) as two separate values — `journalctl --directory=` wants the
-  `journal/` parent, not the machine-id dir itself; it discovers the subdirectory on its
-  own.
+- **`journalctl --directory=` wants the `journal/` parent, not the machine-id directory
+  inside it.** `ls "$JDIR"` lists a 32-hex-char dir (systemd's normal per-machine layout)
+  and journalctl discovers it on its own. Appending it produces a path that silently
+  resolves to nothing useful — as does copy-pasting a path assembled from the *combined*
+  output of two commands run in one shot.
 - **A multi-line `sudo journalctl --directory=... \` command that gets mis-pasted (e.g.
   wrapped across a narrow terminal) can silently execute a bare `journalctl` against the
   *host's own* live journal instead** — the output looks plausible (real timestamps, real
@@ -653,11 +665,14 @@ shell).
 
 ### Graphical display vs serial console
 
-`mise run boot-vm` gives `-serial stdio` (ttyS0), which shows systemd journal
-output. The virtual consoles (tty1–tty9) live on the `virtio-vga` device, *not*
-on serial — so a debug shell or prompt on any tty other than ttyS0 is invisible
-there. Reaching it needs a graphical backend, which a krytis host does not have
-(see the next § ) — fall back to HMP `screendump`.
+`mise run boot-vm` muxes ttyS0, ttyS1 *and* the HMP monitor onto one stdio
+chardev (`-chardev stdio,id=char0,mux=on,signal=off`, two `-serial chardev:char0`,
+`-mon chardev=char0`), so the terminal shows systemd journal output, `Ctrl-A c`
+toggles to the monitor and `Ctrl-A x` quits. The virtual consoles (tty1–tty9)
+live on the `virtio-vga` device, *not* on serial — so a debug shell or prompt on
+any tty other than ttyS0 is invisible there. Reaching it needs a graphical
+backend, which a krytis host does not have (see the next § ) — fall back to HMP
+`screendump`, which that muxed monitor already gives you with no extra socket.
 
 ### `boot-vm` is headless on a krytis host — there is no window to type into
 

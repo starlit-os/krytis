@@ -90,7 +90,7 @@ RUNNER_LABELS = { default = "self-hosted,linux,x64" }
 # Always-on Debian CI VPS runner (issue #794) — mise/tasks/runner-vps/*.
 # RUNNER_VPS_HOST has no default on purpose: it names externally-reachable
 # infra, so it's operator-supplied in .mise.local.toml (gitignored, per the
-# existing docs/skills/mise.md § .mise.local.toml convention), e.g.:
+# existing docs/skills/mise.md § *`BST_CONTAINER` env var as a workstation-wide default*, for the `.mise.local.toml` convention), e.g.:
 #   [env]
 #   RUNNER_VPS_HOST = "root@203.0.113.10"
 RUNNER_VPS_NAME = { default = "krytis-vps" }

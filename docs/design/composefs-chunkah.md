@@ -1,4 +1,9 @@
-# Deferred: ComposFS + Chunkah
+# ComposeFS + Chunkah
+
+Status: **shipped** (epic #15, sub-issues #28/#29/#30). This is the design record —
+why composefs matters, what dakota does, and what krytis had to build. For how to
+*operate* the pipeline (manifest generation quirks, junction attribution, the
+overlay/xattr rule), read `docs/skills/chunkah.md`.
 
 ## Why composefs matters
 
@@ -22,8 +27,9 @@ a composefs-ready image. The pipeline:
 
 2. `just chunkify` — three sub-steps:
    a. Mount the squashed image as a writable overlay.
-   b. Run `fakecap-restore` (a small C program compiled from `files/fakecap/fakecap-restore.c`)
-      to physically apply `user.component` xattrs from `files/fakecap-manifest.tsv`.
+   b. Run `fakecap-restore` (a small C program compiled from dakota's
+      `files/fakecap/fakecap-restore.c`) to physically apply `user.component`
+      xattrs from dakota's `files/fakecap-manifest.tsv`.
       chunkah uses rustix raw syscalls for xattr reads (bypasses `LD_PRELOAD`), so real
       xattrs must exist on the overlay before chunkah runs. (coreos/chunkah#113)
    c. Run chunkah against the read-only overlay. Chunkah splits the image into up to 120
@@ -50,74 +56,58 @@ The `interval` field (`monthly`/`weekly`/`daily`) controls chunkah's layer group
 files from the same element *and* same interval end up in the same layer, providing
 natural delta compression for OTA updates.
 
-## What krytis needs
+## What krytis shipped
 
-### 1. Generate fakecap-manifest.tsv
+### 1. `files/fakecap-manifest.tsv` — #28
 
-After a successful `mise run lint` (image in `localhost/krytis:latest`), scan the image
-and attribute each file to its source BST element. Probably done by:
+`mise run generate-fakecap-manifest` extracts `/usr/manifest.json` from the built
+image and, for each element name in it, asks the BST cache which files that element
+owns. `scripts/generate-fakecap-manifest.py` carries the junction-attribution logic:
+`/usr/manifest.json` records bare in-project element paths with no junction prefix, so
+the script tries each junction in turn. The result is committed — currently ~368k
+lines, an order of magnitude smaller than dakota's ~989k because krytis's manifest is
+narrower. Regenerate it when elements change significantly; the traps are in
+`docs/skills/chunkah.md` § fakecap-manifest.tsv generation.
 
-- Using `bst artifact show --format` to get per-element file lists from the BST cache
-- Or mounting the squashed image and cross-referencing the `usr/manifest.json`
-  (our `oci/krytis/manifest.bst` artifact) to map package → element → files
+### 2. `files/fakecap/fakecap-restore.c` — #29
 
-This produces `files/fakecap-manifest.tsv`, which should be committed and updated via a
-`mise run generate-fakecap-manifest` task whenever elements change significantly.
+Ported from dakota verbatim (MIT licensed). It reads the TSV and calls
+`lsetxattr(path, "user.component", …)` on each file. It is a **host-side build tool**,
+compiled ad hoc with `gcc -O2` by the `chunkify` task — not a BST element, and not the
+same thing as `freedesktop-sdk.bst:components/fakecap.bst`.
 
-### 2. Port fakecap-restore.c
+### 3. `mise run chunkify` — #30
 
-Copy `files/fakecap/fakecap-restore.c` from dakota verbatim (MIT licensed). It reads the
-TSV and calls `lsetxattr(path, "user.component", component_value, ...)` on each file.
+Modelled on dakota's `chunkify` recipe: mount `localhost/krytis:latest` as a writable
+overlay, run `fakecap-restore` against it, then run the pinned `chunkah` container over
+the read-only overlay and `podman load` the result back **under the same tag**. The
+chunkah image digest is pinned inside `mise/tasks/chunkify` and bumped by
+`mise run chunkah-update`, which the `track-chunkah` job in
+`.github/workflows/track-bst-sources.yml` drives.
 
-### 3. Add `mise run chunkify` task
+### 4. `--composefs-backend` in `generate-disk`
 
-Model directly on dakota's `chunkify` just target:
+Because `chunkify` re-tags in place rather than producing a new tag,
+`mise/tasks/generate-disk`'s `bootc install to-disk --composefs-backend` needed no
+change at all — it was already passing the flag.
 
-```bash
-# Compile fakecap-restore if needed
-gcc -O2 -o files/fakecap/fakecap-restore files/fakecap/fakecap-restore.c
+### 5. `mise run verify-composefs-digest` — #565
 
-# Mount squashed image as writable overlay
-LOWER=$(sudo podman image mount localhost/krytis:latest)
-# ... setup UPPER/WORK/MERGED overlay dirs ...
-sudo mount -t overlay overlay -o "lowerdir=${LOWER},upperdir=${UPPER},workdir=${WORK}" "$MERGED"
+Added later, with `seal-uki`: asserts the digest baked into the signed UKI matches the
+rootfs it was computed against. See `docs/design/secure-boot-testing.md`.
 
-# Apply user.component xattrs
-sudo ./files/fakecap/fakecap-restore files/fakecap-manifest.tsv "$MERGED"
+## Build workflow (with composefs)
 
-# Run chunkah
-CHUNKAH_REF="quay.io/coreos/chunkah:v0.6.0@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708"
-sudo podman run --rm --pull never \
-    --security-opt label=type:unconfined_t \
-    -v "${MERGED}:/chunkah:ro" \
-    -e "CHUNKAH_ROOTFS=/chunkah" \
-    "$CHUNKAH_REF" build --max-layers 120 --prune /sysroot/ \
-    --label ostree.commit- --label ostree.final-diffid- \
-    | sudo podman load
-
-# Re-tag to localhost/krytis:latest
-```
-
-### 4. Re-enable `--composefs-backend` in generate-disk
-
-Once chunkify produces a valid chunked image, restore the flag:
-
-```bash
-bootc install to-disk \
-    --composefs-backend \
-    --via-loopback "/data/${DISK}" \
-    ...
-```
-
-## Updated build workflow (with composefs)
+`mise run build` is `generate-image-version` + `load-image` + `lint`; `chunkify` is a
+separate step run against the built image, not part of that task:
 
 ```
 generate-image-version
 validate
 load-image          → localhost/krytis-input:latest
 lint                → localhost/krytis:latest  (single squashed layer)
-chunkify            → localhost/krytis:latest  (re-tagged, composefs layers)
-generate-disk       → bootable.raw  (composefs-backend enabled)
+chunkify            → localhost/krytis:latest  (same tag, composefs layers)
+generate-disk       → bootable.raw  (composefs-backend, already enabled)
 boot-vm
 ```
 
@@ -133,7 +123,8 @@ then add UKI signing on top. See `docs/design/secure-boot-uki.md`.
 
 ## References
 
-- dakota `Justfile` `chunkify` target (local: `/var/home/lily/Projects/dakota/Justfile`)
+- dakota's `Justfile` `chunkify` target (`projectbluefin/dakota`; clone it as a sibling
+  of krytis's main checkout, per `docs/upstreams.yml`)
 - coreos/chunkah: https://github.com/coreos/chunkah
 - ostree-ext composefs docs: https://ostreedev.github.io/ostree/composefs/
 - bootc composefs: https://containers.github.io/bootc/filesystem.html

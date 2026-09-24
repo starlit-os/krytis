@@ -110,14 +110,57 @@ lines across three files (`docs/skills/ci.md`, `ci-reference.md`, `ci-tooling.md
 it became unmaintainable — stale in places, contradicted by the workflow YAML it was
 describing in others — and its own agents did an emergency prune down to ~450 lines total,
 restructured around "executable config is the source of truth; prose that disagrees with
-it is stale" (see `docs/skills/dakota.md` mining pass, 2026-08-31).
+it is stale" (mined into krytis by PR #675, 2026-08-31).
 
-Krytis is heading the same direction: `docs/skills/bst.md` is already 2800+ lines,
-`desktop.md` 1400+. Growth alone isn't the problem — an accurate 3000-line reference beats
+Krytis is heading the same direction: `docs/skills/bst.md` is already 3300+ lines,
+`desktop.md` 2000+. Growth alone isn't the problem — an accurate 3000-line reference beats
 a vague 300-line one — but an agent adding an entry should periodically check whether the
 section it's touching, or a neighboring one, has drifted from what the code/workflow
 actually does today, and fix or cut it in the same pass rather than only ever appending.
 A skill file that only grows is heading toward the same rewrite dakota needed.
+
+**Run the sweep with the `skill-rot-audit` skill** (`.claude/skills/skill-rot-audit/`),
+which carries the procedure: what to sample, the **wrong / unreachable / stale-status**
+classification, and the "mechanism gone but the lesson moved → re-scope, don't delete"
+case. `mise run docs-links` is its mechanical half.
+
+### What the first sweep learned about *how* rot gets in (#860)
+
+The first deliberate pass touched 48 files. Almost none of the damage was a dead path — a
+link checker finds those. It was **claims that still name a real artifact while saying
+something false about it**, and four mechanisms produced most of them:
+
+- **The fixing commit writes a new section and never re-reads the old one.** #642 rewrote
+  an element header to say "THE EXIT CONDITION IS v262, NOT v261 — this comment used to
+  say…" while `bootc-vm.md` kept the superseded v261. #403 wrote `# NOT
+  state/deploy/<hash>/var` into `bootc-vm.md`, and five weeks later #764 added a recipe to
+  the *same file*, 100 lines away, built on the stale diagram it replaced. When a fix's
+  payload is "the previously documented thing was wrong", the grep for the old value has to
+  cover `docs/`, and the *old* section has to be edited — not a corrected one appended
+  beside it.
+- **Conditional framing outlives its decision.** Whole paragraphs written as "if #84 is
+  re-attempted", "when `containers/image#2235` lands", "not yet wired up". The work ships,
+  the issue closes, and each conditional silently becomes a false statement. Any `#<n>` in
+  a doc whose GitHub state is now CLOSED is the single strongest rot signal in this repo.
+- **The claim written from memory instead of from the file.** `bootc-vm.md` documented
+  `-serial stdio` for `mise run boot-vm`, which has never appeared in that task — it is the
+  textbook QEMU flag, not the one the task uses. `gaming-variant.md` asserted `project.conf`
+  `options:` "only has `arch`" when `x86_64_v3` had been there since the second commit.
+  These are the most dangerous class: they read as verified, sitting in a list of genuinely
+  verified facts. A bullet asserting an inventory ("only", "all N", "nothing else") must
+  cite the command that produced it.
+- **A rename in one file rots citations in files its diff never touches.** #647 renamed one
+  `pam.md` heading and orphaned three citers — `docs/SKILL.md`, `mise/tasks/oo7-prompter-test`,
+  `docs/design/secrets-service.md` — for four weeks, with no signal anywhere. `docs-links`
+  now resolves `<path>.md § <anchor>` citations for exactly this reason.
+
+Two consequences worth carrying: a bare backticked path that belongs to an upstream tree
+(`include/install-extra.yml`, `scripts/build-live-squashfs.sh`) is indistinguishable from a
+first-party one, so **name the owning repo in the sentence**; and rot can be
+*re-executable*, not merely misleading — `secure-boot-uki.md` told a reader to build `.auth`
+files with `cert-to-efi-sig-list` in two places, which is precisely the tool #438 found
+silently emitting empty signature lists. When a fix commit contradicts a design doc,
+updating the doc belongs in that commit.
 
 ---
 

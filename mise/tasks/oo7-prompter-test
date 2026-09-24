@@ -6,8 +6,8 @@
 # Guards the one bug that makes every secret unusable: oo7-daemon deciding it is
 # headless and routing unlock prompts to org.freedesktop.secrets.CliPrompter,
 # which krytis does not ship (only oo7's server/ and pam/ sub-projects are
-# built, never cli/). See docs/skills/pam.md § krytis patches oo7's prompter
-# detection, and krytis#588.
+# built, never cli/). See docs/skills/pam.md § *oo7's prompter
+# detection, and the patch krytis no longer needs*, and krytis#588.
 #
 # oo7 has picked the wrong prompter twice, by two different mechanisms — first
 # from its own DISPLAY/WAYLAND_DISPLAY, then from a logind GetSessionByPID

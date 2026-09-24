@@ -33,7 +33,7 @@ not have. See `docs/skills/dakota-iso.md` § Fork State.
 repos:
   - name: dakota                              # matches mise upstream-sync <name>
     upstream: projectbluefin/dakota           # owner/repo to fetch from directly
-    branch: main                              # branch to sync (not necessarily upstream's default branch — see note below)
+    branch: testing                           # branch to sync (not necessarily upstream's default branch — see note below)
     local_path: dakota                        # dir name, sibling of krytis's *main* checkout; origin must point to upstream
     skill_file: docs/skills/dakota.md         # where accepted lessons for this repo land
     last_checked_sha: <sha>                   # upstream HEAD at the last completed mining pass
@@ -96,16 +96,23 @@ trailing on the same line as a value.
 mise upstream-sync                # sync + report range for every tracked repo
 mise upstream-sync dakota         # just one repo
 mise upstream-sync dakota-iso     # …or another
+mise upstream-sync --check        # report the pending range without merging
 ```
 
 The sync is `git fetch origin <branch>` followed by `git merge --ff-only origin/<branch>`
 in the local checkout. No push is involved — `origin` in the local checkout must point to
-the upstream repo.
+the upstream repo. `--check` still runs the `git fetch` (there is no way to measure the
+pending range without it) and compares `origin/<branch>` instead of `HEAD` — it skips only
+the `--ff-only` merge, so it never moves the local checkout.
 
-Output per repo is either "up to date" or an `old_sha..new_sha (N commits)` range — that
-range is what the `upstream-lessons` skill mines. The task deliberately does not do any
-mining itself; parsing commit relevance is a judgment call, not something to bake into a
-shell script.
+A repo whose `local_path` has no checkout on this machine is **skipped with a warning on
+stderr**, not an error: `==> <name>: no checkout at <path>, skipping`. A clean exit
+therefore does not mean every tracked repo was actually measured — read the per-repo lines.
+
+Output per repo is otherwise either "up to date" or an `old_sha..new_sha (N commits)`
+range — that range is what the `upstream-lessons` skill mines. The task deliberately does
+not do any mining itself; parsing commit relevance is a judgment call, not something to
+bake into a shell script.
 
 ## Bootstrap State
 

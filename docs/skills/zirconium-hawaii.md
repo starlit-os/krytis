@@ -10,16 +10,16 @@ Zirconium Hawaii is the upstream inspiration for Krytis. Same foundation:
 |---|---|---|
 | Build system | BST 2.5+ | BST 2.5+ |
 | Base SDK | Freedesktop SDK | Freedesktop SDK |
-| Extra junction | GNOME Build Meta | — |
+| Extra junction | GNOME Build Meta | GNOME Build Meta |
 | Desktop | Niri + Wayland | Niri + Wayland |
 | Output | bootc OCI image | bootc OCI image |
 | Task runner | `just` (via mise) | `mise` |
 | Kernel | Fedora kernel (`core/linux-fedora.bst`) | CachyOS kernel (`core/linux-cachyos.bst`) |
-| Secure Boot | Yes — `just generate-keys` | Deferred |
+| Secure Boot | Yes — `just generate-keys` | Yes — `mise run generate-keys` + `mise run seal-uki`/`sign` (see `secure-boot.md`, `signing.md`) |
 | composefs | Yes — `--composefs-backend` in install | Yes — `--composefs-backend` in install |
 | Gaming variant | `zirconium-hawaii-jackrabbit` | — |
 
-## Directory Layout
+## Directory Layout (zirconium-hawaii's `elements/`, not krytis's)
 
 ```
 elements/
@@ -61,7 +61,7 @@ just generate-image-version       # writes include/image-version.yml from git lo
 
 ## Task Runner
 
-Uses `just` (declared in `mise.toml` as a managed tool). The `bst` recipe wraps the bst2 container via rootful podman (`--privileged`). Override the bst2 image with `BST_IMAGE=...`.
+Uses `just` (declared in zirconium-hawaii's own `mise.toml` as a managed tool). The `bst` recipe wraps the bst2 container via rootful podman (`--privileged`). Override the bst2 image with `BST_IMAGE=...`.
 
 Unlike Krytis's mise file tasks, zirconium-hawaii uses `just`'s recipe syntax with positional `$var=default` arguments.
 
@@ -83,13 +83,13 @@ ghcr.io/zirconium-dev/zirconium-hawaii:latest
 
 ## GNOME Build Meta Junction
 
-Zirconium Hawaii adds a `gnome-build-meta.bst` junction on top of fdsdk. This provides GNOME components directly from upstream builds. Krytis does not use this junction currently.
+Zirconium Hawaii adds a `gnome-build-meta.bst` junction on top of fdsdk. This provides GNOME components directly from upstream builds. Krytis junctions it too (`elements/gnome-build-meta.bst`, tracking `gnome-51`) and leans on it hard — `elements/stacks/base-system.bst` pulls seven `gnomeos-deps/*` elements from it, and `elements/freedesktop-sdk.bst`'s `config.overrides:` redirects ~20 `components/*.bst` at `gnome-build-meta.bst:sdk/*` equivalents.
 
 When a project uses both fdsdk and gnome-build-meta, the `buildstream-plugins` and `buildstream-plugins-community` junctions are loaded in multiple contexts. Fix: add `junctions: internal:` to `project.conf` (see `docs/skills/bst.md` § Multiple Plugin Junction Contexts).
 
 ## Custom Plugin: patch_queue
 
-`plugins/patch_queue.py` — a BST source kind that applies a directory of patches in order:
+zirconium-hawaii's `plugins/patch_queue.py` — a BST source kind that applies a directory of patches in order. Krytis gets the same source kind from the `buildstream-plugins-community` junction instead (declared in `project.conf`'s `plugins:` block), not from a vendored copy:
 
 ```yaml
 sources:
@@ -100,6 +100,8 @@ sources:
 The patch directory must contain only patch files — any non-patch file (`.gitkeep`, etc.) causes a fatal `git apply` error.
 
 ## Desktop Components to Reference
+
+All paths below are under zirconium-hawaii's `elements/`:
 
 | Element | What it is |
 |---|---|
@@ -114,7 +116,7 @@ The patch directory must contain only patch files — any non-patch file (`.gitk
 
 ## Secure Boot
 
-Keys are generated locally with `just generate-keys <vendor>` and stored in `files/boot-keys/`. The kernel element signs modules with `linux-module-cert`. Cosign public key is at `cosign.pub` in the repo root.
+Keys are generated locally with `just generate-keys <vendor>` and stored in zirconium-hawaii's `files/boot-keys/`. The kernel element signs modules with `linux-module-cert`. Cosign public key is at `cosign.pub` in that repo's root. (Krytis's own `files/boot-keys/` is the same layout, populated by `mise run generate-keys` and gitignored — see `secure-boot.md`.)
 
 ## composefs
 
@@ -129,14 +131,15 @@ Without `--composefs-backend`, bootc takes the traditional ostree path and requi
 freedesktop-sdk ships `/etc/profile.d/fcitx5.sh` (fcitx5 is a transitive fdsdk dependency,
 so krytis inherits this file too). Without fcitx5 actually configured, the script does
 nothing useful and breaks the Steam overlay. zirconium-hawaii's fix is to remove the file
-from the image via `remove-files:` in `elements/zirconium/common.bst` rather than patch or
-disable it in freedesktop-sdk itself — a narrowly-scoped `remove-files:` on the file, kept
-in place until fcitx5 support is actually wired up, not a permanent fix.
+from the image via `remove-files:` in its `elements/zirconium/common.bst` rather
+than patch or disable it in freedesktop-sdk itself — a narrowly-scoped `remove-files:` on the
+file, kept in place until fcitx5 support is actually wired up, not a permanent fix.
 
 ## Disabling a Redundant Service via systemd Preset
 
 To drop avahi (redundant once systemd-resolved is in use), zirconium-hawaii doesn't remove
-an avahi element — it ships a systemd preset file (`files/systemd-zirconium/10-zirconium.preset`)
+an avahi element — it ships a systemd preset file (its own
+`files/systemd-zirconium/10-zirconium.preset`)
 that disables `avahi-daemon.service` and `avahi-daemon.socket` by default. This is the right
 pattern when the package/element is still installed (e.g. as a transitive dependency you
 don't control) but shouldn't run: a preset-file disable is declarative and shows up
@@ -196,22 +199,25 @@ from there rather than re-porting from upstream if this is ever revisited.
 Two upstream-specific details worth keeping, since they are the parts that do
 not exist anywhere in krytis:
 
-**The dual-sysroot diff is how upstream builds a sysext.**
-`sysext/jackrabbit/layer.bst` runs `prepare-image.sh` **twice** — once for the
-base `oci/zirconium/filesystem.bst` sysroot, once for
-`sysext/jackrabbit/filesystem.bst` (base + gaming) — then diffs them with
+**The dual-sysroot diff is how upstream builds a sysext.** zirconium-hawaii's
+`elements/sysext/jackrabbit/layer.bst` runs `prepare-image.sh` **twice** — once for the
+base `elements/oci/zirconium/filesystem.bst` sysroot, once for
+`elements/sysext/jackrabbit/filesystem.bst` (base + gaming) — then diffs them with its
 `files/sysext/make-layer.py <lower> <upper> <output>` and packages only the
 delta as an erofs `.raw` tagged with
 `usr/lib/extension-release.d/extension-release.<id>`. `make-layer.py` is
 generic (pure `os.walk` + `shutil.copy2` + whiteouts, no upstream-specific
-paths), so it ports verbatim for any future sysext. krytis already carries the
-activation half: `gnome-build-meta.bst:gnomeos/reload-sysext.bst` is in
-`stacks/base-system.bst` with no consumer.
+paths), so it ports verbatim for any future sysext. krytis used to carry the
+activation half (`gnome-build-meta.bst:gnomeos/reload-sysext.bst` in
+`elements/stacks/base-system.bst`, with no consumer) but gnome-build-meta deleted that
+element between `gnome-50` and `master` with no replacement, so krytis dropped it — see
+the comment left in `elements/stacks/base-system.bst`. A sysext port now needs its own
+reload trigger, or confirmation that systemd v261 (fdsdk 26.08) handles it natively.
 
-**32-bit support is a cross-compile + filter pair.**
-`sysext/jackrabbit/lib32.bst` builds fontconfig, libglvnd, libva,
+**32-bit support is a cross-compile + filter pair.** zirconium-hawaii's
+`elements/sysext/jackrabbit/lib32.bst` builds fontconfig, libglvnd, libva,
 libxkbcommon, vulkan-icd-loader, xorg-lib-xinerama, libdrm and mesa against
-`freedesktop-sdk.bst:cross-compilers/freedesktop-sdk-i686.bst`, and
+`freedesktop-sdk.bst:cross-compilers/freedesktop-sdk-i686.bst`, and its
 `lib32-filter.bst` (`kind: filter`) splits out only the arch-specific paths.
 krytis has **no i686 cross-compiler junction override** in
 `elements/freedesktop-sdk.bst`, so this is a prerequisite, not a copy.
@@ -243,17 +249,18 @@ release ships broken.
 *Source: zirconium-hawaii `30febd5`, `5cb27df`*
 
 A `patch_queue` entry against a junction (e.g. `freedesktop-sdk.bst`) can bump one of the
-junction's own internal vendored source pins (`elements/extensions/mesa/mesa-sources.yml`,
-`elements/include/ostree-source.yml`) directly, landing a point-fix immediately instead of
+junction's own internal vendored source pins (freedesktop-sdk's
+`elements/extensions/mesa/mesa-sources.yml` and `elements/include/ostree-source.yml`)
+directly, landing a point-fix immediately instead of
 waiting for krytis's own junction ref to advance past a known-bad upstream version — which
 can drag in weeks of unrelated changes. Full writeup and the cache-key tradeoff (see the
 "Patch queues on junctions destroy upstream cache reuse" entry in `docs/skills/dakota.md`)
 in `docs/skills/bst.md` § `git_repo` tracking. The two specific bugs that motivated this
 upstream (mesa 26.1.6, ostree v2026.3) are already fixed in krytis's current fdsdk pin
-(26.08rc.2) — recorded as a technique for the next time this happens, not an action item
-today.
+(`freedesktop-sdk-26.08.1`) — recorded as a technique for the next time this happens, not
+an action item today.
 
-Also new upstream: a second junction, `elements/freedesktop-sdk-extra.bst`
+Also new upstream: a second junction, zirconium-hawaii's `elements/freedesktop-sdk-extra.bst`
 (`kind: junction`, tracks `freedesktop-sdk-extra.git`), added purely to reuse a
 pre-packaged component (smartmontools) instead of writing a new element from scratch — uses
 the same `config.overrides:` mechanism this file already documents for `gnome-build-meta`

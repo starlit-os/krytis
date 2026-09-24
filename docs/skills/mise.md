@@ -1,6 +1,8 @@
 # mise — task runner and tool manager
 
-Replaces `just` entirely. Every maintenance task must be a `mise <task>` call.
+Every maintenance task must be a `mise <task>` call. krytis has never carried a
+`Justfile` — `just` is the sibling trees' pattern (dakota runs CI-gated `just`
+recipes; see [`workflow.md`](workflow.md) § Retargeted PRs Skip CI), not this one.
 **Requires mise ≥ 2026.6.10** (for `[env]` default values).
 
 ## Quick reference
@@ -59,7 +61,7 @@ mise switch-local             # bootc switch THIS machine to the local build (au
   unsigned case where `SEAL_SECURE_BOOT` defaults to `false` — the `RUN` becomes a
   no-op `if` branch, but `podman build` still commits a full second image layer for
   it. `--squash-all` then rewrites/recompresses the *entire* image (krytis is
-  multi-GB — see `docs/skills/bst.md` § `--squash-all` erases parent/layer
+  multi-GB — see § *Standard build workflow* below
   provenance) once per commit, which is where the wall-clock actually goes.
   Observed on this repo (2026-09-08): a `mise run lint` invocation still running at
   442s of wall time before failing partway through the `sealed` stage's commit —
@@ -198,7 +200,8 @@ mise/tasks/
 └── upstream-sync            # mise upstream-sync
 ```
 
-Subdirectory nesting uses `:` as separator: `mise/tasks/test/units` → `mise test:units`.
+Subdirectory nesting uses `:` as separator: `mise/tasks/buildbarn/status` →
+`mise buildbarn:status`, `mise/tasks/fido2/enroll-signing` → `mise fido2:enroll-signing`.
 
 ### Creating a new task
 
@@ -242,7 +245,12 @@ The env vars from `mise.toml` are already injected when running as a mise task.
 ./mise/tasks/bst artifact checkout --tar - oci/krytis/image.bst | podman load
 ```
 
-Never use `mise other-task` from inside a task script — it spawns a nested mise process.
+Never use `mise <other-task>` from inside a task script when the caller has flags to forward —
+it spawns a nested mise process, which re-parses flags from its own argv and ignores the
+ambient `usage_*`. Five tasks do nest `mise run` (`bootstrap` → `generate-image-version`,
+`seal-uki` → `pull-keys`, `scx-loader-update` → `bst source track`, `oo7-prompter-test` and
+`oo7-login-race-test` → `bst artifact checkout`); every one of them passes a complete literal
+argument list and has nothing to forward, which is the only shape this is safe in.
 Verified concretely why (`build` → `load-image` was the test case):
 
 - **Flag inheritance silently breaks.** `usage_*` env vars *do* propagate through a
@@ -331,8 +339,8 @@ Tools managed by mise go in `mise.toml`. System tools (podman, git, qemu) are **
 
 ```toml
 [tools]
-usage = "4.1.0"        # not "latest"
-python = "3.12.13"     # capped below 3.13 by a packageRule, see below
+usage = "6.11.0"       # not "latest"
+python = "3.12.14"     # capped below 3.13 by a packageRule, see below
 ```
 
 `python` is the one pin with a ceiling: `pyproject.toml`'s `requires-python` is `">=3.12"` and BST 2.5.x is validated against it, so the Renovate rule for it caps at `allowedVersions: "<3.13"` (#25). Crossing the minor boundary is a human decision, not a patch bump.
@@ -372,7 +380,7 @@ Six things worth knowing:
 - **Renovate's native `mise` manager refreshes it automatically, reliably enough to auto-merge on.** Bumping a `[tools]` pin updates `mise.toml` and `mise.lock` in the same bot commit, and CI's `mise install --locked` (`checks.yml`, via `jdx/mise-action`) hard-fails — `"<tool>@<version> is not in the lockfile"`, exit 1 — on any drift between the two, so a bad refresh cannot silently merge. Zero failures across native-manager PRs since 2026-08; that's why (#25 superseded) mise deps now inherit the repo's default `automerge: true` for digest/patch/minor. The `pass-cli` pin is the exception: it comes from a `custom.regex` manager (see [`renovate.md`](renovate.md) § Custom regex managers), which does not get the same automatic lockfile refresh — two of its PRs landed with a stale lock and needed a manual `mise run mise-lock` + force-push before merge, so that rule stays `automerge: false`.
 - **The resolved checksum/URL depends on which `mise` binary writes the lock, not just the pinned version.** aqua-registry data ships inside the `mise` binary itself, and different `mise` releases can prefer a different build variant for the exact same tool version — e.g. `bat`/`usage`/`uv` flipped from `musl` to `gnu` artifacts between mise `2026.7.16` and `2026.9.0` with no dependency bump involved (#702, CI run 33605345953). A relock done on a stale local `mise` can be internally consistent and still fail `checks.yml`'s CI gate, which always runs whatever `jdx/mise-action` installs as current. If `--check` fails in CI but passes locally, update local `mise` first (`mise self-update`, or a standalone binary from [github.com/jdx/mise/releases/latest](https://github.com/jdx/mise/releases/latest) if the system package blocks self-update) and relock again — don't assume the CI failure is wrong.
 - **`checks.yml` runs `mise run mise-lock --check` on every PR** (`Check mise.lock is in sync` step) — a general drift gate, not Renovate-specific. Any PR, human or bot, that lands `mise.toml` without a matching `mise.lock` refresh fails CI.
-- **A `lockfile_version` field was added upstream; existing files silently stay on the old, unversioned format ("version 0") forever.** Plain `mise lock` (what `mise run mise-lock` runs) only refreshes checksums/URLs for the currently locked versions — it does not add the field even when the installed `mise` binary supports it, specifically to avoid surprise drift on every ordinary relock. Migrating requires the explicit one-time `mise lock --upgrade --platform linux-x64` (or add `--upgrade` to the `mise-lock` task's `mise lock` invocation for a permanent switch). It rewrites every tool block with a `specifiers = [...]` array (the requested version strings, distinct from the resolved `version`) alongside the top-level `lockfile_version = 1`; it can also surface previously-missing metadata mise now knows how to record, e.g. `provenance = "cosign"` appearing on an `aqua` tool's platform block that had none before, from re-resolving that entry — not a real config change. Verify a `--upgrade` relock the same way as any other: confirm every `version =` and checksum/URL is byte-identical, only the new fields are additions.
+- **A `lockfile_version` field was added upstream; an existing file silently stays on the old, unversioned format ("version 0") until someone migrates it deliberately.** Plain `mise lock` (what `mise run mise-lock` runs) only refreshes checksums/URLs for the currently locked versions — it does not add the field even when the installed `mise` binary supports it, specifically to avoid surprise drift on every ordinary relock. Migration is the explicit one-time `mise lock --upgrade --platform linux-x64`; krytis ran it in `da879e5` (2026-09-09), so the committed `mise.lock` has carried `lockfile_version = 1` and a per-tool `specifiers = [...]` array (the requested version strings, distinct from the resolved `version`) ever since, while `mise/tasks/mise-lock` still invokes plain `mise lock` with no `--upgrade`. The upgrade can also surface previously-missing metadata mise now knows how to record, e.g. `provenance = "cosign"` appearing on an `aqua` tool's platform block that had none before, from re-resolving that entry — not a real config change. Verify a `--upgrade` relock the same way as any other: confirm every `version =` and checksum/URL is byte-identical, only the new fields are additions.
 
 ## System-wide config: `/etc/mise/conf.d/*.toml`
 
@@ -608,7 +616,7 @@ Wraps the pinned `bst2` container image. Override points:
 | `BST_MEMORY_LIMIT` | `mise.toml [env]` default | Container memory cap |
 | `BST_FLAGS` | Shell only | Appended to default flags |
 | `BST_FLAGS_OVERRIDE` | Shell only | Replaces all flags |
-| `BST_CONTAINER` | `.mise.local.toml [env]` (per-developer) | `true` defaults every `bst`/`validate`/`load-image` call to `--container` |
+| `BST_CONTAINER` | `.mise.local.toml [env]` (per-developer) | `true` defaults every `bst`/`validate`/`load-image`/`sbom` call to `--container` |
 
 Default flags applied: `-o x86_64_v3 true --no-interactive`
 
@@ -670,7 +678,7 @@ mise settings experimental=true   # required once before first invocation
 mise bootstrap                     # installs packages and tools, then runs the bootstrap task
 ```
 
-**How the bootstrap task fits in:** `mise bootstrap` (the built-in) runs `[bootstrap.packages]` → installs tools → then calls the `bootstrap` task as a post-hook. The task's only job is to set `experimental=true` for subsequent mise invocations. **Never call `mise bootstrap` from inside the `bootstrap` task** — the built-in calls the task, so calling the built-in from the task creates infinite recursion (issue #87).
+**How the bootstrap task fits in:** `mise bootstrap` (the built-in) runs `[bootstrap.packages]` → installs tools → then calls the `bootstrap` task as a post-hook. The task does two things: sets `experimental=true` for subsequent mise invocations, and regenerates `include/image-version.yml` (gitignored, so a fresh clone has none). **Never call `mise bootstrap` from inside the `bootstrap` task** — the built-in calls the task, so calling the built-in from the task creates infinite recursion (issue #87).
 
 ### Package manager support
 
@@ -772,7 +780,7 @@ Systems without native BST host deps (`patch`, `lzip`, `bubblewrap`, etc.) need 
 BST_CONTAINER = "true"
 ```
 
-Unlike `BST2_IMAGE`/`BST_MEMORY_LIMIT`, this is **not** declared in the project `mise.toml [env]` block — it's purely a per-developer override with no meaningful project-wide default (same category as `BST_FLAGS`). Each of `bst`, `validate`, and `load-image` checks it independently, after the explicit `--container` flag computation, so a literal flag always takes precedence:
+Unlike `BST2_IMAGE`/`BST_MEMORY_LIMIT`, this is **not** declared in the project `mise.toml [env]` block — it's purely a per-developer override with no meaningful project-wide default (same category as `BST_FLAGS`). Each of `bst`, `validate`, `load-image`, and `sbom` checks it independently, after the explicit `--container` flag computation, so a literal flag always takes precedence:
 
 ```bash
 CONTAINER=${usage_container:+--container}
@@ -877,9 +885,14 @@ starts without them even though the primary checkout has had them for months.
 The secure-boot gates need two, and neither is obtainable from the branch:
 
 ```bash
-cp -a ../../krytis/files/boot-keys/. files/boot-keys/   # .gitignore:39 — normally `mise run pull-keys` (needs fnox)
+cp -a "$(git worktree list | head -1 | awk '{print $1}')/files/boot-keys/." files/boot-keys/   # .gitignore:39 — normally `mise run pull-keys` (needs fnox)
 mise run generate-ovmf-vars                             # .gitignore:19 — rebuilds .ovmf-vars-secure.fd, ~2 s
 ```
+
+Resolve the primary checkout with `git worktree list | head -1` (its first row is always
+the main worktree) rather than counting `../`: an issue-backed worktree sits two levels
+under the base (`<base>/<cc-type>/gh<n>-<slug>`), so a hardcoded `../../krytis/…` lands
+inside `krytis.worktrees/` and silently copies nothing.
 
 Copy the keys rather than re-pulling them when the primary checkout already has
 them: `pull-keys` needs an unlocked Proton Pass, and `generate-ovmf-vars` is
@@ -923,32 +936,41 @@ fi
 
 ### File task list
 
-`mise tasks` is the source of truth — run it. This section groups them by purpose,
-because a hand-maintained copy of the tree rots: the list that lived here named 16
-tasks while `mise/tasks/` held 53.
+`mise tasks` is the source of truth for *what you can run* — run it. This section
+groups them by purpose, because a hand-maintained copy of the tree rots: the list
+that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**25 of the 100 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
-tasks below for the list and `mise tasks --hidden` to see them. (`mise tasks --hidden
-| wc -l` is the check; this line has drifted before.)
+**25 of the 96 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+tasks below for the list and `mise tasks --hidden` to see them. Count from the
+**tree**, not the CLI: `find mise/tasks -type f | wc -l` and
+`grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
+because it also lists the running user's own `~/.config/mise` tasks — which is how
+this line claimed 100/75 while the tree held 96/71 on the very commit that wrote it
+(`e0d42c2`).
 
 | Group | Tasks |
 |---|---|
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
-| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly) |
+| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden) |
+| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
-| Infrastructure | `bootstrap` `runner/*` `buildbarn/*` |
+| Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794) |
 | Docs & upstreams | `docs-links` `upstream-sync` |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
+| Element pin checks | `abseil-cpp-check` `rust-bindgen-check` `systemd-base-check` `gnome-disk-utility-check` — assert a forked override still matches the freedesktop-sdk / gnome-build-meta element it was copied from; `libdisplay-info-check` — whether the 0.3.0 hold can be dropped yet; `greetd-relock` — regenerate greetd's `Cargo.lock` bump patch |
+| Dev host | `switch-local` — `bootc switch` this machine to the local build; `fido2:enroll-signing` — enroll a FIDO2 resident key for commit signing (see [`fido2.md`](fido2.md)) |
 
 `generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).
-`push` tags and pushes to `ghcr.io/starlit-os/krytis`. `docs-links` resolves
-`docs/*.md` references and markdown links across the tree — run it before any PR
-that touches docs (see `docs/skills/workflow.md` § Where Plan and Design Docs Go).
+`push` tags and pushes to `ghcr.io/starlit-os/krytis`. `docs-links` resolves five
+classes of reference across the tree — `docs/*.md` paths, markdown links,
+backticked repo-relative paths, backticked `mise run <task>` names, and
+`<path>.md § <anchor>` section citations — run it before any PR that touches
+docs (see `docs/skills/workflow.md` § *Where Plan and Design Docs Go*).
 
 **`docs-links` scans `git grep --untracked`, not just committed content — this
 was a real bug, not a defensive choice made up front.** A brand-new doc written
@@ -983,18 +1005,18 @@ precisely because it renames nothing: `track-bst-sources.yml`'s hardcoded
 it needs no AGENTS.md rename approval.
 
 ```bash
-mise tasks --hidden          # the full 100
-mise tasks                   # the 75 worth scanning
+mise tasks --hidden          # all 96 repo tasks (plus any of your own global ones)
+mise tasks                   # the 71 worth scanning
 ```
 
 Hidden today:
 
-| Task | Only caller |
+| Task | Callers |
 |---|---|
 | the 21 `<name>-update` tasks | one `track-bst-sources.yml` job each |
-| `generate-image-version` | `bootstrap`, `bst`/`validate` via `depends`, `cache-warm.yml` |
+| `generate-image-version` | `load-image` (raw call), `bst`/`validate`/`sbom`/`vuln-scan` via `depends`, `bootstrap`, `cache-warm.yml` |
 | `assert-vault-access` | `publish.yml`, right after `pass-cli login` |
-| `fetch-microsoft-certs` / `fetch-microsoft-dbx` | the secure-boot key flow; `generate-ovmf-vars` prints the command when a cert dir is empty |
+| `fetch-microsoft-certs` / `fetch-microsoft-dbx` | the secure-boot key flow; `generate-ovmf-vars` prints the command when a cert dir is empty; `track-bst-sources.yml`'s `microsoft-dbx` group runs `fetch-microsoft-dbx` on schedule |
 
 The tradeoff is discoverability: someone debugging a tracking failure who does not
 already know `kernel-update` exists will not find it in `mise tasks`. That is why the
@@ -1119,7 +1141,7 @@ Secrets that must never enter the repo (e.g. signing keys) are retrieved with [`
 - One-time setup on a dev machine: `pass-cli login` (browser-based). After that, `fnox get SECRET_NAME` resolves the reference and prints the value to stdout.
 - Tasks that consume secrets (e.g. `mise/tasks/pull-keys`, #311) loop over the `fnox.toml` secret names, redirect `fnox get` output to the destination file, and validate the result (`openssl x509 -noout`, `openssl rsa -check`) — a fnox misconfiguration or an empty vault field fails loudly instead of writing a garbage key file.
 - Retrieved secrets land in a gitignored path (e.g. `files/boot-keys/`), never committed.
-- `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (pinned exactly — `2.2.4`, not `latest`, see below) in the project `mise.toml` — same dev-host-tooling pattern as `oras` and `grype`. `fnox` is pinned there too (`1.31.1`); it was globally-installed-only until #448, so CI failed with `fnox: command not found` on its first sealed publish. `mise install` then provisions both automatically; no manual download step.
+- `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (pinned to an exact version, never `latest` — see § `mise which X` for why the exact version matters) in the project `mise.toml` — same dev-host-tooling pattern as `oras` and `grype`. `fnox` is pinned there too; it was globally-installed-only until #448, so CI failed with `fnox: command not found` on its first sealed publish. `mise install` then provisions both automatically; no manual download step. Read the current pins out of `mise.toml` rather than from here — Renovate moves them.
 
 ### In CI: a PAT, and a separate grant per vault
 
@@ -1190,7 +1212,7 @@ vendor_conf.d/some-tool.fish ← loads after, mise already active
 
 ## ISO build task (`mise run build-iso`)
 
-`mise/tasks/build-iso` builds the ISO entirely from this repo — no sibling checkout, no `just`. It runs three steps in order:
+`mise/tasks/build-iso` builds the ISO entirely from this repo — no sibling checkout and no `just` recipes. The pipeline was ported from dakota-iso, which is a `just` project (`just container <target>`, `just iso-sd-boot <target>` — see [`dakota-iso.md`](dakota-iso.md)); krytis has no `Justfile`. It runs three steps in order:
 
 1. **`live/iso-tools/Containerfile` → `localhost/iso-tools:latest`** — the Fedora-based toolchain container for the binaries freedesktop-sdk has no component for (see § Tool sourcing below).
 2. **`live/Containerfile` → `localhost/krytis-installer`** — the live environment image (initramfs rebuild, `liveuser`, flatpaks, `configure-live-krytis.sh`, `recipe.json`). `mise run iso-container-build` builds exactly this, standalone, for iterating on the live env without a full ISO assembly; `build-iso` issues the same `podman build` itself so it can pass the payload ref it has just resolved.
@@ -1338,7 +1360,7 @@ $ curl -sL "$(locked url from mise.lock)" -o pc && ./pc --version
 Proton Pass CLI 2.2.4 (84323b8)      #   -> login/logout/info, NO `test`
 ```
 
-`mise.toml` pins 2.2.4 and `mise.lock` names the exact asset, so **CI got 2.2.4 while a
+`mise.toml` pinned 2.2.4 at the time and `mise.lock` names the exact asset, so **CI got 2.2.4 while a
 stray 2.2.3 answered locally**. Upstream had removed the subcommand between those
 releases. Nothing in the local session hinted at the mismatch: the help output was
 perfectly valid, just for the wrong version.

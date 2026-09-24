@@ -61,7 +61,7 @@ If `bootc install to-disk` defaults to xfs but the image lacks `xfsprogs`, `mkfs
 
 A local `patch_queue` source applied to a junction (`gnome-build-meta.bst`, `freedesktop-sdk.bst`) changes that junction's cryptographic source hash and cache key. BST derives every downstream element's strong cache key from its build-dependencies' keys recursively — so a patch on the junction invalidates the cache key of *everything* the junction provides, not just the patched piece. Dakota carried one small patch (`disable-lorry-mirrors.patch`) on `gnome-build-meta.bst` and it silently forced local compiles of WebKit and other large components instead of pulling from the public `gbm.gnome.org` cache. Removing the patch queue immediately restored 1053/1090 cached elements (96% hit rate).
 
-Krytis has no `patch_queue` source on a junction today, but it does junction both `freedesktop-sdk.bst` and `gnome-build-meta.bst` (see `docs/skills/zirconium-hawaii.md` — krytis doesn't use the gbm junction currently, but if that changes, this is the failure mode to avoid). If a junction-level patch is ever needed: submit it upstream first, or bump the junction ref instead of patching locally. Element-level overrides (`overrides/<name>.bst`, the `frei0r.bst`/`sudo-rs.bst` pattern already used in krytis) don't have this problem — only patches applied directly to a junction's own source do.
+Krytis has no `patch_queue` source on a junction today, but it does junction both `freedesktop-sdk.bst` and `gnome-build-meta.bst` — and consumes the gbm one heavily (`elements/stacks/base-system.bst` alone pulls seven `gnome-build-meta.bst:gnomeos-deps/*` elements), so this is a live failure mode here, not a hypothetical. If a junction-level patch is ever needed: submit it upstream first, or bump the junction ref instead of patching locally. Element-level overrides (the junction's own `config.overrides:` map in `elements/freedesktop-sdk.bst`, redirecting a `components/*.bst` at a krytis element — `overrides/frei0r.bst`, `core/sudo-rs.bst`) don't have this problem — only patches applied directly to a junction's own source do.
 
 ### Verify nested-junction ref consistency before merging a bump
 
@@ -74,7 +74,7 @@ curl -fsSL "https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/<gbm-sha>/elem
 grep -m1 ref: elements/freedesktop-sdk.bst   # must match
 ```
 
-Krytis DOES junction `gnome-build-meta` today (`elements/gnome-build-meta.bst`, tracking branch `gnome-50`). This check applies now. Verified 2026-07-21: krytis's `elements/freedesktop-sdk.bst` ref (`freedesktop-sdk-25.08.14-0-g57149392fe26548b0e7c50a2e171e3aac005a412`) matches the fdsdk ref pinned by the tracked gnome-build-meta commit (`50.3-5-g4b25046df8a03b6341db7aa8956c55fbbc0c1365`) exactly — no drift. Re-run this check before merging any future junction bump (including the eventual 26.08 bump tracked in #305).
+Krytis DOES junction `gnome-build-meta` today (`elements/gnome-build-meta.bst`, tracking branch `gnome-51`). This check applies now. It was first run on 2026-07-21 against the then-current `gnome-50`/fdsdk-25.08.14 pair and found no drift; the 26.08 bump it flagged as the next thing to re-check landed in #305 (closed), and krytis now pins `freedesktop-sdk-26.08.1` alongside gbm `gnome-51`. Re-run the two-line comparison before merging any future junction bump — `track-core-junctions` (§ Automating the nested-junction ref-consistency check, below) makes the two refs land together but does not make them agree.
 
 ### Drop stale `gtk-doc` override — RESOLVED, dropped (2026-08-12, #305)
 
@@ -114,8 +114,9 @@ Under BuildBarn/BuildBox remote execution the build sandbox chroots into the inp
 which has no `/dev/stdin` — every `install -Dm644 /dev/stdin "target" <<'EOF'` element
 fails outright. Full writeup and the fix (`/dev/null` + `cat >`) is in
 `docs/skills/bst.md` § Config-only Elements — krytis's own `bst.md` taught the broken
-form as canonical until this pass. 26+ existing element sites still use the fragile
-single-step form; backporting them is tracked separately (see the linked issue).
+form as canonical until this pass. The 26+ element sites that still used the fragile
+single-step form were backported in `4b09c87` ("backport /dev/null+cat fix for inline
+file writes"); `grep -rl /dev/stdin elements/` now returns nothing.
 
 ### GHA `concurrency:` drops queued runs without `queue: max`
 
@@ -166,11 +167,13 @@ the pinned `gnome-build-meta` commit expects). Dakota automated the equivalent c
 CI: track `gnome-build-meta` via its own `track:` branch, extract the pinned commit's sha,
 fetch that commit's own `elements/freedesktop-sdk.bst` from the GitLab API, and rewrite the
 local `freedesktop-sdk.bst` ref to match — failing loudly if the pin can't be resolved,
-rather than silently drifting. This is a genuine next step for krytis's
-`track-bst-sources.yml` (which currently tracks `freedesktop-sdk.bst` independently,
-racing ahead of `gnome-build-meta` whenever fdsdk tags a release — the same failure mode
-dakota hit on 2026-08-17). Not implemented in this pass — recorded as a candidate
-improvement to the existing manual-check workflow, not yet built.
+rather than silently drifting. Krytis went half-way (`8533568`): `track-bst-sources.yml`
+now has a `track-core-junctions` job that runs `bst source track` on
+`gnome-build-meta.bst` and `freedesktop-sdk.bst` in the same step and commits both refs
+in one `auto/track-core-junctions` PR, so the two can no longer land separately. It still
+tracks fdsdk independently (`track: freedesktop-sdk-26.08*`) rather than deriving the pin
+from the tracked gbm commit, so fdsdk can still race ahead of what gbm expects *within*
+one atomic bump — the manual `curl` comparison above is still what catches that.
 
 ### Documentation discipline: "Docs Are the Model" and "Scoped Documentation"
 

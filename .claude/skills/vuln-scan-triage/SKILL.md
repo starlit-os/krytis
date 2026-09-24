@@ -83,8 +83,8 @@ under `github:language:python` — from false positives on `markdown`/`networkx`
   - `X == real ecosystem` → **likely a genuine match** (e.g. `python == python`). Don't add
     to `.grype.yaml` on ecosystem grounds alone — if it still looks wrong (implausible
     `fixed-in` version given the project's real version history), that's a different kind of
-    false positive (see `docs/skills/sbom.md` § the *first* two mitigated classes:
-    wrapper-package and hash-version) — investigate separately, don't force it into this
+    false positive (see `docs/skills/sbom.md` § *Mitigated: dependency-graph-proven unreachable crate
+    versions*, and the wrapper-package/hash-version classes above it) — investigate separately, don't force it into this
     skill's bucket.
   - `X != real ecosystem` → **confirmed false positive**. A `native` (C/C++) package can
     never legitimately be `github:language:javascript`/`ruby`/`php`/etc, and a `python`

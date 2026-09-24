@@ -8,7 +8,7 @@ Load when working on `mise run sign`, `.github/workflows/publish.yml`, or anythi
 
 ## Digest Hand-off from `mise run push`
 
-`mise/tasks/push` writes `krytis-push-digests.env` (gitignored, transient) with up to three `KEY=VALUE` lines:
+`mise/tasks/push` writes its digest file (`--digest-file`, default `krytis-push-digests.env` — gitignored, transient) with up to three `KEY=VALUE` lines:
 
 ```
 image_digest=sha256:...
@@ -23,7 +23,7 @@ mise run push --fail-on critical
 mise run sign
 ```
 
-`--image-digest`/`--sbom-digest`/`--vuln-digest` flags override the file for scripted/CI use (also useful for re-signing a specific historical digest without re-running `push`).
+`--image-digest`/`--sbom-digest`/`--vuln-digest` flags override the file for scripted use (also useful for re-signing a specific historical digest without re-running `push`). CI does not use them — it pairs a matching `--digest-file` on `push` and `sign` instead, which is what lets the sealed build (#448) run in the same job without clobbering the record: the sealed steps write and read `krytis-sealed-digests.env`, so the primary image's `krytis-push-digests.env` still names the digest its own signature was verified against.
 
 ## Why Signing Isn't Wired Into `mise/tasks/push`/`mise/tasks/sbom` Directly
 
@@ -105,6 +105,17 @@ The identity is pinned to the run's own ref (`main` on the normal path — see �
 It verifies every artifact `sign` signed (image, SBOM, vulnerability report), not just the
 image: an unverifiable referrer signature is the same class of problem.
 
+The sealed image repeats the whole pattern with its own steps — `Sign sealed
+artifacts with cosign (best-effort)` (`if: always() && steps.push-sealed.outcome
+== 'success'`, `continue-on-error: true`) and `Verify sealed signature`
+(`if: always() && steps.sign-sealed.outcome == 'success'`) — against
+`krytis-sealed-digests.env` and the same ref-pinned identity regexp. Same
+contract, separate digest file. It runs only when `publish_sealed` is set
+(`workflow_dispatch` input, default `true`), and deliberately *after* the
+unsigned image is published, signed and verified: the sealed build is the
+newer, less-exercised path and a failure in it must not cost the primary
+artifact.
+
 ## Host-side enforcement does not exist, and cannot today
 
 Signatures are attestations for consumers to check. **Nothing on a krytis host verifies
@@ -126,9 +137,16 @@ images signed via GitHub Actions OIDC" at all.
 Note the asymmetry: `cosign verify` handles URI SANs perfectly well, which is exactly what
 the CI step above relies on. It is only `policy.json` that cannot.
 
-Upstream fix: [`containers/image#2235`](https://github.com/containers/image/pull/2235)
-adds URI-SAN support to the `fulcio` block. Stalled on DCO/review friction since February
-2024, and would then need to reach the `containers/image` version `bootc` vendors.
+No upstream fix is in flight. [`containers/image#2235`](https://github.com/containers/image/pull/2235)
+("Accept URI for Sigstore Signed Images") would have added URI-SAN support to the `fulcio`
+block, but after stalling on DCO/review friction from February 2024 it was **closed
+unmerged** on 2025-08-26 when `containers/image` folded into the `containers/container-libs`
+monorepo. The demand is now only a tracking issue,
+[`containers/container-libs#34`](https://github.com/containers/container-libs/issues/34)
+("Extend Fulcio signature acceptance options to support 'workflow identity'"), open with no
+implementation and explicitly unscheduled upstream. So the timeline is: land an
+implementation there, *then* wait for it to reach the `containers/image` version `bootc`
+vendors. Treat host-side keyless enforcement as unavailable, not imminent.
 
 The workaround — a long-lived static key whose `keyPath` verification `policy.json` *can*
 express, signed alongside the keyless signature — means storing and rotating a key, the

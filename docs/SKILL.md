@@ -8,15 +8,15 @@ Agent entry point. Load only the skill for your current task — do not load eve
 |---|---|
 | Understand BST element syntax and patterns | [`docs/skills/bst.md`](skills/bst.md) |
 | Add a package to Krytis | [`docs/skills/bst.md`](skills/bst.md) § Adding a Package |
-| Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § BST Weak-Key Caching Bug |
+| Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § *A cached failed artifact is replayed, not rebuilt* |
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
 | Package a prebuilt desktop app — choose `.deb` vs portable tarball, defuse an Electron self-updater | [`docs/skills/bst.md`](skills/bst.md) § Electron self-updaters on a read-only image |
 | Backport a patch onto a release pinned by a junction | [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
-| Decide whether to (re-)attempt the gnome-keyring → oo7 migration (#84) | [`docs/design/secrets-service.md`](design/secrets-service.md) |
-| Re-pin oo7, or check whether an upstream oo7 fix actually helps krytis (`mise run oo7-prompter-test`, `mise run oo7-login-race-test`) | [`docs/skills/pam.md`](skills/pam.md) § krytis patches oo7's prompter detection, § Login auto-unlock is lost to a race |
+| Understand why krytis runs oo7 rather than gnome-keyring, and what the cutover cost (#84, closed 2026-09-04) | [`docs/design/secrets-service.md`](design/secrets-service.md) |
+| Re-pin oo7, or check whether an upstream oo7 fix actually helps krytis (`mise run oo7-prompter-test`, `mise run oo7-login-race-test`) | [`docs/skills/pam.md`](skills/pam.md) § *oo7's prompter detection, and the patch krytis no longer needs*, § *Login auto-unlock is lost to a race* |
 | Change SSH config, sshd auth policy, or make SSH work for some account type | [`docs/skills/pam.md`](skills/pam.md) § `UsePAM yes` — **read the priority note first: SSH is opt-in and not a release blocker** |
 | Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
 | Generate or debug the firmware key-enrollment `.auth` files, or refresh the dbx revocation list (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
@@ -28,6 +28,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
 | Sync the dakota/zirconium-hawaii/dakota-iso mirrors and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
+| Audit a skill/design doc for rot, or fact-check a claim that sent you hunting for a file that isn't there (`mise run docs-links`) | skill: `.claude/skills/skill-rot-audit/`, [`AGENTS.md`](../AGENTS.md) § Skill files rot too |
 | Generate/attach the SBOM or run the Grype vuln scan (`mise run sbom`, `mise run vuln-scan`, `mise run push`) | [`docs/skills/sbom.md`](skills/sbom.md) |
 | Re-check Grype vuln-scan false positives, or update `.grype.yaml`'s ignore list | [`docs/skills/sbom.md`](skills/sbom.md) § Mitigated: Grype `stock-matcher`..., skill: `.claude/skills/vuln-scan-triage/` |
 | Change `.github/renovate.json5`, enable a manager, or decide what auto-merges (`mise run renovate-check`) | [`docs/skills/renovate.md`](skills/renovate.md) |

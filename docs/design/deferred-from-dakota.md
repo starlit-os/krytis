@@ -1,14 +1,15 @@
 # Deferred: Items to port from dakota
 
-Reference implementations live in `dakota/elements/bluefin/` unless noted.
+Reference implementations live in `dakota/elements/bluefin/` unless noted — clone
+dakota as a sibling of krytis's main checkout (see `docs/upstreams.yml`).
 Zirconium-hawaii does NOT use any of these — they are dakota/Bluefin-specific choices.
 
-## Priority: memory-safe replacements
+## Memory-safe replacements — both ported, no longer deferred
 
-| Element | dakota ref | Notes |
-|---------|-----------|-------|
-| `sudo-rs` | `bluefin/sudo-rs.bst` | Rust sudo replacement. Note `starlit/greetd.bst` has a PAM workaround that references this pattern — check when porting. PikaOS has (or had) a wrapper that falls back to `sudo` for cases sudo-rs doesn't yet handle — investigate whether they still see a need for it before deciding whether to carry the same wrapper. |
-| `uutils-coreutils` | `bluefin/uutils-coreutils.bst` | Rust coreutils. dakota intentionally keeps GNU `cp`/`mv`/`rm` due to unresolved TOCTOU issues in uutils — preserve that carve-out. |
+| Element | krytis element | Notes |
+|---------|----------------|-------|
+| `sudo-rs` | `elements/core/sudo-rs.bst` | Rust sudo replacement, shipped. `elements/core/pangolin-cli.bst` documents the sudoers `Cmnd` / `Args::Prefix` matching rules sudo-rs actually supports. No PikaOS-style fallback wrapper was carried. |
+| `uutils-coreutils` | `elements/core/uutils-coreutils.bst` | Rust coreutils, shipped with dakota's carve-out preserved: the element installs `uutils-<prog>` symlinks for everything but only takes over the bare `<prog>` name outside `cp`/`mv`/`rm`, which stay GNU over unresolved TOCTOU issues. |
 
 ## Build patterns to revisit from dakota
 
@@ -18,15 +19,15 @@ Zirconium-hawaii does NOT use any of these — they are dakota/Bluefin-specific 
 
 ## Other bluefin elements worth considering
 
-| Element | Notes |
-|---------|-------|
-| `uupd.bst` | bootc update daemon. Already noted as deferred in `stacks/bootc.bst`. |
-| `bootc-install-config.bst` | Install-time configuration for `bootc install`. |
-| `tailscale.bst` | VPN. |
-| `xdg-terminal-exec.bst` | XDG terminal execution spec — needed for "open terminal" actions in desktop environments. |
-| `network.bst` | Network config drop-ins. |
-| `firstboot-date.bst` / `firstboot-services.bst` | First-boot service setup. |
-| `efibootmgr.bst` | EFI boot manager CLI. |
-| `fzf.bst` | Fuzzy finder. |
-| `tealdeer.bst` | tldr pages. |
-| `motd.bst` / `umotd.bst` | Message of the day. |
+| Element | Status in krytis | Notes |
+|---------|------------------|-------|
+| `uupd.bst` | **superseded** | bootc update daemon. krytis wrote its own instead: `elements/config/starlit-update.bst` (#173) updates bootc, system Flatpaks, firmware and mise tools on a daily timer, gated on AC power and an unmetered network. |
+| `xdg-terminal-exec.bst` | **ported** | `elements/desktop/xdg-terminal-exec.bst`, in `stacks/desktop.bst`. |
+| `efibootmgr.bst` | **ported** | `elements/core/efibootmgr.bst`. |
+| `tealdeer` | **covered differently** | not a BST element — `elements/config/mise-aliases.bst` (#153) exposes it as a `[tool_alias]` so a user can `mise use tealdeer`. |
+| `bootc-install-config.bst` | still deferred | Install-time configuration for `bootc install`. |
+| `tailscale.bst` | still deferred | VPN. |
+| `network.bst` | still deferred | Network config drop-ins. |
+| `firstboot-date.bst` / `firstboot-services.bst` | **superseded** | krytis ships its own first-boot wizard instead — `files/systemd-firstboot/krytis-firstboot.service` (#487), see `docs/design/first-boot-setup.md`. |
+| `fzf.bst` | still deferred | Fuzzy finder. |
+| `motd.bst` / `umotd.bst` | still deferred | Message of the day. |
