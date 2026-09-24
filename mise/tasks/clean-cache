@@ -104,6 +104,20 @@ fi
 # install is handed to `iso-boot-installed`. Reaping one throws away that
 # install, not just garbage — so the age gate is the safety, and the next
 # iso-boot-live run starts from an empty disk.
+#
+# The name list, not a blanket `krytis-*`, is what bounds this to our own
+# debris — /var/tmp also holds systemd-private-* dirs and whatever else a user
+# parked there. The cost of that choice is that the list has to track every
+# disk a task can produce, and it silently did not: `generate-disk --disk` and
+# `boot-vm` write `.raw`, and naming one after the PR under test
+# (`/var/tmp/krytis-802.raw`) is the established way to hand-verify a branch,
+# per `docs/skills/workflow.md`. Two of those, 23G between them, sat through
+# every clean-cache run on a dev box for two weeks — and were still invisible
+# on the run where an ISO build beside them pushed /var to 96% and this task
+# reported nothing left to reclaim (#944). `krytis-luks-boot.*`, luks-boot-test's
+# WORKDIR, was missing for the same reason. Add the pattern here when you add a
+# task that creates scratch; the Update-path gate for elements has no analogue
+# for this one.
 VM_SCRATCH=()
 VM_IN_USE=()
 # /proc cmdlines are world-readable, so this sees other users' VMs too.
@@ -121,7 +135,9 @@ while IFS= read -r -d '' p; do
     fi
 done < <(find /var/tmp -maxdepth 1 \
     \( -name 'krytis-boot-test.*' -o -name 'krytis-enroll-test.*' \
-       -o -name 'krytis-*.img' -o -name 'krytis-qemu-*-vars.fd' \) \
+       -o -name 'krytis-luks-boot.*' \
+       -o -name 'krytis-*.img' -o -name 'krytis-*.raw' \
+       -o -name 'krytis-qemu-*-vars.fd' \) \
     -mmin "+$((MIN_AGE_HOURS * 60))" -print0 2>/dev/null)
 
 if [ ${#VM_SCRATCH[@]} -gt 0 ]; then

@@ -3477,6 +3477,20 @@ Sizes are reported as **allocated blocks, never apparent size**: `krytis-install
 64 GB sparse file that held 23 GB, so `du -sb` would have promised 41 GB of reclaim that
 does not exist.
 
+**The two guards only ever apply to paths the name list matches, and that list is the
+real failure mode.** It is an explicit set of globs — not a blanket `krytis-*`, which
+would also swallow `systemd-private-*` and anything a user parked in `/var/tmp` — so a
+task that writes scratch under a name nobody added is simply never seen. `clean-cache`
+then reports "Orphaned VM scratch: none" while the disk fills, which reads as *there is
+nothing to reclaim* rather than *I am not looking there*. Hit on 2026-09-24 (#944):
+`generate-disk --disk` and `boot-vm` write `.raw`, and naming one after the PR under
+test (`/var/tmp/krytis-802.raw`) is the established way to hand-verify a branch — two of
+those, 23 GB, survived every run for two weeks, including the run made *because* an ISO
+build beside them had pushed `/var` to 96%. `krytis-luks-boot.*` was absent for the same
+reason. Both patterns are now in the list; **when you add a task that creates scratch,
+add its pattern in the same commit** — nothing enforces this the way the Update-path
+gate enforces element tracking.
+
 One trap when driving the task from a pipeline: its in-flight-build guard is `pgrep -f`,
 which matches *arguments*, so `mise run clean-cache | grep -v buildah` makes the task refuse
 to run — the grep's own argv is the "live build" it finds. Filter on something else.
