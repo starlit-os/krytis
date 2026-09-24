@@ -1153,6 +1153,31 @@ sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "$ELEMENT"
 
 Use `mktemp -d` + `trap 'rm -rf "$TMPDIR"' EXIT` for the temp directory.
 
+### Container images a task runs are dependencies too
+
+A `podman run` inside a mise task is an external dependency with no manifest, so
+neither Renovate nor `bst source track` can see it — `.github/renovate.json5`'s
+custom managers read `mise.toml`, `Containerfile.runner` and the workflow YAML,
+never `mise/tasks/*`. An unpinned tag there is the same exposure as an unpinned
+`uses:`, and worse when the container is privileged: `boot-vm`'s fallback runs
+`--privileged --device /dev/kvm` with the disk image bind-mounted.
+
+The convention is the same as for elements — pin `<image>:<tag>@sha256:…`, add a
+`<name>-update` task, wire a `track-<name>` job. Two are pinned this way today:
+`chunkify`'s `CHUNKAH_REF` (`chunkah-update`) and the `QEMU_IMAGE_REF` shared by
+`boot-vm` and `convert-to-qcow2` (`qemu-image-update`, #936).
+
+**One ref in two files needs a drift guard, not two sed calls.** `qemu-image-update`
+reads the pin from every file it owns and aborts if they disagree, rather than
+rewriting whichever it read first. Without that, a hand-edit to one file leaves the
+other on a stale digest and the next automated bump silently cements the split —
+the same class of failure `track-bst-sources.yml`'s staged `git diff --cached`
+check exists to catch for deletions.
+
+**Digest-pinned means `--pull=always` is dead weight.** A digest names exactly one
+image; if it is in local storage, re-fetching cannot produce anything different.
+`boot-vm` carried the flag from its unpinned days and no longer does.
+
 ## Never add loose shell scripts
 
 All development workflows must be `mise run` tasks. No standalone scripts outside `mise/tasks/`.
