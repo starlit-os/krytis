@@ -1,0 +1,16 @@
+[Unit]
+Description=Put host cursor themes on the Flatpak XCursor search path
+Documentation=https://github.com/starlit-os/krytis/issues/949
+# No ConditionPathExists gate, unlike flatpak-preinstall.service: this writes
+# into /var, needs no network, and must reassert itself if /var is reset.
+# Ordered before the graphical session so the first app launched already sees
+# the override.
+Before=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/krytis/flatpak-cursor-path.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
