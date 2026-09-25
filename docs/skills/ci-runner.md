@@ -1645,8 +1645,11 @@ prefers `BUILDBARN_PUSH_TOKEN` over `BUILDBARN_PULL_TOKEN`:
   reads by design, even though it happened to work in the live test above,
   so don't assume one token covers both; wire the role you actually need.
 - **Neither present:** no bow entries in user config at all — `cache-warm`
-  builds against `gbm.gnome.org`/`cache.projectbluefin.io` only, cleanly,
-  no warnings (since `project.conf` doesn't declare bow either).
+  runs cleanly with no warnings (`project.conf` doesn't declare bow either),
+  but since #942/#954 removed krytis's own `project.conf` cache entries there
+  is then *no* remote cache for krytis elements at all, and the junctions'
+  caches (fdsdk's, gbm's) serve only their own elements. Such a run rebuilds
+  everything krytis owns from scratch.
 
 The token file is written to `$RUNNER_TEMP` with `printf '%s'` (not `echo`,
 to avoid a trailing newline in the token). Both secrets have to be added by

@@ -49,9 +49,10 @@ if [ "$PUSH" = "true" ] && [ "$PULL" = "true" ]; then
 fi
 
 # Wire krytis's bow Buildbarn cache when --push/--pull is requested. Neither
-# flag -> no bow entries at all (today's default: public freedesktop-sdk/gnome
-# caches from project.conf only). bow is deliberately never declared in
-# project.conf itself — see docs/skills/ci-runner.md and cache-warm.yml.
+# flag -> no remote cache for krytis's own elements at all: project.conf
+# declares none since #942/#954, and the junctions' caches serve only their own
+# elements. bow is deliberately never declared in project.conf either — see
+# docs/skills/ci-runner.md and cache-warm.yml.
 BOW_CONFIG=""
 BOW_TOKEN_FILE=""
 cleanup_bow() {
