@@ -99,15 +99,44 @@ full cost/sizing rationale.
 ### Host-native, not a container — the local runner's design doesn't apply here
 
 `Containerfile.runner`'s privileged-Podman-container design exists
-specifically to isolate the runner on a **shared local dev workstation**.
-This VPS has no other tenant — the VM itself is the isolation boundary — so
-the runner is installed directly on the host (`/opt/actions-runner`,
-`RUNNER_ALLOW_RUNASROOT=1`, supervised by the binary's own `svc.sh`-generated
-systemd unit) rather than containerized. No `--privileged` flag, no podman
-run wrapper, nothing analogous to `mise runner:start`/`stop` for the
-container lifecycle — this is a persistent host service, closer in shape to
-the Buildbarn Quadlet precedent (always up, restarts with the box) than to
-the local runner's manually start/stop container.
+specifically to isolate the runner from **other humans on a shared local dev
+workstation**. This VPS has no second human tenant — one unprivileged `debian`
+(uid 1000) account exists with no active session, and `loginctl list-users`
+shows only root — so the runner is installed directly on the host
+(`/opt/actions-runner`, `RUNNER_ALLOW_RUNASROOT=1`, supervised by the binary's
+own `svc.sh`-generated systemd unit) rather than containerized. No
+`--privileged` flag, no podman run wrapper, nothing analogous to
+`mise runner:start`/`stop` for the container lifecycle — this is a persistent
+host service, closer in shape to the Buildbarn Quadlet precedent (always up,
+restarts with the box) than to the local runner's manually start/stop
+container.
+
+**It is not, however, a single-*workload* box, and an earlier version of this
+section said it was** ("no other tenant — the VM itself is the isolation
+boundary"), which `files/runner-vps/gc.sh`'s own header has contradicted since
+#938 ("Shared box: it also carries …"). Measured 2026-09-25, and the shape
+matters more than the count:
+
+- `beszel-agent` (`docker.io/henrygd/beszel-agent`, monitoring) runs as an
+  always-on **root** quadlet beside the runner. `Privileged=false`, but it binds
+  `/run/podman/podman.sock`. A read-only bind of that socket is not a read-only
+  capability: anything that can talk to it can start a privileged container with
+  `/` mounted, so socket access is **root-equivalent on the host**.
+- `materia-update.container` runs `ghcr.io/stryan/materia:stable` — a **floating
+  tag**, `Network=host`, with `/run/podman/podman.sock`, `/etc/systemd/system`,
+  `/etc/containers/systemd` and `/usr/local/bin` all mounted read-write. That is
+  the box's config-management agent, so the access is by design, but it means
+  the host's trust boundary includes whatever that tag resolves to on any given
+  day.
+
+Everything here — runner, quadlets, builds — is uid 0, and two third-party
+images hold root-equivalent access to the same kernel. That is inert for a build
+job, which has no secrets. It is decisive for anything that writes secret
+material to this disk, and it is why **#824 option B was declined**: sealed
+publishes put six UEFI private keys in the workspace for the duration of the
+build, and this is not a host that can hold them. `publish.yml` stays on
+Blacksmith. Evidence and the full measurement in
+`docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md` § V0. Tenancy on the VPS
 
 Managed via `mise runner-vps:{install,register,deregister,status}`
 (`mise/tasks/runner-vps/`, provisioning script in `files/runner-vps/provision.sh`).
@@ -249,6 +278,32 @@ about RAM.** #794's verification run landed almost entirely bow cache hits,
 showed >10G free, and was correctly identified in this file as "not evidence
 either way" — but the sizing change shipped anyway. When a knob's risk is
 peak RAM, the run that clears it has to actually compile.
+
+### …but that sizing only reaches callers that use the *default* user config
+
+`cache-warm.yml` writes `~/.config/buildstream.conf` and then runs `uv run bst`
+directly. Anything that builds through `mise/tasks/bst --pull`/`--push` does
+**not** inherit it: that script writes a temporary config (`mise/tasks/bst:92`)
+and passes it as `bst --config`, and `--config` *replaces* the default user
+configuration rather than merging with it.
+
+Verified empirically against the pinned BuildStream 2.7.0, not inferred from the
+`--config FILE  Configuration file to use` help text: with
+`XDG_CONFIG_HOME/buildstream.conf` containing an unknown key, a bare `bst` command
+dies with `Error loading user configuration: … Unexpected key: bogus_key_xyz`,
+while the same command plus `--config <other file>` never reads it at all — it
+gets past user-config loading and fails later, on the project.
+
+That matters because the bow config sets `build: max-jobs: 4` and no `scheduler:`
+block, so BuildStream's own default `builders: 4` (`data/userconfig.yaml`) applies:
+**4 x 4 = up to 16 concurrent compilers**, 2.7x the 6-slot budget derived above, on
+any job that builds with `--pull` on this box. `cache-warm.yml` is unaffected
+because it never calls `mise/tasks/bst`. Any `--pull` build on a
+RAM-constrained host hits it, which is why the sizing belongs in
+`mise/tasks/bst` (one formula, every caller) rather than being copied into each
+workflow that builds. Found while investigating #824 option B, which was then
+declined for unrelated reasons — see
+`docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md` § Findings that outlive this decision.
 
 ### An OOM must not decommission the runner
 
@@ -438,8 +493,10 @@ carries `ghcr.io/stryan/materia:stable`, `henrygd/beszel-agent`,
 another project's images. The script prunes *dangling* images only, plus
 krytis-owned tags named explicitly.
 
-Sunday is deliberate: `cache-warm.yml` is `41 6 * * 1-5`, so a weekend slot
+Sunday is deliberate: `cache-warm.yml` is `41 1 * * 1-5`, so a weekend slot
 misses it by a day rather than by minutes (§ Scheduled Workflow Cron Delay).
+`publish.yml`'s `30 3 * * 1-5` (#824) is weekday-only as well, and runs on
+Blacksmith regardless, so it never competes for this runner.
 
 ### `register` is re-runnable
 
@@ -636,17 +693,55 @@ up there — but a *sustained* multi-hour daily delay is well beyond the
 "occasional few minutes" their docs describe; this reads as scheduler
 backlog specific to this repo/account, not routine jitter.
 
-**Fix applied:** moved both off `:00` to arbitrary non-round minutes
-(`track-bst-sources.yml` → `13 5 * * *`, `cache-warm.yml` → `41 6 * * 1-5`,
-~90min apart so tracking PRs have a window to land before cache-warm builds
-— see each file's own cron comment). This addresses the documented
-top-of-hour contention factor; it will not necessarily fix a genuine
-account-level scheduler backlog if that's the real cause. Check
+**Fix applied:** moved both off `:00` to arbitrary non-round minutes, and
+in #824 the whole chain moved 5h earlier so the scheduled publish it now
+feeds lands in the maintainer's morning: `track-bst-sources.yml` →
+`13 0 * * *`, `cache-warm.yml` → `41 1 * * 1-5`, `publish.yml` →
+`30 3 * * 1-5`. The relative spacing is what matters and is unchanged —
+~90min from tracking to cache-warm so tracking PRs have a window to land
+before cache-warm builds, ~110min from cache-warm to publish so publish
+pulls a warmed bow cache (see each file's own cron comment). This addresses
+the documented top-of-hour contention factor; it will not necessarily fix a
+genuine account-level scheduler backlog if that's the real cause. Check
 `gh api repos/starlit-os/krytis/actions/workflows/<file>/runs --paginate -q
 '.workflow_runs[] | select(.event=="schedule") | .created_at'` again after
 a couple of weeks — if delay from the new trigger times is still growing,
 top-of-hour contention wasn't the (whole) story and it's worth a GitHub
 support ticket instead of another cron-minute shuffle.
+
+### Adding `schedule:` to a dispatch-only workflow silently disables every `if: inputs.*` step
+
+On a `schedule` event there are no inputs at all — every `inputs.<name>` is
+null, including ones declared with `default: true`. A `default:` belongs to the
+`workflow_dispatch` form, not to the workflow. So a step guarded by
+`if: inputs.publish_sealed` does not run on the cron trigger, and nothing
+reports an error: the step shows as skipped, the job is green, and the artifact
+that step produced is simply never refreshed.
+
+#824 added `schedule: '30 3 * * 1-5'` to `publish.yml`, whose five sealed-image
+steps were all `if: inputs.publish_sealed` with `default: true`. Left alone,
+every scheduled run would have republished `:latest` and never touched `:sealed`
+— the tag users actually boot under Secure Boot — while looking entirely
+healthy. `verify-sealed.yml` would have kept passing too, because it tests
+whatever `:sealed` currently is, not whether this run produced it.
+
+Resolve it once at job level rather than at each guard, so the sites cannot
+drift apart:
+
+```yaml
+env:
+  PUBLISH_SEALED: ${{ github.event_name == 'schedule' || inputs.publish_sealed }}
+```
+
+then `if: env.PUBLISH_SEALED == 'true'` on each step (string comparison — env
+values are strings).
+
+**Audit every input when adding a trigger, not just the one you came for.** The
+null default is only wrong where falsy is not the safe answer. In the same
+workflow `report_only` (falsy → the severity gate blocks), `force_self_hosted`
+(falsy → Blacksmith) and `allow_branch_publish` (falsy, and a scheduled run
+always carries the default branch) were all *correct* when null and needed no
+change. Only a `default: true` input is a live trap.
 
 ---
 
@@ -1554,7 +1649,7 @@ autonomously.
 | Workflow | Runner | Rationale |
 |---|---|---|
 | `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
-| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Still Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml`: this job is `workflow_dispatch`-only (no schedule), so nothing recurs unattended, and its escape hatch is for debugging a publish failure on the real hardware or falling back when Blacksmith is degraded. Dispatch-only also means the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard, unlike `cache-warm.yml`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
+| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
