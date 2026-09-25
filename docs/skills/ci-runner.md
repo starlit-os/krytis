@@ -250,6 +250,31 @@ showed >10G free, and was correctly identified in this file as "not evidence
 either way" — but the sizing change shipped anyway. When a knob's risk is
 peak RAM, the run that clears it has to actually compile.
 
+### …but that sizing only reaches callers that use the *default* user config
+
+`cache-warm.yml` writes `~/.config/buildstream.conf` and then runs `uv run bst`
+directly. Anything that builds through `mise/tasks/bst --pull`/`--push` does
+**not** inherit it: that script writes a temporary config (`mise/tasks/bst:92`)
+and passes it as `bst --config`, and `--config` *replaces* the default user
+configuration rather than merging with it.
+
+Verified empirically against the pinned BuildStream 2.7.0, not inferred from the
+`--config FILE  Configuration file to use` help text: with
+`XDG_CONFIG_HOME/buildstream.conf` containing an unknown key, a bare `bst` command
+dies with `Error loading user configuration: … Unexpected key: bogus_key_xyz`,
+while the same command plus `--config <other file>` never reads it at all — it
+gets past user-config loading and fails later, on the project.
+
+That matters because the bow config sets `build: max-jobs: 4` and no `scheduler:`
+block, so BuildStream's own default `builders: 4` (`data/userconfig.yaml`) applies:
+**4 x 4 = up to 16 concurrent compilers**, 2.7x the 6-slot budget derived above, on
+any job that builds with `--pull` on this box. `cache-warm.yml` is unaffected
+because it never calls `mise/tasks/bst`. `publish.yml` would hit it the moment it
+is routed to this runner — which is exactly what #824 option B proposes, and why
+the sizing belongs in `mise/tasks/bst` (one formula, both callers) rather than
+being copied into a second workflow. See
+`docs/plans/2026-09-25-publish-on-krytis-vps-verification.md` § P2.
+
 ### An OOM must not decommission the runner
 
 `svc.sh install`'s generated unit carries **no `Restart=` at all** and
