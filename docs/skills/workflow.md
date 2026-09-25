@@ -475,6 +475,38 @@ Report obsolete branches to the user rather than deleting them — they are the 
 Worktrees for fork work live beside the fork, not in krytis:
 `<parent>/<fork-name>.worktrees/<branch-leaf>`.
 
+### Auditing the fork inventory (which forks are live, and how far they've drifted)
+
+"Which forks are we on?" is answered by the element sources, not by the fork list: a fork
+only matters if some `sources:` entry names it. Both halves are one command each.
+
+```shell
+# Forks that exist, in both orgs we own.
+gh repo list kitten-lily --limit 100 --json name,isFork,parent \
+  --jq '.[] | select(.isFork) | "\(.name)\tparent=\(.parent.owner.login)/\(.parent.name)"'
+# Forks krytis actually builds from.
+grep -rn 'url: github:kitten-lily\|url: github:starlit-os' elements/
+# Drift of a carried branch, in both directions at once.
+gh api repos/<upstream-owner>/<repo>/compare/main...<fork-owner>:<branch> \
+  --jq '"status=\(.status) ahead=\(.ahead_by) behind=\(.behind_by)"'
+```
+
+Compare the carried branch against the **release tag** as well as `main`
+(`compare/v5.1.0...<fork>:<branch>`). Against `main` a branch is always hundreds behind and
+the number means little; against the newest tag it states exactly how many releases the
+image is missing — which is the number that decides whether a rebase is due.
+
+**A fork nothing points at is dead weight, but check for unique commits before deleting it.**
+`compare` reports `ahead_by` for the fork's `main` too, and those commits can be unrelated
+work that was never upstreamed — `starlit-os/sysext-bakery` looked like an unused fork of
+`flatcar/sysext-bakery` (0 references anywhere in this repo) yet carried three hand-written
+komodo-periphery commits that exist nowhere else. `ahead_by: 0` on every branch is the only
+safe-to-delete signal; otherwise ask.
+
+Deleting is also not possible with the usual credentials: the standard `gh` token scope set
+(`repo`, `workflow`, `read:org`, …) has no `delete_repo`, and the API returns 403 until
+`gh auth refresh -h github.com -s delete_repo` is run interactively by the human.
+
 ### Rebasing a carried fork branch: verify the *introduced hunks*, not the tips
 
 After rebasing a carried branch onto a moved upstream, the useful question is "did my change
