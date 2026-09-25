@@ -14,8 +14,8 @@ on:
     # added publish.yml's own schedule downstream of this one:
     #   00:13 track -> 01:41 cache-warm (here) -> 03:30 publish
     # The 90min spacing above is unchanged; publish sits a further ~110min
-    # out. Weekday-only is also unchanged — the scheduled publish is daily,
-    # so a weekend publish runs against Friday's warm cache plus bow.
+    # out. Weekday-only is also unchanged, and publish.yml matches it
+    # (`30 3 * * 1-5`) so neither runs against a cache the other skipped.
     - cron: '41 1 * * 1-5'
   workflow_dispatch:
     inputs:
