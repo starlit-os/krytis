@@ -1928,6 +1928,139 @@ build-commands:
 
 Do NOT use `${JOBS}`, `%{max-jobs}`, or `$JOBS` in `kind: manual` elements.
 
+## Zig Projects
+
+Zig has no lockfile BST can consume and no BST source kind understands `build.zig.zon`.
+Every Zig element therefore pins the whole dependency graph as one `kind: remote` source
+per tarball, staged into `zig-deps/`, and calls `zig fetch` on each in `build-commands` to
+populate a `ZIG_GLOBAL_CACHE_DIR` the offline sandbox builds against. `elements/desktop/`
+has three: `ghostty.bst`, `seance.bst` (both large), `falcond.bst` (small).
+
+**The dep list is generated, never hand-written.** `mise/lib/zig_zon.py` holds the shared
+resolver; `mise/tasks/{ghostty,seance}-update` supply only the version/URL policy. Both
+take `-- --regenerate` to re-resolve at the currently pinned version, which is how you test
+a resolver change without bumping anything.
+
+### Four things the resolver has to get right
+
+Each was a real failure while writing `seance.bst` (#956), and each is silent if missed.
+
+- **Walk the transitive closure, not just the tarball's zon files.** A fetched dep carries
+  its own `build.zig.zon` and Zig fetches *that* too. ghostty.bst's `zigimg` and `uucode`
+  entries come from vaxis, which is itself a downloaded tarball — they were hand-added
+  because the old updater only parsed one zon. `resolve_closure()` unpacks every dep and
+  re-scans breadth-first.
+- **`git+https://` deps are a different URL shape and are trivially missed.** vaxis declares
+  zigimg, uucode and libvaxis as `git+https://github.com/<owner>/<repo>#<sha>`, which does
+  not match an `https?://` regex at all — three deps silently absent. Rewrite them to the
+  forge's `/archive/<sha>.tar.gz`. Do **not** hand-place git deps under
+  `$ZIG_GLOBAL_CACHE_DIR/p/<hash>`: on Zig 0.16 that entry is ignored and the dep is
+  re-fetched over the network (which fails offline). `zig fetch <local-tarball>` produces an
+  entry `zig build` accepts for a git dep — see `falcond.bst`'s comment, same conclusion.
+- **Strip `//` comment lines before matching.** ghostty's `example/*/build.zig.zon` each
+  carry a commented-out `//     .url = ".../archive/COMMIT.tar.gz"` template. Treated as a
+  dep it is an immediate 404.
+- **Check whether BST actually strips the source tarball.** `kind: tar`'s default
+  `base-dir: '*'` only strips when exactly one top-level member matches. seance's release
+  tarball also contains a `./` entry, so nothing was stripped and the project landed one
+  directory down — `zig fetch` failed with `no build.zig file found, in the current
+  directory or any parent directories`. Fix is an explicit `base-dir: 'seance-*'`, not a
+  `cd` in every command. Symptom is identical to falcond's genuinely-nested layout, so check
+  the tarball (`tar tzf … | awk -F/ '{print $1}' | sort -u`) before assuming which it is.
+
+A regenerating updater must also preserve non-dep sources: `extract_source_blocks(text,
+"patch")` carries `kind: patch` entries (and the comment block above them) across a
+regeneration. Without it, the next ghostty bump would silently drop
+`patches/ghostty/allow-shlib-undefined.patch`.
+
+### Zig 0.16 covers fdsdk 26.08's glibc; Zig 0.15 does not
+
+`ghostty.bst` carries `allow-shlib-undefined.patch` because Zig 0.15.2's abilists stop at
+glibc 2.42 while fdsdk 26.08 ships 2.44, so `ld.lld` refuses the link against fdsdk
+libraries referencing newer symbols (#305). That patch is **not** needed on
+`desktop/zig-0.16.bst`:
+
+- Zig 0.16.0's `lib/libc/glibc/abilists` lists 56 versions, max **2.43.0**.
+- Every library the GTK stack exposes tops out at **`GLIBC_2.43`** — checked with `nm -D
+  --with-symbol-versions` on a booted image: `libgtk-4.so.1`, `libglib-2.0.so.0` and
+  `libgraphene-1.0.so.0` are 2.43; everything else (adwaita, X11, wayland, EGL, GL,
+  fontconfig, freetype, harfbuzz, pango, cairo, libnotify) is ≤ 2.38.
+
+So a Zig 0.16 element needs no workaround, and `ghostty.bst` should be able to drop its
+patch whenever ghostty itself moves to 0.16. Re-run the `nm -D` check after an fdsdk bump
+rather than assuming it still holds.
+
+**Do not silence the resulting `zig cannot build new glibc version 2.44.0; providing
+instead 2.43.0` line with `-Dtarget=native-native-gnu.2.43`.** It is only a warning, and
+naming an explicit glibc version makes the target non-native — at which point Zig uses its
+own bundled libc headers and stops searching `/usr/include` at all. seance's build then
+dies in translate-c with `/usr/include/gtk-4.0/gdk/x11/gdkx.h:29:10: fatal error:
+'X11/Xlib.h' not found`, because `x11.pc` carries no `-I` of its own and the header only
+ever came from the default system include path. The warning is the correct outcome: Zig
+picks the highest ABI it knows, and everything in the graph fits inside it.
+
+To read the abilists table yourself (the format is a `u8` lib count, NUL-terminated lib
+names, a `u8` version count, then 3-byte version triples):
+
+```python
+d = open("lib/libc/glibc/abilists", "rb").read()
+off = 1
+for _ in range(d[0]):
+    off = d.index(0, off) + 1
+cnt = d[off]; off += 1
+print(max((d[off+3*i], d[off+3*i+1], d[off+3*i+2]) for i in range(cnt)))
+```
+
+### `oniguruma.pc` is shipped by `components/jq.bst`
+
+There is no `oniguruma.bst` in fdsdk or gnome-build-meta, and grepping the junctions for
+"oniguruma" finds nothing — but `libonig.so.5` is on a booted image all the same.
+`components/jq.bst` builds it: jq vendors oniguruma as a `kind: git_module` submodule and
+its autotools run installs `libonig.so*`, `usr/bin/onig-config`, the headers, **and**
+`%{libdir}/pkgconfig/oniguruma.pc`.
+
+So an element needing system oniguruma depends on `freedesktop-sdk.bst:components/jq.bst`.
+seance does: `build.zig` links `freetype2`, `harfbuzz` and `oniguruma` itself with
+`use_pkg_config = .force`, because libghostty is consumed as a static archive built with
+system integration and those libraries are therefore not embedded in it. Without the dep
+the build dies late with `thread N panic: pkg-config failed for library oniguruma` — note
+that Zig panics on a *missing* `.pc` even at the default `use_pkg_config = .yes`, so this
+is not specific to `.force`.
+
+Generalises: when a library exists on the image but no element seems to own it, search the
+SBOM rather than the element tree — `python3 -c "…" < /usr/manifest.json` over the
+`modules` list finds the real producer, including submodule-vendored ones.
+
+### seance: relocating libghostty resources to avoid a fatal overlap
+
+seance vendors ghostty as a submodule and installs `share/ghostty/{shell-integration,themes}`
+plus a compiled `share/terminfo/` database — paths `desktop/ghostty.bst` and fdsdk's ncurses
+already own. `project.conf` makes overlaps fatal, so `oci/krytis/runtime.bst` fails to stage.
+
+Move them in `install-commands` rather than adding an `overlap-whitelist` entry:
+
+```yaml
+- |
+  mkdir -p "%{install-root}%{datadir}/seance"
+  mv "%{install-root}%{datadir}/ghostty" "%{install-root}%{datadir}/seance/ghostty"
+  mv "%{install-root}%{datadir}/terminfo" "%{install-root}%{datadir}/seance/terminfo"
+```
+
+This is upstream-supported, not a hack: `src/ghostty_bridge.zig` probes
+`share/seance/ghostty` *before* `share/ghostty` on every candidate prefix, and derives
+`TERMINFO` as its sibling — added for exactly this reason by the AUR package. A whitelist
+would have been wrong here: both copies are real and neither should win.
+
+### Why seance is built from source rather than shipped as its AppImage
+
+Upstream's AppImage is produced by `linuxdeploy-plugin-gtk`, whose AppRun hook contains an
+unconditional `export GDK_BACKEND=x11`. It overrides whatever the caller sets, so the
+AppImage always runs on XWayland — there is no environment-variable workaround from
+outside it. seance's own `build.zig` links both `x11` and `wayland-client`; a source build
+runs natively on Wayland. Verified on a live niri session: the AppImage's window reports
+`xwayland-satellite`'s pid to `niri msg --json windows`, the source build reports its own
+with `app_id=com.seance.app`. Generalises to any `linuxdeploy-plugin-gtk` AppImage.
+
 ## Rust / Cargo Projects
 
 ### Strategy A: cargo2 source (live Cargo.lock)
@@ -2972,9 +3105,11 @@ Always verify the canonical URL when vendoring a source for the first time.
 
 ## fdsdk mesa doesn't expose `egl.pc` / `glesv2.pc` — `components/mesa-headers.bst` puts them back
 
-Even with mesa built `-Degl=enabled -Dgles2=enabled`, a plain `dependency('egl')` or `dependency('glesv2')` in a consuming project's meson.build will fail to resolve, regardless of `PKG_CONFIG_PATH` pointing at mesa's `GL/default/lib/pkgconfig` (see the prepend-mesa-env pattern above). `freedesktop-sdk.bst:components/libglvnd.bst` deliberately `rm`s `egl.pc`, `gl.pc`, `glesv2.pc`, and `glesv1_cm.pc` from its own install output, and mesa's own `GL/default` split only ships `gbm.pc`/`libdrm*.pc`.
+Even with mesa built `-Degl=enabled -Dgles2=enabled`, a plain `dependency('egl')` or `dependency('glesv2')` in a consuming project's meson.build will fail to resolve, regardless of `PKG_CONFIG_PATH` pointing at mesa's `GL/default/lib/pkgconfig` (see the prepend-mesa-env pattern above). `freedesktop-sdk.bst:components/libglvnd.bst` deliberately `rm`s `egl.pc`, `gl.pc`, `glesv2.pc`, and `glesv1_cm.pc` from its own install output and builds with `-Dheaders=false`, and mesa's own `GL/default` split only ships `gbm.pc`/`libdrm*.pc`.
 
 **But the `.pc` files are recoverable, and that is now the standing fix.** `freedesktop-sdk.bst:components/mesa-headers.bst` regenerates `egl.pc`, `glesv2.pc` and `gl.pc` (plus the EGL/GLES2/KHR headers) at the *standard* `%{libdir}/pkgconfig`, so `dependency('egl')`/`dependency('glesv2')` resolve with no `PKG_CONFIG_PATH` trickery. `libEGL.so.1`/`libGLESv2.so.2` themselves still come from `components/libglvnd.bst`, already a runtime dep of `extensions/mesa/mesa.bst`. `desktop/wlroots.bst` build-depends on it to compile `-Drenderers=gles2,vulkan` (`e3edc13`, needed by `desktop/umbriel.bst`'s umbrielfx, a GLES2-only renderer that `#include`s `<wlr/render/egl.h>`); `desktop/cage.bst` and `desktop/noctalia-greeter.bst` carry it for the same reason, since wlroots' `.pc` then lists `egl`/`glesv2` in `Requires.private`. Under `-Drenderers=auto` and without mesa-headers, gles2 was silently skipped — no error, just a missing renderer.
+
+**It is not only a meson concern.** Zig's `linkSystemLibrary("egl", .{ .use_pkg_config = .force })` hits the same wall, and `elements/desktop/seance.bst` is the non-meson consumer: its `build.zig` aborts before any compilation unless `pkg-config --exists gl egl` succeeds. mesa-headers' split-rule is `devel: '/**'`, so `build-depends`-only adds nothing to the image. When the app links `-lGL`/`-lEGL` for real, also name `components/libglvnd.bst` in `depends:` — it ships the `libGL.so`/`libEGL.so` devel symlinks, and mesa-headers only *`runtime-depends`* on it, so a build-only dep's runtime deps never reach the image.
 
 `libepoxy` (dlopen-based GL/EGL loading, no `.pc` needed at compile time) is the other way out, and it is what upstreams reach for when they write `dependency('egl', required: false)`. It is no longer the branch krytis takes: since mesa-headers landed, noctalia-greeter's optional `dependency('egl')`/`dependency('glesv2')` **succeed**, so the greeter compositor links `libEGL.so.1`/`libGLESv2.so.2` directly (both already ship via `extensions/mesa/mesa.bst` → `components/libglvnd.bst`). `desktop/noctalia-greeter.bst` still lists `components/libepoxy.bst` in `depends:`, but the epoxy fallback is not exercised — don't read that dependency as evidence the gap is unfixed.
 

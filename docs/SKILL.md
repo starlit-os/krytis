@@ -11,6 +11,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § *A cached failed artifact is replayed, not rebuilt* |
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
+| Package a Zig project, or regenerate a `build.zig.zon` dep list | [`docs/skills/bst.md`](skills/bst.md) § Zig Projects |
 | Package a prebuilt desktop app — choose `.deb` vs portable tarball, defuse an Electron self-updater | [`docs/skills/bst.md`](skills/bst.md) § Electron self-updaters on a read-only image |
 | Backport a patch onto a release pinned by a junction | [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
