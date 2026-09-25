@@ -36,6 +36,10 @@ depends:
 
   # ── Terminal ────────────────────────────────────────────────────────────
   - desktop/ghostty.bst
+  # seance: GTK4 scrolling multiplexer for AI coding agents, terminal
+  # emulation via libghostty. Ships its ghostty resources under
+  # share/seance/ so it does not collide with ghostty.bst above.
+  - desktop/seance.bst
 
   # ── Virtual console (VT2-4) ─────────────────────────────────────────────
   # kmscon replaces fbcon with a KMS/DRM-rendered console on VT2-4, leaving
