@@ -1,17 +1,50 @@
-# Verification plan — issue #824 option B (`publish.yml` on `krytis-vps`)
+# Issue #824 option B (`publish.yml` on `krytis-vps`) — investigated, DECLINED
 
-Issue #824 lists three steps for option B: add a third `force_self_hosted` option,
-dispatch once against `krytis-vps`, boot-test the result. That checklist is
-necessary but **not sufficient** — two of publish.yml's steps are actively wrong
-for a persistent box and would be exercised for the first time by that dispatch,
-and the security question the Security Gate actually turns on (private UEFI keys
-on an always-on host that runs other workloads) is not in it at all.
+**Outcome, 2026-09-25: option B is not being done. `publish.yml` stays on
+Blacksmith.** Decided by the maintainer once V0 came back, on two grounds:
 
-This plan is the verification scope. It does not authorise the schedule; the
-cadence/policy question in the issue is unchanged and still human-owned.
+1. **The VPS cannot hold the signing keys.** V0 (below) found two third-party
+   root-equivalent workloads co-resident with the runner, one of them on a
+   floating tag. That rules out sealed publishes on that host.
+2. **The only variant that survived V0 buys nothing durable.** With sealed ruled
+   out, all option B could offer was routing the *unsealed* publish to the VPS —
+   and the unsealed image is expected to go away. Building a runner-selection
+   mechanism, a scheduler-sizing fix and a key-hygiene regime for a path with a
+   planned end-of-life is cost against an artifact we intend to stop producing.
 
-**Scope boundary:** this plan proves the runner is trustworthy for a *dispatched*
-publish. Adding `schedule:` is a separate decision that depends on P7 below.
+What follows is kept as the evidence behind that call, not as a checklist. The
+V-sections were written as an execution plan before the decision; they are
+preserved because V0's measurements and the defects in "Findings that outlive
+this decision" are load-bearing for other work, and because a future proposal to
+revisit this should start from what was actually measured rather than repeat it.
+
+Issue #824's other half is untouched by this: option A (cron on Blacksmith) and
+the cadence/policy question remain open and human-owned, and V7 below — nothing
+boot-gates `:latest` — applies to *any* scheduled publish regardless of runner.
+
+---
+
+## Findings that outlive this decision
+
+Three of the prerequisites were not VPS-specific. They stay true whether or not
+publish ever moves:
+
+- **P1** — `publish.yml:85` runs `hastd/free-disk-space` ungated, and its
+  `swapoff -a && rm -f /mnt/swapfile` is wrong on *any* persistent runner. That
+  includes the `force_self_hosted` escape hatch that exists today, which targets
+  the local container runner running privileged on a dev workstation. Still worth
+  gating.
+- **P2** — `bst --config` replaces the user config, so every `mise run build
+  --pull` gets `builders: 4` × `max-jobs: 4` regardless of what the host wrote to
+  `~/.config/buildstream.conf`. This is not about publish or about the VPS; it is
+  about any RAM-constrained host that builds with the bow cache wired. The
+  mechanism is recorded in `docs/skills/ci-runner.md`, in the section following
+  § Build concurrency is `builders` x `max-jobs`.
+- **P5 / `provision.sh`** — `openssl` is present on the VPS only as an implicit apt
+  dependency. Any task that depends on it there is relying on dependency
+  resolution rather than provisioning.
+
+None of these are in scope for this PR, which is documentation only.
 
 ---
 
@@ -132,7 +165,7 @@ at dispatch time, or run `mise run runner-vps:gc` first.
 
 ---
 
-## V0. Tenancy — ANSWERED 2026-09-25, and it splits option B in two
+## V0. Tenancy on the VPS — ANSWERED 2026-09-25, and it splits option B in two
 
 The contradiction was real: `docs/skills/ci-runner.md:103` claimed "This VPS has
 no other tenant — the VM itself is the isolation boundary", while

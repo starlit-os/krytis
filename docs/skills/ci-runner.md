@@ -132,11 +132,11 @@ matters more than the count:
 Everything here — runner, quadlets, builds — is uid 0, and two third-party
 images hold root-equivalent access to the same kernel. That is inert for a build
 job, which has no secrets. It is decisive for anything that writes secret
-material to this disk: see #824 option B and
-`docs/plans/2026-09-25-publish-on-krytis-vps-verification.md` § V0, which is why
-sealed publishes (six UEFI private keys, present in the workspace for the
-duration of the build) should not be routed here on the same argument that makes
-unsealed builds fine.
+material to this disk, and it is why **#824 option B was declined**: sealed
+publishes put six UEFI private keys in the workspace for the duration of the
+build, and this is not a host that can hold them. `publish.yml` stays on
+Blacksmith. Evidence and the full measurement in
+`docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md` § V0. Tenancy on the VPS
 
 Managed via `mise runner-vps:{install,register,deregister,status}`
 (`mise/tasks/runner-vps/`, provisioning script in `files/runner-vps/provision.sh`).
@@ -298,11 +298,12 @@ That matters because the bow config sets `build: max-jobs: 4` and no `scheduler:
 block, so BuildStream's own default `builders: 4` (`data/userconfig.yaml`) applies:
 **4 x 4 = up to 16 concurrent compilers**, 2.7x the 6-slot budget derived above, on
 any job that builds with `--pull` on this box. `cache-warm.yml` is unaffected
-because it never calls `mise/tasks/bst`. `publish.yml` would hit it the moment it
-is routed to this runner — which is exactly what #824 option B proposes, and why
-the sizing belongs in `mise/tasks/bst` (one formula, both callers) rather than
-being copied into a second workflow. See
-`docs/plans/2026-09-25-publish-on-krytis-vps-verification.md` § P2.
+because it never calls `mise/tasks/bst`. Any `--pull` build on a
+RAM-constrained host hits it, which is why the sizing belongs in
+`mise/tasks/bst` (one formula, every caller) rather than being copied into each
+workflow that builds. Found while investigating #824 option B, which was then
+declined for unrelated reasons — see
+`docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md` § Findings that outlive this decision.
 
 ### An OOM must not decommission the runner
 
