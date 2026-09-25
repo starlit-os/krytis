@@ -2272,32 +2272,51 @@ The artifact-ref form is `<project-name>/<element-path-with-slashes-as-dashes>/<
 
 An `artifacts:`/`source-caches:` entry in your own `project.conf` governs *your*
 project's elements. An element resolved through a junction is an element of the
-junctioned project and uses **that** project's cache configuration — so declaring
-another project's cache at your top level does not make it serve that project's
-elements; it only adds a round trip per artifact query. zirconium-hawaii
-`f833afe` removed its `gbm.gnome.org` entries on that reasoning: a top-level
-declaration "will never have any artifacts from [this project] cached" and is
-useful only "for the junctions that already have it patched in".
+junctioned project and uses **that** project's cache configuration. The
+mechanism is `_resolve_specs_for_project` in `buildstream/_context.py`: for each
+loaded project it takes the user config's remotes (CLI > per-project override >
+global) and appends *that project's own* `project.conf` remotes. The toplevel
+project's list is never inherited downward. zirconium-hawaii `f833afe` removed
+its `gbm.gnome.org` entries on that reasoning: a top-level declaration "will
+never have any artifacts from [this project] cached" and is useful only "for the
+junctions that already have it patched in".
 
-**Audit item for krytis, not a mechanical deletion.** `project.conf` declares
-`https://gbm.gnome.org:11003` in both `artifacts:` (line 57) and `source-caches:`
-(line 85), and the long comments around both blocks explain only why *bow* is
-deliberately absent — neither says why gbm is present. krytis overrides no
-junction's cache config, so under the rule above gbm's own elements are already
-served by gbm's own config and the top-level entry can only ever hit on a krytis
-element whose resolved cache key coincides with something gbm built, which
-`x86_64_v3` makes very unlikely (§ Why every freedesktop-sdk artifact pull missed
-in `ci-runner.md`).
+**krytis dropped both gbm entries on measured evidence (#942).** The cheap way
+to see the scoping is `bst artifact pull --deps none <element>`: its heading
+prints each loaded project's remote list *with the `project.conf` line every
+spec came from*, and the `pull:` lines name every remote actually queried.
+Measured on 508fc30, one element per project:
 
-Settle one contradiction before acting on this. That same `ci-runner.md` entry
-records `bst build -o x86_64_v3 false core/gum.bst` "against `gbm.gnome.org:11003`
-alone" pulling all 16 FDSDK bootstrap/component artifacts — i.e. junctioned
-elements apparently served by a cache named at krytis's top level, which is what
-the scoping rule says cannot happen (the pulls may in fact have come from the
-fdsdk junction's own configured remote and been misattributed). Measure it —
-build one junctioned element with each remote configured in isolation and read
-which remote answers — then either delete the two gbm entries or write down why
-they stay.
+| element | project | remotes queried before | after |
+|---|---|---|---|
+| `core/gum.bst` | krytis | gbm, projectbluefin | projectbluefin |
+| `freedesktop-sdk.bst:components/expat.bst` | freedesktop-sdk | cache.freedesktop-sdk.io | unchanged |
+| `gnome-build-meta.bst:sdk/glib.bst` | gnome | gbm | unchanged |
+
+fdsdk's elements never saw krytis's gbm entry at all, and gbm's elements keep
+reaching gbm afterwards — because **gnome-build-meta declares
+`https://gbm.gnome.org:11003` in its own `project.conf`** (line 11/19 at the
+pinned ref). That is the generalisable check: before deleting a
+redundant-looking cache entry, read the junctioned project's `project.conf`. If
+it declares the cache itself, your top-level copy is redundant; if it does not,
+your copy is the only thing pointing its elements at that cache and deleting it
+is a regression.
+
+Removing a remote cannot change build output: remote specs are not cache-key
+inputs. `bst show --format '%{name} %{full-key}' oci/krytis/stack.bst` returned
+all 905 keys byte-identical before and after the deletion, so no rebuild and no
+image change follows from it.
+
+**The apparent contradiction with `ci-runner.md` § Why every freedesktop-sdk
+artifact pull missed is resolved, not open.** That entry records
+`bst build -o x86_64_v3 false core/gum.bst` "against `gbm.gnome.org:11003`
+alone" pulling 16 FDSDK artifacts, which looked like a top-level declaration
+serving junctioned elements. It was not: those tests configured the remote
+through a hand-written `--config` user-config file, and the user config's
+top-level `artifacts:`/`source-caches:` list applies to **every** project, not
+just the toplevel one. User config is global; `project.conf` is project-scoped.
+That asymmetry is also why `mise/tasks/bst --push/--pull` and `cache-warm.yml`
+can reach bow for fdsdk and gbm elements while `project.conf` never could.
 
 ## A cached failed artifact is replayed, not rebuilt — build with `--retry-failed`
 
