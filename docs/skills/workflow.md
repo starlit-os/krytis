@@ -619,6 +619,40 @@ Three things must line up, and a valid local signature proves only the first:
 2. The public key is registered on the account **as a Signing Key**, not an Authentication Key (the dropdown at `github.com/settings/ssh/new` defaults to the wrong one).
 3. The **committer** email is an address GitHub can map to that account.
 
+### `agent refused operation` is a missed touch window, not a broken setup
+
+An `ED25519-SK` signing key fails like this when the token has not been touched:
+
+```
+Couldn't sign message (signer): agent refused operation?
+fatal: failed to write commit object
+```
+
+Two behaviours make this read as a configuration fault when it isn't. The refusal is
+**instant** (2–4 s) once the token has stopped waiting, so it looks like a hard "no" rather
+than a timeout; and after one touch the key signs *without* further prompting for a short
+window, so an unrelated command run in that window succeeds and the next one fails. Chasing
+it as config burns turns: `git config --show-origin --get-all user.signingkey`, a scratch-repo
+`git commit -S` probe and `GIT_TRACE=1` all come back clean, because the invocation really is
+`ssh-keygen -Y sign -n git -f <key> <buffer>` in both the working and failing cases.
+
+Don't retry by hand — the odds of landing inside the window are poor. Loop, so any touch in
+the next two minutes lands the commit:
+
+```bash
+for i in $(seq 1 60); do
+  git commit -q -F /tmp/msg.txt 2>/dev/null && { echo "signed on attempt $i"; break; }
+  sleep 2
+done
+```
+
+Same shape for `git rebase --continue`. One extra trap there: `git rebase` records the
+`--gpg-sign` option in `.git/rebase-merge/gpg_sign_opt` when the rebase *starts*, so a later
+`git -c commit.gpgsign=false rebase --continue` still tries to sign. Delete that file to
+override. And when a sign fails mid-rebase the changes stay **staged** — `rebase --continue`
+then refuses with "changes are staged"; commit them with `git commit -C <original-sha>` to
+preserve author and message, then continue.
+
 ### Check registration without the `admin:ssh_signing_key` scope
 
 `gh api user/ssh_signing_keys` needs a scope the default `gh` token does not carry, and `gh auth refresh` drags in a device-code flow to get it. Skip both — the per-user list is public and unauthenticated:
