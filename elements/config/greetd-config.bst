@@ -230,6 +230,17 @@ config:
     LIBSEAT_LOGLEVEL=debug
     EOF
 
+  # XCURSOR_THEME/XCURSOR_SIZE duplicate files/niri/config.kdl's `cursor { }`
+  # block on purpose, and the two must be kept in step. niri exports them to
+  # processes *it* spawns, which covers everything launched from the session —
+  # but not the systemd user manager or the D-Bus activation environment
+  # (`systemctl --user show-environment` carried no XCURSOR_* before this),
+  # so a D-Bus- or systemd-activated X11 app got no theme name at all and
+  # libXcursor fell back to its built-in core cursor. Wayland clients never
+  # noticed: the compositor draws their cursor from `cursor { }` directly.
+  # XCURSOR_PATH is deliberately absent — the default search path is right on
+  # the host, and flatpak strips that variable from the inherited environment
+  # anyway (see config/flatpak-preinstall.bst's cursor-path override, #949).
   - |
     install -Dm644 /dev/null \
       "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf"
@@ -248,6 +259,8 @@ config:
     QT_WAYLAND_FORCE_DPI=physical
     ELECTRON_OZONE_PLATFORM_HINT=auto
     _JAVA_AWT_WM_NONREPARENTING=1
+    XCURSOR_THEME=Adwaita
+    XCURSOR_SIZE=24
     EOF
 
   # Filename matters more than the directory here. journald.conf.d drop-ins are

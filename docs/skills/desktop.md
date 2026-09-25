@@ -887,6 +887,71 @@ confirmed by extracting the actual archive rather than assuming:
 
 Krytis uses `xcursor-theme "Adwaita"` (size 24) set in the top-level `cursor { }` block in `files/niri/config.kdl`. No extra element is needed — `gnome-build-meta.bst:core/nautilus.bst` already pulls `sdk/adwaita-icon-theme.bst` transitively. Verify with `grep -r "adwaita-icon-theme" <gnome-build-meta-staged>/elements/core/nautilus.bst`.
 
+### `cursor { }` is not the whole story — XWayland and Flatpak each need their own fix
+
+The niri block covers Wayland clients completely, because the compositor draws their
+cursor itself. **X11 clients draw their own**, via libXcursor, which needs two separate
+things to be true: the theme *name* in `XCURSOR_THEME`, and the theme *files* on its
+search path. Krytis got the first right by accident and the second wrong in two places
+(#949).
+
+**niri's export stops at its own children.** niri sets `XCURSOR_THEME`/`XCURSOR_SIZE`
+from `cursor { }` for processes it spawns — verified by reading `/proc/<noctalia-pid>/environ`
+on a live session. It does not push them into the systemd user manager or the D-Bus
+activation environment:
+
+```console
+$ systemctl --user show-environment | grep -i xcursor   # before #949: nothing
+```
+
+So anything D-Bus- or systemd-activated got no theme name and fell back to libXcursor's
+built-in core cursor. Fixed by adding both to `/usr/lib/environment.d/90-krytis-session.conf`
+(`elements/config/greetd-config.bst`) — **which now duplicates the values in
+`files/niri/config.kdl`, and the two must be changed together.**
+
+**Flatpak apps inherit the name but cannot find the theme.** Inside the sandbox:
+
+| path | contents |
+|---|---|
+| `/usr/share/icons` (runtime) | `hicolor` only — the freedesktop runtime ships **no cursors** |
+| `~/.icons`, `~/.local/share/icons` | empty / `hicolor`; `~` is the per-app data dir |
+| `/run/host/share/icons/Adwaita/cursors` | the host's themes, bind-mounted by flatpak itself |
+
+libXcursor searches the first three. The theme is in the fourth. Diagnosing this on a
+live app is worth doing by hand, because the two halves fail differently — read
+`/proc/<pid>/environ` of the *inner* process, not the `bwrap` one, whose environ is
+empty:
+
+```console
+$ tr '\0' '\n' < /proc/<inner-pid>/environ | grep XCURSOR
+XCURSOR_THEME=Adwaita      # inherited fine
+XCURSOR_SIZE=24
+                           # XCURSOR_PATH absent -> lookup fails
+```
+
+Steam is a good illustration: `steamwebhelper` *does* get an `XCURSOR_PATH` from
+pressure-vessel, so the cursor is correct over part of the UI and wrong everywhere else.
+Two processes, two answers, one app.
+
+**`environment.d` cannot fix the Flatpak half — flatpak strips `XCURSOR_PATH`** from the
+inherited environment while forwarding `XCURSOR_THEME`. Measured:
+
+```console
+$ XCURSOR_PATH=/usr/share/icons XCURSOR_THEME=Adwaita \
+    flatpak run --command=sh com.valvesoftware.Steam -c 'echo "${XCURSOR_PATH:-<unset>} / $XCURSOR_THEME"'
+<unset> / Adwaita
+```
+
+An override is the only mechanism, and `flatpak override --system` is the only safe way
+to write one: `/var/lib/flatpak/overrides/global` is mutable and may already hold
+operator entries, so writing the file directly — including via a tmpfiles.d `f+` line —
+truncates them. `files/flatpak-preinstall/flatpak-cursor-path.sh` does the merge from a
+boot-time oneshot.
+
+**Shipping a different theme** means all three places: the theme files somewhere on the
+path (`~/.local/share/icons/<Theme>` is already covered by the override), the name in
+`cursor { }`, and the name in `90-krytis-session.conf`.
+
 ## Validating niri Config Changes
 
 When editing anything under `files/niri/`, validate the top-level file before committing — since includes are relative, validate the file in place (not copied to `/tmp`, which would break the relative include paths):
