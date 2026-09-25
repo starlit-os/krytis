@@ -123,36 +123,64 @@ and `localhost/krytis:sealed`, plus the two `ghcr.io/starlit-os/krytis:*` tags
 `push` creates. At ~8G each that is the dominant new disk consumer. Extend the
 list in the same PR.
 
-**Sizing check before the first dispatch:** 115G used of ~197G as of 2026-09-24
-(`files/runner-vps/gc.sh` header). An unsealed publish adds ~16G of podman
-tags; a sealed one ~32G more across the two squash phases, before CAS growth.
-Confirm free space ≥ 60G at dispatch time or run `mise run runner-vps:gc` first.
+**Sizing check before the first dispatch:** measured 2026-09-25, **71G used /
+119G avail of 197G** — down from the 115G recorded in `files/runner-vps/gc.sh`'s
+header on 2026-09-24, so the Sunday 04:27 GC job demonstrably reclaims. An
+unsealed publish adds ~16G of podman tags; a sealed one ~32G more across the two
+squash phases, before CAS growth. The ≥60G-free precondition holds today; re-check
+at dispatch time, or run `mise run runner-vps:gc` first.
 
 ---
 
-## V0. Resolve the tenancy contradiction (Security Gate prerequisite)
+## V0. Tenancy — ANSWERED 2026-09-25, and it splits option B in two
 
-`docs/skills/ci-runner.md:103` states "This VPS has no other tenant — the VM
-itself is the isolation boundary". `files/runner-vps/gc.sh:47–50` states "Shared
-box: it also carries `ghcr.io/stryan/materia:stable`, `henrygd/beszel-agent`,
-`fedora-minimal`, `debian:bookworm` and `busybox`" and refuses
-`podman system prune -a` because of them.
+The contradiction was real: `docs/skills/ci-runner.md:103` claimed "This VPS has
+no other tenant — the VM itself is the isolation boundary", while
+`files/runner-vps/gc.sh:47–50` called it a "Shared box". Resolved against the
+live box (`podman inspect`, `systemctl list-units`, `/etc/containers/systemd/`),
+not the docs. `ci-runner.md` was the wrong one and is corrected in this PR.
 
-Both cannot be the basis for a Security Gate decision about putting the
-project's PK/KEK/db private keys on that disk. Resolve against the live box, not
-the docs:
+**Measured state:**
 
-```shell
-ssh "${RUNNER_VPS_HOST}" 'podman ps -a --format "{{.Names}} {{.Image}} {{.Status}}"; \
-  systemctl list-units --type=service --state=running --no-pager; \
-  ls -la /root/.config/containers /run/containers 2>/dev/null'
-```
+| Fact | Value |
+|---|---|
+| Human tenants | one unused `debian` (uid 1000); `loginctl` shows root only |
+| Runner uid | 0 (`RUNNER_ALLOW_RUNASROOT=1`) |
+| Co-resident workloads | `beszel-agent` (`docker.io/henrygd/beszel-agent`, running 3d) and `materia-update.container` (`ghcr.io/stryan/materia:stable`, oneshot) — both root |
+| `beszel-agent` access | `Privileged=false`, but binds `/run/podman/podman.sock` |
+| `materia` access | `Network=host` + `podman.sock`, `/etc/systemd/system`, `/etc/containers/systemd`, `/usr/local/bin`, all rw; image pinned to a **floating `:stable` tag** |
+| Disk | 71G used / 119G avail of 197G — the Sunday GC works; P5's ≥60G precondition holds |
+| `openssl` / `python3` / `shred` | all present in `/usr/bin` (implicit deps, not declared in `provision.sh`) |
+| ghcr credentials | none on the box — clean baseline for V4's residue check |
 
-**Acceptance:** an explicit statement of what else runs on the box and under
-which uid, and the wrong doc corrected in this PR. If other *root* services run
-there, the key-custody argument in `publish.yml:227–235` ("the runner's disk
-only inside this job") needs restating for a host that is not ephemeral — that
-is a Security Gate item for the human, not an agent call.
+**Verdict.** A read-only bind of `/run/podman/podman.sock` is not a read-only
+capability: anything that can reach that socket can start a privileged container
+with `/` mounted. So two third-party images — one of them on a floating tag that
+can change under us on any given day — hold root-equivalent access to the host
+that would be holding PK/KEK/db.
+
+That is **fine for a build**, which carries no secrets, and **not fine for a
+sealed publish**. `publish.yml:227–235` argues key custody on the premise that
+the keys "touch the runner's disk only inside this job"; that premise is about
+*time*, and it survives here. What does not survive is the unstated premise that
+nothing else on the box can read that disk while the job runs.
+
+**Recommendation — split option B:**
+
+- **Unsealed publish → `krytis-vps` is fine.** No secret material beyond the
+  ephemeral `GITHUB_TOKEN`, which the box would hold anyway for any job.
+- **Sealed publish → stays on Blacksmith.** Ephemeral host, no co-tenants, and
+  it is where every sealed image this project has shipped was built.
+
+This is a Security Gate call, not an agent call. If the human prefers sealed
+publishes on the VPS anyway, the minimum that would make it defensible is:
+pin `materia` to a digest, drop `podman.sock` from `beszel-agent`, and add a
+pre-job assertion that no unexpected container is running — none of which this
+plan assumes.
+
+V2 below is written for the sealed path regardless, because the human may
+overrule this and because `verify-composefs-digest` on a second engine is
+worth having either way.
 
 ---
 
@@ -199,15 +227,17 @@ gh workflow run publish.yml --ref main -f runner=krytis-vps -f publish_sealed=tr
 | Step | Risk on this box | Acceptance |
 |---|---|---|
 | `pass-cli login --pat` | network egress to Proton Pass from the VPS, untested | exits 0 |
-| `mise run assert-vault-access` | invokes `python3` inline — resolves via mise's pinned python; Debian trixie minimal is not guaranteed a system python3 | no `command not found`; either asserts the vault or warns |
-| `mise run pull-keys` | needs `openssl` — **not in `provision.sh`'s apt list** (`files/runner-vps/provision.sh:62–79`), only implied via `ca-certificates` | all six secrets fetched, all three keypairs openssl-validated |
+| `mise run assert-vault-access` | invokes `python3` inline | `/usr/bin/python3` confirmed present 2026-09-25; no `command not found` |
+| `mise run pull-keys` | needs `openssl` — present at `/usr/bin/openssl`, but **not declared** in `provision.sh:62–79`; it arrives as an implicit dependency, so a rebuilt box is not guaranteed it | all six secrets fetched, all three keypairs openssl-validated |
 | `mise run seal-uki` | two-phase `--squash-all` on podman 5.4.2, never run on this engine here | phases 1–3 complete |
 | `verify-composefs-digest` (phase 3/3) | the real engine-sensitivity gate | digests match |
 | `push --sealed`, `sign`, verify | as V1 | `:sealed` + `:<version>-sealed` pushed, signatures verify |
 | Key wipe step | `shred -u` on ext4, persistent disk | step ran; V4 confirms the disk |
 
-Pre-check `command -v openssl python3` on the box before dispatching — a missing
-`openssl` fails `pull-keys` ~20 minutes in, after the keys are already on disk.
+`openssl`, `python3` and `shred` were all confirmed on the box on 2026-09-25, so
+the "fails 20 minutes in, after the keys are already on disk" hazard is closed
+for the current host. Declare `openssl` in `provision.sh` anyway — the guarantee
+should come from provisioning, not from apt's dependency resolution.
 
 ---
 
@@ -317,7 +347,7 @@ accepts publishing unattended without one. **Human decision, Design Gate.**
 | # | Item | Who decides |
 |---|---|---|
 | P1–P5 | Prerequisite code changes | agent implements |
-| V0 | Tenancy contradiction resolved; key custody restated for a persistent host | human (Security Gate) |
+| V0 | **ANSWERED** — box is root-monolithic with two root-equivalent third-party workloads; recommendation is to keep sealed publishes on Blacksmith | human accepts or overrules (Security Gate) |
 | V1–V2 | Dispatches succeed, cosign sign step verified in its own log | agent verifies |
 | V3 | Artifact equivalence vs Blacksmith | agent verifies; a mismatch stops option B |
 | V4 | No key/credential residue | agent verifies; human signs off |

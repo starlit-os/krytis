@@ -99,15 +99,44 @@ full cost/sizing rationale.
 ### Host-native, not a container — the local runner's design doesn't apply here
 
 `Containerfile.runner`'s privileged-Podman-container design exists
-specifically to isolate the runner on a **shared local dev workstation**.
-This VPS has no other tenant — the VM itself is the isolation boundary — so
-the runner is installed directly on the host (`/opt/actions-runner`,
-`RUNNER_ALLOW_RUNASROOT=1`, supervised by the binary's own `svc.sh`-generated
-systemd unit) rather than containerized. No `--privileged` flag, no podman
-run wrapper, nothing analogous to `mise runner:start`/`stop` for the
-container lifecycle — this is a persistent host service, closer in shape to
-the Buildbarn Quadlet precedent (always up, restarts with the box) than to
-the local runner's manually start/stop container.
+specifically to isolate the runner from **other humans on a shared local dev
+workstation**. This VPS has no second human tenant — one unprivileged `debian`
+(uid 1000) account exists with no active session, and `loginctl list-users`
+shows only root — so the runner is installed directly on the host
+(`/opt/actions-runner`, `RUNNER_ALLOW_RUNASROOT=1`, supervised by the binary's
+own `svc.sh`-generated systemd unit) rather than containerized. No
+`--privileged` flag, no podman run wrapper, nothing analogous to
+`mise runner:start`/`stop` for the container lifecycle — this is a persistent
+host service, closer in shape to the Buildbarn Quadlet precedent (always up,
+restarts with the box) than to the local runner's manually start/stop
+container.
+
+**It is not, however, a single-*workload* box, and an earlier version of this
+section said it was** ("no other tenant — the VM itself is the isolation
+boundary"), which `files/runner-vps/gc.sh`'s own header has contradicted since
+#938 ("Shared box: it also carries …"). Measured 2026-09-25, and the shape
+matters more than the count:
+
+- `beszel-agent` (`docker.io/henrygd/beszel-agent`, monitoring) runs as an
+  always-on **root** quadlet beside the runner. `Privileged=false`, but it binds
+  `/run/podman/podman.sock`. A read-only bind of that socket is not a read-only
+  capability: anything that can talk to it can start a privileged container with
+  `/` mounted, so socket access is **root-equivalent on the host**.
+- `materia-update.container` runs `ghcr.io/stryan/materia:stable` — a **floating
+  tag**, `Network=host`, with `/run/podman/podman.sock`, `/etc/systemd/system`,
+  `/etc/containers/systemd` and `/usr/local/bin` all mounted read-write. That is
+  the box's config-management agent, so the access is by design, but it means
+  the host's trust boundary includes whatever that tag resolves to on any given
+  day.
+
+Everything here — runner, quadlets, builds — is uid 0, and two third-party
+images hold root-equivalent access to the same kernel. That is inert for a build
+job, which has no secrets. It is decisive for anything that writes secret
+material to this disk: see #824 option B and
+`docs/plans/2026-09-25-publish-on-krytis-vps-verification.md` § V0, which is why
+sealed publishes (six UEFI private keys, present in the workspace for the
+duration of the build) should not be routed here on the same argument that makes
+unsealed builds fine.
 
 Managed via `mise runner-vps:{install,register,deregister,status}`
 (`mise/tasks/runner-vps/`, provisioning script in `files/runner-vps/provision.sh`).
