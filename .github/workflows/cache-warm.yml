@@ -2,14 +2,21 @@ name: Warm BST Cache
 
 on:
   schedule:
-    # 06:41 UTC, not top-of-the-hour (see track-bst-sources.yml's cron
+    # 01:41 UTC, not top-of-the-hour (see track-bst-sources.yml's cron
     # comment — same GitHub-scheduler-delay finding, both workflows were on
     # '0 6' and drifted in lockstep). ~90min after track-bst-sources.yml's
-    # 05:13: once tracking PRs auto-merge (not yet, see that file's comment),
+    # 00:13: once tracking PRs auto-merge (not yet, see that file's comment),
     # this gives same-day tracked updates a window to land in main before
     # cache-warm builds and warms bow's cache — no point warming a cache for
     # a tree that's about to change under it.
-    - cron: '41 6 * * 1-5'
+    #
+    # Moved 5h earlier (was 06:41) with the rest of the chain in #824, which
+    # added publish.yml's own schedule downstream of this one:
+    #   00:13 track -> 01:41 cache-warm (here) -> 03:30 publish
+    # The 90min spacing above is unchanged; publish sits a further ~110min
+    # out. Weekday-only is also unchanged — the scheduled publish is daily,
+    # so a weekend publish runs against Friday's warm cache plus bow.
+    - cron: '41 1 * * 1-5'
   workflow_dispatch:
     inputs:
       force_blacksmith:

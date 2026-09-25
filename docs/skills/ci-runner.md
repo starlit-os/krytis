@@ -493,8 +493,10 @@ carries `ghcr.io/stryan/materia:stable`, `henrygd/beszel-agent`,
 another project's images. The script prunes *dangling* images only, plus
 krytis-owned tags named explicitly.
 
-Sunday is deliberate: `cache-warm.yml` is `41 6 * * 1-5`, so a weekend slot
+Sunday is deliberate: `cache-warm.yml` is `41 1 * * 1-5`, so a weekend slot
 misses it by a day rather than by minutes (§ Scheduled Workflow Cron Delay).
+`publish.yml`'s `30 3 * * *` (#824) does fire on Sunday, an hour before this
+job, but it runs on Blacksmith and never competes for this runner.
 
 ### `register` is re-runnable
 
@@ -691,17 +693,55 @@ up there — but a *sustained* multi-hour daily delay is well beyond the
 "occasional few minutes" their docs describe; this reads as scheduler
 backlog specific to this repo/account, not routine jitter.
 
-**Fix applied:** moved both off `:00` to arbitrary non-round minutes
-(`track-bst-sources.yml` → `13 5 * * *`, `cache-warm.yml` → `41 6 * * 1-5`,
-~90min apart so tracking PRs have a window to land before cache-warm builds
-— see each file's own cron comment). This addresses the documented
-top-of-hour contention factor; it will not necessarily fix a genuine
-account-level scheduler backlog if that's the real cause. Check
+**Fix applied:** moved both off `:00` to arbitrary non-round minutes, and
+in #824 the whole chain moved 5h earlier so the scheduled publish it now
+feeds lands in the maintainer's morning: `track-bst-sources.yml` →
+`13 0 * * *`, `cache-warm.yml` → `41 1 * * 1-5`, `publish.yml` →
+`30 3 * * *`. The relative spacing is what matters and is unchanged —
+~90min from tracking to cache-warm so tracking PRs have a window to land
+before cache-warm builds, ~110min from cache-warm to publish so publish
+pulls a warmed bow cache (see each file's own cron comment). This addresses
+the documented top-of-hour contention factor; it will not necessarily fix a
+genuine account-level scheduler backlog if that's the real cause. Check
 `gh api repos/starlit-os/krytis/actions/workflows/<file>/runs --paginate -q
 '.workflow_runs[] | select(.event=="schedule") | .created_at'` again after
 a couple of weeks — if delay from the new trigger times is still growing,
 top-of-hour contention wasn't the (whole) story and it's worth a GitHub
 support ticket instead of another cron-minute shuffle.
+
+### Adding `schedule:` to a dispatch-only workflow silently disables every `if: inputs.*` step
+
+On a `schedule` event there are no inputs at all — every `inputs.<name>` is
+null, including ones declared with `default: true`. A `default:` belongs to the
+`workflow_dispatch` form, not to the workflow. So a step guarded by
+`if: inputs.publish_sealed` does not run on the cron trigger, and nothing
+reports an error: the step shows as skipped, the job is green, and the artifact
+that step produced is simply never refreshed.
+
+#824 added `schedule: '30 3 * * *'` to `publish.yml`, whose five sealed-image
+steps were all `if: inputs.publish_sealed` with `default: true`. Left alone,
+every nightly run would have republished `:latest` and never touched `:sealed`
+— the tag users actually boot under Secure Boot — while looking entirely
+healthy. `verify-sealed.yml` would have kept passing too, because it tests
+whatever `:sealed` currently is, not whether this run produced it.
+
+Resolve it once at job level rather than at each guard, so the sites cannot
+drift apart:
+
+```yaml
+env:
+  PUBLISH_SEALED: ${{ github.event_name == 'schedule' || inputs.publish_sealed }}
+```
+
+then `if: env.PUBLISH_SEALED == 'true'` on each step (string comparison — env
+values are strings).
+
+**Audit every input when adding a trigger, not just the one you came for.** The
+null default is only wrong where falsy is not the safe answer. In the same
+workflow `report_only` (falsy → the severity gate blocks), `force_self_hosted`
+(falsy → Blacksmith) and `allow_branch_publish` (falsy, and a scheduled run
+always carries the default branch) were all *correct* when null and needed no
+change. Only a `default: true` input is a live trap.
 
 ---
 
@@ -1609,7 +1649,7 @@ autonomously.
 | Workflow | Runner | Rationale |
 |---|---|---|
 | `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
-| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Still Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml`: this job is `workflow_dispatch`-only (no schedule), so nothing recurs unattended, and its escape hatch is for debugging a publish failure on the real hardware or falling back when Blacksmith is degraded. Dispatch-only also means the input is unconditional (`inputs.force_self_hosted`) — no `github.event_name == 'workflow_dispatch'` guard, unlike `cache-warm.yml`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
+| `publish.yml` | `blacksmith-8vcpu-ubuntu-2404` (default); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * *`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |

@@ -20,9 +20,11 @@ name: Runner VPS GC
 on:
   schedule:
     # Sunday 04:27 UTC. Deliberately a weekend day and a distinct minute:
-    # cache-warm.yml is `41 6 * * 1-5` (weekdays only, so Sunday avoids it
+    # cache-warm.yml is `41 1 * * 1-5` (weekdays only, so Sunday avoids it
     # entirely rather than merely missing it by minutes) and
-    # track-bst-sources.yml is `13 5 * * *`. See docs/skills/ci-runner.md
+    # track-bst-sources.yml is `13 0 * * *`. publish.yml's `30 3 * * *`
+    # (#824) does run on Sunday, but on Blacksmith — it never competes for
+    # this runner. See docs/skills/ci-runner.md
     # § Scheduled Workflow Cron Delay for why sharing a trigger minute is
     # worth avoiding even between unrelated workflows.
     - cron: '27 4 * * 0'

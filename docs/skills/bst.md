@@ -463,7 +463,7 @@ override: sudo-rs).
 
 **No PR gate catches an element that stops building.** `Checks` is static-only — no `bst
 build` on PRs, as `checks.yml`'s own header comment states. The only scheduled job that
-compiles elements is `cache-warm.yml` (`cron: '41 6 * * 1-5'`, i.e. 06:41 UTC Mon–Fri —
+compiles elements is `cache-warm.yml` (`cron: '41 1 * * 1-5'`, i.e. 01:41 UTC Mon–Fri —
 deliberately off the hour), and until #741 its build step ended
 in `set +e` … `exit 0` with a `::warning::`, so run 33872185343 reported **success** nine
 minutes after the #735 break landed, then pushed the failed artifact to the shared cache
