@@ -1435,6 +1435,16 @@ Buildbarn cache (populated by krytis's own `x86_64_v3` builds via
 This isn't a bug to fix; it's the reason the Buildbarn cache work (#234)
 exists in the first place.
 
+**"with only that remote configured" means a user-config override, and that
+distinction matters.** Both tests here pointed at `gbm.gnome.org:11003` through
+a hand-written `--config` file, whose top-level `artifacts:`/`source-caches:`
+list BuildStream applies to *every* loaded project — which is why a gnome
+remote answered for `freedesktop-sdk.bst:` elements. It is not evidence that a
+`project.conf` entry reaches junctioned elements; that list is project-scoped
+and never inherited downward (`docs/skills/bst.md` § Remote cache declarations
+in `project.conf` are project-scoped). krytis's own top-level gbm entries were
+removed in #942 for exactly that reason.
+
 ### `max-jobs` does NOT affect cache keys — a prior fix's stated reason was wrong (corrected 2026-07-29)
 
 A second cache-key divergence was investigated when testing `cache-warm.yml`
