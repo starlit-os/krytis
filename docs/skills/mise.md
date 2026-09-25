@@ -651,8 +651,11 @@ BST_FLAGS="--config /src/buildstream-ci.conf" mise bst build stacks/base-system.
 ### `--push`/`--pull` — opt-in bow Buildbarn cache
 
 `bst`, `validate`, `load-image`, and `build` all accept `--push` and `--pull` (mutually
-exclusive). Neither flag → today's default, public freedesktop-sdk/gnome caches only
-(bow is never declared in `project.conf` itself — see `docs/skills/ci-runner.md`). With
+exclusive). Neither flag → the junctions' own caches only (freedesktop-sdk's and
+gnome-build-meta's, from *their* `project.conf`s), and so no remote cache at all for
+krytis's own elements: krytis's `project.conf` declares none since #942/#954, and bow
+is never declared there either — see `docs/skills/bst.md` § Remote cache declarations
+in `project.conf` are project-scoped and `docs/skills/ci-runner.md`. With
 one of the flags, the task resolves a bow JWT (`BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
 env var first, else `fnox get` — see `fnox.toml`'s `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
 entries, sourced from the Krytis vault's "Buildbarn" item), writes a temp

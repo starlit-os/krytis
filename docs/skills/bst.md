@@ -2302,10 +2302,58 @@ it declares the cache itself, your top-level copy is redundant; if it does not,
 your copy is the only thing pointing its elements at that cache and deleting it
 is a regression.
 
+**A second filter decides what the scoping rule leaves open: the ref
+namespace.**
+Artifact refs are `<project-name>/<element-path>/<key>`
+(`_compose_artifact_name` in `buildstream/element.py`), so an entry in krytis's
+`project.conf` — already narrowed by the scoping rule to krytis's own elements
+— can only ever hit if that remote already holds `krytis/…` refs. That is what
+removed `https://cache.projectbluefin.io:11001` (#954): no junctioned project
+declares it, so the scoping rule said nothing either way, but it is dakota's
+cache and dakota's `project.conf` sets `name: bluefin`.
+
+Probe a remote by ref to test this directly — it also distinguishes "holds
+nothing for us" from "is down". An `ArtifactProject` carries no `project.conf`
+specs (`buildstream/_artifactproject.py`), so a bare-ref pull is served by user
+config alone:
+
+```shell
+# /tmp/bluefin-only.conf:
+#   artifacts:
+#     override-project-caches: true
+#     servers:
+#     - url: https://cache.projectbluefin.io:11001
+BST_FLAGS_OVERRIDE="--no-interactive --config /tmp/bluefin-only.conf" \
+  mise run bst artifact pull freedesktop-sdk/components-expat/<baseline-key>
+```
+
+Against projectbluefin that fdsdk ref pulled clean (`INFO Pulled artifact
+48463f3d`), while `krytis/core-gum/…` and `krytis/oci-krytis-stack/…` both
+reported "does not have artifact cached" — a live remote in the wrong
+namespace. Take the fdsdk baseline key from `bst show -o x86_64_v3 false`;
+krytis's own `x86_64_v3=true` keys match nothing public. Note the fdsdk content
+such a cache does hold is still unreachable from krytis's `project.conf` twice
+over: scoping sends fdsdk elements to fdsdk's own remote, and the `x86_64_v3`
+key divergence would miss anyway (`ci-runner.md` § Why every freedesktop-sdk
+artifact pull missed).
+
+With both entries gone, krytis's `project.conf` declares no remote at all and a
+`pull` on a krytis element contacts nothing (`Pull Queue: processed 0, skipped
+1` with zero `Pulling artifact` lines). bow via user config
+(`mise run bst --push`/`--pull`, `cache-warm.yml`) is the only remote that can
+hold matching krytis keys.
+
 Removing a remote cannot change build output: remote specs are not cache-key
 inputs. `bst show --format '%{name} %{full-key}' oci/krytis/stack.bst` returned
-all 905 keys byte-identical before and after the deletion, so no rebuild and no
-image change follows from it.
+all 905 keys byte-identical across both deletions (#942, #954), so no rebuild
+and no image change follows from either.
+
+**Hold HEAD fixed for that comparison.** `mise run generate-image-version`
+writes `include/image-version.yml` from `git log -1 --format=%cd` — HEAD's
+commit date, not wall clock — so comparing keys taken at two different commits
+moves `core/os-release.bst`, `core/initramfs.bst` and `oci/krytis/stack.bst`
+for reasons unrelated to the change under test. `git stash`, re-measure, `git
+stash pop` at one HEAD instead.
 
 **The apparent contradiction with `ci-runner.md` § Why every freedesktop-sdk
 artifact pull missed is resolved, not open.** That entry records
