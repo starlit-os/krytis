@@ -62,11 +62,20 @@ depends:
 # org.gnome.keyring.SystemPrompter provider that oo7 depends on for every
 # unlock prompt, per the note above.
 #
-# Rebased onto upstream main 87b203c68 (v5.0.0-beta.8-135) on 2026-08-17: the
-# 1722-line feature commit applied across 98 upstream commits with no source
-# conflict. The only conflict was documentation -- upstream moved the
-# dependency lists out of README.md into BUILDING.md, so the gcr-4 package
-# names were ported there instead, including the newly added AerynOS entry.
+# Rebase history of the carried commit. 2026-08-17: onto upstream main
+# 87b203c68 (v5.0.0-beta.8-135) -- the 1722-line feature commit applied across
+# 98 upstream commits with no source conflict; the only conflict was
+# documentation, upstream having moved the dependency lists out of README.md
+# into BUILDING.md, so the gcr-4 package names were ported there instead.
+# 2026-09-25: onto the v5.1.0 tag (54 commits), again with no source conflict;
+# the BUILDING.md commit was already upstream-equivalent and `git rebase`
+# dropped it as redundant. v5.0.1 -> v5.1.0 changed no `dependency()` call in
+# noctalia's meson.build (39 entries either side, verified by diffing the two
+# tags), so this element's build-depends/depends lists are unchanged.
+#
+# Rebase the branch onto the new tag and re-track when upstream cuts a
+# release: `track: <branch>` cannot see tags, so no auto-track PR will ever
+# offer the release. See docs/skills/desktop.md.
 #
 # Revert to
 #   url: github:noctalia-dev/noctalia.git
@@ -79,7 +88,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.0.1-2-g0b4ae36c830098d7c6c9a89fcece9737256c0167
+  ref: v5.1.0-2-gf3cd36d0032eb13cec822e1c2265fcfe4dc55179
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test
