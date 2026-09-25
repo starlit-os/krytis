@@ -1092,6 +1092,37 @@ xdg-utils v1.2.x uses `org.freedesktop.portal.OpenURI` (via `gdbus`) to open URL
 
 **Tag format in repo:** `v*.*.*` (not `xdg-utils-*.*.*` as one might expect).
 
+## URL scheme handlers need `desktop-file-utils` in the image (#945)
+
+**Symptom:** `steam://…`, `discord://…` — any URL scheme, and any MIME type — resolves to nothing for GIO-based callers (browsers, xdg-desktop-portal, `gio open`), even when the claiming `.desktop` file is installed and its `MimeType=` line is correct.
+
+```console
+$ gio mime x-scheme-handler/steam
+No default applications for “x-scheme-handler/steam”
+```
+
+**Cause:** `update-desktop-database` — the tool that compiles every `MimeType=` line in a directory into that directory's `mimeinfo.cache` — ships in `desktop-file-utils`, which for a long time was only ever a *build*-depend in this repo (`desktop/gnome-disk-utility.bst`). With it absent from the image, two things break at once:
+
+1. **`/usr/share/applications/mimeinfo.cache` is never generated.** fdsdk's `components/desktop-file-utils.bst` carries the `integration-commands` entry that would create it, so if the element is not a runtime dep of a stack, the command never runs at compose time. GIO then reports zero registered applications for anything the image's own desktop files claim — zen-browser's `http`/`https`, equibop's `discord`.
+2. **Flatpak's post-install trigger silently no-ops.** `/usr/share/flatpak/triggers/desktop-database.trigger` is guarded by `command -v update-desktop-database`, so with no binary it exits 0 having done nothing. `/var/lib/flatpak/exports/share/applications/mimeinfo.cache` is then frozen at whatever the base image shipped, and no Flatpak installed afterwards ever registers its MIME or scheme claims. A stale cache is easy to spot: its mtime is the reproducible-build epoch (`Nov 11 2011`) while the app symlinks beside it are dated months later.
+
+**Fix:** `freedesktop-sdk.bst:components/desktop-file-utils.bst` is a runtime dep in `stacks/desktop.bst`. Do not demote it to a build-depend.
+
+**Trap — `xdg-mime` lies about this.** xdg-utils' generic backend falls back to grepping `.desktop` files directly when no `mimeapps.list` default matches, so it answers correctly on a system where the database is entirely missing:
+
+```console
+$ xdg-mime query default x-scheme-handler/steam
+com.valvesoftware.Steam.desktop     # ← correct, and completely misleading
+$ gio mime x-scheme-handler/steam
+No default applications for …       # ← what every real caller sees
+```
+
+Always diagnose MIME/scheme association with `gio mime`, never `xdg-mime query default`.
+
+**Second trap — Firefox derivatives mask the breakage for `http`/`https`.** Zen Browser self-registers a per-user `userapp-Zen-*.desktop` plus a `~/.config/mimeapps.list` default on first run. An explicit `mimeapps.list` default is looked up by desktop-file ID across all XDG data dirs and needs no `mimeinfo.cache`, so web links keep working while every other scheme is dead. "Links open fine" is not evidence that the desktop database exists.
+
+**Repairing an already-deployed system** (the image fix only affects new deployments' `/usr`; `/var/lib/flatpak` is runtime state either way): once an image carrying `desktop-file-utils` is booted, any `flatpak install`/`update` re-fires the trigger and rebuilds the exports cache. To associate a single scheme immediately without waiting, set an explicit default — `gio mime x-scheme-handler/steam com.valvesoftware.Steam.desktop` — which writes `~/.config/mimeapps.list` and bypasses the cache entirely.
+
 ## Locale Data
 
 `config/locale-data.bst` (kind: script) replaces `freedesktop-sdk.bst:components/locales.bst` in `stacks/base-system.bst`. It generates only the locales Krytis needs instead of the full glibc SUPPORTED list (~400+ entries).
