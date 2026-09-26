@@ -1,6 +1,7 @@
 # noctalia-greeter — Quickshell-style login greeter for greetd.
-# Upstream noctalia-dev/noctalia-greeter. Releases tagged v* (v1.0.0 latest
-# as of this pin). git_repo + track: v* lets bst source track follow tags.
+# Upstream noctalia-dev/noctalia-greeter. Releases tagged v*; the `ref:` below
+# is the authoritative statement of which one is pinned -- do not restate it
+# here. git_repo + track: v* lets bst source track follow tags.
 #
 # The greeter runs inside Cage (kiosk wlroots compositor) via the
 # noctalia-greeter-session wrapper script that greetd calls.

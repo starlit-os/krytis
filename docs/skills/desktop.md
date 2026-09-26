@@ -172,7 +172,8 @@ switch to `track: v*`.
 ## noctalia-greeter source and config
 
 `desktop/noctalia-greeter.bst` uses `kind: git_repo` with `track: v*` against upstream
-`noctalia-dev/noctalia-greeter` (releases tagged `v*`, e.g. `v1.0.0`). This replaced an
+`noctalia-dev/noctalia-greeter` (releases tagged `v*`; the element's own `ref:` is the
+authoritative statement of which tag is pinned). This replaced an
 earlier `kind: tar` pin against a `kitten-lily/noctalia-greeter` fork commit. The switch
 was made once upstream started tagging releases — `git_repo` + `track:` lets `bst source
 track` follow tags automatically (option A in the update-path gate), so no mise update task

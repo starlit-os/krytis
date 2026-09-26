@@ -475,6 +475,38 @@ Report obsolete branches to the user rather than deleting them — they are the 
 Worktrees for fork work live beside the fork, not in krytis:
 `<parent>/<fork-name>.worktrees/<branch-leaf>`.
 
+### Auditing the fork inventory (which forks are live, and how far they've drifted)
+
+"Which forks are we on?" is answered by the element sources, not by the fork list: a fork
+only matters if some `sources:` entry names it. Both halves are one command each.
+
+```shell
+# Forks that exist, in both orgs we own.
+gh repo list kitten-lily --limit 100 --json name,isFork,parent \
+  --jq '.[] | select(.isFork) | "\(.name)\tparent=\(.parent.owner.login)/\(.parent.name)"'
+# Forks krytis actually builds from.
+grep -rn 'url: github:kitten-lily\|url: github:starlit-os' elements/
+# Drift of a carried branch, in both directions at once.
+gh api repos/<upstream-owner>/<repo>/compare/main...<fork-owner>:<branch> \
+  --jq '"status=\(.status) ahead=\(.ahead_by) behind=\(.behind_by)"'
+```
+
+Compare the carried branch against the **release tag** as well as `main`
+(`compare/v5.1.0...<fork>:<branch>`). Against `main` a branch is always hundreds behind and
+the number means little; against the newest tag it states exactly how many releases the
+image is missing — which is the number that decides whether a rebase is due.
+
+**A fork nothing points at is dead weight, but check for unique commits before deleting it.**
+`compare` reports `ahead_by` for the fork's `main` too, and those commits can be unrelated
+work that was never upstreamed — `starlit-os/sysext-bakery` looked like an unused fork of
+`flatcar/sysext-bakery` (0 references anywhere in this repo) yet carried three hand-written
+komodo-periphery commits that exist nowhere else. `ahead_by: 0` on every branch is the only
+safe-to-delete signal; otherwise ask.
+
+Deleting is also not possible with the usual credentials: the standard `gh` token scope set
+(`repo`, `workflow`, `read:org`, …) has no `delete_repo`, and the API returns 403 until
+`gh auth refresh -h github.com -s delete_repo` is run interactively by the human.
+
 ### Rebasing a carried fork branch: verify the *introduced hunks*, not the tips
 
 After rebasing a carried branch onto a moved upstream, the useful question is "did my change
@@ -586,6 +618,40 @@ Three things must line up, and a valid local signature proves only the first:
 1. The signature verifies locally — `git verify-commit HEAD` prints `Good "git" signature`.
 2. The public key is registered on the account **as a Signing Key**, not an Authentication Key (the dropdown at `github.com/settings/ssh/new` defaults to the wrong one).
 3. The **committer** email is an address GitHub can map to that account.
+
+### `agent refused operation` is a missed touch window, not a broken setup
+
+An `ED25519-SK` signing key fails like this when the token has not been touched:
+
+```
+Couldn't sign message (signer): agent refused operation?
+fatal: failed to write commit object
+```
+
+Two behaviours make this read as a configuration fault when it isn't. The refusal is
+**instant** (2–4 s) once the token has stopped waiting, so it looks like a hard "no" rather
+than a timeout; and after one touch the key signs *without* further prompting for a short
+window, so an unrelated command run in that window succeeds and the next one fails. Chasing
+it as config burns turns: `git config --show-origin --get-all user.signingkey`, a scratch-repo
+`git commit -S` probe and `GIT_TRACE=1` all come back clean, because the invocation really is
+`ssh-keygen -Y sign -n git -f <key> <buffer>` in both the working and failing cases.
+
+Don't retry by hand — the odds of landing inside the window are poor. Loop, so any touch in
+the next two minutes lands the commit:
+
+```bash
+for i in $(seq 1 60); do
+  git commit -q -F /tmp/msg.txt 2>/dev/null && { echo "signed on attempt $i"; break; }
+  sleep 2
+done
+```
+
+Same shape for `git rebase --continue`. One extra trap there: `git rebase` records the
+`--gpg-sign` option in `.git/rebase-merge/gpg_sign_opt` when the rebase *starts*, so a later
+`git -c commit.gpgsign=false rebase --continue` still tries to sign. Delete that file to
+override. And when a sign fails mid-rebase the changes stay **staged** — `rebase --continue`
+then refuses with "changes are staged"; commit them with `git commit -C <original-sha>` to
+preserve author and message, then continue.
 
 ### Check registration without the `admin:ssh_signing_key` scope
 
