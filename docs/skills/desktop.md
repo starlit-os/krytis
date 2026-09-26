@@ -183,11 +183,22 @@ or `track-mise` CI job is needed. A matrix entry in the `track` job in
 ## noctalia (shell) build dependencies
 
 `desktop/noctalia.bst` also uses `git_repo`, but **not** `track: v*` today: it carries a
-fork pin, `github:kitten-lily/noctalia.git` `track: feat/system-prompter`
-(`ref: v5.0.1-2-g0b4ae36c`), for the native `org.gnome.keyring.SystemPrompter` provider oo7
-needs. The upstream `noctalia-dev/noctalia` + `track: v*` source is kept commented out in the
-element, to revert to once the feature lands upstream or is dropped; branch tracking means
-`bst source track` follows the branch head, not releases. The v5.0.0-beta2 re-pin
+fork pin, `github:kitten-lily/noctalia.git` `track: feat/system-prompter`, for the native
+`org.gnome.keyring.SystemPrompter` provider oo7 needs. The element's `ref:` states which
+commit; do not restate it here. The revert target (`noctalia-dev/noctalia` + `track: v*`)
+is written out in the element's `FORK PIN` comment as prose — there is no commented-out
+`sources:` block to uncomment.
+
+**Branch tracking cannot see release tags, so the fork pin freezes the release stream too.**
+`bst source track` follows the branch head, so an upstream release produces no auto-track
+PR at all — between 2026-09-08 and 2026-09-25 upstream shipped v5.1.0 and nothing in the
+repo could say the image was a release behind. Advancing it is manual and has three steps
+that all matter: rebase `feat/system-prompter` onto the new tag, **push that tag to the
+fork**, then `mise run bst source track desktop/noctalia.bst`. Skipping the tag push is
+silent rather than fatal — `git describe` falls back to the newest tag the *fork* knows,
+so the ref lands as `v5.0.1-56-g<sha>` instead of `v5.1.0-2-g<sha>`: same commit, but the
+ref no longer states which release the image is on, which is the only thing that ref
+prefix is for. The v5.0.0-beta2 re-pin
 (99 commits past the old `main` pin) changed the upstream dependency surface —
 upstream un-vendored `md4c`/`tomlplusplus` from `third_party/` and added
 `nlohmann_json` and stb header requirements. The v5.0.0-beta.4 re-pin (#352)
