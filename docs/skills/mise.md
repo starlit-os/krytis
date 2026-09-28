@@ -1387,11 +1387,31 @@ Two different secrets under one lookup name is the forked state, and it is why t
 says "the encryption key may not match" rather than naming a keyring problem. Observed
 2026-09-28 with both entries present simultaneously, created seconds apart.
 
-**`fnox` amplifies this into a wall of noise.** It resolves every `[secrets]` entry
-concurrently, so one broken backend produces ten near-identical stack traces at once —
-and occasionally one *different* message (`Command is not logout there is no session`)
-from whichever invocation raced to a partially-written database. Read one trace, not ten;
-the odd one out is not a separate bug.
+**`fnox` is not just noise here — it is a second, independent cause.** It resolves every
+`[secrets]` entry *concurrently*, so on krytis one invocation is ten `pass-cli` processes
+at once. Against a **cleared or logged-out** state that is ten simultaneous first-time
+initialisations, and they do not agree: one process writes `pass-cli.db` while another
+stores the local key, leaving a db the stored key cannot open. Measured 2026-09-28 on a
+freshly cleared state, single backend, no mixing involved:
+
+| Invocation | Result |
+|---|---|
+| 10 × `pass-cli info` in parallel | db created, 1 key stored, **db unreadable** — `hmac check failed` |
+| 3 × `pass-cli info` serially | `requires an authenticated client` every time, state coherent |
+
+This is why the breakage reappears minutes after a clean-up with nobody having logged in:
+`~/.config/fish/conf.d/01-mise.fish` runs `fnox activate fish | source`, so **opening a
+shell is enough to re-break it**. After any reset, run a single serial `pass-cli login`
+*before* opening a new shell or cd-ing into a repo with an `fnox.toml`.
+
+Note the asymmetry when it does break: under `kernel` the next run finds no key at all,
+force-logs-out and self-heals; under `dbus` the mismatched key persists in the collection,
+so it stays broken until the db and the key are both cleared. The persistent backend that
+fixes the reboot problem is also the one that cannot recover from this on its own.
+
+One more artefact of the concurrency: among the ten traces one usually differs
+(`Command is not logout there is no session`), from whichever process lost the race to a
+partially-written database. Read one trace, not ten; the odd one out is not a separate bug.
 
 **A stale shell keeps failing after the fix, and will lie to you about why.**
 `environment.d` only reaches processes the systemd user manager starts, and the
@@ -1401,6 +1421,22 @@ separate the two causes: a failing `fnox` call can precede the new session direc
 mtime by seconds and fit a tidy "race" story that is simply wrong. The environment of the
 *calling* shell is what distinguishes them — check `echo $PROTON_PASS_LINUX_KEYRING` in
 the shell that failed.
+
+**On a host that has not yet booted an image carrying `config/proton-pass-keyring.bst`,
+the two image drop-ins do not exist at all** — `/usr/lib/environment.d/50-proton-pass-cli.conf`
+and `/etc/profile.d/50-proton-pass-cli.sh` are simply absent, so only the chezmoi
+`fish/conf.d` copy is in play. That leaves every non-fish context on the kernel default:
+bash, anything the systemd user manager started before `~/.config/environment.d` existed,
+and any coding-agent shell. Mixing is then the *normal* state, not an accident — the fish
+prompt writes the key to the Secret Service while a bash invocation of the same `fnox`
+writes it to keyutils. Bridge the running session until the image is deployed:
+
+```shell
+systemctl --user set-environment PROTON_PASS_LINUX_KEYRING=dbus
+```
+
+Verify with `systemctl --user show-environment | grep PROTON_PASS` — an empty result means
+the user manager never imported `~/.config/environment.d`, which needs a re-login.
 
 ### Testing secret-consuming tasks without a live vault
 
