@@ -40,6 +40,19 @@ mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot 
 mise switch-local             # bootc switch THIS machine to the local build (auto-seals if UKI-booted)
 ```
 
+**Pass `--push` if you have push access, else `--pull`, on every `bst`/`validate`/
+`load-image`/`build` invocation where credentials resolve.** No flag means *no remote
+cache at all for krytis's own elements* (§ `--push`/`--pull` — opt-in bow Buildbarn
+cache below), so every element the local CAS is missing gets rebuilt from source even
+though bow already has it — which is the normal state in a fresh worktree, since a
+worktree shares `~/.cache/buildstream` but any element whose cache key moved since the
+last local build is a miss. Credentials resolve automatically when `fnox` is configured
+(or `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN` is exported); when they don't, the
+task fails fast rather than silently building uncached, so there is no downside to
+trying the flag first. Observed 2026-09-28 (#869): a flagless
+`mise run bst -- build desktop/xwayland-satellite.bst` in a new worktree spent 9 min
+pulling freedesktop-sdk bootstrap artifacts alone before reaching the element.
+
 - `include/image-version.yml` is **gitignored** — generated at build time, never committed.
   `bst` and `validate` tasks declare `depends=["generate-image-version"]` so it's always
   regenerated automatically. `mise bootstrap` also generates it for fresh clones.
