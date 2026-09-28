@@ -311,36 +311,36 @@ documented "always both" rule — worth a per-element spot-check, not a mechanic
 
 *Source: zirconium-hawaii `9cf2c6a`, `de344f0` — "Update xwayland-satellite to 0.8.2 with patches"*
 
-**This supersedes the earlier "pin to 0.8.1" guidance** (zirconium `4a3f63a`), which is no
-longer upstream's position. 0.8.2 carries fixes worth having over 0.8.1, and both of its
-regressions are patchable, so zirconium moved to `ref: v0.8.2-0-g8d135d3…`, re-enabled
-`track: v*`, and added a `kind: patch_queue` source on `patches/xwayland-satellite/`
-holding two patches cherry-picked from upstream `main`:
+**This superseded the earlier "pin to 0.8.1" guidance** (zirconium `4a3f63a`). 0.8.2 carried
+fixes worth having over 0.8.1 and both of its regressions were patchable, so zirconium moved
+to `ref: v0.8.2-0-g8d135d3…`, re-enabled `track: v*`, and added a `kind: patch_queue` source
+on `patches/xwayland-satellite/` holding two patches cherry-picked from upstream `main`:
 
 | Patch | Fixes |
 |---|---|
 | `0002-fix-never-focus-override-redirect-popups-offer-WM_TA.patch` | Steam drop-downs closing immediately — upstream [#468](https://github.com/Supreeeme/xwayland-satellite/issues/468), i.e. the exact bug the 0.8.1 pin existed for. Originally upstream PR 494; `de344f0` re-pointed the patch at the commit as merged to `main`. |
 | `0001-fix-classify-resizable-DIALOG-windows-as-toplevel-no.patch` | Resizable `DIALOG` windows classified as popup instead of toplevel, so DaVinci Resolve's Project Manager and Qt/GTK file dialogs never appear — upstream #470. |
 
-**krytis has not moved.** `elements/desktop/xwayland-satellite.bst` is still
-`ref: v0.8.1-0-g536bd32…` (`:81`) with `exclude: [v0.8.2]` (`:79-80`) and
-`# track: 'v*'` commented out behind a FIXME (`:76-78`). The only file in
-`patches/xwayland-satellite/` is `bump-time-ghsa-r6v5-fh4h-64xc.patch`; neither upstream
-patch is present. Adopting them means switching that `kind: patch` to a `kind: patch_queue`
-over the whole directory — which then also carries the `time` GHSA patch, so ordering in
-the directory matters and the dir must stay patch-files-only (§ Custom Plugin: patch_queue
-above). The `VERGEN_GIT_DESCRIBE` handling in that element is unaffected: it already
-neutralises the `-dirty` marker any number of patches would produce.
+**Both patches are upstream as of v0.8.3** (2026-09-24): `add27951` is PR 494, `7f848f50`
+is the #470 DIALOG fix (`src/xstate/mod.rs` now guards the `dialog` branch with
+`forced_size`, as the issue asked). krytis went straight from the v0.8.1 pin to
+`ref: v0.8.3-…` with `track: 'v*'` restored and no cherry-picks at all (#869) — the window
+in which zirconium's patch-don't-pin position bought anything closed when the tag landed.
+`elements/desktop/xwayland-satellite.bst` therefore still has one `kind: patch` source
+(`bump-time-ghsa-r6v5-fh4h-64xc.patch`, kept because upstream's own `Cargo.lock` is still
+on `time` 0.3.44 at v0.8.3) and never needed the `kind: patch_queue` switch this section
+used to prescribe.
 
-**The real lesson is the exit condition.** That element's header comment (`:13-19`) says
-to re-enable tracking "once issue #468 is fixed and a new release ships the fix", and
-gates dropping the vendored element entirely on "#468 is fixed (meaning v0.8.2 is no
-longer the latest)". #468 *is* fixed — as a commit merged to `main`. No tag carries it,
-and v0.8.2 is still the latest release. A condition written against a *release event*
-cannot be discharged by a *merged fix*, so the workaround outlives its
-cause and nobody re-reads it, because on its own terms it is still unmet. Write removal
-conditions against the fix being available in a form you can consume — merged commit,
-backportable patch, or tag — not against upstream cutting a release.
+**The lasting lesson is the exit condition.** That element's header used to gate re-enabling
+tracking on "#468 is fixed and a new release ships the fix", and gate dropping the vendored
+element on "#468 is fixed (meaning v0.8.2 is no longer the latest)". For six weeks #468 was
+fixed *as a commit merged to `main`* while no tag carried it, so on its own terms the
+condition read as unmet and nobody re-opened the question — the state zirconium had already
+routed around. A condition written against a *release event* cannot be discharged by a
+*merged fix*. Write removal conditions against the fix being available in a form you can
+consume — merged commit, backportable patch, or tag — not against upstream cutting a
+release. Krytis's surface for this is a tracking issue (#869 under #483), which is what
+actually got re-read when v0.8.3 appeared.
 
 ## Arch-derived kernel configs don't create `/sys/fs/selinux`
 
