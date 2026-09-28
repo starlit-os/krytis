@@ -4,6 +4,7 @@
 #USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to run the compositor out of"
 #USAGE flag "--seconds <n>" default="12" help="How long to let the compositor run before SIGTERM"
 #USAGE flag "--keep-log" help="Print the full captured log, not just the asserted lines"
+#USAGE flag "--shipped-config" help="umbriel only: use /etc/xdg/umbriel/config.toml instead of upstream defaults"
 
 # Why this exists: `mise boot-test` cannot test any compositor. Its VM has no
 # /dev/dri at all, and it deliberately masks greetd (ExecStart=/usr/bin/true)
@@ -32,12 +33,14 @@ COMPOSITOR="${usage_compositor:-umbriel}"
 IMAGE="${usage_image:-localhost/krytis:latest}"
 SECONDS_TO_RUN="${usage_seconds:-12}"
 KEEP_LOG="${usage_keep_log:-false}"
+SHIPPED_CONFIG="${usage_shipped_config:-false}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --compositor) COMPOSITOR="$2"; shift 2 ;;
         --image)      IMAGE="$2"; shift 2 ;;
         --seconds)    SECONDS_TO_RUN="$2"; shift 2 ;;
         --keep-log)   KEEP_LOG=true; shift ;;
+        --shipped-config) SHIPPED_CONFIG=true; shift ;;
         *) shift ;;
     esac
 done
@@ -48,17 +51,46 @@ done
 # produces no error lines.
 case "$COMPOSITOR" in
     umbriel)
-        # UMBRIEL_CONFIG=/dev/null: assert upstream defaults, so a broken
-        # files/umbriel/config.toml cannot mask a renderer failure. Use
-        # --compositor umbriel with the shipped config by dropping this via
-        # --keep-log inspection if you specifically want to test the config.
-        LAUNCH='env UMBRIEL_CONFIG=/dev/null /usr/bin/umbriel'
+        # Upstream defaults by default, so a broken files/umbriel/config.toml
+        # cannot mask a renderer failure. The isolation has to be an EMPTY
+        # REGULAR FILE passed to -c: umbriel has no config-path environment
+        # variable at all (UMBRIEL_CONFIG, used here until krytis#980, is a
+        # variable in upstream's own tests/harness/checks/*.sh and is never
+        # read by the compositor -- so this task silently ran with the shipped
+        # config for its whole life), and -c /dev/null fails closed with
+        # "not a regular file".
+        #
+        # --shipped-config drops -c entirely, letting the normal lookup pick
+        # /etc/xdg/umbriel/config.toml. That is a runtime counterpart to
+        # `mise run umbriel-config-validate`, which only parses.
+        #
+        # The markers are umbriel's OWN log lines. Until krytis#980 they were
+        # `initialized EGL`, `OpenGL ES vendor=` and `output HEADLESS-1`, none
+        # of which umbriel ever emits -- all three come from NOCTALIA, the Qt
+        # client the shipped config autostarts, initialising its own EGL. The
+        # task was asserting that noctalia's renderer worked, which it only
+        # ever saw because the UMBRIEL_CONFIG no-op above let the shipped
+        # config's `autostart` fire. umbrielfx, the thing #775 added this task
+        # to cover, was never asserted at all.
+        if [ "$SHIPPED_CONFIG" = "true" ]; then
+            LAUNCH='/usr/bin/umbriel'
+            ENV_EXTRA=''
+        else
+            LAUNCH='/usr/bin/umbriel -c /tmp/umbriel-defaults.toml'
+            ENV_EXTRA=': >/tmp/umbriel-defaults.toml;'
+        fi
         REQUIRE=(
-            'initialized EGL'
-            'OpenGL ES vendor='
-            'output HEADLESS-1'
+            'Creating umbrielfx renderer'
+            'GL renderer:'
+            "output 'HEADLESS-1': applied mode="
         )
-        ENV_EXTRA=''
+        # Only the shipped config carries krytis's `autostart = ["noctalia"]`,
+        # and this line is umbriel reporting that it acted on it -- so it also
+        # proves the [include] overlay in files/umbriel/config.toml really
+        # merged, not merely parsed.
+        if [ "$SHIPPED_CONFIG" = "true" ]; then
+            REQUIRE+=("spawned 'noctalia' on WAYLAND_DISPLAY=")
+        fi
         ;;
     greeter)
         # The greeter compositor is what greetd actually launches, with the

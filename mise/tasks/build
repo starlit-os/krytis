@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="generate-image-version + load-image + lint — full local build pipeline"
+#MISE description="generate-image-version + load-image + lint + umbriel-config-validate — full local build pipeline"
 #USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
 #USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
 #USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
@@ -19,3 +19,8 @@ FORCE=${usage_force:+--force}
 # same include/image-version.yml content twice in one invocation.
 ./mise/tasks/load-image ${CONTAINER:-} ${PUSH:-} ${PULL:-} ${FORCE:-}
 ./mise/tasks/lint
+# Cheap (~2s, no GPU/seat/root) and it needs exactly what lint just produced.
+# Runs here because nothing else connected files/umbriel/config.toml to the
+# umbriel binary shipped beside it, and desktop/umbriel.bst is ref-bumped
+# daily — see docs/skills/desktop.md § Validating the shipped Umbriel config.
+./mise/tasks/umbriel-config-validate

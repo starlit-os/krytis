@@ -29,6 +29,7 @@ remaining args as positionals, so flags like `--deps` and `--tar` pass through w
 mise validate                 # confirm element graph resolves
 mise load-image               # BST build → podman local storage
 mise lint                     # bootc container lint (squash-all)
+mise umbriel-config-validate  # umbriel validate on the shipped /etc/xdg config (#980)
 mise generate-fakecap-manifest # regenerate files/fakecap-manifest.tsv (only when elements change)
 mise chunkify                 # rechunk into composefs-ready component layers
 mise load-image-root          # copy krytis:latest into the ROOT podman store (sudo)
@@ -49,9 +50,9 @@ mise switch-local             # bootc switch THIS machine to the local build (au
   whose elements have never been loaded it validates the *previous* branch's image and reports
   success. Observed while testing an element swap: `lint` passed while the image still
   contained the elements the branch had removed. Use `mise run build`
-  (`generate-image-version` → `load-image` → `lint`), and confirm the change by inspecting
-  image *contents* — `podman run --rm localhost/krytis:latest ...`, or `/usr/manifest.json`
-  for element-level presence — never by the lint exit code alone.
+  (`generate-image-version` → `load-image` → `lint` → `umbriel-config-validate`), and confirm
+  the change by inspecting image *contents* — `podman run --rm localhost/krytis:latest ...`,
+  or `/usr/manifest.json` for element-level presence — never by the lint exit code alone.
 - **`mise lint` is a real multi-stage `podman build`, not a fast static check — its
   name undersells it.** `Containerfile` has two stages: `base` (`FROM
   localhost/krytis-input:latest` + `RUN bootc container lint` — this part really is
@@ -978,7 +979,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 |---|---|
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
-| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
+| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel validate` on the shipped `/etc/xdg/umbriel/config.toml` inside the image, the only gate tying that file to the daily-bumped `desktop/umbriel.bst` ref (#980, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden) |
 | Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
