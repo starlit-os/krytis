@@ -1271,16 +1271,28 @@ Run 'pass-cli login' to authenticate again.
 work again. This is not a krytis bug, a `pam_oo7` failure, or a corrupt database.
 
 Fix is one environment variable, read at startup (`PROTON_PASS_LINUX_KEYRING`, valid values
-`dbus` and `kernel`; anything else falls back to `kernel` with a warning):
+`dbus` and `kernel`; anything else falls back to `kernel` with a warning). `dbus` selects the
+Secret Service (`Linux keyring: using zbus secret service (persistent)`), which on krytis is
+`oo7-daemon` writing `~/.local/share/keyrings/v1/login.keyring`.
 
-```ini
-# ~/.config/environment.d/50-proton-pass.conf
-PROTON_PASS_LINUX_KEYRING=dbus
-```
+**The image sets it** — `elements/config/proton-pass-keyring.bst`, wired into
+`elements/stacks/desktop.bst` beside `config/ssh-agent-env.bst`. It ships two drop-ins
+because they cover disjoint process trees:
 
-`dbus` selects the Secret Service (`Linux keyring: using zbus secret service (persistent)`),
-which on krytis is `oo7-daemon` writing `~/.local/share/keyrings/v1/login.keyring`. Verified
-2026-09-28 on pass-cli 2.4.1: the credential appears under
+| File | Reaches |
+|---|---|
+| `/usr/lib/environment.d/50-proton-pass-cli.conf` | the systemd user manager, so niri and everything it spawns |
+| `/etc/profile.d/50-proton-pass-cli.sh` | login shells the user manager never touches — ssh, tty |
+
+`environment.d` is read once at user-manager startup, so a change needs a re-login;
+`systemctl --user set-environment PROTON_PASS_LINUX_KEYRING=dbus` bridges the running
+session. A file of the **same name** in `~/.config/environment.d/` masks the `/usr/lib` one
+outright (drop-in masking, as with `journald.conf.d` — see `config/greetd-config.bst`), so a
+chezmoi-managed dotfile stays authoritative and portable to non-krytis machines. The
+`profile.d` snippet only sets the variable when it is unset, so an explicit
+`PROTON_PASS_LINUX_KEYRING=kernel` still wins.
+
+Verified 2026-09-28 on pass-cli 2.4.1: the credential appears under
 `secret-tool search --all service ProtonPassCLI` with username
 `cli-local-key:<fingerprint>@ProtonPassCLI`, the `login.keyring` file is rewritten, and
 repeated `pass-cli` invocations stop force-logging-out. The fingerprint is deterministic —
@@ -1291,21 +1303,19 @@ Three things this depends on, all worth knowing before debugging a repeat offend
 
 - **The `login` collection must be unlocked when `pass-cli` runs**, or it fails with
   `Linux keyring: D-Bus secret service is unavailable or locked`. krytis unlocks it at login
-  through the greetd PAM stack — see [`pam.md`](pam.md).
-- **Do not mix backends.** A single invocation without the variable re-creates the local
-  state under a keyutils key; the next `dbus` invocation then sees data it cannot decrypt
-  and force-logs-out again — or, if the settings DB is what got re-encrypted,
+  through the greetd PAM stack — see [`pam.md`](pam.md). Over ssh into a krytis box the
+  collection is locked, and that error is the *intended* outcome: see the next point.
+- **Do not mix backends.** A single invocation under the other backend re-creates the local
+  state under a key the desktop session cannot read; the next invocation then force-logs-out
+  again — or, if the settings DB is what got re-encrypted, dies with
   `sqlcipher_page_cipher: hmac check failed` / `file is not a database`. `pass-cli logout
-  --force` (with the variable set) is the clean reset.
-- **Keep it user-level; do not ship it in the image or put it in `mise.toml` `[env]`.**
-  GitHub-hosted runners and the build VPS have no Secret Service, and `publish.yml`'s
-  `pass-cli login --pat` path is fine with the ephemeral keyutils default.
-
-`environment.d` is read by the systemd user manager at session start, so the file needs a
-re-login to take effect; `systemctl --user set-environment PROTON_PASS_LINUX_KEYRING=dbus`
-bridges the current session. niri is a user unit on krytis, so terminals it spawns inherit
-it — see [`desktop.md`](desktop.md) § Variables in `environment.d/90-krytis-session.conf`
-for why that mechanism is preferred over `/etc/environment`.
+  --force` (with the variable set) is the clean reset. This is why both drop-ins are
+  unconditional rather than probing for a reachable Secret Service: one backend everywhere
+  beats a fallback that silently forks the local state.
+- **CI is untouched, and must stay that way.** Neither drop-in exists on a GitHub-hosted
+  runner or on the Debian build VPS (`files/runner-vps/provision.sh`), so `publish.yml`'s
+  `pass-cli login --pat` keeps the ephemeral keyutils default. Do not move the variable into
+  `mise.toml` `[env]`, which *would* reach both.
 
 ### Testing secret-consuming tasks without a live vault
 
