@@ -259,6 +259,19 @@ instead (`async: true`) puts the prompt where nobody can answer it and fails wit
 same `A terminal is required to authenticate`. Do not try to work around it — hand it
 off.
 
+**Escaping the 300 s window does not rescue it either — the killer just changes.** Running
+the task as a long-lived *named* service (omp's `bash` tool, `name:` + `pty: true`, no
+deadline) removes the harness SIGTERM above, and the run still dies — now on sudo's own
+`passwd_timeout`, reported as a bare `sudo: timed out` after `[1/5]`. Confirmed twice on
+2026-09-28 while finishing #986. Two things make this worse than it sounds: there are
+**two** prompts, not one, separated by the multi-minute `podman load` in
+`load-image-root`, so the human must answer, wait several minutes unprompted, then answer
+again; and the prompt only exists inside the agent's transcript, which nobody is watching
+between turns. Priming the ticket first does not help — `sudo -n -v && mise run boot-test`
+in one command still lost the race, because the timestamp had expired by the time the
+human's earlier answer reached it. Hand off `generate-disk` as below; it is one command
+and it is over in seconds.
+
 **The privileged part is one step, not the whole gate.** `bootc install to-disk --via-loopback` has to create a loop device and mount the new filesystem, which requires `CAP_SYS_ADMIN` in the initial user namespace (see the comment block at `mise/tasks/boot-test:76`). Everything after it — the QEMU boot, the serial-console assertions, the verdict — is unprivileged, and `boot-test` exposes the split via `--reuse-disk`:
 
 ```shell
