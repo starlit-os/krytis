@@ -1251,6 +1251,193 @@ CI cannot do a browser login, so it authenticates with a Proton Pass personal ac
 
 2. **Pin the version, and check subcommands against the pinned asset.** `pass-cli test` existed in 2.2.3 and was gone by 2.2.4; a CI step calling it died while the same command worked locally. See the PATH-shadowing entry at the end of this file.
 
+### On a dev host: the local key dies at reboot unless you ask for D-Bus
+
+`pass-cli` encrypts its local state (`~/.local/share/proton-pass-cli/.session/` —
+`pass-cli.db`, `user_keys.enc`, `passphrases.enc`, `session.json`) with a *local key* that
+it keeps in a system keyring. On Linux it picks the backend itself, and the default is the
+**kernel keyutils** keyring — the binary's own log line says so: `Linux keyring: using
+kernel keyutils (cleared on reboot)`. The encrypted data is on disk; the key is in RAM.
+So every boot produces:
+
+```console
+$ pass-cli info
+Error: Local encryption key not found but local data exists. Forcing logout for security.
+Executing force logout
+Run 'pass-cli login' to authenticate again.
+```
+
+— and a browser `pass-cli login` before `mise run pull-keys` or `mise run bst --pull` will
+work again. This is not a krytis bug, a `pam_oo7` failure, or a corrupt database.
+
+Fix is one environment variable, read at startup (`PROTON_PASS_LINUX_KEYRING`, valid values
+`dbus` and `kernel`; anything else falls back to `kernel` with a warning). `dbus` selects the
+Secret Service (`Linux keyring: using zbus secret service (persistent)`), which on krytis is
+`oo7-daemon` writing `~/.local/share/keyrings/v1/login.keyring`.
+
+**The image sets it** — `elements/config/proton-pass-keyring.bst`, wired into
+`elements/stacks/desktop.bst` beside `config/ssh-agent-env.bst`. It ships two drop-ins
+because they cover disjoint process trees:
+
+| File | Reaches |
+|---|---|
+| `/usr/lib/environment.d/50-proton-pass-cli.conf` | the systemd user manager, so niri and everything it spawns |
+| `/etc/profile.d/50-proton-pass-cli.sh` | login shells the user manager never touches — ssh, tty |
+
+`environment.d` is read once at user-manager startup, so a change needs a re-login;
+`systemctl --user set-environment PROTON_PASS_LINUX_KEYRING=dbus` bridges the running
+session. A file of the **same name** in `~/.config/environment.d/` masks the `/usr/lib` one
+outright (drop-in masking, as with `journald.conf.d` — see `config/greetd-config.bst`), so a
+chezmoi-managed dotfile stays authoritative and portable to non-krytis machines. The
+`profile.d` snippet only sets the variable when it is unset, so an explicit
+`PROTON_PASS_LINUX_KEYRING=kernel` still wins.
+
+Verified 2026-09-28 on pass-cli 2.4.1: the credential appears under
+`secret-tool search --all service ProtonPassCLI` with username
+`cli-local-key:<fingerprint>@ProtonPassCLI`, the `login.keyring` file is rewritten, and
+repeated `pass-cli` invocations stop force-logging-out. The fingerprint is deterministic —
+the same `cli-local-key:<fingerprint>@ProtonPassCLI` name appears whether the credential
+lives in keyutils or in the Secret Service — so the session survives a reboot as long as
+its *store* does. **Read that property as a hazard, not a reassurance:** the name being
+identical across backends while the secret behind it is not is exactly what lets the two
+stores hold conflicting keys under one lookup, silently. See
+§ *Switching the backend under a live session*.
+
+Three things this depends on, all worth knowing before debugging a repeat offender:
+
+- **The `login` collection must be unlocked when `pass-cli` runs**, or it fails with
+  `Linux keyring: D-Bus secret service is unavailable or locked`. krytis unlocks it at login
+  through the greetd PAM stack — see [`pam.md`](pam.md). Over ssh into a krytis box the
+  collection is locked, and that error is the *intended* outcome: see the next point.
+- **Do not mix backends.** A single invocation under the other backend leaves the local
+  state encrypted under a key the running one cannot read. *Which* symptom you get depends
+  on when the split happened: across a reboot `pass-cli` notices the key is gone and
+  force-logs-out, saying so plainly; flip the variable under a session that already exists
+  and it never mentions a key at all — it dies decrypting its own database. See
+  § *Switching the backend under a live session* below, and in particular do **not** run
+  the `pass-cli logout --force` that error suggests. This is why both drop-ins are
+  unconditional rather than probing for a reachable Secret Service: one backend everywhere
+  beats a fallback that silently forks the local state.
+- **CI is untouched, and must stay that way.** Neither drop-in exists on a GitHub-hosted
+  runner or on the Debian build VPS (`files/runner-vps/provision.sh`), so `publish.yml`'s
+  `pass-cli login --pat` keeps the ephemeral keyutils default. Do not move the variable into
+  `mise.toml` `[env]`, which *would* reach both.
+
+### Switching the backend under a live session
+
+Changing `PROTON_PASS_LINUX_KEYRING` while a session created under the *other* backend is
+still on disk fails in a way that looks nothing like the reboot case above, and is much
+easier to misdiagnose. Hit on the workstation 2026-09-28 while building #982:
+
+```console
+Error: fnox::provider::cli_failed
+  × Proton Pass: command failed:
+  │ ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+  │ ERROR CORE sqlite3Codec: error decrypting page 1 data: 1
+  │ Failed to open encrypted database: file is not a database. The encryption key
+  │ may not match or the database may be corrupted. Try running
+  │ 'pass-cli logout --force' to reset local state.
+ERROR: fnox get BUILDBARN_PUSH_TOKEN failed. Set BUILDBARN_PUSH_TOKEN directly or fix fnox/pass-cli auth.
+```
+
+The encrypted state is intact. Its key is simply in the keyring you just stopped using.
+
+- **There is no force-logout, and no mention of a missing key.** Unlike the reboot path,
+  `pass-cli` neither detects this nor self-recovers — it reports a decrypt failure, which
+  reads as disk corruption.
+- **`pass-cli logout --force` does not fix it, and neither does a fresh shell.** Both were
+  tried on 2026-09-28 and both failed: `logout --force` printed
+  `Successfully performed force logout`, and the very next `pass-cli login` — in a new
+  shell carrying the new value — died with the identical hmac error. `logout --force`
+  clears the *session* but leaves `~/.local/share/proton-pass-cli/.session/pass-cli.db`
+  on disk **and** leaves the local key in both keyrings, so the next run re-reads the same
+  mismatched pair. Recovery has to clear all three, which is what actually worked:
+
+  ```shell
+  tar czf ~/pass-cli-broken-state.tar.gz -C ~/.local/share proton-pass-cli   # reversible
+  rm -f ~/.local/share/proton-pass-cli/.session/pass-cli.db
+  secret-tool clear service ProtonPassCLI
+  keyctl purge user "keyring:cli-local-key:<fingerprint>@ProtonPassCLI"
+  PROTON_PASS_LINUX_KEYRING=dbus pass-cli login
+  ```
+
+  Confirm the clear worked before logging in: `pass-cli info` must report
+  `This operation requires an authenticated client`. Any remaining hmac error means one of
+  the three survived.
+- **It is not bow-only.** Every entry in `fnox.toml`'s `[secrets]` resolves through the one
+  `protonpass` provider — the six Secure Boot key/cert secrets and `RUNNER_VPS_USER`/`_IP`
+  as well as the two Buildbarn tokens — so `mise run pull-keys`, `mise run generate-keys`
+  and anything reaching the CI VPS are as dead as `--push`/`--pull` while this lasts.
+- **`pass-cli info` is the cheap discriminator.** Once a new-backend session exists, `info`
+  prints a live session (`Username`, `Email`, `Session has lock: no`) in the new shell
+  while `fnox get` is still failing in the old one. That asymmetry is the tell, and it also
+  separates this case from the reboot one — there, `info` is what surfaces the force-logout.
+
+**Prove the fork before deleting anything — it takes two commands.** The key is stored
+under the *same* name in both backends, so presence alone tells you nothing; compare the
+material:
+
+```shell
+secret-tool search --all service ProtonPassCLI     # note the `secret = …` value
+k=$(keyctl search @s user "keyring:cli-local-key:<fingerprint>@ProtonPassCLI")
+keyctl pipe "$k" | sha256sum                       # differs from sha256 of the above
+```
+
+Two different secrets under one lookup name is the forked state, and it is why the error
+says "the encryption key may not match" rather than naming a keyring problem. Observed
+2026-09-28 with both entries present simultaneously, created seconds apart.
+
+**`fnox` is not just noise here — it is a second, independent cause.** It resolves every
+`[secrets]` entry *concurrently*, so on krytis one invocation is ten `pass-cli` processes
+at once. Against a **cleared or logged-out** state that is ten simultaneous first-time
+initialisations, and they do not agree: one process writes `pass-cli.db` while another
+stores the local key, leaving a db the stored key cannot open. Measured 2026-09-28 on a
+freshly cleared state, single backend, no mixing involved:
+
+| Invocation | Result |
+|---|---|
+| 10 × `pass-cli info` in parallel | db created, 1 key stored, **db unreadable** — `hmac check failed` |
+| 3 × `pass-cli info` serially | `requires an authenticated client` every time, state coherent |
+
+This is why the breakage reappears minutes after a clean-up with nobody having logged in:
+`~/.config/fish/conf.d/01-mise.fish` runs `fnox activate fish | source`, so **opening a
+shell is enough to re-break it**. After any reset, run a single serial `pass-cli login`
+*before* opening a new shell or cd-ing into a repo with an `fnox.toml`.
+
+Note the asymmetry when it does break: under `kernel` the next run finds no key at all,
+force-logs-out and self-heals; under `dbus` the mismatched key persists in the collection,
+so it stays broken until the db and the key are both cleared. The persistent backend that
+fixes the reboot problem is also the one that cannot recover from this on its own.
+
+One more artefact of the concurrency: among the ten traces one usually differs
+(`Command is not logout there is no session`), from whichever process lost the race to a
+partially-written database. Read one trace, not ten; the odd one out is not a separate bug.
+
+**A stale shell keeps failing after the fix, and will lie to you about why.**
+`environment.d` only reaches processes the systemd user manager starts, and the
+`fish/conf.d` copy only new fish shells, so a long-lived shell still carries the old value
+and keeps reproducing the error against a perfectly good session. Timestamps do not
+separate the two causes: a failing `fnox` call can precede the new session directory's
+mtime by seconds and fit a tidy "race" story that is simply wrong. The environment of the
+*calling* shell is what distinguishes them — check `echo $PROTON_PASS_LINUX_KEYRING` in
+the shell that failed.
+
+**On a host that has not yet booted an image carrying `config/proton-pass-keyring.bst`,
+the two image drop-ins do not exist at all** — `/usr/lib/environment.d/50-proton-pass-cli.conf`
+and `/etc/profile.d/50-proton-pass-cli.sh` are simply absent, so only the chezmoi
+`fish/conf.d` copy is in play. That leaves every non-fish context on the kernel default:
+bash, anything the systemd user manager started before `~/.config/environment.d` existed,
+and any coding-agent shell. Mixing is then the *normal* state, not an accident — the fish
+prompt writes the key to the Secret Service while a bash invocation of the same `fnox`
+writes it to keyutils. Bridge the running session until the image is deployed:
+
+```shell
+systemctl --user set-environment PROTON_PASS_LINUX_KEYRING=dbus
+```
+
+Verify with `systemctl --user show-environment | grep PROTON_PASS` — an empty result means
+the user manager never imported `~/.config/environment.d`, which needs a re-login.
+
 ### Testing secret-consuming tasks without a live vault
 
 `mise run` reorders `PATH` so mise-installed tool shims take precedence over any prefix you export (e.g. `PATH=/mock/bin:$PATH mise run generate-keys` still resolves `fnox` from the mise install dir). To mock a secret backend for task testing, shadow the binary at its mise install path instead:

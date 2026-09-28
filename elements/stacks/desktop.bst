@@ -77,6 +77,12 @@ depends:
   # no ssh-agent of its own. Guarded on the variable being unset and the
   # socket existing, so it is inert outside a live user session.
   - config/ssh-agent-env.bst
+  #
+  # proton-pass-keyring: PROTON_PASS_LINUX_KEYRING=dbus, so pass-cli parks its
+  # local encryption key in oo7's on-disk collection instead of the kernel
+  # keyring, which the kernel drops at reboot — otherwise every boot force-logs
+  # the CLI out and `mise run pull-keys` needs a fresh browser login.
+  - config/proton-pass-keyring.bst
 
   # ── User accounts ──────────────────────────────────────────────────────
   # accounts-daemon: AccountsService D-Bus daemon. noctalia-greeter queries
