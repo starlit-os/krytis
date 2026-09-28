@@ -1354,16 +1354,21 @@ The encrypted state is intact. Its key is simply in the keyring you just stopped
   mismatched pair. Recovery has to clear all three, which is what actually worked:
 
   ```shell
+  bash                                    # NOT fish — see the fnox prompt hook below
+  export PROTON_PASS_LINUX_KEYRING=dbus
   tar czf ~/pass-cli-broken-state.tar.gz -C ~/.local/share proton-pass-cli   # reversible
-  rm -f ~/.local/share/proton-pass-cli/.session/pass-cli.db
+  rm -rf ~/.local/share/proton-pass-cli/.session
   secret-tool clear service ProtonPassCLI
   keyctl purge user "keyring:cli-local-key:<fingerprint>@ProtonPassCLI"
-  PROTON_PASS_LINUX_KEYRING=dbus pass-cli login
+  pass-cli info                           # MUST say: requires an authenticated client
+  pass-cli login
   ```
 
-  Confirm the clear worked before logging in: `pass-cli info` must report
-  `This operation requires an authenticated client`. Any remaining hmac error means one of
-  the three survived.
+  Two details the first two attempts at this got wrong. The whole sequence must run in a
+  shell with **no fnox prompt hook**, or the reset is undone between commands. And
+  `rm -rf` the `.session` directory rather than just `pass-cli.db` — leaving the directory
+  with a stale `.last_update_check` is harmless, but deleting only the db while a key
+  survives in either keyring reproduces the same mismatch on the next run.
 - **It is not bow-only.** Every entry in `fnox.toml`'s `[secrets]` resolves through the one
   `protonpass` provider — the six Secure Boot key/cert secrets and `RUNNER_VPS_USER`/`_IP`
   as well as the two Buildbarn tokens — so `mise run pull-keys`, `mise run generate-keys`
@@ -1396,13 +1401,40 @@ freshly cleared state, single backend, no mixing involved:
 
 | Invocation | Result |
 |---|---|
-| 10 × `pass-cli info` in parallel | db created, 1 key stored, **db unreadable** — `hmac check failed` |
-| 3 × `pass-cli info` serially | `requires an authenticated client` every time, state coherent |
+| 10 × `pass-cli info` in parallel, no session | db created, 1 key stored, **db unreadable** — `hmac check failed` |
+| 3 × `pass-cli info` serially, no session | `requires an authenticated client` every time, state coherent |
+| 10 × `pass-cli info` in parallel, **session established** | healthy — session intact, nothing leaked to keyutils |
 
-This is why the breakage reappears minutes after a clean-up with nobody having logged in:
-`~/.config/fish/conf.d/01-mise.fish` runs `fnox activate fish | source`, so **opening a
-shell is enough to re-break it**. After any reset, run a single serial `pass-cli login`
-*before* opening a new shell or cd-ing into a repo with an `fnox.toml`.
+The third row is the qualifier that makes the rest make sense: **only first-time
+initialisation loses the race.** An established session survives concurrency fine, which is
+why fish worked for months and only became unusable once a logged-out state had to be
+recovered.
+
+**Recovering from a logged-out state inside fish is impossible, not merely awkward.**
+`fnox activate fish` hooks **every prompt**, and `PWD` on top of it:
+
+```fish
+function __fnox_env_eval --on-event fish_prompt
+function __fnox_cd_hook --on-variable PWD
+```
+
+so each Enter keypress re-runs the ten-way resolution and re-breaks the database before
+the next command executes. You cannot type `pass-cli login` without first running the thing
+that corrupts it; the login then fails with the same `hmac check failed`. **Log in from
+`bash` instead** — it carries no fnox hook, and it is the only thing that reliably worked
+on 2026-09-28:
+
+```shell
+bash
+export PROTON_PASS_LINUX_KEYRING=dbus   # bash inherits neither fish conf.d nor, on an
+                                        # undeployed host, the image drop-ins
+pass-cli login
+pass-cli info                           # Username / Email / "Session has lock: no"
+```
+
+Once `info` reports a session, fish is safe again — go back to it. Tracked for upstream
+filing in #987; the fix belongs in `fnox` (serialise, or batch one `pass-cli` call per
+resolution) or in `pass-cli` (lock first-time init), and neither repo is ours.
 
 Note the asymmetry when it does break: under `kernel` the next run finds no key at all,
 force-logs-out and self-heals; under `dbus` the mismatched key persists in the collection,
