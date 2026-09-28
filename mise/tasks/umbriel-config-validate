@@ -31,14 +31,16 @@ if ! podman image exists "$IMAGE"; then
     exit 1
 fi
 
-echo "==> Validating /etc/xdg/umbriel/config.toml inside $IMAGE..."
+echo "==> Validating the shipped Umbriel config inside $IMAGE..."
 
 podman run --rm --entrypoint sh "$IMAGE" -c '
 set -u
 status=0
 
 SYSTEM=/etc/xdg/umbriel/config.toml
+SKEL=/etc/skel/.config/umbriel/config.toml
 PACKAGED=/usr/share/umbriel/config.toml
+FRAGMENTS="input.toml layout.toml colors.toml rules.toml binds.toml"
 
 # The overlay `[include]`s the packaged default, so the path upstream installs
 # it to is a hard dependency of the shipped config. A missing include already
@@ -52,19 +54,40 @@ if [ ! -f "$PACKAGED" ]; then
 fi
 
 # Upstream documents [keybinds] as replacing the built-in bind set wholesale.
-# The overlay defines [keybinds] to rebind Mod+Return, which is only safe while
-# the included file contributes the full set — otherwise the merged config ends
-# up with exactly one working keybind, which still validates.
+# files/umbriel/binds.toml overlays a partial bind set onto upstream'"'"'s, which is
+# only safe while the included file still contributes one — otherwise the
+# merged config keeps just the binds krytis names, and that still validates.
 if [ -f "$PACKAGED" ] && ! grep -q "^\[keybinds\]" "$PACKAGED"; then
     echo "    FAIL $PACKAGED no longer defines a [keybinds] table."
-    echo "         files/umbriel/config.toml overlays a single bind onto it;"
-    echo "         with no base table that bind becomes the ENTIRE bind set."
+    echo "         files/umbriel/binds.toml is a partial overlay on top of it;"
+    echo "         with no base table it silently becomes the ENTIRE bind set."
     status=1
 fi
 
 if [ ! -f "$SYSTEM" ]; then
     echo "    FAIL $SYSTEM missing — is config/umbriel-config.bst in the image?"
     exit 1
+fi
+
+# The system config [include]s these by relative name. A fragment dropped from
+# umbriel-config.bst'"'"'s install loop fails closed in validate, but with a
+# generic "include not found" — say which file and which element owns it.
+for f in $FRAGMENTS; do
+    if [ ! -f "/etc/xdg/umbriel/$f" ]; then
+        echo "    FAIL /etc/xdg/umbriel/$f missing — config/umbriel-config.bst"
+        echo "         installs a fixed list; files/umbriel/config.toml includes it."
+        status=1
+    fi
+done
+
+# The seed that keeps noctalia'"'"'s Umbriel theme template additive (krytis#982).
+# Without it, apply.sh writes a tier-1 config.toml holding only the palette
+# include, and every krytis default below tier 1 is silently unreachable.
+if [ ! -f "$SKEL" ]; then
+    echo "    FAIL $SKEL missing — is config/umbriel-skel.bst in"
+    echo "         stacks/desktop.bst? Without it noctalia'"'"'s theme template"
+    echo "         shadows /etc/xdg/umbriel/ entirely for every new account."
+    status=1
 fi
 
 # Upstream moved `validate` under `config` in f66d6a8 (2026-09-27); older pins
@@ -76,20 +99,25 @@ else
     VALIDATE="validate"
 fi
 
-echo "    ==> umbriel $VALIDATE -c $SYSTEM"
-# Not a pipeline: piping into sed would test sed exit status, and umbriel
-# reports drift only through its own exit code.
-out=$(umbriel $VALIDATE -c "$SYSTEM" 2>&1)
-rc=$?
-echo "$out" | sed "s/^/    /"
-if [ "$rc" -eq 0 ]; then
-    echo "    OK   config: valid"
-else
-    echo "    FAIL umbriel rejected the shipped config (see diagnostics above)."
-    echo "         files/umbriel/config.toml has drifted from the pinned"
-    echo "         desktop/umbriel.bst ref. See docs/skills/desktop.md."
-    status=1
-fi
+# Both tiers, because they are different files with different include chains
+# and the skel one is what users actually run.
+for target in "$SYSTEM" "$SKEL"; do
+    [ -f "$target" ] || continue
+    echo "    ==> umbriel $VALIDATE -c $target"
+    # Not a pipeline: piping into sed would test sed exit status, and umbriel
+    # reports drift only through its own exit code.
+    out=$(umbriel $VALIDATE -c "$target" 2>&1)
+    rc=$?
+    echo "$out" | sed "s/^/    /"
+    if [ "$rc" -eq 0 ]; then
+        echo "    OK   $target"
+    else
+        echo "    FAIL umbriel rejected $target (see diagnostics above)."
+        echo "         files/umbriel/ has drifted from the pinned"
+        echo "         desktop/umbriel.bst ref. See docs/skills/desktop.md."
+        status=1
+    fi
+done
 
 exit $status
 '

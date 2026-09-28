@@ -47,6 +47,7 @@ include/efitools.yml                      # freedesktop-sdk's; cited by bst.md, 
 include/gcc-for-recc.yml                  # freedesktop-sdk's; cited by bst.md
 include/recc.yml                          # freedesktop-sdk's; cited by bst.md
 include/meson.build                       # wlroots' own source tree; cited by desktop.md
+docs/user/configuration.md                # noctalia-dev/umbriel's own docs; cited by desktop.md and files/umbriel/*.toml
 patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch  # gnome-build-meta's patch set; cited by bst.md
 scripts/Makefile.in                       # xdg-utils' own source tree; cited by desktop.md
 scripts/build-live-squashfs.sh            # dakota-iso's; cited by dakota-iso.md, secure-boot.md

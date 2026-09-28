@@ -1,0 +1,56 @@
+# krytis: layout and appearance, ported from files/niri/layout.kdl (krytis#982).
+# Included by /etc/xdg/umbriel/config.toml.
+
+[layout]
+# niri: `gaps 4` (umbriel default 8).
+gap = 4
+# niri: preset-column-widths 0.33333 / 0.5 / 0.66667 / 1.0. Upstream umbriel
+# ships the first three; 1.0 is the krytis addition, so Mod+R cycles up to a
+# full-width column the way it does under niri.
+extent_presets = [0.33333, 0.5, 0.66667, 1.0]
+
+[layout.scrolling]
+# niri: `center-focused-column "never"`. Already umbriel's default; stated
+# because niri states it, and a future upstream default change should not
+# silently move krytis.
+center_focused = "never"
+# niri: `default-column-width { proportion 0.66667; }`.
+default_extent_fraction = 0.66667
+
+[layout.struts]
+# niri: `struts { left 4; right 4; top 4; bottom 4 }` -- inset the tiled area
+# beyond whatever exclusive zone the noctalia bar already reserves.
+left = 4
+right = 4
+top = 4
+bottom = 4
+
+[appearance]
+# niri draws two rings: `focus-ring { width 2 }` (focused window only) and
+# `border { width 2 }` (always visible). umbriel's nearest equivalent is a
+# single border plus a concentric outer border, so the widths port across but
+# the semantics are not identical -- umbriel's inner border is always drawn and
+# changes colour on focus (colors.border.focused / .unfocused), rather than
+# being a separate ring that appears on focus. border_width is already 2
+# upstream; outer_border_width defaults to 0.
+border_width = 2
+outer_border_width = 2
+
+# niri: `window-rule { geometry-corner-radius 10; clip-to-geometry true }`
+# applied to all windows. 10 is also umbriel's default. niri's `clip-to-geometry`
+# has no separate umbriel key -- rounded corners clip by construction.
+corner_radius = 10
+
+# niri: `prefer-no-csd`. Already umbriel's default.
+prefer_no_csd = true
+
+# NOT PORTED: niri's `layout { background-color "transparent" }`. umbriel's
+# colors.background is an opaque compositor backdrop with no transparent value,
+# and it is invisible in practice either way -- noctalia draws the wallpaper as
+# a layer-shell surface above it (`[wallpaper] creating on <output>`), so the
+# compositor background is never the visible pixel. Left at upstream's default.
+#
+# NOT PORTED: niri's `animations { slowdown 2.0 }`. umbriel has no global
+# animation multiplier -- 54 individual `animation.*.duration_ms` keys would
+# each need hand-scaling, which would then drift from upstream's own tuning
+# every time it changes a default. See krytis#982.

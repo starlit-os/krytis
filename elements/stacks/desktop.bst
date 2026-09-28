@@ -255,6 +255,10 @@ depends:
   - config/niri-config.bst
   - config/umbriel-config.bst
   - config/niri-skel.bst
+  # Not optional garnish: without this seed, noctalia's Umbriel theme template
+  # writes a tier-1 ~/.config/umbriel/config.toml that shadows
+  # config/umbriel-config.bst entirely. See that element and krytis#982.
+  - config/umbriel-skel.bst
   - config/noctalia-skel.bst
   - config/noctalia-assets.bst
 

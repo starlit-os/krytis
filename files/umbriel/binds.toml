@@ -1,0 +1,220 @@
+# krytis: keybinds, ported from files/niri/binds.kdl and files/niri/binds/*.kdl
+# (krytis#982). Included by /etc/xdg/umbriel/config.toml.
+#
+# [keybinds] is a TABLE, so it MERGES BY KEY with upstream's packaged bind set
+# rather than replacing it. Every bind here either adds a key upstream leaves
+# free or overrides one upstream binds to something else; upstream binds not
+# named here stay active. The overrides are listed explicitly in the sections
+# below so the divergence is auditable rather than implicit.
+#
+# Upstream binds krytis deliberately leaves in place (no niri counterpart, and
+# a table merge cannot remove a key):
+#   Mod          launcher (duplicates niri's Mod+Space, which is also bound)
+#   Mod+T        window-toggle-floating   (niri uses Mod+V, also bound)
+#   Mod+Shift+T  window-focus-switch-floating (niri uses Mod+Shift+V)
+#   Mod+P        window-toggle-pinned
+#   Mod+F1       window-focus-next
+#   Mod+Ctrl+F   window-toggle-maximize  -- see the gap note at the bottom
+#   Mod+Shift+1..9  window-move-to-workspace:N (niri uses Mod+Ctrl+N)
+#   Mod+Shift+Space / Mod+Ctrl+Space / Mod+Tab  scratchpad move/restore/cycle.
+#     Note Mod+Space is re-bound below to the launcher, so `scratchpad-toggle`
+#     itself is left without a key; the other three scratchpad binds remain.
+
+[keybinds]
+
+# ── Applications and session ─────────────────────────────────────────────────
+# niri: `Mod+Return hotkey-overlay-title=... { spawn "ghostty"; }`. Overrides
+# upstream's spawn:kitty. Only `action` is set so upstream's own repeat = false
+# merges through key-by-key.
+"Mod+Return" = { action = "spawn:ghostty" }
+"Mod+E" = "spawn:nautilus"
+
+# niri: `Mod+Shift+7 { show-hotkey-overlay; }` -- Mod+Shift+/ on a US layout.
+"Mod+Shift+7" = { action = "cheatsheet-toggle", repeat = false }
+
+# niri: `Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }`.
+# OVERRIDE: upstream binds Mod+Escape to session-quit. niri's quit keys are
+# Mod+Shift+E and Ctrl+Alt+Delete, both bound below, and upstream's own
+# Mod+Shift+Escape escape hatch stays available either way.
+"Mod+Escape" = { action = "shortcuts-inhibit-toggle", allow_when_inhibited = true, repeat = false }
+
+# niri: `Mod+Shift+E { quit; }` and `Ctrl+Alt+Delete { quit; }`. Both show a
+# confirmation first, matching niri's quit dialog.
+"Mod+Shift+E" = { action = "session-quit", repeat = false }
+"Ctrl+Alt+Delete" = { action = "session-quit", repeat = false }
+
+# niri: `Mod+Shift+P { power-off-monitors; }`.
+"Mod+Shift+P" = { action = "dpms-off", repeat = false }
+
+# ── Screenshots ──────────────────────────────────────────────────────────────
+# niri has built-in screenshot actions; umbriel has none, and the image ships
+# no grim/slurp/satty. Routed through noctalia, which does. niri's Print was an
+# interactive region grab and Ctrl+Print the whole screen.
+"Print" = { action = "spawn:noctalia msg screenshot-region", repeat = false }
+"Ctrl+Print" = { action = "spawn:noctalia msg screenshot-fullscreen", repeat = false }
+
+# ── Noctalia shell ───────────────────────────────────────────────────────────
+# niri: `Mod+Space { spawn-sh "noctalia msg panel-toggle launcher"; }`.
+# OVERRIDE: upstream binds Mod+Space to scratchpad-toggle.
+"Mod+Space" = { action = "spawn:noctalia msg panel-toggle launcher", repeat = false }
+
+"XF86AudioPlay" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
+"XF86AudioNext" = { action = "spawn:noctalia msg media next", allow_when_locked = true }
+# niri's binds/noctalia.kdl spells this `media mrevious`, which is a typo and a
+# no-op; the niri file is corrected in the same commit.
+"XF86AudioPrev" = { action = "spawn:noctalia msg media previous", allow_when_locked = true }
+
+"XF86AudioRaiseVolume" = "spawn:noctalia msg volume-up"
+"XF86AudioLowerVolume" = "spawn:noctalia msg volume-down"
+"XF86AudioMute" = "spawn:noctalia msg volume-mute"
+
+"XF86MonBrightnessUp" = "spawn:noctalia msg brightness-up"
+"XF86MonBrightnessDown" = "spawn:noctalia msg brightness-down"
+
+# ── Focus ────────────────────────────────────────────────────────────────────
+# Mod+arrows and Mod+HJKL already match upstream; not restated.
+
+# niri: Mod+Home / Mod+End focus-column-first / -last.
+"Mod+Home" = "column-focus-first"
+"Mod+End" = "column-focus-last"
+
+# niri: Mod+Shift+<dir> focus-monitor-<dir>.
+# OVERRIDE: upstream binds Mod+Shift+Left/Right to column-move-left/right and
+# Mod+Shift+Up/Down to window-move-up/down. niri puts column/window movement on
+# Mod+Ctrl+<dir>, which is bound below, so nothing is lost.
+"Mod+Shift+Left" = "output-focus-left"
+"Mod+Shift+Down" = "output-focus-down"
+"Mod+Shift+Up" = "output-focus-up"
+"Mod+Shift+Right" = "output-focus-right"
+"Mod+Shift+H" = "output-focus-left"
+"Mod+Shift+J" = "output-focus-down"
+"Mod+Shift+K" = "output-focus-up"
+"Mod+Shift+L" = "output-focus-right"
+
+# ── Move ─────────────────────────────────────────────────────────────────────
+# niri: Mod+Ctrl+<dir> move-column-left/right, move-window-up/down. The
+# horizontal pair moves the whole column, the vertical pair one window inside
+# it -- same asymmetry as niri.
+"Mod+Ctrl+Left" = "column-move-left"
+"Mod+Ctrl+Down" = "window-move-down"
+"Mod+Ctrl+Up" = "window-move-up"
+"Mod+Ctrl+Right" = "column-move-right"
+"Mod+Ctrl+H" = "column-move-left"
+"Mod+Ctrl+J" = "window-move-down"
+"Mod+Ctrl+K" = "window-move-up"
+"Mod+Ctrl+L" = "column-move-right"
+
+"Mod+Ctrl+Home" = "column-move-to-first"
+"Mod+Ctrl+End" = "column-move-to-last"
+
+# niri: Mod+Shift+Ctrl+<dir> move-column-to-monitor-<dir>.
+"Mod+Shift+Ctrl+Left" = "column-move-to-output-left"
+"Mod+Shift+Ctrl+Down" = "column-move-to-output-down"
+"Mod+Shift+Ctrl+Up" = "column-move-to-output-up"
+"Mod+Shift+Ctrl+Right" = "column-move-to-output-right"
+"Mod+Shift+Ctrl+H" = "column-move-to-output-left"
+"Mod+Shift+Ctrl+J" = "column-move-to-output-down"
+"Mod+Shift+Ctrl+K" = "column-move-to-output-up"
+"Mod+Shift+Ctrl+L" = "column-move-to-output-right"
+
+# niri: consume-or-expel-window-left/right on the bracket keys.
+"Mod+BracketLeft" = "window-consume-or-expel-left"
+"Mod+BracketRight" = "window-consume-or-expel-right"
+
+# ── Sizing ───────────────────────────────────────────────────────────────────
+# Mod+R / Mod+Shift+R (cycle primary extent) already match upstream.
+
+# niri: Mod+Ctrl+Shift+R switch-preset-window-height.
+"Mod+Ctrl+Shift+R" = "window-cycle-secondary-extent"
+
+# niri: Mod+F maximize-column. OVERRIDE: upstream binds Mod+F to fullscreen and
+# has no key for "full width column". niri's fullscreen is Mod+Shift+F, below.
+"Mod+F" = { action = "window-toggle-maximize", repeat = false }
+"Mod+Shift+F" = { action = "window-toggle-fullscreen", repeat = false }
+
+# niri: Mod+C center-column.
+"Mod+C" = { action = "column-center", repeat = false }
+
+# niri: Mod+Minus / Mod+Equal set-column-width "-10%" / "+10%", and the Shift
+# pair for height. umbriel takes the same step as a fraction of the viewport.
+"Mod+Minus" = "window-modify-primary-extent:-0.1"
+"Mod+Equal" = "window-modify-primary-extent:0.1"
+"Mod+Shift+Minus" = "window-modify-secondary-extent:-0.1"
+"Mod+Shift+Equal" = "window-modify-secondary-extent:0.1"
+
+# niri: Mod+V toggle-window-floating, Mod+Shift+V switch-focus-between-
+# floating-and-tiling. Upstream puts the same two actions on Mod+T / Mod+Shift+T,
+# which remain bound as well.
+"Mod+V" = { action = "window-toggle-floating", repeat = false }
+"Mod+Shift+V" = { action = "window-focus-switch-floating", repeat = false }
+
+# ── Workspaces ───────────────────────────────────────────────────────────────
+# Mod+1..9 (workspace-switch:N) already match upstream.
+#
+# niri's workspaces are a vertical strip (focus-workspace-down/up); umbriel's
+# are an ordered list (workspace-next/previous). Down maps to next.
+"Mod+Page_Down" = "workspace-next"
+"Mod+Page_Up" = "workspace-previous"
+"Mod+U" = "workspace-next"
+"Mod+I" = "workspace-previous"
+
+"Mod+Ctrl+Page_Down" = "column-move-to-workspace-next"
+"Mod+Ctrl+Page_Up" = "column-move-to-workspace-previous"
+"Mod+Ctrl+U" = "column-move-to-workspace-next"
+"Mod+Ctrl+I" = "column-move-to-workspace-previous"
+
+# niri: move-workspace-down/up -- reorders the workspace itself.
+"Mod+Shift+Page_Down" = "workspace-move-down"
+"Mod+Shift+Page_Up" = "workspace-move-up"
+"Mod+Shift+U" = "workspace-move-down"
+"Mod+Shift+I" = "workspace-move-up"
+
+# niri: Mod+Ctrl+N move-column-to-workspace N.
+"Mod+Ctrl+1" = "column-move-to-workspace:1"
+"Mod+Ctrl+2" = "column-move-to-workspace:2"
+"Mod+Ctrl+3" = "column-move-to-workspace:3"
+"Mod+Ctrl+4" = "column-move-to-workspace:4"
+"Mod+Ctrl+5" = "column-move-to-workspace:5"
+"Mod+Ctrl+6" = "column-move-to-workspace:6"
+"Mod+Ctrl+7" = "column-move-to-workspace:7"
+"Mod+Ctrl+8" = "column-move-to-workspace:8"
+"Mod+Ctrl+9" = "column-move-to-workspace:9"
+
+# ── Scroll wheel ─────────────────────────────────────────────────────────────
+# niri binds the vertical wheel to workspaces and the horizontal wheel to
+# columns. OVERRIDE: upstream binds Mod+WheelUp/Down to window focus, which
+# would leave the vertical wheel doing what niri puts on the horizontal one.
+"Mod+WheelDown" = { action = "workspace-next", cooldown_ms = 150 }
+"Mod+WheelUp" = { action = "workspace-previous", cooldown_ms = 150 }
+"Mod+Ctrl+WheelDown" = { action = "column-move-to-workspace-next", cooldown_ms = 150 }
+"Mod+Ctrl+WheelUp" = { action = "column-move-to-workspace-previous", cooldown_ms = 150 }
+
+"Mod+WheelLeft" = "window-focus-left"
+"Mod+WheelRight" = "window-focus-right"
+"Mod+Ctrl+WheelLeft" = "column-move-left"
+"Mod+Ctrl+WheelRight" = "column-move-right"
+
+# niri replicates horizontal scrolling with Shift held, as applications do.
+"Mod+Shift+WheelUp" = "window-focus-left"
+"Mod+Shift+WheelDown" = "window-focus-right"
+"Mod+Ctrl+Shift+WheelUp" = "column-move-left"
+"Mod+Ctrl+Shift+WheelDown" = "column-move-right"
+
+# ── Deliberately unbound: niri actions with no umbriel equivalent ─────────────
+# Leaving these keys free is the point. Rebinding them to the nearest available
+# action would give a niri user a key that looks familiar and behaves
+# differently, which is worse than a key that does nothing. See krytis#982.
+#
+#   Mod+W        toggle-column-tabbed-display. umbriel has no tabbed column
+#                display at all -- no `tab` action, no schema key.
+#   Mod+Ctrl+C   center-visible-columns. umbriel has only column-center, which
+#                is niri's center-column and is bound to Mod+C above.
+#   Mod+Ctrl+R   reset-window-height. umbriel can cycle and modify the
+#                secondary extent but cannot reset it.
+#   Alt+Print    screenshot-window. Neither umbriel nor noctalia can capture a
+#                single window; region and fullscreen are bound above.
+#
+# Mod+Ctrl+F is niri's expand-column-to-available-width, which umbriel also
+# lacks -- but upstream already binds that key to window-toggle-maximize, and a
+# table merge cannot remove a bind. It is left as upstream set it rather than
+# silently shadowed.

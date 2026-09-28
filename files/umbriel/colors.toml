@@ -1,0 +1,37 @@
+# krytis: palette, ported from files/niri/noctalia.kdl (krytis#982).
+# Included by /etc/xdg/umbriel/config.toml.
+#
+# This is the static fallback only. noctalia's own theme template
+# (/usr/share/noctalia/assets/templates/umbriel/, registered in builtin.toml as
+# [templates.umbriel]) renders the live palette to
+# ~/.config/umbriel/noctalia.toml and appends it LAST to the user config's
+# include list, so once a user enables that template it overrides everything
+# here -- exactly as assets/templates/niri/ overrides files/niri/noctalia.kdl.
+# The values below are what an account sees before that ever runs.
+#
+# umbriel takes 8-digit #RRGGBBAA; niri's KDL took 6-digit for opaque colours.
+# The Rosé Pine Moon values are carried across unchanged with FF appended.
+
+[colors]
+# niri: insert-hint { color "#ea9a9780" } -- already 8-digit there.
+insert_hint = "#ea9a9780"
+# niri: shadow { color "#23213670" }.
+shadow = "#23213670"
+
+[colors.border]
+# niri set the same pair on both focus-ring and border; umbriel has one border,
+# so the pair applies once.
+focused = "#ea9a97ff"
+unfocused = "#232136ff"
+# niri has no equivalent -- its second ring carried its own active/inactive
+# colours rather than an outer edge. Matched to the unfocused base so the
+# concentric ring reads as a shadow line rather than a second accent.
+outer = "#232136ff"
+
+# NOT PORTED, no umbriel equivalent exists (krytis#982):
+#   - urgent-color on focus-ring / border / tab-indicator (niri "#eb6f92").
+#     umbriel has no urgency colour anywhere in `umbriel config schema`.
+#   - tab-indicator { ... }. umbriel has no tabbed column display at all --
+#     zero `tab` actions in `umbriel msg --help`, zero tab keys in the schema.
+#   - recent-windows { highlight { ... } }. No such subsystem; umbriel's
+#     window-focus-last / window-focus-next carry no visual switcher.
