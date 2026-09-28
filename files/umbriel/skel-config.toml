@@ -1,0 +1,42 @@
+# krytis: seeded to /etc/skel/.config/umbriel/config.toml by
+# elements/config/umbriel-skel.bst, and copied into every new account's home
+# directory by useradd --create-home / homectl firstboot.
+#
+# THIS FILE EXISTS TO BE OVERWRITTEN SAFELY. It is not a convenience copy.
+#
+# noctalia ships an Umbriel theme template
+# (/usr/share/noctalia/assets/templates/umbriel/, registered in builtin.toml as
+# [templates.umbriel] with output_path $XDG_CONFIG_HOME/umbriel/noctalia.toml).
+# Its apply.sh branches on whether this file already exists:
+#
+#   if [ ! -f "$config_file" ]; then
+#       printf '[include]\n%s\n' 'files = ["noctalia.toml"]' >"$config_file"
+#       exit 0
+#   fi
+#
+# With no seed, enabling that template creates a tier-1
+# ~/.config/umbriel/config.toml containing ONLY an include of the palette.
+# umbriel's lookup is first-match, not merged across tiers, so
+# /etc/xdg/umbriel/config.toml is never read again -- every krytis default
+# (autostart, binds, rules, input) disappears silently, and so does upstream's
+# own packaged config, because the /etc/xdg overlay is what included it. This
+# is the same trap krytis#490 hit with niri, which is why config/niri-skel.bst
+# exists; see krytis#982.
+#
+# When the file DOES exist, apply.sh instead awk-merges "noctalia.toml" into
+# include.files and appends it LAST, so the resulting order is correct without
+# any coordination:
+#
+#   [include]
+#   files = ["/etc/xdg/umbriel/config.toml", "noctalia.toml"]
+#
+# -- system config first, live noctalia palette overriding it, and upstream's
+# packaged default pulled in transitively by the system config's own include.
+#
+# Edit freely: values set below the include win over everything it pulls in,
+# and additional includes can be listed after it.
+
+[include]
+# Absolute: this file is copied into $HOME, so a relative path would resolve
+# against ~/.config/umbriel rather than /etc/xdg/umbriel.
+files = ["/etc/xdg/umbriel/config.toml"]

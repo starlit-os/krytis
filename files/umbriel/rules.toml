@@ -1,0 +1,71 @@
+# krytis: window and layer rules, ported from files/niri/rules.kdl (krytis#982).
+# Included by /etc/xdg/umbriel/config.toml.
+#
+# [[window_rule]] and [[layer_rule]] COLLECT across included files rather than
+# replacing (upstream docs/user/configuration.md § Include), so everything here
+# is added to upstream's packaged set, not instead of it. Rules apply in order
+# and a later rule wins on the keys it sets -- which is why the toast override
+# below can adjust upstream's own rule by repeating its match.
+#
+# match.app_id and match.title are regexes, so literal dots need escaping.
+
+# niri: steam_app_* variable-refresh-rate true. Games drive their own frame
+# pacing; let the output follow them.
+[[window_rule]]
+match.app_id = "^steam_app_.*$"
+vrr = "always"
+
+# niri: steam notificationtoasts default-floating-position x=10 y=10
+# relative-to="bottom-right". Upstream already ships this rule matching the
+# same title, but anchors at x=0 y=0; repeating the match nudges it to niri's
+# inset without restating default_focused / default_pinned, which upstream
+# already sets and which merge through untouched.
+[[window_rule]]
+match.title = "^notificationtoasts_.+_desktop"
+default_position = { x = 10, y = 10, anchor = "bottom_right" }
+
+# niri: ghostty default-column-width { proportion 0.33333 }.
+[[window_rule]]
+match.app_id = "^ghostty$"
+default_scrolling_extent = 0.33333
+
+# niri: Proton Pass default-column-width { proportion 0.33333 }. niri matched
+# app-id="Proton Pass" title="^Proton Pass$"; the app_id carries a space.
+[[window_rule]]
+match.app_id = "^Proton Pass$"
+match.title = "^Proton Pass$"
+default_scrolling_extent = 0.33333
+
+# niri: floating Noctalia settings window at a fixed 1080x920. Distinct from
+# upstream's own ^dev[.]noctalia[.]Noctalia$ rule (1020x900) -- that one is the
+# shell, this is the settings window.
+[[window_rule]]
+match.app_id = "^dev[.]noctalia[.]Noctalia[.]Settings$"
+default_floating = true
+default_floating_size_px = { width = 1080, height = 920 }
+
+# NOT PORTED -- already covered by upstream's packaged config, and repeating a
+# rule that collects rather than replaces would only duplicate work:
+#   - blur every window with the non-optimized path (niri's
+#     `background-effect { blur true; xray false }` for all windows) is
+#     upstream's first [[window_rule]]: blur = true, blur_optimized = false.
+#   - Picture-in-Picture floating. Upstream matches the title
+#     ^(Picture-in-Picture|Picture in picture)$ for any app; niri's rule was
+#     narrower (firefox only), so upstream's is a superset.
+#   - the noctalia-* layer blur rule. Upstream's namespace regex already covers
+#     bar / notification / dock / panel / attached-panel / osd and adds
+#     desktop-widget-*, with blur_ignore_alpha = 0.5 and blur_popups = true.
+#
+# NOT PORTED -- the referenced application is not in the image. Verified with
+# `podman run --rm --entrypoint sh localhost/krytis:latest -c 'command -v <app>'`:
+#   - wezterm (its empty default-column-width was an initial-configure
+#     workaround) and kitty. Neither binary exists in krytis.
+#
+# NOT PORTED -- no umbriel equivalent exists (krytis#982):
+#   - `draw-border-with-background false` for ghostty and zed. umbriel has no
+#     key controlling whether the border is filled behind a translucent window.
+#   - layer-rule { match namespace="^noctalia-backdrop"; place-within-backdrop
+#     true }. umbriel's [[layer_rule]] exposes only match.namespace plus four
+#     blur keys -- there is no placement control, so noctalia's
+#     backdrop-behind-the-overview effect cannot be reproduced. colors.backdrop
+#     is a colour, not a placement.

@@ -138,17 +138,17 @@ pattern needed (config lookup gracefully falls back to it, unlike
 `noctalia-greeter`'s mutable `/var` `greeter.toml`, which needs
 `config/greeter-config-seed.bst`'s oneshot-unit pattern).
 
-`config/umbriel-config.bst` ships a small **overlay** one tier higher, at
+`config/umbriel-config.bst` ships an **overlay** one tier higher, at
 `/etc/xdg/umbriel/config.toml` (`$XDG_CONFIG_DIRS`, tier 2): an `[include]`
-of `/usr/share/umbriel/config.toml` plus exactly two krytis-specific values
-(see `files/umbriel/config.toml`'s header for the full rationale):
-
-1. `autostart = ["noctalia"]` (upstream ships `autostart = []` — without
-   this, noctalia-shell never launches under umbriel, and the panel/
-   launcher/lock-screen acceptance criteria in #775 cannot pass).
-2. `"Mod+Return" = { action = "spawn:ghostty" }` (upstream's example binds
-   `kitty`, which krytis does not package; krytis ships ghostty —
-   `desktop/ghostty.bst`).
+of `/usr/share/umbriel/config.toml`, then the krytis fragments
+(`input.toml`, `layout.toml`, `colors.toml`, `rules.toml`, `binds.toml`),
+then its own `[general]`/`[environment]`. The split mirrors `files/niri/*.kdl`
+and the port that filled it is #982, below; #980 is why the base layer is an
+include rather than a copy. Fragment paths are relative and resolve against
+`/etc/xdg/umbriel/`, so they only work because `umbriel-config.bst` installs
+them beside `config.toml` — the element's install loop and
+`config.toml`'s `files = [...]` list have to stay in step, which is what
+`mise run umbriel-config-validate` now checks by name.
 
 **This file used to be all 836 lines of upstream's example, vendored with the
 two edits applied, and that is what #980 had to undo.** The reasoning at the
@@ -212,6 +212,132 @@ Verified on the reference machine (installed binary `umbriel 0.1.0
 | include sets `99999`, main file sets `gap = 8` | `config: ok` — main file wins over its includes |
 | include points at a nonexistent path | invalid, `include not found` — fails closed |
 | the real overlay against `/usr/share/umbriel/config.toml` | `config: ok` |
+
+### Config parity with niri — and the tier-1 seed that makes it reachable (#982)
+
+`files/umbriel/` is the TOML port of `files/niri/*.kdl`, split the same way.
+About **90%** of the niri config carries across; the residue is listed at the
+bottom and is deliberately left unbound rather than approximated.
+
+**The load-bearing half is `config/umbriel-skel.bst`, not the fragments.**
+noctalia ships an Umbriel theme template
+(`/usr/share/noctalia/assets/templates/umbriel/`, registered in
+`builtin.toml` as `[templates.umbriel]`), and its `apply.sh` is the #490 trap
+again with a different filename:
+
+```sh
+config_file="$config_dir/config.toml"          # ~/.config/umbriel/config.toml
+if [ ! -f "$config_file" ]; then
+    printf '[include]\n%s\n' 'files = ["noctalia.toml"]' >"$config_file"
+    exit 0
+fi
+```
+
+Without a seed, enabling that template creates a **tier-1** config holding only
+the palette include. Lookup is first-match, so `/etc/xdg/umbriel/` is never read
+again — every krytis default vanishes, *and so does upstream's packaged
+default*, because the tier-2 overlay is what pulled tier 3 in. The session drops
+to compiled-in defaults plus colours. With the seed present, `apply.sh` takes
+its other branch and awk-merges `"noctalia.toml"` into the existing
+`include.files`, appending it **last**, so precedence lands correctly with no
+coordination between the two projects:
+
+```toml
+files = ["/etc/xdg/umbriel/config.toml", "noctalia.toml"]
+```
+
+Unlike `niri-skel.bst`, which seeds the *same* files at both tiers, the umbriel
+seed is a different file — a two-line include. Copying `/etc/xdg`'s config into
+every home directory would freeze that copy per-account; an include keeps the
+account tracking the image.
+
+**`umbriel config validate` is strict enough to be a real port gate.** It
+rejects all three failure classes, verified by construction against
+`2c683caf4bcc`:
+
+| deliberately broken input | diagnostic |
+|---|---|
+| `"Mod+Nonsense_Key" = "window-close"` | `ignoring keybind 'Mod+Nonsense_Key' (bad chord)` |
+| `"Mod+Page_Down" = "no-such-action"` | `ignoring keybind 'Mod+Page_Down' (unknown action …)` |
+| `[layout] not_a_key = 1` | `unknown key layout.not_a_key` |
+
+So `config: ok` on the ported tree is a positive statement about every bind,
+action name, key name and config path in it — not merely "the TOML parsed".
+Validate the whole tree against the image binary without a rebuild:
+
+```shell
+podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
+  --entrypoint umbriel localhost/krytis:latest \
+  config validate -c /etc/xdg/umbriel/config.toml
+```
+
+#### Translation notes that are not obvious from either config
+
+- **`[environment]` cannot set `XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP` or
+  `XDG_SESSION_TYPE`.** umbriel owns them and refuses overrides (upstream
+  `docs/user/configuration.md` § Environment). niri's `environment` block sets
+  all three; porting them is not merely redundant, it is rejected. umbriel
+  publishes `XDG_CURRENT_DESKTOP=Umbriel` itself, which is what
+  `xdg-desktop-portal-umbriel`'s `umbriel-portals.conf` (`default=umbriel;gtk`)
+  keys off. The other ten variables port unchanged.
+- **`general.autostart` entries are command *lines*, not argv.** Verified in a
+  headless run: `spawned 'flatpak run --command=bazaar-daemon
+  io.github.kolunmi.Bazaar --no-window'`. The niri equivalent was a
+  `spawn-at-startup` with separate argv tokens.
+- **`[keybinds]` merges by key, so upstream's binds survive.** The port can
+  override a key but cannot *remove* one. Every upstream bind krytis has no
+  niri counterpart for is still live — `Mod` (launcher), `Mod+T`, `Mod+P`,
+  `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad trio. They are enumerated in
+  `files/umbriel/binds.toml`'s header so the divergence is auditable.
+- **Five upstream binds mean something different under niri and are overridden:**
+  `Mod+Space` (scratchpad → launcher), `Mod+Escape` (quit → shortcuts-inhibit),
+  `Mod+F` (fullscreen → maximize), `Mod+Shift+<dir>` (move → focus output), and
+  `Mod+Wheel<Up|Down>` (window focus → workspace). Re-binding `Mod+Space` leaves
+  `scratchpad-toggle` with no key; the other three scratchpad binds remain.
+- **Upstream's packaged config enables a hot corner.** niri has
+  `gestures { hot-corners { off } }`; umbriel's default config turns top-left
+  into overview-open after 500 ms. `input.toml` disables it explicitly — dropping
+  that stanza silently adds a gesture niri users never had.
+- **Rule lists collect, scalars replace.** `[[window_rule]]` in `rules.toml`
+  *adds* to upstream's set, so a rule repeating upstream's match adjusts it
+  rather than replacing it (used for the steam toast inset). Anything niri did
+  that upstream already ships — blur-all, Picture-in-Picture floating, the
+  `noctalia-*` layer blur — is deliberately not restated.
+- **`wezterm` and `kitty` window rules are not ported.** Neither binary is in
+  the image; confirmed with
+  `podman run --rm --entrypoint sh localhost/krytis:latest -c 'command -v kitty'`.
+
+#### Capability gaps — no umbriel equivalent exists
+
+Keys are left **unbound** rather than pointed at the nearest similar action: a
+familiar key that behaves differently is worse than one that does nothing.
+
+| niri | gap |
+|---|---|
+| `toggle-column-tabbed-display` (`Mod+W`) | no tabbed columns at all — zero `tab` actions, zero schema keys |
+| `center-visible-columns` (`Mod+Ctrl+C`) | only `column-center`, which is niri's `center-column` (`Mod+C`) |
+| `reset-window-height` (`Mod+Ctrl+R`) | secondary extent can cycle and modify, not reset |
+| `screenshot-window` (`Alt+Print`) | neither umbriel nor noctalia captures a single window; region and fullscreen route through `noctalia msg` |
+| `urgent-color` | no urgency colour anywhere in the schema |
+| `tab-indicator`, `recent-windows` | subsystems do not exist |
+| `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` exposes only `match.namespace` + four blur keys; `colors.backdrop` is a colour, not placement |
+| `draw-border-with-background false` | no equivalent |
+| `animations { slowdown 2.0 }` | no global multiplier; 54 separate `animation.*.duration_ms` keys |
+| `clip-to-geometry true` | not exposed independently of `corner_radius` |
+
+`Mod+Ctrl+F` is niri's `expand-column-to-available-width`, also absent — but
+upstream already binds that key to `window-toggle-maximize` and a table merge
+cannot remove a bind, so it is left as upstream set it.
+
+#### Upstream bug found during the port
+
+noctalia v5.0.1's `umbriel.toml` template emits `colors.border.scratchpad_focused`
+and `colors.border.scratchpad_unfocused`. umbriel `2c683ca`'s schema has only
+`colors.border.{focused,outer,unfocused}`, so any account enabling the template
+gets a config `umbriel config validate` rejects. Same drift class as #980, on
+noctalia's side. Both are `noctalia-dev/` repos — Upstream Gate applies, nothing
+has been filed.
+
 
 **No `config/xdg-portals.bst`-style routing file needed for umbriel** — unlike
 niri (which isn't a portal implementation itself and needed a hand-authored
@@ -721,14 +847,25 @@ mise run umbriel-config-validate                   # localhost/krytis:latest
 mise run umbriel-config-validate --image <tag>
 ```
 
-Runs upstream's own `umbriel validate` against the installed
-`/etc/xdg/umbriel/config.toml` inside the built image, plus two assertions the validator
-cannot make: that `/usr/share/umbriel/config.toml` (the overlay's `[include]` target, and
-therefore a hard dependency of the shipped config) still exists at that path, and that it
-still defines a `[keybinds]` table. Needs **no GPU, no seat and no root** — `umbriel validate`
-only parses — so unlike `compositor-smoke` it runs anywhere the image does, including CI.
+Runs upstream's own `umbriel config validate` against **both** shipped tiers inside the built
+image — `/etc/xdg/umbriel/config.toml` (`config/umbriel-config.bst`) and
+`/etc/skel/.config/umbriel/config.toml` (`config/umbriel-skel.bst`) — because they are
+different files with different include chains, and the skel one is what accounts actually
+run. Plus four assertions the validator cannot make on its own:
 
-It exists because nothing previously connected `files/umbriel/config.toml` to the binary that
+- `/usr/share/umbriel/config.toml` still exists at that path (the overlay's `[include]`
+  target, and therefore a hard dependency of everything krytis ships).
+- that file still defines a `[keybinds]` table — `binds.toml` is a *partial* overlay, so
+  without a base table it silently becomes the entire bind set, and still validates.
+- every fragment `config.toml` includes by relative name is installed beside it, naming the
+  missing file and the element that owns it rather than emitting a generic "include not found".
+- the skel seed is present at all — without it noctalia's theme template shadows
+  `/etc/xdg/umbriel/` entirely for every new account (#982).
+
+Needs **no GPU, no seat and no root** — validation only parses — so unlike `compositor-smoke`
+it runs anywhere the image does, including CI.
+
+It exists because nothing previously connected `files/umbriel/` to the binary that
 reads it: `desktop/umbriel.bst` tracks `refs/heads/main` and is ref-bumped daily, and
 `bst source track` cannot re-vendor a `kind: local` data file. Run it after any
 `chore(deps): update umbriel` bump.

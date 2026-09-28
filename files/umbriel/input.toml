@@ -1,0 +1,41 @@
+# krytis: input configuration, ported from files/niri/input.kdl (krytis#982).
+# Included by /etc/xdg/umbriel/config.toml.
+
+[input.keyboard]
+# niri: repeat-delay 300, repeat-rate 30. umbriel defaults are 600/25.
+repeat_delay = 300
+repeat_rate = 30
+# niri: bare `numlock`. Enables NumLock when a physical keyboard connects.
+numlock_toggle = true
+
+[input.touchpad]
+# niri: `touchpad { tap; natural-scroll }`. tap already defaults true upstream;
+# stated explicitly so the ported intent is visible next to natural_scroll.
+tap = true
+natural_scroll = true
+
+[input.mouse]
+# niri: `mouse { accel-profile "flat" }`.
+accel_profile = "flat"
+
+[input.focus]
+# niri: `focus-follows-mouse max-scroll-amount="0%"` -- pointer focus follows
+# the cursor, but crossing a window edge never scrolls the strip to reach it.
+# umbriel expresses the same cap as a fraction rather than a percentage.
+follows_mouse = true
+follows_mouse_max_scroll = 0.0
+
+[input.cursor]
+# niri: `cursor { xcursor-theme "Adwaita"; xcursor-size 24 }`. 24 is also
+# umbriel's default; the theme is not.
+theme = "Adwaita"
+size = 24
+
+# niri: `gestures { hot-corners { off } }`.
+#
+# This is a real override, not a restatement of a default: upstream umbriel's
+# packaged config ENABLES the top-left corner with a 500 ms delay bound to
+# overview-open. Dropping this section would hand krytis a hot corner niri
+# users have never had. The other three corners default to disabled.
+[hot_corners.top_left]
+enabled = false

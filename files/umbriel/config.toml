@@ -2,57 +2,97 @@
 # /etc/xdg/umbriel/config.toml by elements/config/umbriel-config.bst.
 #
 # This is an OVERLAY, not a vendored copy. It includes upstream's own packaged
-# default and then sets only the two values krytis needs to differ on. Read
+# default and then layers krytis's fragments over it. Read
 # /usr/share/umbriel/config.toml for the annotated reference of every setting.
 #
 # Why an overlay (krytis#980). This file used to be all 836 lines of
 # noctalia-dev/umbriel's examples/config.toml, vendored once on 2026-09-10
 # (#775) with two edits applied. desktop/umbriel.bst tracks refs/heads/main and
 # is ref-bumped daily by .github/workflows/track-bst-sources.yml, so upstream's
-# 2026-09-16 renames (window-cycle-width -> window-cycle-primary-extent,
-# layout.width_presets -> extent_presets, default_width_fraction ->
-# default_extent_fraction, window_rule.default_size ->
-# default_floating_size_px) silently invalidated six settings here while
-# nothing in the tree noticed. `bst source track` cannot re-vendor a data file,
-# so a full copy is structurally guaranteed to rot against the binary beside
-# it. Upstream's /usr/share/umbriel/config.toml is installed by the same meson
+# 2026-09-16 renames silently invalidated six settings here while nothing in
+# the tree noticed. `bst source track` cannot re-vendor a data file, so a full
+# copy is structurally guaranteed to rot against the binary beside it.
+# Upstream's /usr/share/umbriel/config.toml is installed by the same meson
 # build as /usr/bin/umbriel (meson.build install_data), so including it is the
 # only form of this file that cannot drift.
 #
-# Merge semantics (src/config/config_merge.cpp, deepMerge): includes are
-# expanded first, then this file's values are applied over them. Tables merge
-# recursively -- so [keybinds] keeps every upstream bind and only "Mod+Return"
-# is replaced, and "Mod+Return" itself merges key-by-key, inheriting upstream's
-# repeat/allow_when_inhibited flags while overriding `action`. Non-table values
-# and non-table arrays are replaced wholesale, which is what `autostart` below
-# relies on. [[window_rule]]-style arrays-of-tables accumulate across files.
+# Merge semantics (upstream docs/user/configuration.md § Include, implemented
+# in src/config/config_merge.cpp deepMerge): included files are applied in list
+# order and THE INCLUDING FILE IS APPLIED LAST. Tables merge by key -- so
+# [keybinds] keeps every upstream bind and binds.toml replaces only the ones it
+# names. Rule lists ([[window_rule]], [[layer_rule]]) COLLECT across files
+# rather than replacing, so rules.toml adds to upstream's set; a later rule
+# matching the same window wins on the keys it sets. Plain arrays and scalars
+# are replaced by the last file that sets them.
 #
-# A missing include fails closed (src/config/store.h), so a build where
-# upstream stops installing its packaged default breaks loudly rather than
-# silently dropping every krytis default. `mise run umbriel-config-validate`
-# runs `umbriel validate` on this file inside the built image and asserts that
-# upstream still ships a [keybinds] table -- without one, the bare [keybinds]
-# below would replace the built-in bind set with a single bind.
+# A missing required include fails closed (src/config/store.h), so a build
+# where upstream stops installing its packaged default breaks loudly rather
+# than silently dropping every krytis default.
+# `mise run umbriel-config-validate` runs `umbriel config validate` on this
+# file inside the built image and asserts the include target still ships a
+# [keybinds] table.
 #
-# Users: copy /usr/share/umbriel/config.toml to ~/.config/umbriel/config.toml
-# for personal changes (upstream PACKAGING.md's "Configuration lookup"); the
-# user file is tier 1 and shadows this file entirely -- lookup is first-match,
-# not merged. Or include this file from yours to keep the krytis defaults.
+# Users: /etc/skel/.config/umbriel/config.toml (config/umbriel-skel.bst) seeds
+# a tier-1 file that includes this one, so personal edits layer on top instead
+# of shadowing it. See that file's header and krytis#982 for why that seed is
+# load-bearing rather than a convenience.
 
 [include]
-# Absolute because meson's datadir is compiled into the binary and krytis
-# builds with the default prefix=/usr; umbriel-config-validate checks the path
-# against the real image rather than trusting this constant.
-files = ["/usr/share/umbriel/config.toml"]
+files = [
+  # Upstream's own packaged default -- the base layer. Absolute because meson's
+  # datadir is compiled into the binary and krytis builds with the default
+  # prefix=/usr; umbriel-config-validate checks the path against the real image
+  # rather than trusting this constant.
+  "/usr/share/umbriel/config.toml",
+  # krytis fragments, mirroring the files/niri/*.kdl split. Relative paths
+  # resolve against this file's own directory (/etc/xdg/umbriel).
+  "input.toml",
+  "layout.toml",
+  "colors.toml",
+  "rules.toml",
+  "binds.toml",
+]
 
 [general]
-# Upstream ships `autostart = []`. Without noctalia here, noctalia-shell never
-# launches under Umbriel and the panel/launcher/lock screen acceptance criteria
-# in #775 cannot pass.
-autostart = ["noctalia"]
+# noctalia: the shell (panel, launcher, lock screen, wallpaper). Without this,
+# none of #775's acceptance criteria can pass.
+#
+# bazaar-daemon: D-Bus SearchProvider2 for noctalia's bazaarsearch launcher
+# plugin (`/bzr <query>`). Bazaar ships a D-Bus-activatable
+# io.github.kolunmi.Bazaar.SearchProvider.service, but upstream's plugin docs
+# call out explicit session startup as the supported way to guarantee it is
+# running rather than relying on that activation. Mirrors niri's second
+# spawn-at-startup in files/niri/startup.kdl. Bazaar itself is a --system
+# flatpak, not a BST element -- files/flatpak-preinstall/ (#66).
+autostart = [
+  "noctalia",
+  "flatpak run --command=bazaar-daemon io.github.kolunmi.Bazaar --no-window",
+]
 
-[keybinds]
-# Upstream binds kitty, which krytis does not package; krytis ships ghostty as
-# its terminal (desktop/ghostty.bst). Only `action` is set, so upstream's own
-# flags on this bind are inherited rather than reset.
-"Mod+Return" = { action = "spawn:ghostty" }
+# niri sets `hotkey-overlay { skip-at-startup }`; upstream umbriel defaults this
+# to true and pops the cheatsheet on every login. Mod+Shift+7 still opens it.
+show_cheatsheet = false
+
+# niri's `debug { honor-xdg-activation-with-invalid-serial }` -- required for
+# notification actions and window activation raised from Noctalia.
+focus_on_activate = true
+
+[environment]
+# Ported from files/niri/config.kdl's `environment` block, minus the three
+# variables umbriel refuses to let a config set because it owns them:
+# XDG_CURRENT_DESKTOP, XDG_SESSION_DESKTOP and XDG_SESSION_TYPE (upstream
+# docs/user/configuration.md § Environment). umbriel publishes those itself --
+# XDG_CURRENT_DESKTOP=Umbriel, which is what xdg-desktop-portal-umbriel's own
+# umbriel-portals.conf (`default=umbriel;gtk`) keys off.
+MOZ_ENABLE_WAYLAND = "1"
+MOZ_DBUS_REMOTE = "1"
+GDK_BACKEND = "wayland"
+# Compose-key support: see docs/skills/desktop.md. The compose table lookup
+# also needs LANG/LC_CTYPE set, which /etc/locale.conf provides.
+GTK_IM_MODULE = "simple"
+QT_AUTO_SCREEN_SCALE_FACTOR = "1"
+QT_WAYLAND_FORCE_DPI = "physical"
+EGL_PLATFORM = "wayland"
+CLUTTER_BACKEND = "wayland"
+_JAVA_AWT_WM_NONREPARENTING = "1"
+ELECTRON_OZONE_PLATFORM_HINT = "auto"
