@@ -1296,8 +1296,12 @@ Verified 2026-09-28 on pass-cli 2.4.1: the credential appears under
 `secret-tool search --all service ProtonPassCLI` with username
 `cli-local-key:<fingerprint>@ProtonPassCLI`, the `login.keyring` file is rewritten, and
 repeated `pass-cli` invocations stop force-logging-out. The fingerprint is deterministic —
-the same value appears whether the credential is stored in keyutils or in the Secret
-Service — so it survives a reboot as long as its *store* does.
+the same `cli-local-key:<fingerprint>@ProtonPassCLI` name appears whether the credential
+lives in keyutils or in the Secret Service — so the session survives a reboot as long as
+its *store* does. **Read that property as a hazard, not a reassurance:** the name being
+identical across backends while the secret behind it is not is exactly what lets the two
+stores hold conflicting keys under one lookup, silently. See
+§ *Switching the backend under a live session*.
 
 Three things this depends on, all worth knowing before debugging a repeat offender:
 
@@ -1341,10 +1345,25 @@ The encrypted state is intact. Its key is simply in the keyring you just stopped
 - **There is no force-logout, and no mention of a missing key.** Unlike the reboot path,
   `pass-cli` neither detects this nor self-recovers — it reports a decrypt failure, which
   reads as disk corruption.
-- **The error's own suggested remedy is wrong for this cause.** `pass-cli logout --force`
-  discards local state to recover from corruption; nothing is corrupt here. The fix is to
-  create a session under the new backend instead: open a **fresh** shell carrying the new
-  `PROTON_PASS_LINUX_KEYRING` value, then `pass-cli login`.
+- **`pass-cli logout --force` does not fix it, and neither does a fresh shell.** Both were
+  tried on 2026-09-28 and both failed: `logout --force` printed
+  `Successfully performed force logout`, and the very next `pass-cli login` — in a new
+  shell carrying the new value — died with the identical hmac error. `logout --force`
+  clears the *session* but leaves `~/.local/share/proton-pass-cli/.session/pass-cli.db`
+  on disk **and** leaves the local key in both keyrings, so the next run re-reads the same
+  mismatched pair. Recovery has to clear all three, which is what actually worked:
+
+  ```shell
+  tar czf ~/pass-cli-broken-state.tar.gz -C ~/.local/share proton-pass-cli   # reversible
+  rm -f ~/.local/share/proton-pass-cli/.session/pass-cli.db
+  secret-tool clear service ProtonPassCLI
+  keyctl purge user "keyring:cli-local-key:<fingerprint>@ProtonPassCLI"
+  PROTON_PASS_LINUX_KEYRING=dbus pass-cli login
+  ```
+
+  Confirm the clear worked before logging in: `pass-cli info` must report
+  `This operation requires an authenticated client`. Any remaining hmac error means one of
+  the three survived.
 - **It is not bow-only.** Every entry in `fnox.toml`'s `[secrets]` resolves through the one
   `protonpass` provider — the six Secure Boot key/cert secrets and `RUNNER_VPS_USER`/`_IP`
   as well as the two Buildbarn tokens — so `mise run pull-keys`, `mise run generate-keys`
@@ -1353,6 +1372,26 @@ The encrypted state is intact. Its key is simply in the keyring you just stopped
   prints a live session (`Username`, `Email`, `Session has lock: no`) in the new shell
   while `fnox get` is still failing in the old one. That asymmetry is the tell, and it also
   separates this case from the reboot one — there, `info` is what surfaces the force-logout.
+
+**Prove the fork before deleting anything — it takes two commands.** The key is stored
+under the *same* name in both backends, so presence alone tells you nothing; compare the
+material:
+
+```shell
+secret-tool search --all service ProtonPassCLI     # note the `secret = …` value
+k=$(keyctl search @s user "keyring:cli-local-key:<fingerprint>@ProtonPassCLI")
+keyctl pipe "$k" | sha256sum                       # differs from sha256 of the above
+```
+
+Two different secrets under one lookup name is the forked state, and it is why the error
+says "the encryption key may not match" rather than naming a keyring problem. Observed
+2026-09-28 with both entries present simultaneously, created seconds apart.
+
+**`fnox` amplifies this into a wall of noise.** It resolves every `[secrets]` entry
+concurrently, so one broken backend produces ten near-identical stack traces at once —
+and occasionally one *different* message (`Command is not logout there is no session`)
+from whichever invocation raced to a partially-written database. Read one trace, not ten;
+the odd one out is not a separate bug.
 
 **A stale shell keeps failing after the fix, and will lie to you about why.**
 `environment.d` only reaches processes the systemd user manager starts, and the
