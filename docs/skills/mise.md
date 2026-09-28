@@ -40,6 +40,45 @@ mise boxes-vt --vt 5          # switch a Boxes/libvirt VM to a VT (Boxes cannot 
 mise switch-local             # bootc switch THIS machine to the local build (auto-seals if UKI-booted)
 ```
 
+**Pass `--push` if you have push access, else `--pull`, on every `bst`/`validate`/
+`load-image`/`build` invocation where credentials resolve.** No flag means *no remote
+cache at all for krytis's own elements* (§ `--push`/`--pull` — opt-in bow Buildbarn
+cache below), so every element the local CAS is missing gets rebuilt from source even
+though bow already has it — which is the normal state in a fresh worktree, since a
+worktree shares `~/.cache/buildstream` but any element whose cache key moved since the
+last local build is a miss. Credentials resolve automatically when `fnox` is configured
+(or `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN` is exported); when they don't, the
+task fails fast rather than silently building uncached, so there is no downside to
+trying the flag first. Observed 2026-09-28 (#869): a flagless
+`mise run bst -- build desktop/xwayland-satellite.bst` in a new worktree spent 9 min
+pulling freedesktop-sdk bootstrap artifacts alone before reaching the element.
+
+**Check free disk on the podman/CAS filesystem before starting — `mise run build` can burn
+the whole BST build and then die in `lint`.** Each build leaves an ~8 GB untagged
+`localhost/krytis-input` layer set behind in podman storage, so they accumulate fast. The
+failure looks like a podman bug, not a disk problem:
+
+```
+Checks passed: 14                                  ← bootc container lint itself passed
+Error: committing container for step … writing blob "sha256:…": unpacking failed
+exhausting input failed (error: write …/containers/storage/overlay-layers/tmp/…:
+  no space left on device)
+```
+
+`podman image prune -f` clears the dangling layers (freed 33 GB on 2026-09-28, #869), then
+re-run `mise run build --pull --force` — every BST artifact is already cached, so only
+`load-image`/`lint`/`umbriel-config-validate` actually re-run.
+
+**Check the right filesystem.** On a Fedora-derived host `$HOME` is typically its own
+btrfs subvolume: both `~/.local/share/containers/storage` and `~/.cache/buildstream` (50 GB
+default CAS quota, `BST_CACHE_QUOTA`) live there, and `df -h /var` can report hundreds of
+GB free while the one that matters is at 100%. Use the paths, not the mountpoint you
+assume:
+
+```bash
+df -h ~/.local/share/containers/storage ~/.cache/buildstream
+```
+
 - `include/image-version.yml` is **gitignored** — generated at build time, never committed.
   `bst` and `validate` tasks declare `depends=["generate-image-version"]` so it's always
   regenerated automatically. `mise bootstrap` also generates it for fresh clones.

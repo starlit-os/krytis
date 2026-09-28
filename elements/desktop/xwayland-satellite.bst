@@ -1,4 +1,4 @@
-# xwayland-satellite v0.8.1 — rootless XWayland manager, vendored as a
+# xwayland-satellite v0.8.3 — rootless XWayland manager, vendored as a
 # first-party element (#499).
 #
 # Previously consumed via gnome-build-meta.bst:sdk/xwayland-satellite.bst.
@@ -10,20 +10,28 @@
 # reference entirely for this one element. Blast radius is exactly one line
 # (elements/stacks/desktop.bst's dependency on the gnome-build-meta path).
 #
-# Pinned to v0.8.1 (not v0.8.2): v0.8.2 breaks Steam drop-down menus under
-# rootless XWayland — upstream issue #468. `track:` is commented out and
-# v0.8.2 is excluded. Re-enable tracking once issue #468 is fixed and a new
-# release ships the fix. Removal condition: drop this element and revert
+# Tracking is live again (#869). The v0.8.1 pin existed because v0.8.2 broke
+# Steam drop-down menus (upstream issue #468); v0.8.3 (2026-09-24) carries
+# both that fix (add27951, upstream PR #494 — never focus override-redirect
+# popups, offer WM_TAKE_FOCUS when advertised) and the fix for resizable
+# DIALOG windows misclassified as popups (7f848f50, upstream issue #470 —
+# DaVinci Resolve's Project Manager, Qt/GTK file dialogs). Both were the
+# reason zirconium-hawaii carried cherry-picked patches over v0.8.2; at
+# v0.8.3 neither patch is needed. `exclude: [v0.8.2]` is gone with them.
+#
+# Removal condition for this element as a whole: drop it and revert
 # desktop.bst to gnome-build-meta.bst:sdk/xwayland-satellite.bst once that
-# element's own `time` pin reaches >=0.3.47 AND upstream issue #468 is fixed
-# (meaning v0.8.2 is no longer the latest) — both must hold.
+# element's own `time` pin reaches >=0.3.47. Still 0.3.44 as of
+# gnome-build-meta 51.0-5-gbe7cb31 (checked 2026-09-28), so the element and
+# its Cargo.lock patch stay — upstream's own lock is also still on 0.3.44 at
+# v0.8.3.
 #
 # build.rs uses vergen-gitcl's GitclBuilder::describe(true, true, None),
 # which shells out to `git describe --always --tags` plus a separate
 # `git status --porcelain` dirty probe. `kind: git_repo` stages a real
 # `.git`, so that succeeds here (hence components/git.bst in
 # build-depends) — but the `kind: patch` source below dirties the
-# worktree, so the embedded version lands on "v0.8.1-dirty".
+# worktree, so the embedded version lands on "v0.8.3-dirty".
 #
 # VERGEN_IDEMPOTENT does not suppress that: in vergen-gitcl 1.0.8 the
 # describe path never reads the idempotent flag (only the commit
@@ -31,7 +39,7 @@
 # short-circuits the shell-out, and the literal VERGEN_IDEMPOTENT_OUTPUT
 # sentinel is the value upstream's own src/lib.rs::version() special-cases,
 # falling back to CARGO_PKG_VERSION. So `xwayland-satellite -version`
-# prints "0.8.1" deterministically, independent of tag reachability in the
+# prints "0.8.3" deterministically, independent of tag reachability in the
 # mirror clone and of how many patches this element carries. See
 # docs/skills/bst.md § vergen-gitcl.
 #
@@ -73,12 +81,8 @@ config:
 sources:
 - kind: git_repo
   url: github:Supreeeme/xwayland-satellite.git
-  # FIXME: re-enable track when upstream issue is fixed:
-  # https://github.com/Supreeeme/xwayland-satellite/issues/468
-  # track: 'v*'
-  exclude:
-  - v0.8.2
-  ref: v0.8.1-0-g536bd32efc935bf876d6de385ec18a1b715c9358
+  track: 'v*'
+  ref: v0.8.3-0-gb83eab900644e4c7c77982ce3d44cb490f0c5e1d
 
 - kind: patch
   path: patches/xwayland-satellite/bump-time-ghsa-r6v5-fh4h-64xc.patch
@@ -271,6 +275,10 @@ sources:
     version: 0.5.2
     sha: fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c
   - kind: registry
+    name: hostname
+    version: 0.4.2
+    sha: 617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd
+  - kind: registry
     name: humantime
     version: 2.3.0
     sha: 135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424
@@ -458,6 +466,10 @@ sources:
     name: syn
     version: 2.0.111
     sha: 390cc9a294ab71bdb1aa2e99d13be9c753cd2d7bd6560c77118597410c4d2e87
+  - kind: registry
+    name: syslog
+    version: 7.0.0
+    sha: 019f1500a13379b7d051455df397c75770de6311a7a188a699499502704d9f10
   - kind: registry
     name: termcolor
     version: 1.4.1

@@ -2815,7 +2815,8 @@ Two useful values:
 - `VERGEN_GIT_DESCRIBE=VERGEN_IDEMPOTENT_OUTPUT` — the sentinel a crate's own
   fallback may already special-case. `xwayland-satellite`'s
   `src/lib.rs::version()` does (`if version == "VERGEN_IDEMPOTENT_OUTPUT" {
-  version = env!("CARGO_PKG_VERSION") }`), so `-version` prints `0.8.2` with
+  version = env!("CARGO_PKG_VERSION") }`), so `-version` prints the crate
+  version — `0.8.3` today — with
   the element hardcoding no version string of its own. This is what
   `desktop/xwayland-satellite.bst` uses.
 - `VERGEN_GIT_DESCRIBE=v1.2.3` — a literal, when the crate has no fallback.
@@ -2836,8 +2837,11 @@ element modifies the staged worktree, so a patched element is *always* dirty
 and the suffix is unavoidable as long as the describe runs at all.
 
 Verified in the real sandbox, not just on the host: with the sentinel set,
-`mise run bst build desktop/xwayland-satellite.bst` succeeds and
-`bst shell … -- xwayland-satellite -version` prints `0.8.2`.
+`mise run build` produces an image whose
+`podman run --rm --entrypoint /usr/bin/xwayland-satellite localhost/krytis:latest
+-version` prints `0.8.3` — the bare crate version, no `-dirty`, even though the
+element carries a `kind: patch` source (re-checked 2026-09-28 at v0.8.3, #869;
+first verified at v0.8.2).
 
 ## Greeter Stack: greetd display-manager Alias
 
