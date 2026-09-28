@@ -123,7 +123,7 @@ cairo/pango at all — so `desktop/umbriel.bst` declares
 `components/pango.bst` directly in its own `depends:`, matching
 `desktop/noctalia-greeter.bst`'s identical direct declarations.
 
-### Config: umbriel already ships a complete, Noctalia-integrated default — the seed only needed two edits
+### Config: a vendored copy rots against a daily-tracked binary — `[include]` it instead (#980)
 
 Unlike niri (which ships no usable default binds/config at all), umbriel's
 own `examples/config.toml` is a complete, working default that the upstream
@@ -138,23 +138,80 @@ pattern needed (config lookup gracefully falls back to it, unlike
 `noctalia-greeter`'s mutable `/var` `greeter.toml`, which needs
 `config/greeter-config-seed.bst`'s oneshot-unit pattern).
 
-`config/umbriel-config.bst` ships the **same** file one tier higher, at
-`/etc/xdg/umbriel/config.toml` (`$XDG_CONFIG_DIRS`, tier 2), with exactly two
-krytis-specific edits (see `files/umbriel/config.toml`'s header comment for
-the full rationale):
+`config/umbriel-config.bst` ships a small **overlay** one tier higher, at
+`/etc/xdg/umbriel/config.toml` (`$XDG_CONFIG_DIRS`, tier 2): an `[include]`
+of `/usr/share/umbriel/config.toml` plus exactly two krytis-specific values
+(see `files/umbriel/config.toml`'s header for the full rationale):
 
 1. `autostart = ["noctalia"]` (upstream ships `autostart = []` — without
    this, noctalia-shell never launches under umbriel, and the panel/
    launcher/lock-screen acceptance criteria in #775 cannot pass).
-2. `"Mod+Return" = "spawn:ghostty"` (upstream's example binds `kitty`, which
-   krytis does not package; krytis ships ghostty — `desktop/ghostty.bst`).
+2. `"Mod+Return" = { action = "spawn:ghostty" }` (upstream's example binds
+   `kitty`, which krytis does not package; krytis ships ghostty —
+   `desktop/ghostty.bst`).
 
-**Config lookup is first-match, not merged across tiers** — shipping only a
-`[general]` fragment at `/etc/xdg/umbriel/config.toml` would silently drop
-every other upstream default (blur, shadows, animations, all the Noctalia
-window/layer rules) rather than layering on top of them, since umbriel stops
-at the first existing file in its lookup chain. The full file has to be
-duplicated with the two edits, not diffed down to a fragment.
+**This file used to be all 836 lines of upstream's example, vendored with the
+two edits applied, and that is what #980 had to undo.** The reasoning at the
+time was: "config lookup is first-match, not merged across tiers, so a
+fragment at tier 2 would silently drop every upstream default — the full file
+has to be duplicated, not diffed." The premise is true; the conclusion is
+not. **Tier selection and `[include]` merging are two separate mechanisms.**
+Lookup picks exactly one file, and *then* that file's `[include]` list is
+expanded and deep-merged before any field is read — so a tier-2 file can pull
+tier 3 in by hand and layer onto it after all.
+
+Why it mattered: `desktop/umbriel.bst` uses `track: refs/heads/main` and is
+ref-bumped **daily** by `track-bst-sources.yml`, while `files/umbriel/config.toml`
+is a `kind: local` data file that `bst source track` cannot touch. A full copy
+is therefore structurally guaranteed to drift from the binary shipped beside
+it. It did, on 2026-09-16, six days after the vendor: upstream renamed
+`window-cycle-width` → `window-cycle-primary-extent` (`2f2e4e3`),
+`layout.width_presets` → `extent_presets` (same commit),
+`layout.scrolling.default_width_fraction` → `default_extent_fraction`
+(`32cc131`), and `window_rule.default_size = [w, h]` →
+`default_floating_size_px = { width, height }` (`8a2c591`). Six settings in
+the shipped config were dead for twelve days and nothing noticed.
+
+The failure was quiet by design: unknown keys and unknown keybind actions are
+**warnings**, not fatal. `src/config/store.h` documents that only missing
+explicit paths, invalid includes, syntax errors, and DRM policy errors fail
+closed — everything else keeps the compatibility fallback to defaults. So
+umbriel starts, logs `[WRN] [config] … ignoring keybind`, and quietly runs
+without those settings. `umbriel validate` is stricter than the loader and
+treats any diagnostic as invalid, which is what makes it usable as a gate.
+
+Merge semantics that make the overlay safe (`src/config/config_merge.cpp`,
+`deepMerge`):
+
+- Tables merge **recursively**, so `[keybinds]` keeps every upstream bind and
+  only `Mod+Return` is replaced; `Mod+Return` itself merges key-by-key, so
+  setting only `action` inherits upstream's `repeat`/`allow_when_inhibited`.
+- Non-table values and non-table arrays are **replaced wholesale** — that is
+  what `autostart = ["noctalia"]` relies on, and it is also how a later file
+  drops what an earlier one contributed (including via an empty array).
+- Arrays of tables (`[[window_rule]]`, `[[layer_rule]]`, `[[workspace]]`,
+  `[[input.device]]`) **accumulate** across files rather than replacing.
+- A missing include **fails closed**, so a build where upstream stops
+  installing its packaged default breaks loudly instead of silently dropping
+  every krytis default.
+
+The one assumption the overlay carries that `umbriel validate` cannot check:
+upstream documents `[keybinds]` as *replacing* the built-in bind set, so the
+overlay's bare `[keybinds]` is only safe while the included file contributes
+the full set. If upstream ever drops `[keybinds]` from its example, the
+merged config would have exactly one bind — and still validate.
+`mise run umbriel-config-validate` asserts the base table's presence for that
+reason.
+
+Verified on the reference machine (installed binary `umbriel 0.1.0
+(8929c2d88f35)`), proving the merge rather than assuming it:
+
+| Config | Result |
+|---|---|
+| include sets `layout.gap = 99999`, nothing overrides | invalid, diagnostic cites the *included* file — includes are really parsed |
+| include sets `99999`, main file sets `gap = 8` | `config: ok` — main file wins over its includes |
+| include points at a nonexistent path | invalid, `include not found` — fails closed |
+| the real overlay against `/usr/share/umbriel/config.toml` | `config: ok` |
 
 **No `config/xdg-portals.bst`-style routing file needed for umbriel** — unlike
 niri (which isn't a portal implementation itself and needed a hand-authored
@@ -587,13 +644,42 @@ mise run compositor-smoke                          # umbriel (default)
 mise run compositor-smoke --compositor greeter     # noctalia-greeter-compositor, as greetd runs it
 mise run compositor-smoke --compositor cage        # cage
 mise run compositor-smoke --compositor umbriel --keep-log
+mise run compositor-smoke --compositor umbriel --shipped-config   # run the /etc/xdg config, not defaults
 ```
 
+**umbriel has no config-path environment variable.** Until #980 this task launched
+`env UMBRIEL_CONFIG=/dev/null /usr/bin/umbriel` and its comment claimed that isolated the run
+from `files/umbriel/config.toml`. It did not: `UMBRIEL_CONFIG` appears nowhere in umbriel's
+source — it is a variable in upstream's own `tests/harness/checks/*.sh`, which pass it to `-c`
+— so the compositor ignored it and used its normal lookup, i.e. the shipped
+`/etc/xdg/umbriel/config.toml`. The task ran with the very config it claimed to exclude for its
+whole life, and still passed, because unknown keys are warnings. Isolation is `-c` pointed at an
+**empty regular file**; `-c /dev/null` fails closed with `cannot inspect config file /dev/null:
+not a regular file`. `--shipped-config` drops `-c` and lets the lookup find tier 2 — the runtime
+counterpart to `mise run umbriel-config-validate`, which only parses.
+
 Each variant asserts positive markers, never the absence of errors (a compositor that dies in
-20 ms also logs no errors): umbriel must report `initialized EGL`, `OpenGL ES vendor=` and
-`output HEADLESS-1`; the greeter must reach `greeter output: HEADLESS-1` and `started greeter:`;
-cage must create the pixman renderer and start the backend. Observed on the reference machine:
-`[render] OpenGL ES vendor="AMD" renderer="AMD Radeon RX 7800 XT (radeonsi, navi32, ACO)"`.
+20 ms also logs no errors): umbriel must report `Creating umbrielfx renderer`, `GL renderer:`
+and `output 'HEADLESS-1': applied mode=`; the greeter must reach `greeter output: HEADLESS-1`
+and `started greeter:`; cage must create the pixman renderer and start the backend.
+`--shipped-config` adds `spawned 'noctalia' on WAYLAND_DISPLAY=`.
+
+**Those umbriel markers were wrong until #980, and wrong in a way that inverted what the task
+covered.** They used to be `initialized EGL`, `OpenGL ES vendor=` and `output HEADLESS-1` —
+none of which umbriel emits. All three are **noctalia** log lines (`[gl]`, `[render]`,
+`[wayland]` categories), from the Qt shell the shipped config autostarts bringing up *its own*
+EGL context as a Wayland client. The task passed because `UMBRIEL_CONFIG` was a no-op and the
+shipped config's `autostart` fired; umbrielfx — the GLES2-only scene graph that #775 added this
+task to cover — was never asserted at all. Running with genuine upstream defaults exposed it
+immediately: the compositor came up perfectly and all three markers were missing. Confirm a
+marker belongs to the process under test before trusting it; a passing grep against a
+combined stdout proves only that *something* logged it.
+
+`spawned 'noctalia' on WAYLAND_DISPLAY=` is umbriel reporting that it acted on
+`autostart = ["noctalia"]`, so `--shipped-config` is also the proof that the `[include]`
+overlay really **merged** rather than merely parsed — a validator cannot tell those apart.
+Observed on the reference machine (Iris Xe):
+`[wlr] [render/fx_renderer/fx_renderer.c:600] GL renderer: Mesa Intel(R) Iris(R) Xe Graphics (RPL-U)`.
 
 D-Bus/pipewire/secret-store warnings are expected inside the container and harmless, as is the
 flood of `Direct scan-out disabled by software cursor` under pixman (the task filters it). This
@@ -627,6 +713,30 @@ GTK client and cause its UI to render black (GTK Vulkan GSK renderer fails silen
 
 Toolkit env hints (`GSK_RENDERER`, `SDL_VIDEODRIVER`) belong only in `environment.d` (user
 systemd sessions), not in `/etc/environment` (which is read by the greeter PAM session too).
+
+### Validating the shipped Umbriel config — `mise run umbriel-config-validate`
+
+```shell
+mise run umbriel-config-validate                   # localhost/krytis:latest
+mise run umbriel-config-validate --image <tag>
+```
+
+Runs upstream's own `umbriel validate` against the installed
+`/etc/xdg/umbriel/config.toml` inside the built image, plus two assertions the validator
+cannot make: that `/usr/share/umbriel/config.toml` (the overlay's `[include]` target, and
+therefore a hard dependency of the shipped config) still exists at that path, and that it
+still defines a `[keybinds]` table. Needs **no GPU, no seat and no root** — `umbriel validate`
+only parses — so unlike `compositor-smoke` it runs anywhere the image does, including CI.
+
+It exists because nothing previously connected `files/umbriel/config.toml` to the binary that
+reads it: `desktop/umbriel.bst` tracks `refs/heads/main` and is ref-bumped daily, and
+`bst source track` cannot re-vendor a `kind: local` data file. Run it after any
+`chore(deps): update umbriel` bump.
+
+**The subcommand moved.** `umbriel validate` became `umbriel config validate` upstream in
+`f66d6a8` (2026-09-27, `feat(cli): add umbriel config schema and move validate under config`);
+the bare form is gone, not aliased. The task picks the form out of `umbriel help` rather than
+assuming either, so it spans pins on both sides of that commit.
 
 ## SSH agent: gcr-ssh-agent and `SSH_AUTH_SOCK`
 

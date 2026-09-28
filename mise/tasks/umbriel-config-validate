@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+#MISE description="Validate the shipped /etc/xdg/umbriel/config.toml against the umbriel binary in the built image"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to validate out of"
+
+# Why this exists: krytis#980. elements/config/umbriel-config.bst ships a
+# system Umbriel config, and desktop/umbriel.bst tracks refs/heads/main and is
+# ref-bumped daily by .github/workflows/track-bst-sources.yml. Nothing tied the
+# two together, so upstream's 2026-09-16 config renames invalidated six
+# settings in the shipped file and no check in the tree noticed for twelve
+# days. `mise run compositor-smoke --compositor umbriel` could not catch it
+# either: it deliberately runs with UMBRIEL_CONFIG=/dev/null so a broken config
+# cannot mask a renderer failure.
+#
+# Needs no GPU, no seat and no root -- `umbriel validate` only parses. That is
+# what makes this runnable anywhere the image is, unlike compositor-smoke.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+IMAGE="${usage_image:-localhost/krytis:latest}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) IMAGE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+if ! podman image exists "$IMAGE"; then
+    echo "==> FAILED: no such image '$IMAGE' — run 'mise run build' first." >&2
+    exit 1
+fi
+
+echo "==> Validating /etc/xdg/umbriel/config.toml inside $IMAGE..."
+
+podman run --rm --entrypoint sh "$IMAGE" -c '
+set -u
+status=0
+
+SYSTEM=/etc/xdg/umbriel/config.toml
+PACKAGED=/usr/share/umbriel/config.toml
+
+# The overlay `[include]`s the packaged default, so the path upstream installs
+# it to is a hard dependency of the shipped config. A missing include already
+# fails closed in `umbriel validate`, but that reports a generic "include not
+# found" — name the real cause instead.
+if [ ! -f "$PACKAGED" ]; then
+    echo "    FAIL $PACKAGED missing — upstream stopped installing its packaged"
+    echo "         default, or meson datadir moved. files/umbriel/config.toml"
+    echo "         includes this path literally and must be updated with it."
+    status=1
+fi
+
+# Upstream documents [keybinds] as replacing the built-in bind set wholesale.
+# The overlay defines [keybinds] to rebind Mod+Return, which is only safe while
+# the included file contributes the full set — otherwise the merged config ends
+# up with exactly one working keybind, which still validates.
+if [ -f "$PACKAGED" ] && ! grep -q "^\[keybinds\]" "$PACKAGED"; then
+    echo "    FAIL $PACKAGED no longer defines a [keybinds] table."
+    echo "         files/umbriel/config.toml overlays a single bind onto it;"
+    echo "         with no base table that bind becomes the ENTIRE bind set."
+    status=1
+fi
+
+if [ ! -f "$SYSTEM" ]; then
+    echo "    FAIL $SYSTEM missing — is config/umbriel-config.bst in the image?"
+    exit 1
+fi
+
+# Upstream moved `validate` under `config` in f66d6a8 (2026-09-27); older pins
+# only have the bare form. Pick from the help text the binary itself prints
+# rather than assuming either shape.
+if umbriel help 2>&1 | grep -q "config validate"; then
+    VALIDATE="config validate"
+else
+    VALIDATE="validate"
+fi
+
+echo "    ==> umbriel $VALIDATE -c $SYSTEM"
+# Not a pipeline: piping into sed would test sed exit status, and umbriel
+# reports drift only through its own exit code.
+out=$(umbriel $VALIDATE -c "$SYSTEM" 2>&1)
+rc=$?
+echo "$out" | sed "s/^/    /"
+if [ "$rc" -eq 0 ]; then
+    echo "    OK   config: valid"
+else
+    echo "    FAIL umbriel rejected the shipped config (see diagnostics above)."
+    echo "         files/umbriel/config.toml has drifted from the pinned"
+    echo "         desktop/umbriel.bst ref. See docs/skills/desktop.md."
+    status=1
+fi
+
+exit $status
+'
+RUN_STATUS=$?
+
+if [ "$RUN_STATUS" -ne 0 ]; then
+    echo "==> umbriel-config-validate FAILED." >&2
+    exit 1
+fi
+
+echo "==> umbriel-config-validate PASSED."
