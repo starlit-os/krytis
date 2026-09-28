@@ -1305,17 +1305,63 @@ Three things this depends on, all worth knowing before debugging a repeat offend
   `Linux keyring: D-Bus secret service is unavailable or locked`. krytis unlocks it at login
   through the greetd PAM stack — see [`pam.md`](pam.md). Over ssh into a krytis box the
   collection is locked, and that error is the *intended* outcome: see the next point.
-- **Do not mix backends.** A single invocation under the other backend re-creates the local
-  state under a key the desktop session cannot read; the next invocation then force-logs-out
-  again — or, if the settings DB is what got re-encrypted, dies with
-  `sqlcipher_page_cipher: hmac check failed` / `file is not a database`. `pass-cli logout
-  --force` (with the variable set) is the clean reset. This is why both drop-ins are
+- **Do not mix backends.** A single invocation under the other backend leaves the local
+  state encrypted under a key the running one cannot read. *Which* symptom you get depends
+  on when the split happened: across a reboot `pass-cli` notices the key is gone and
+  force-logs-out, saying so plainly; flip the variable under a session that already exists
+  and it never mentions a key at all — it dies decrypting its own database. See
+  § *Switching the backend under a live session* below, and in particular do **not** run
+  the `pass-cli logout --force` that error suggests. This is why both drop-ins are
   unconditional rather than probing for a reachable Secret Service: one backend everywhere
   beats a fallback that silently forks the local state.
 - **CI is untouched, and must stay that way.** Neither drop-in exists on a GitHub-hosted
   runner or on the Debian build VPS (`files/runner-vps/provision.sh`), so `publish.yml`'s
   `pass-cli login --pat` keeps the ephemeral keyutils default. Do not move the variable into
   `mise.toml` `[env]`, which *would* reach both.
+
+### Switching the backend under a live session
+
+Changing `PROTON_PASS_LINUX_KEYRING` while a session created under the *other* backend is
+still on disk fails in a way that looks nothing like the reboot case above, and is much
+easier to misdiagnose. Hit on the workstation 2026-09-28 while building #982:
+
+```console
+Error: fnox::provider::cli_failed
+  × Proton Pass: command failed:
+  │ ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+  │ ERROR CORE sqlite3Codec: error decrypting page 1 data: 1
+  │ Failed to open encrypted database: file is not a database. The encryption key
+  │ may not match or the database may be corrupted. Try running
+  │ 'pass-cli logout --force' to reset local state.
+ERROR: fnox get BUILDBARN_PUSH_TOKEN failed. Set BUILDBARN_PUSH_TOKEN directly or fix fnox/pass-cli auth.
+```
+
+The encrypted state is intact. Its key is simply in the keyring you just stopped using.
+
+- **There is no force-logout, and no mention of a missing key.** Unlike the reboot path,
+  `pass-cli` neither detects this nor self-recovers — it reports a decrypt failure, which
+  reads as disk corruption.
+- **The error's own suggested remedy is wrong for this cause.** `pass-cli logout --force`
+  discards local state to recover from corruption; nothing is corrupt here. The fix is to
+  create a session under the new backend instead: open a **fresh** shell carrying the new
+  `PROTON_PASS_LINUX_KEYRING` value, then `pass-cli login`.
+- **It is not bow-only.** Every entry in `fnox.toml`'s `[secrets]` resolves through the one
+  `protonpass` provider — the six Secure Boot key/cert secrets and `RUNNER_VPS_USER`/`_IP`
+  as well as the two Buildbarn tokens — so `mise run pull-keys`, `mise run generate-keys`
+  and anything reaching the CI VPS are as dead as `--push`/`--pull` while this lasts.
+- **`pass-cli info` is the cheap discriminator.** Once a new-backend session exists, `info`
+  prints a live session (`Username`, `Email`, `Session has lock: no`) in the new shell
+  while `fnox get` is still failing in the old one. That asymmetry is the tell, and it also
+  separates this case from the reboot one — there, `info` is what surfaces the force-logout.
+
+**A stale shell keeps failing after the fix, and will lie to you about why.**
+`environment.d` only reaches processes the systemd user manager starts, and the
+`fish/conf.d` copy only new fish shells, so a long-lived shell still carries the old value
+and keeps reproducing the error against a perfectly good session. Timestamps do not
+separate the two causes: a failing `fnox` call can precede the new session directory's
+mtime by seconds and fit a tidy "race" story that is simply wrong. The environment of the
+*calling* shell is what distinguishes them — check `echo $PROTON_PASS_LINUX_KEYRING` in
+the shell that failed.
 
 ### Testing secret-consuming tasks without a live vault
 
