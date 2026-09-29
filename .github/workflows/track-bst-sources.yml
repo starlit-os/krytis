@@ -1164,6 +1164,18 @@ jobs:
           # desktop/stb.bst) have no suffix to strip and yield an empty string,
           # so the Version row is omitted rather than showing a bare SHA. The
           # digit filter drops non-version tags like "release-0-g<sha>".
+          #
+          # A branch-tracked element whose nearest ANNOTATED tag is stale gets a
+          # describe prefix that is real but wrong: desktop/oo7.bst tracks
+          # refs/heads/main and every ref reads v0.6.0-alpha-<n>-g<sha>, because
+          # upstream's 0.7.0.alpha is a lightweight tag and git-describe ignores
+          # those. Both sides of the bump then describe to the same stale tag.
+          # The title already guards on that (OLD_VER != NEW_VER below); the
+          # Version row did not, so it rendered `v0.6.0-alpha` -> `v0.6.0-alpha`
+          # on every oo7 PR -- a row asserting no change, on a PR that exists
+          # only because something changed, naming a version upstream is well
+          # past. Same guard on both, so the row appears only when it says
+          # something. Commits/Compare still carry the real delta.
           describe_tag() {
             printf '%s\n' "$1" | grep -oP '^.+(?=-\d+-g[0-9a-f]{7,40}$)' | grep -P '\d' || true
           }
@@ -1193,7 +1205,7 @@ jobs:
               echo "| | |"
               echo "| --- | --- |"
               echo "| **Source** | [$UPSTREAM_SLUG]($GITHUB_URL) |"
-              if [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ]; then
+              if [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ] && [ "$OLD_VER" != "$NEW_VER" ]; then
                 echo "| **Version** | \`$OLD_VER\` → \`$NEW_VER\` |"
               fi
               if [ -n "$OLD_SHA" ] && [ -n "$NEW_SHA" ]; then
