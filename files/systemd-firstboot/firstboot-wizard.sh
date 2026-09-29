@@ -57,7 +57,7 @@ fi
 # IS the admin account. --prompt-groups=no is what keeps that value -- were the
 # groups prompt left on, an interactive answer would overwrite memberOf wholesale.
 #
-# --auto-resize-mode=off --disk-size=50% is the #996 decision. Do not restore
+# --auto-resize-mode=off --disk-size=35% is the #996 decision. Do not restore
 # shrink-and-grow: on systemd 261 that is already homed's default for a
 # LUKS2+btrfs home ("Defaults to shrink-and-grow, if LUKS2/btrfs is used,
 # otherwise is off" -- man homectl), i.e. what homectl firstboot would produce
@@ -69,18 +69,28 @@ fi
 # resize latency reaches the same workaround -- see docs/skills/pam.md
 # § A logout shrink blocks the next login, and its Prior art subsection.
 #
-# --disk-size=50% replaces homed's own default of 85% of free space. The size
+# --disk-size=35% replaces homed's own default of 85% of free space. The size
 # matters much more once auto-resize is off, because the LUKS2 image is
-# allocated in full at creation, not sparsely (verified: `stat` reports
-# allocated blocks equal to apparent size), so the value chosen here is
-# consumed on disk immediately and nothing reclaims it later. Sizing is
-# relative to FREE space on the backing filesystem at creation time
-# (homework-luks.c calculate_initial_image_size uses statfs f_bavail), so it
-# self-scales and cannot over-commit. Half is left for the OS: bootc
-# deployments, system flatpaks and root container storage measured ~101 GB on
-# a well-used krytis machine. The asymmetry decides the direction of the
-# guess: growing later is a cheap allocation, shrinking is the multi-minute
-# relocation above, so start small and grow.
+# allocated in full at creation, not sparsely, so the value chosen here is
+# consumed on disk immediately and nothing reclaims it later. Measured on real
+# hardware: growing one home 84G -> 150G raised `df /sysroot` used from 186G to
+# 252G at once, and `stat` reports allocated blocks exactly equal to apparent
+# size. Sizing is relative to FREE space on the backing filesystem at creation
+# time (homework-luks.c calculate_initial_image_size uses statfs f_bavail), so
+# it self-scales and cannot over-commit.
+#
+# Why deliberately small rather than generous -- the two directions are not
+# symmetric, and the gap is three orders of magnitude. Both measured on adora:
+#
+#   grow   84G -> 150G   1 second     (metadata + allocation)
+#   shrink 109G -> 84G   659 seconds  (btrfs block-group relocation)
+#
+# So guessing low costs a one-second `homectl resize` later, while guessing
+# high costs both wasted disk and an 11-minute operation to undo. 35% also
+# leaves room for the OS side: bootc deployments, system flatpaks and root
+# container storage measured ~101 GB on a well-used krytis machine. For
+# reference, the first operator to size this by hand chose 150G against 74.7G
+# in use -- roughly 2x actual usage, well under half of free space.
 #
 # --rebalance-weight=off is redundant but kept explicit: homectl already
 # forces rebalanceWeight to off whenever --disk-size= is given
@@ -93,7 +103,7 @@ fi
 # the polkit agent, so that prompt is graphical. A GUI control for it is #998.
 if ! homectl firstboot --prompt-new-user --prompt-shell=no \
         --prompt-groups=no --member-of=wheel \
-        --auto-resize-mode=off --rebalance-weight=off --disk-size=50% \
+        --auto-resize-mode=off --rebalance-weight=off --disk-size=35% \
         --mute-console=yes; then
     log "initial user creation failed"
 fi

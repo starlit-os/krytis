@@ -1282,7 +1282,7 @@ journalctl -u greetd -b                         # silence == blocked in pam_syst
 `files/systemd-firstboot/firstboot-wizard.sh` now creates the initial account with:
 
 ```
---auto-resize-mode=off --rebalance-weight=off --disk-size=50%
+--auto-resize-mode=off --rebalance-weight=off --disk-size=35%
 ```
 
 On an **existing** machine the wizard has already run, so apply it by hand once (admin auth,
@@ -1306,17 +1306,27 @@ homectl resize <user> <size>    # only if the current size is wrong
   `update-home` (admin) rather than `update-home-by-owner` (`allow_active=yes`). This is why
   #996 shipped no GUI — see #998.
 - **The LUKS2 image is allocated in full, not sparsely.** `stat` on a real
-  `/var/home/<user>.home` reports allocated blocks exactly equal to apparent size. So with
+  `/var/home/<user>.home` reports allocated blocks exactly equal to apparent size, and
+  growing one 84G → 150G moved `df /sysroot` used from 186G to 252G *at once*. So with
   auto-resize off the chosen size is consumed on disk immediately and nothing reclaims it.
   This is what makes homed's own 85% default unacceptable here, and it is the reverse of the
   intuition that an unused image costs nothing.
 - **A percentage is relative to *free* space at creation, not to the disk.**
   `calculate_initial_image_size()` in `src/home/homework-luks.c` takes `statfs` `f_bavail` of
-  the backing filesystem as the upper boundary. So `50%` self-scales and cannot over-commit,
+  the backing filesystem as the upper boundary. So `35%` self-scales and cannot over-commit,
   and it is only ever evaluated once, at creation.
 
-Direction of the guess follows the cost asymmetry: **growing is a cheap allocation, shrinking
-is the multi-minute block-group relocation above.** Start small and grow.
+**Grow and shrink are not symmetric, and the gap is three orders of magnitude.** Both
+measured on `adora`, same machine, same week:
+
+| Direction | Change | Elapsed | Why |
+|---|---|---|---|
+| grow | 84G → 150G | **1 s** | metadata + allocation |
+| shrink | 109G → 84G | **659 s** | btrfs block-group relocation, scaling with data in use |
+
+So guessing the size low costs a one-second `homectl resize` later; guessing high costs both
+wasted disk and an 11-minute operation to undo. **Start small and grow.** That asymmetry is
+the whole reason the wizard's default is well under homed's own.
 
 ### Prior art: there is no official homed tuning guide, and the only advice anyone gives is "turn it off"
 
