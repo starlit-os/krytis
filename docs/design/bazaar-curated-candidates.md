@@ -114,6 +114,7 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | App | Decision | Links |
 |---|---|---|
 | **Damask** | Dropped. | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
+| **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
 | **Discord** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
@@ -227,7 +228,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **GPU Screen Recorder** | Low-overhead hardware-encoded screen recorder / replay buffer † | [Flathub](https://flathub.org/apps/com.dec05eba.gpu_screen_recorder) · `com.dec05eba.gpu_screen_recorder` |
 | **Protontricks** | Apps and fixes for Proton games | [Flathub](https://flathub.org/apps/com.github.Matoking.protontricks) · `com.github.Matoking.protontricks` |
 | **OBS Studio** | Live stream and record videos | [Flathub](https://flathub.org/apps/com.obsproject.Studio) · `com.obsproject.Studio` |
-| **Boatswain** | Control Elgato Stream Deck devices † | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
+| ~~**Boatswain**~~ | ~~Control Elgato Stream Deck devices †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | ~~**Steam Link**~~ | ~~Stream games from another computer with Steam~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
 | **Mahjongg** | Match tiles and clear the board † | [Flathub](https://flathub.org/apps/org.gnome.Mahjongg) · `org.gnome.Mahjongg` |
 | **SDL Sopwith** | Classic side-scrolling biplane shoot-'em-up † | [Flathub](https://flathub.org/apps/io.github.fragglet.sdl_sopwith) · `io.github.fragglet.sdl_sopwith` |
