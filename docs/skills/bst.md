@@ -1210,7 +1210,7 @@ stops at the first letter, so every pre-release tag collapses to its base versio
 describe offset on stable tags (`v1.15.2-0`). Both symptoms shipped in real PRs
 (starlit-os/krytis#401).
 
-Two constraints on any change here:
+Three constraints on any change here:
 
 - **Plain-SHA refs must yield an empty version.** Branch-tracked elements with no reachable
   tag (`desktop/stb.bst`, `track: refs/heads/master`) get a bare 40-char SHA as their ref;
@@ -1219,6 +1219,16 @@ Two constraints on any change here:
   A bare `+` after `^` is a literal plus only in GNU BRE; uutils-style greps read it as a
   quantifier on `^` and match *every* diff line, so `NEW_REF` silently picks up the old ref
   too. GitHub runners ship GNU grep, so this only bites when reproducing the step locally.
+- **A version that did not change must not be printed.** The parse can succeed and still be
+  wrong: a branch-tracked element whose nearest *annotated* tag is stale describes to that
+  tag forever. `desktop/oo7.bst` (`track: refs/heads/main`) reads
+  `v0.6.0-alpha-<n>-g<sha>` on every ref, because upstream's `0.7.0.alpha` is a **lightweight**
+  tag and `git describe` ignores those unless asked. Both sides of a bump then yield the same
+  string, so the body rendered `` `v0.6.0-alpha` → `v0.6.0-alpha` `` on every oo7 PR — a row
+  asserting no change, on a PR that exists only because something changed, naming a version
+  upstream is long past. The title had guarded on `OLD_VER != NEW_VER` since #401; the
+  **Version** row did not. Both guard on it now, so the row appears only when it says
+  something, and `Commits`/`Compare` carry the real delta either way.
 
 ### Verify a track: glob only matches the intended release channel
 
