@@ -30,7 +30,9 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   by `etc/bazaar/bazaar.yaml` + `hooks.py`, which steer the user to a Homebrew/`ujust`
   install. krytis has no Homebrew and no hooks, so copying those rows as they are
   would install the sandboxed Flatpak. That is exactly the experience Bluefin is
-  warning people away from.
+  warning people away from. **Resolved:** every one of those rows is dropped (see
+  *Decided*). If Bluefin adds an IDE, check whether its hooks intercept it before
+  proposing it.
 - **krytis already ships some of these natively.** Zed (`elements/desktop/zed.bst`)
   duplicates `dev.zed.Zed`. Equibop (`elements/desktop/equibop.bst`) covers the same
   need as `com.discordapp.Discord`. The #245 wiring plan blocklists both IDs, so they
@@ -124,6 +126,9 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **Sudoku** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
 | **Battle for Wesnoth** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
 | **Threadbare** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
+| **Zed** | Dropped: krytis ships Zed natively (`elements/desktop/zed.bst`), and the wiring's `blocklist.yaml` blocks the Flatpak. | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
+| **VSCodium** | Dropped. | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
+| **IntelliJ IDEA** | Dropped. | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
@@ -300,15 +305,15 @@ This is Bluefin's "Games" section, renamed for krytis.
 | **Jan** | Private offline AI assistant | [Flathub](https://flathub.org/apps/ai.jan.Jan) · `ai.jan.Jan` |
 | **Whis** | Turn speech into text | [Flathub](https://flathub.org/apps/ink.whis.Whis) · `ink.whis.Whis` |
 
-### Desktop Development (13/17)
+### Desktop Development (10/17)
 
 | App | Summary | Links |
 |---|---|---|
 | **Gitte** | Git GUI client † | [Flathub](https://flathub.org/apps/de.wwwtech.gitte) · `de.wwwtech.gitte` |
-| **Zed** | High-performance code editor | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
+| ~~**Zed**~~ | ~~High-performance code editor~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
 | ~~**Visual Studio Code**~~ | ~~Code editing. Redefined~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.visualstudio.code) · `com.visualstudio.code` |
-| **VSCodium** | Telemetry-less code editing | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
-| **IntelliJ IDEA** | Java and Kotlin IDE | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
+| ~~**VSCodium**~~ | ~~Telemetry-less code editing~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
+| ~~**IntelliJ IDEA**~~ | ~~Java and Kotlin IDE~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
 | ~~**PyCharm Professional**~~ | ~~Python IDE (proprietary, paid)~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
 | ~~**CLion**~~ | ~~A cross-platform IDE for C and C++~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
 | ~~**Android Studio**~~ | ~~IDE for Android app development~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
