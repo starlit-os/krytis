@@ -90,6 +90,11 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
   Bluefin's order. Update the per-section counts in the headings and the snapshot line
   (SHA, date, totals).
 - Replace the marker with the `New marker:` line the task printed.
+- Re-check **Currently preinstalled by krytis** against its two sources,
+  `files/flatpak-preinstall/flatpak-preinstall.sh` (`APPS=`) and `live/src/flatpaks`.
+  That section exists so each preinstalled app can be weighed against the curated
+  alternatives. If Bluefin starts recommending an app krytis preinstalls, note it on
+  that app's row.
 - If a change affects a point under **Things to settle before picking**, update that
   point too. Examples: Bluefin drops an app krytis ships natively, the IDE-hook set
   changes, or `blocklist.yaml` changes. Don't append a new point beside a stale one.

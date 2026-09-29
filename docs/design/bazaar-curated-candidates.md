@@ -46,6 +46,43 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. Any krytis
   blocklist is a separate decision from the curated list.
 
+## Currently preinstalled by krytis
+
+These are listed so they can be weighed against the curated page: keep one
+preinstalled, or move it to a recommendation. None of them is in Bluefin's curated list
+above.
+
+krytis preinstalls Flatpaks through two paths, and they don't install the same set:
+
+| Path | File | What gets it |
+|---|---|---|
+| Image first boot | `files/flatpak-preinstall/flatpak-preinstall.sh` | Every krytis system, including one reached by `bootc switch`. It installs **only Bazaar**. |
+| Live ISO | `live/src/flatpaks`, baked into the squashfs by `live/src/install-flatpaks.sh` | The live session, and installs made from the ISO. The file header says the installer copies them to the target offline (`flatpak_var_path` in `live/src/configure-live-krytis.sh`). |
+
+So a system installed from the ISO has all 16 apps, while a system that reached krytis by
+`bootc switch` has only Bazaar. `live/src/flatpaks` came over with the dakota-iso fork and
+still carries the header `# Bluefin system flatpaks`. Nothing in `files/` or `elements/`
+depends on any entry in it: no MIME default or config references them.
+The "no native …" notes below come from the image's `.desktop` inventory:
+`grep -E '^/\./usr/share/applications/.*\.desktop' files/fakecap-manifest.tsv`.
+
+| App | Summary | Path | Notes | Links |
+|---|---|---|---|---|
+| **Bazaar** | Flatpak app store † | image + ISO | The store itself, so it can't be a recommendation. Bluefin's blocklist hides it for that reason. | [Flathub](https://flathub.org/apps/io.github.kolunmi.Bazaar) · `io.github.kolunmi.Bazaar` |
+| **adw-gtk3** / **adw-gtk3-dark** | The libadwaita theme ported to GTK 3 | ISO | Runtime extensions, not apps, so they don't fit a curated app row. They theme Flatpak GTK 3 apps; the host copy is `elements/desktop/adw-gtk3.bst`. | [Flathub](https://flathub.org/apps/org.gtk.Gtk3theme.adw-gtk3) · `org.gtk.Gtk3theme.adw-gtk3`, `org.gtk.Gtk3theme.adw-gtk3-dark` |
+| **Papers** | Document (PDF) viewer † | ISO | The image has no native PDF viewer, though Zen's built-in viewer can open PDFs. | [Flathub](https://flathub.org/apps/org.gnome.Papers) · `org.gnome.Papers` |
+| **Loupe** (Image Viewer) | View images † | ISO | The image has no native image viewer. | [Flathub](https://flathub.org/apps/org.gnome.Loupe) · `org.gnome.Loupe` |
+| **Showtime** (Video Player) | Watch videos † | ISO | The image has no native video player. | [Flathub](https://flathub.org/apps/org.gnome.Showtime) · `org.gnome.Showtime` |
+| **Sushi** (NautilusPreviewer) | Quick file previews in Nautilus (space bar) † | ISO | Add-on for Nautilus, which krytis ships natively (`gnome-build-meta.bst:core/nautilus.bst`). | [Flathub](https://flathub.org/apps/org.gnome.NautilusPreviewer) · `org.gnome.NautilusPreviewer` |
+| **Fonts** | View and install fonts † | ISO | | [Flathub](https://flathub.org/apps/org.gnome.font-viewer) · `org.gnome.font-viewer` |
+| **Logs** | View the systemd journal † | ISO | | [Flathub](https://flathub.org/apps/org.gnome.Logs) · `org.gnome.Logs` |
+| **Firmware** | Install firmware on devices (fwupd front-end) † | ISO | | [Flathub](https://flathub.org/apps/org.gnome.Firmware) · `org.gnome.Firmware` |
+| **Mission Center** | Monitor system resource usage | ISO | | [Flathub](https://flathub.org/apps/io.missioncenter.MissionCenter) · `io.missioncenter.MissionCenter` |
+| **Flatseal** | Manage Flatpak permissions | ISO | | [Flathub](https://flathub.org/apps/com.github.tchx84.Flatseal) · `com.github.tchx84.Flatseal` |
+| **Ignition** | Manage startup apps and scripts | ISO | GNOME-style autostart entries. Under niri, `spawn-at-startup` is the other startup mechanism, and Ignition doesn't manage it. | [Flathub](https://flathub.org/apps/io.github.flattool.Ignition) · `io.github.flattool.Ignition` |
+| **Smile** | An emoji picker | ISO | | [Flathub](https://flathub.org/apps/it.mijorus.smile) · `it.mijorus.smile` |
+| **Pinta** | Edit images and paint digitally | ISO | | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
+
 ## The list
 
 ### Bluefin Recommends (14)

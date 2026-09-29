@@ -2437,6 +2437,12 @@ refresh. Non-obvious points:
   Zed and the JetBrains IDEs are listed, then intercepted by `bazaar.yaml` + `hooks.py`
   and redirected to Homebrew. krytis has neither, so those rows can't be copied as they
   are.
+- **krytis preinstalls Flatpaks through two paths that have drifted apart.** The image's
+  first-boot `files/flatpak-preinstall/flatpak-preinstall.sh` installs only Bazaar. The
+  live ISO's `live/src/flatpaks`, inherited from dakota-iso and still headed `# Bluefin
+  system flatpaks`, bakes in 15 more (Papers, Loupe, Showtime, Flatseal and others). So a
+  system installed from the ISO has them, and a system reached by `bootc switch` doesn't.
+  Check both files before claiming what "krytis preinstalls".
 - **flathub.org is blocked from the cloud-agent sandbox.** The Flathub API
   (`/api/v2/appstream/<id>`) works on a dev machine only. From the sandbox, get app
   summaries from the AppStream metainfo in the `github.com/flathub/<id>` packaging repo,
