@@ -565,13 +565,13 @@ Relevant because krytis carries fork patches it may want to upstream (#999), and
 krytis's own commits carry `Assisted-by:` trailers per `AGENTS.md`.
 
 **There is no AI/LLM contribution policy anywhere in `noctalia-dev`, checked 2026-09-29.**
-Zero matches for `AI|LLM|GPT|Claude|Copilot|ChatGPT|Codex|generative|AI-generated|
-AI-assisted|machine-generated|slop` across `CONTRIBUTING.md`, `README.md`, `ARCHITECTURE.md`,
-`BUILDING.md`, `CREDITS.md`, `SCOPE.md`, `.github/PULL_REQUEST_TEMPLATE.md`, all three
-`.github/ISSUE_TEMPLATE/*`, and `.github/workflows/scripts/enforce-pr-template.py`, in each of
-`noctalia`, `umbriel` and `noctalia-greeter`, plus the `noctalia-dev/.github` org profile
-README. Re-run before relying on this — it is an absence claim and absences are exactly what
-rots:
+Every path named in this subsection belongs to an upstream `noctalia-dev/*` tree, not to
+krytis. Zero matches for `AI|LLM|GPT|Claude|Copilot|ChatGPT|Codex|generative|AI-generated|
+AI-assisted|machine-generated|slop` across each repo's `CONTRIBUTING.md`, `README.md`,
+`ARCHITECTURE.md`, `BUILDING.md`, `CREDITS.md`, `SCOPE.md`, its pull-request template, all
+three issue templates, and its PR-enforcement script — in each of `noctalia`, `umbriel` and
+`noctalia-greeter`, plus the `noctalia-dev/.github` org profile README. Re-run before relying
+on this; it is an absence claim, and absences are exactly what rots:
 
 ```bash
 for r in noctalia umbriel noctalia-greeter; do
@@ -586,8 +586,8 @@ requirement (`gh api repos/noctalia-dev/<r>/community/profile`). So nothing obli
 of AI assistance and nothing forbids it. Krytis's `Assisted-by:` trailer is therefore safe to
 carry upstream, and dropping it would be the unusual choice, not keeping it.
 
-**What upstream does enforce is structural, and a bot acts on it.**
-`.github/workflows/enforce-pr-template.yml` runs `enforce-pr-template.py` on open, edit,
+**What upstream does enforce is structural, and a bot acts on it.** `noctalia-dev/noctalia`'s
+PR-template enforcement workflow runs its checker script on open, edit,
 reopen and ready-for-review; a PR missing required structure is **commented on and converted
 back to Draft** (it is never closed). Required: the `## Summary`, `## Motivation`,
 `## Type of Change`, `## Testing` and `## Checklist` headings, with the Checklist wording
