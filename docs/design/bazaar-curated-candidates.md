@@ -129,6 +129,8 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **Zed** | Dropped: krytis ships Zed natively (`elements/desktop/zed.bst`), and the wiring's `blocklist.yaml` blocks the Flatpak. | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
 | **VSCodium** | Dropped. | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
 | **IntelliJ IDEA** | Dropped. | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
+| **Builder** | Dropped: too narrow a focus (GNOME/Flatpak app development). | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |
+| **Arduino IDE v2** | Dropped: too narrow a focus (Arduino boards only). | [Flathub](https://flathub.org/apps/cc.arduino.IDE2) · `cc.arduino.IDE2` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
@@ -305,7 +307,7 @@ This is Bluefin's "Games" section, renamed for krytis.
 | **Jan** | Private offline AI assistant | [Flathub](https://flathub.org/apps/ai.jan.Jan) · `ai.jan.Jan` |
 | **Whis** | Turn speech into text | [Flathub](https://flathub.org/apps/ink.whis.Whis) · `ink.whis.Whis` |
 
-### Desktop Development (10/17)
+### Desktop Development (8/17)
 
 | App | Summary | Links |
 |---|---|---|
@@ -317,8 +319,8 @@ This is Bluefin's "Games" section, renamed for krytis.
 | ~~**PyCharm Professional**~~ | ~~Python IDE (proprietary, paid)~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
 | ~~**CLion**~~ | ~~A cross-platform IDE for C and C++~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
 | ~~**Android Studio**~~ | ~~IDE for Android app development~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
-| **Builder** | IDE for GNOME / Flatpak development † | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |
-| **Arduino IDE v2** | Open-source electronics prototyping platform | [Flathub](https://flathub.org/apps/cc.arduino.IDE2) · `cc.arduino.IDE2` |
+| ~~**Builder**~~ | ~~IDE for GNOME / Flatpak development †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |
+| ~~**Arduino IDE v2**~~ | ~~Open-source electronics prototyping platform~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/cc.arduino.IDE2) · `cc.arduino.IDE2` |
 | **Brief** | Browse command-line cheatsheets | [Flathub](https://flathub.org/apps/io.github.shonebinu.Brief) · `io.github.shonebinu.Brief` |
 | **Icon Library** | Find the right icon to use † | [Flathub](https://flathub.org/apps/org.gnome.design.IconLibrary) · `org.gnome.design.IconLibrary` |
 | **Embellish** | Install nerd fonts | [Flathub](https://flathub.org/apps/io.github.getnf.embellish) · `io.github.getnf.embellish` |
