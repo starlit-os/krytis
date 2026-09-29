@@ -563,6 +563,12 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
 
 *Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7).*
 
+**The locker authenticates through PAM service `login`, not `greetd`** — hardcoded in
+noctalia's `src/shell/lockscreen/lock_screen.cpp`, reaching krytis's `system-auth` from
+`elements/config/u2f-config.bst`. So a PAM decision taken for the greeter (e.g. #585's
+`pam_u2f` disable) does not apply here, and noctalia#4283's homed retry stall does. See
+`docs/skills/pam.md` § The lock screen authenticates through `login`, not `greetd`.
+
 **Do not add swayidle/hypridle/swaylock/a `sleep.target` lock unit to get lock-on-suspend.**
 noctalia already implements it, using the same delay-inhibit pattern those tools use, and a
 second locker would race it. The full chain:

@@ -1330,12 +1330,45 @@ Two facts worth extracting, both confirmed by more than one independent report:
 So krytis's first-boot wizard currently asks for the one setting every upstream thread tells
 people to disable. That is the substance of #996.
 
-**Related, not the same bug:** [noctalia#4283](https://github.com/noctalia-dev/noctalia/issues/4283)
-— noctalia's lock screen re-sends a rejected password across all five of
-`pam_systemd_home`'s retry prompts, so a wrong password takes 12–15 s to be reported instead
-of ~3 s. Same family (a greeter-shaped PAM conversation behaving badly against homed's
-timings), different mechanism, and it is upstream's to fix. swaylock fixed the analogous bug
-in [swaylock#447](https://github.com/swaywm/swaylock/pull/447).
+## The lock screen authenticates through `login`, not `greetd` — and noctalia#4283 hits krytis as shipped
+
+**Neither this file nor `docs/skills/desktop.md` said which PAM service the locker opens
+before #996.** It matters: every PAM decision made for the greeter is invisible to the lock
+screen, and vice versa.
+
+krytis ships no separate locker — no swaylock, gtklock, hyprlock or waylock is packaged or
+present on a live machine. **noctalia itself is the lock screen**, an `ext-session-lock-v1`
+client (`src/shell/lockscreen/lock_screen.cpp`), with niri/umbriel as the lock server.
+`files/umbriel/config.toml` autostarts noctalia, and `elements/config/logind-lid.bst` states
+it outright: *"Krytis ships no swayidle/hypridle/swaylock and needs none."* There is no lock
+keybind at all — lock is reached from noctalia's own panel, `loginctl lock-session`, lid
+close, or an idle action.
+
+**The service name is hardcoded `"login"`** in `lock_screen.cpp` (`const std::string
+pamService = "login";`), not a config key. `/etc/pam.d/login` is freedesktop-sdk's (from
+`components/shadow.bst`, per `files/fakecap-manifest.tsv`) and `include`s `system-auth` in
+all four phases, so the locker runs krytis's `system-auth` from
+`elements/config/u2f-config.bst`. Two consequences:
+
+- `pam_systemd_home.so` is on that path in all four phases, so homed users do unlock
+  correctly.
+- `auth sufficient pam_u2f.so cue pinverification` is **live on the lock screen**, unlike the
+  greeter, where `elements/config/greetd-config.bst` has it commented out for #585. A FIDO2
+  decision taken for `greetd` does not carry to the locker.
+
+**[noctalia#4283](https://github.com/noctalia-dev/noctalia/issues/4283) therefore applies to
+krytis as shipped.** The lock screen re-supplies the same rejected password to every
+`PAM_PROMPT_ECHO_OFF`, so `pam_systemd_home`'s five retries all consume it and a mistyped
+password takes 12–15 s to be reported instead of ~3 s. Confirmed present at krytis's pinned
+ref: `pamConversation()` in `src/auth/pam_authenticator.cpp` answers every `ECHO_OFF` from
+the same `PamConversationData.password` pointer with no once-only guard. The issue is open
+upstream with no fix, and upstream v5.2.0 does not address it — bumping the pin will not help.
+
+**This one is ours to fix, not upstream's.** `elements/desktop/noctalia.bst` already pins the
+**kitten-lily fork** (`github:kitten-lily/noctalia.git`, `track: feat/system-prompter`), so
+the change lands in a repo krytis owns. The fix shape is swaylock's
+([swaylock#447](https://github.com/swaywm/swaylock/pull/447)): answer the first `ECHO_OFF`
+with the password, return `PAM_CONV_ERR` for any later one.
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 
