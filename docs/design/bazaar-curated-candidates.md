@@ -57,8 +57,10 @@ has to satisfy five rules:
 
 1. Every ID resolves: `flatpak remote-info flathub <id>` succeeds. A delisted or renamed
    ID fails silently.
-2. No ID is also in krytis's `blocklist.yaml`, because the blocklist wins. The plan
-   blocks at least `dev.zed.Zed` and `com.discordapp.Discord`.
+2. No ID is also in krytis's `blocklist.yaml`, because the blocklist wins. It blocks
+   Flatpaks krytis already ships natively: `dev.zed.Zed`, `com.discordapp.Discord`,
+   `org.vim.Vim` and `org.freedesktop.fwupd`. The last two were agreed in
+   [this reply](https://github.com/starlit-os/krytis/issues/245#issuecomment-5888011213).
 3. The modern schema only.
 4. No `image:` under `banner:` unless branding art lands in the same change.
 5. Changing a list touches no other file. If it has to, raise that on #245.
