@@ -108,8 +108,9 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
   row would make the next refresh report it as "added" and propose it again. If Bluefin
   itself later removes a struck app, remove it from both places.
 - Add, remove, rename and move rows so each section table mirrors Bluefin's list, in
-  Bluefin's order. Update the per-section counts in the headings and the snapshot line
-  (SHA, date, totals).
+  Bluefin's order. Each section heading reads `(<accepted>/<total>)`, where total is
+  Bluefin's row count and accepted is the rows not struck through. Recount both after
+  every add, drop or move, and update the snapshot line (SHA, date, totals).
 - Replace the marker with the `New marker:` line the task printed.
 - Re-check **Currently preinstalled by krytis** against its two sources,
   `files/flatpak-preinstall/flatpak-preinstall.sh` (`APPS=`) and `live/src/flatpaks`.

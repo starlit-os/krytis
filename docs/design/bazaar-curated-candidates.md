@@ -154,7 +154,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 
 ## The list
 
-### Bluefin Recommends (14)
+### Bluefin Recommends (13/14)
 
 | App | Summary | Links |
 |---|---|---|
@@ -173,7 +173,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **File Shredder** | Securely delete files † | [Flathub](https://flathub.org/apps/com.github.ADBeveridge.Raider) · `com.github.ADBeveridge.Raider` |
 | **Kasasa** | Snip and pin useful information | [Flathub](https://flathub.org/apps/io.github.kelvinnovais.Kasasa) · `io.github.kelvinnovais.Kasasa` |
 
-### Browsers (7)
+### Browsers (2/7)
 
 | App | Summary | Links |
 |---|---|---|
@@ -185,7 +185,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | ~~**Vivaldi**~~ | ~~Feature-packed web browser~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.vivaldi.Vivaldi) · `com.vivaldi.Vivaldi` |
 | ~~**Ecosia Browser**~~ | ~~Chromium-based browser from the tree-planting search engine †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.ecosia.Browser) · `org.ecosia.Browser` |
 
-### Media (12)
+### Media (9/12)
 
 | App | Summary | Links |
 |---|---|---|
@@ -202,7 +202,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Blanket** | Listen to ambient sounds † | [Flathub](https://flathub.org/apps/com.rafaelmardojai.Blanket) · `com.rafaelmardojai.Blanket` |
 | **Parabolic** | Download web video and audio | [Flathub](https://flathub.org/apps/org.nickvision.tubeconverter) · `org.nickvision.tubeconverter` |
 
-### Office & Productivity (14)
+### Office & Productivity (12/14)
 
 | App | Summary | Links |
 |---|---|---|
@@ -221,7 +221,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | ~~**Obsidian**~~ | ~~Markdown-based knowledge base~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
 | **Logseq** | Connect your notes and knowledge | [Flathub](https://flathub.org/apps/com.logseq.Logseq) · `com.logseq.Logseq` |
 
-### Games (15)
+### Games (12/15)
 
 | App | Summary | Links |
 |---|---|---|
@@ -241,7 +241,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Battle for Wesnoth** | Turn-based fantasy strategy game † | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
 | **Threadbare** | Endless Access game about learning to make games † | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
 
-### Utilities (19)
+### Utilities (18/19)
 
 | App | Summary | Links |
 |---|---|---|
@@ -265,7 +265,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | ~~**Mozilla VPN**~~ | ~~A fast, secure and easy to use VPN. Built by the makers of Firefox~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.mozilla.vpn) · `org.mozilla.vpn` |
 | **RClone Manager** | Browse and sync cloud storage | [Flathub](https://flathub.org/apps/io.github.zarestia_dev.rclone-manager) · `io.github.zarestia_dev.rclone-manager` |
 
-### Sustainability & Education (12)
+### Sustainability & Education (12/12)
 
 | App | Summary | Links |
 |---|---|---|
@@ -282,7 +282,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Multiplication Puzzle** | Practise times tables with a puzzle game † | [Flathub](https://flathub.org/apps/app.drey.MultiplicationPuzzle) · `app.drey.MultiplicationPuzzle` |
 | **Spelling Bee** | Learn new English words | [Flathub](https://flathub.org/apps/io.github.josephmawa.SpellingBee) · `io.github.josephmawa.SpellingBee` |
 
-### AI and Machine Learning (4)
+### AI and Machine Learning (4/4)
 
 | App | Summary | Links |
 |---|---|---|
@@ -291,7 +291,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Jan** | Private offline AI assistant | [Flathub](https://flathub.org/apps/ai.jan.Jan) · `ai.jan.Jan` |
 | **Whis** | Turn speech into text | [Flathub](https://flathub.org/apps/ink.whis.Whis) · `ink.whis.Whis` |
 
-### Desktop Development (17)
+### Desktop Development (13/17)
 
 | App | Summary | Links |
 |---|---|---|
@@ -313,7 +313,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **ASCII Draw** | Sketch diagrams in ASCII † | [Flathub](https://flathub.org/apps/io.github.nokse22.asciidraw) · `io.github.nokse22.asciidraw` |
 | **Concessio** | Understand file permissions | [Flathub](https://flathub.org/apps/io.github.ronniedroid.concessio) · `io.github.ronniedroid.concessio` |
 
-### Cloud Native Development (13)
+### Cloud Native Development (7/13)
 
 | App | Summary | Links |
 |---|---|---|
