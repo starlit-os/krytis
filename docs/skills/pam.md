@@ -1278,12 +1278,64 @@ journalctl -t systemd-homework -b | grep -E 'Ready to resize|shrinking completed
 journalctl -u greetd -b                         # silence == blocked in pam_systemd_home
 ```
 
-**Mitigation** is to stop the oscillation rather than to make the greeter wait: pin
-`--disk-size=` so `grow` converges, and drop the logout shrink
-(`homectl update <user> --disk-size=<fixed> --auto-resize-mode=grow`), reclaiming space
-explicitly with `homectl resize <user> min` when wanted. Changing what
-`firstboot-wizard.sh` gives new accounts is a Design Gate decision — tracked in #996, not
-applied here.
+**Mitigation** is to stop the oscillation rather than to make the greeter wait. Two shapes,
+both in wide use upstream (see Prior art below):
+
+- `homectl update <user> --auto-resize-mode=off --rebalance-weight=off` — the answer every
+  upstream thread converges on. No grow, no shrink, image stays where it is; reclaim becomes
+  explicit (`homectl resize <user> min`, which btrfs supports while the user is logged in).
+- `homectl update <user> --disk-size=<fixed> --auto-resize-mode=grow` — keeps auto-grow but
+  pins its target, so `grow` is a no-op once the image is at size and there is never a logout
+  shrink.
+
+Changing what `firstboot-wizard.sh` gives new accounts is a Design Gate decision — tracked in
+#996, not applied here.
+
+### Prior art: there is no official homed tuning guide, and the only advice anyone gives is "turn it off"
+
+Checked 2026-09-29, because this is obviously not a krytis-specific failure. **No upstream or
+distro document covers homed resize performance at all:**
+
+- [`systemd.io/HOME_DIRECTORY`](https://systemd.io/HOME_DIRECTORY/) is an on-disk *format*
+  spec (LUKS2 token layout, permitted file systems). No operational guidance.
+- `man homectl` is reference material: it documents what each mode does, and the one
+  performance-adjacent warning it carries is about ext4 needing a logout to shrink — not
+  about how long shrinking takes.
+- The [ArchWiki systemd-homed page](https://wiki.archlinux.org/title/Systemd-homed) has
+  installation, storage backends, SSH unlocking, rescue mounting and a Troubleshooting
+  section — and **nothing** on resize or login latency.
+
+What exists instead is a four-year trail of issue threads and forum posts that all land on
+the same workaround:
+
+| Source | Finding |
+|---|---|
+| [Arch BBS 281563](https://bbs.archlinux.org/viewtopic.php?id=281563) (2022, marked SOLVED) | 2.2T image / 1.2T used, login took **2 minutes**. Accepted answer: `homectl update <user> --auto-resize-mode=off --rebalance-weight=off`. Reporter: "It worked. Much faster now." This is the canonical answer for "homed login is slow". |
+| [systemd#22901](https://github.com/systemd/systemd/issues/22901) | "On shutdown, homed resizes until it gets killed" — byte-for-byte the same log shape as ours, including `Allocated additional …G` and `Worker process for home <u> is still running while exiting`. Closed with no fix; the reporter's workaround was `TimeoutStopSec=infinity` drop-ins on `systemd-homed.service`/`systemd-homed-activate.service`, and he notes **the same shrink then recurs on every subsequent shutdown**. |
+| [systemd#24937](https://github.com/systemd/systemd/issues/24937) | Open since 2022: the image grows to fill the whole backing partition while under half full inside; reporter ran `homectl resize <u> <size>` manually "every ~week". A later commenter was **locked out** by it (`Activation failed: No space left on device`). |
+| [systemd#27625](https://github.com/systemd/systemd/issues/27625) | Same excessive-space behaviour under `--auto-resize-mode=grow`. |
+| [systemd#35719](https://github.com/systemd/systemd/issues/35719) | f2fs homes need `--auto-resize-mode=off` to activate at all. |
+
+Two facts worth extracting, both confirmed by more than one independent report:
+
+- **The shrink path re-allocates before it shrinks.** `Discarded unused 11.2G` → `Ready to
+  resize …` → `Allocated additional 11.1G` looks like a logging bug on first read; #22901
+  shows the identical trio (`Discarded unused 153.2G` … `Allocated additional 153.2G`). The
+  offline discard immediately before a shrink is wasted work, not a reclaim.
+- **The shrink is btrfs block-group relocation**, which is why it scales with *used* data
+  rather than with the amount being reclaimed. #22901's kernel log shows minutes of
+  `BTRFS info: relocating block group …` between the resize being announced and it
+  completing. A home that is 89% full has the most data to relocate and the least to gain.
+
+So krytis's first-boot wizard currently asks for the one setting every upstream thread tells
+people to disable. That is the substance of #996.
+
+**Related, not the same bug:** [noctalia#4283](https://github.com/noctalia-dev/noctalia/issues/4283)
+— noctalia's lock screen re-sends a rejected password across all five of
+`pam_systemd_home`'s retry prompts, so a wrong password takes 12–15 s to be reported instead
+of ~3 s. Same family (a greeter-shaped PAM conversation behaving badly against homed's
+timings), different mechanism, and it is upstream's to fix. swaylock fixed the analogous bug
+in [swaylock#447](https://github.com/swaywm/swaylock/pull/447).
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 
