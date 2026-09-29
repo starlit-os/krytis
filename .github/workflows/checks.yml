@@ -61,6 +61,11 @@ jobs:
       - name: Check docs references
         run: mise run docs-links
 
+      - name: Check tracked file sizes
+        # actions/checkout fetches depth 1 by default, which is all this needs:
+        # it reads the checked-out tree via `git ls-tree`, never history.
+        run: mise run large-blob-check
+
       - name: Shell syntax
         # Catches the class of typo that only surfaces when a task is invoked,
         # which for the boot-chain tasks can be 40 minutes into a QEMU run.
