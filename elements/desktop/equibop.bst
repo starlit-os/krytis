@@ -18,7 +18,8 @@ kind: manual
 # Layout: the `equibop` binary has RPATH $ORIGIN, so the bundle must stay in one
 # directory — installed to /usr/lib/equibop/ with /usr/bin/equibop symlinked in,
 # the same shape as zed.bst and zen-browser.bst. Deliberately not /opt: bootc
-# maps /opt to /var/opt, which is empty runtime state on every boot (warp.bst).
+# maps /opt to /var/opt, which is empty runtime state on every boot — see
+# docs/skills/bst.md § Never install payload content under /opt.
 #
 # chrome-sandbox ships mode 0755, not setuid, and that is correct here: krytis
 # re-enables kernel.unprivileged_userns_clone

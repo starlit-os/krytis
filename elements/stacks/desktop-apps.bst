@@ -16,10 +16,6 @@ depends:
   # Zen Browser: Firefox-based, privacy/customization-focused, x86_64 + aarch64. Closes #314.
   - desktop/zen-browser.bst
 
-  # ── Terminal ───────────────────────────────────────────────────────────────
-  # Warp: agentic terminal, prebuilt .deb, x86_64 + aarch64. Closes #315.
-  - desktop/warp.bst
-
   # ── Chat ───────────────────────────────────────────────────────────────────
   # Equibop: Discord client (Vesktop/Equicord fork), portable tarball,
   # x86_64 + aarch64. Native rather than flatpak so RPC sockets land in the

@@ -1,0 +1,12 @@
+# Which terminal xdg-terminal-exec hands a command to (`-e <cmd>`).
+#
+# NOT the same question as "which terminal does Mod+Return open" -- that is
+# seance (files/niri/binds.kdl, files/umbriel/binds.toml). seance has no
+# command-execution CLI: `seance -e <cmd>` exits 0 and runs nothing. Its
+# desktop entry still declares Categories=...TerminalEmulator;, so without
+# this file xdg-terminal-exec picks it and every "open in terminal" action
+# silently does nothing. Verified on krytis: see krytis#1005.
+#
+# Per-user override: ~/.config/xdg-terminals.list takes precedence.
+com.mitchellh.ghostty.desktop
+-com.seance.app.desktop

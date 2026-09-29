@@ -113,7 +113,7 @@ comment so a future reader does not "fix" the omission.
 
 ## Phase 1 — seance as the `Mod+Return` terminal
 
-- [ ] **Step 1: niri bind**
+- [x] **Step 1: niri bind**
 
   `files/niri/binds.kdl:12`:
 
@@ -124,7 +124,7 @@ comment so a future reader does not "fix" the omission.
   The hotkey-overlay title is user-visible (`Mod+Shift+7`) — update it, do not leave it
   reading "ghostty".
 
-- [ ] **Step 2: umbriel bind**
+- [x] **Step 2: umbriel bind**
 
   `files/umbriel/binds.toml:26-29`. Replace both the action and the port comment, which
   currently cites niri's ghostty line:
@@ -139,7 +139,7 @@ comment so a future reader does not "fix" the omission.
   Keep the `{ action = ... }` table form: the inline-table merge is what preserves
   upstream's `repeat = false` (documented at the head of that file, krytis#982).
 
-- [ ] **Step 3: pin the command-executing terminal**
+- [x] **Step 3: pin the command-executing terminal**
 
   New `files/xdg-terminals/xdg-terminals.list`:
 
@@ -171,7 +171,7 @@ comment so a future reader does not "fix" the omission.
   `desktop/xdg-terminal-exec.bst` (L176), inside the existing `── XDG utilities ──`
   block.
 
-- [ ] **Step 4: update path gate**
+- [x] **Step 4: update path gate**
 
   Not applicable — `kind: local`, no upstream source to track, so neither
   `track-bst-sources.yml` matrix option applies. State this explicitly in the PR so the
@@ -179,14 +179,14 @@ comment so a future reader does not "fix" the omission.
 
 ## Phase 2 — drop warp
 
-- [ ] **Step 1: element and stack entry**
+- [x] **Step 1: element and stack entry**
 
   - `git rm elements/desktop/warp.bst`
   - `elements/stacks/desktop-apps.bst:19-21` — delete the whole `── Terminal ──` block
     including the header comment; warp is its only member, and terminals belong to
     `stacks/desktop.bst`'s Terminal section (ghostty, seance), not to the app stack.
 
-- [ ] **Step 2: update task and tracker job**
+- [x] **Step 2: update task and tracker job**
 
   - `git rm mise/tasks/warp-update`
   - `.github/workflows/track-bst-sources.yml` — remove `- warp` from the
@@ -194,12 +194,12 @@ comment so a future reader does not "fix" the omission.
     lines 2256-2350 inclusive (next job `track-qemu:` starts at 2352). Leave exactly one
     blank line between the preceding job and `track-qemu:`.
 
-- [ ] **Step 3: alias**
+- [x] **Step 3: alias**
 
   `include/aliases.yml:22` — remove `warp_releases: https://releases.warp.dev/`. It has
   no other consumer (grep confirms the only uses were `warp.bst` and `warp-update`).
 
-- [ ] **Step 4: check for strays before building**
+- [x] **Step 4: check for strays before building**
 
   ```shell
   grep -rn "warp" --include='*' . \
@@ -212,7 +212,7 @@ comment so a future reader does not "fix" the omission.
   (`2026-08-09-add-limux-element.md` cites `desktop/warp.bst` three times and must stay
   as written).
 
-- [ ] **Step 5: re-scope the skill entries, do not delete them**
+- [x] **Step 5: re-scope the skill entries, do not delete them**
 
   `docs/skills/bst.md` carries three Warp-derived lessons that remain true about `.deb`
   packaging generally even though the element is gone — per AGENTS.md's rot rule
@@ -255,7 +255,7 @@ comment so a future reader does not "fix" the omission.
   separately (AGENTS.md § Verification). `umbriel-config-validate` is the gate that
   catches a bad `spawn:seance` action name; confirm it passed rather than assuming.
 
-- [ ] **Step 2: docs**
+- [x] **Step 2: docs**
 
   ```shell
   mise run docs-links
@@ -309,15 +309,15 @@ underneath:
 > must pin `/etc/xdg/xdg-terminals.list` explicitly; fallback ordering is not
 > alphabetical and not stable across package changes.
 
-- [ ] Add that to `docs/skills/desktop.md` as a new section, with the two `--print-id`
+- [x] Add that to `docs/skills/desktop.md` as a new section, with the two `--print-id`
       transcripts as evidence and the "which terminal opens" vs "which terminal executes"
       split stated once, plainly.
-- [ ] Record in the same section that noctalia does its own discovery
+- [x] Record in the same section that noctalia does its own discovery
       (`$TERMINAL` → hardcoded list → `-e sh -lc`), so it is pinned by `$TERMINAL` if ever
       needed, *not* by `xdg-terminals.list` — two different mechanisms that look like one.
-- [ ] `docs/skills/bst.md` re-scoping from Phase 2 Step 5 lands in the same commit as the
+- [x] `docs/skills/bst.md` re-scoping from Phase 2 Step 5 lands in the same commit as the
       element deletion, not after it.
-- [ ] While in `docs/skills/desktop.md`: it is 2000+ lines. Check whether the section
+- [x] While in `docs/skills/desktop.md`: it is 2000+ lines. Check whether the section
       being added neighbours anything already stale and fix it in the same pass
       (AGENTS.md § Skill files rot too).
 
