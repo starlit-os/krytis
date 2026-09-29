@@ -57,15 +57,22 @@ fi
 # IS the admin account. --prompt-groups=no is what keeps that value -- were the
 # groups prompt left on, an interactive answer would overwrite memberOf wholesale.
 #
-# --auto-resize-mode=shrink-and-grow is NOT homed's own default (that's "off").
-# Without it, the LUKS/btrfs backing image only ever grows: homed's per-user
-# encrypted home area can end up sized far past what's actually stored, with
-# no reclaim path short of an admin manually running `homectl resize <user>
-# min`. shrink-and-grow makes homed grow the image to --disk-size on login (if
-# smaller) and shrink it back to the minimum the used space allows on a clean
-# logout, automatically, every session -- see docs/skills/pam.md § systemd-homed
-# disk-space management. `--disk-size=` is left unset (homed's own default,
-# 85% of free space on the LUKS backend, is fine here).
+# --auto-resize-mode=shrink-and-grow is a NO-OP here: on systemd 261 that is
+# already homed's default whenever the LUKS2 backend is used with btrfs inside
+# it ("Defaults to shrink-and-grow, if LUKS2/btrfs is used, otherwise is off"
+# -- man homectl), which is exactly what homectl firstboot creates. This
+# comment used to claim the default was "off" and that without the flag the
+# image would only ever grow; both were wrong (#996). The flag is kept for now
+# only because deleting it would not change behaviour -- the value itself is
+# what needs deciding.
+#
+# That default is not harmless: it shrinks the home image on every clean
+# logout, and with --disk-size= unset (homed then sizes to 85% of free space on
+# the LUKS backend) the grow/shrink swing is tens of GB per session. The shrink
+# takes minutes, and while it runs pam_systemd_home blocks, so the next login
+# fails with the greeter's "Login service stopped responding. Restart greetd."
+# See docs/skills/pam.md § A logout shrink blocks the next login, and #996 for
+# the Design Gate decision on what to pass instead.
 if ! homectl firstboot --prompt-new-user --prompt-shell=no \
         --prompt-groups=no --member-of=wheel \
         --auto-resize-mode=shrink-and-grow --mute-console=yes; then

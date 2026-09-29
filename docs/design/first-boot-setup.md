@@ -3,8 +3,9 @@
 Status: **shipped** in #487 — `files/systemd-firstboot/krytis-firstboot.service`,
 `firstboot-wizard.sh`, and the two neutralising drop-ins, all installed by
 `elements/config/systemd-firstboot.bst`. Later fixes: #523 (wizard diagnostics go to
-the journal, not only the VT) and the `--auto-resize-mode=shrink-and-grow` addition.
-The "Problem" section below describes the state this replaced.
+the journal, not only the VT) and the `--auto-resize-mode=shrink-and-grow` addition —
+which #996 later found to be a no-op that also documented the wrong default; see the
+initial-user row below. The "Problem" section below describes the state this replaced.
 
 ## Problem
 
@@ -72,7 +73,7 @@ they are ordered before. `first-boot-complete.target` is satisfied as usual.
 | Step | Command | Notes |
 |---|---|---|
 | keymap + timezone (optional) | `systemd-firstboot --prompt-keymap-auto --prompt-timezone --welcome=no --mute-console=yes` | No locale prompt, no root-password prompt. `--prompt-keymap-auto` self-skips when not invoked on a local VT, so a serial-only session is never blocked. Values already present in `/etc` are skipped (no `--force`), so `/etc/localtime` being pre-set to UTC means only keymap normally prompts. |
-| initial user (required) | `homectl firstboot --prompt-new-user --prompt-shell=no --prompt-groups=no --member-of=wheel --auto-resize-mode=shrink-and-grow --mute-console=yes` | systemd-homed managed (encrypted home, FIDO2-login-ready, matching the PAM/FIDO2 investment already in the repo), auto-granted `wheel` (sudo, `%wheel ALL=(ALL) ALL` from fdsdk's `vm/config/sudo.bst`) rather than prompted — the first-boot user *is* the admin account. `--prompt-groups=no` is load-bearing for that: were the groups prompt left on, an interactive answer would overwrite `memberOf` wholesale (`homectl.c`, `create_interactively()`). `--auto-resize-mode=shrink-and-grow` overrides homed's own default (`off`): without it the LUKS/btrfs backing image only ever grows, with no automatic reclaim path — see `docs/skills/pam.md` § systemd-homed disk-space management. |
+| initial user (required) | `homectl firstboot --prompt-new-user --prompt-shell=no --prompt-groups=no --member-of=wheel --auto-resize-mode=shrink-and-grow --mute-console=yes` | systemd-homed managed (encrypted home, FIDO2-login-ready, matching the PAM/FIDO2 investment already in the repo), auto-granted `wheel` (sudo, `%wheel ALL=(ALL) ALL` from fdsdk's `vm/config/sudo.bst`) rather than prompted — the first-boot user *is* the admin account. `--prompt-groups=no` is load-bearing for that: were the groups prompt left on, an interactive answer would overwrite `memberOf` wholesale (`homectl.c`, `create_interactively()`). **`--auto-resize-mode=shrink-and-grow` does nothing:** on systemd 261 it is already homed's default for the LUKS2+btrfs home `homectl firstboot` creates. This row used to claim it "overrides homed's own default (`off`)" and that "without it the LUKS/btrfs backing image only ever grows" — both wrong, corrected by #996, which also found that the real default breaks the next login after a logout. See `docs/skills/pam.md` § A logout shrink blocks the next login. |
 
 Both steps run from one script (`/usr/libexec/krytis/firstboot-wizard.sh`)
 rather than two units, because the unit is `Type=exec` — a second unit ordered

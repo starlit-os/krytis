@@ -1177,7 +1177,7 @@ Do **not** relax `10-krytis-auth.conf` itself to make tooling work, and do not r
 a reason to revisit § Priority above: the fix belongs in the debug-only live environment,
 which is not a krytis release artifact.
 
-## systemd-homed disk-space management: `--auto-resize-mode` defaults to `off`, and an explicit `homectl resize` silently disables rebalancing
+## systemd-homed disk-space management: `--auto-resize-mode` defaults to `shrink-and-grow` on LUKS2/btrfs, and an explicit `homectl resize` silently disables rebalancing
 
 **Symptom, found on a real deployed machine (2026-09-08):** the physical disk backing
 `/sysroot` was 95% full while the mounted home filesystem (`df -h /var/home/<user>`) reported
@@ -1199,26 +1199,91 @@ has `DefaultStorage=`/`DefaultFileSystemType=`):
   turn off the automatic [rebalancing]" — so any one-off `homectl resize <user> <size>` an
   admin runs by hand permanently disables the self-healing background pass for that account,
   with no warning. Re-enable with `homectl update <user> --rebalance-weight=100`.
-- `--auto-resize-mode=` (default **off**) is separate from rebalancing: `grow` expands the
-  image to `--disk-size=` on login if smaller; `shrink-and-grow` additionally shrinks it back
-  to the minimum the used space allows on a **clean logout**, every session. Neither is enabled
-  by default — a homed image only ever grows unless one of these two mechanisms is active.
+- `--auto-resize-mode=` is separate from rebalancing: `grow` expands the image to the size
+  configured via `--disk-size=` on login if it is currently smaller; `shrink-and-grow`
+  additionally shrinks it back on a **clean logout**, every session, to the minimum the used
+  space and file system constraints permit. **It defaults to `shrink-and-grow` whenever the
+  LUKS2 backend is used with btrfs inside it**, `off` otherwise — `man homectl` (systemd 261):
+  *"Defaults to `shrink-and-grow`, if LUKS2/btrfs is used, otherwise is off."* krytis's homed
+  accounts are exactly LUKS2 + btrfs, so every krytis home already shrinks on every clean
+  logout with no configuration at all.
+
+  **This bullet used to say the default was `off`, and that "a homed image only ever grows
+  unless one of these two mechanisms is active". Both are false on systemd 261; corrected by
+  #996**, which also found what the real default costs — see § A logout shrink blocks the
+  next login below. The `--auto-resize-mode=shrink-and-grow` that
+  `files/systemd-firstboot/firstboot-wizard.sh` passes is therefore a **no-op**: it sets the
+  value homed already uses.
 
 **Reclaiming space after the fact:** `homectl resize <user> min` (per `man homectl`, btrfs
 supports this **while the user is logged in** — unlike ext4, which needs the home
 deactivated/logged-out first, and xfs, which cannot shrink at all). Note this resize call
 itself flips `Rebalance` to `off` per the mechanism above, so pair it with
-`--rebalance-weight=100` (or just use `--auto-resize-mode=shrink-and-grow` going forward
-instead of one-off manual resizes).
+`--rebalance-weight=100`.
 
 **Do not "fix" this by enabling `--luks-discard=on` (online discard).** `homectl inspect`
 normally shows `LUKS Discard: online=no offline=yes` — that split is systemd's deliberate
 default, not a misconfiguration: online discard thin-provisions the home area live, so if the
 *outer* filesystem fills up, the *inner* one gets I/O errors mid-write instead of behaving like
 a normal disk. `--auto-resize-mode`/`--rebalance-weight` reclaim space through explicit,
-bounded resize operations instead, which is why krytis's first-boot wizard sets
-`--auto-resize-mode=shrink-and-grow` on the initial account rather than touching discard (see
-`docs/design/first-boot-setup.md`, `files/systemd-firstboot/firstboot-wizard.sh`).
+bounded resize operations instead, which is why krytis's first-boot wizard does not touch
+discard (see `docs/design/first-boot-setup.md`,
+`files/systemd-firstboot/firstboot-wizard.sh`).
+
+## A logout shrink blocks the next login: "Login service stopped responding. Restart greetd."
+
+**Symptom (`adora`, real hardware, 2026-09-29, twice — #996):** log out of the desktop, then
+try to log back in at the greeter within the same boot. The password prompt accepts input,
+then noctalia-greeter reports **"Login service stopped responding. Restart greetd."** Logging
+in at a fresh boot always works.
+
+**greetd is not the problem, and restarting it does not help.** `systemctl status greetd`
+shows it `active (running)` the whole time. The greeter's `create_session` request blocks
+inside `pam_systemd_home`, which waits on systemd-homed, which is busy running a
+`systemd-homework` shrink of the user's LUKS/btrfs home image triggered by the logout that
+just happened. homed serialises operations on a given home area, so the acquire cannot start
+until the shrink finishes.
+
+The diagnostic that separates the two: **a healthy `create_session` logs
+`pam_systemd_home(greetd:auth): Home for user <u> successfully acquired` within about a
+second.** In this failure greetd logs *nothing at all* between the greeter's request and the
+greeter's own 60 s timeout:
+
+```
+09:02:01  systemd-homed:     Got notification that all sessions of user lily ended, deactivating automatically
+09:02:01  systemd-homed:     lily: changing state active → deactivating
+09:02:02  noctalia-greeter:  [INF] [greeter-surface] greetd: create_session for 'lily'
+09:02:04  systemd-homework:  Discarded unused 11.2G.
+09:02:05  systemd-homework:  Ready to resize image size 84G → 73.1G, partition size …, file system size …
+          (greetd: silence)
+09:03:02  noctalia-greeter:  [ERR] [greeter] greetd request 'create_session' timed out after 60100 ms
+```
+
+**Raising the greeter timeout is not a fix.** An uninterrupted shrink on the same machine
+the same morning took **eleven minutes** (`08:46:49 Ready to resize image size 109G → 73.1G`
+→ `08:57:48 LUKS device shrinking completed`).
+
+**Why the shrink is that big — a per-session churn loop.** With `--disk-size=` unset, homed's
+default sizing is 85% of the free space on the backing filesystem, so login grows the image
+to ~109G; the `shrink-and-grow` default then shrinks it back toward the floor (~73G) at
+logout. `journalctl -t systemd-homework | grep "Ready to resize"` showed the identical
+`109G → 73G` line on five separate days. That is ~36 GB written and ~36 GB discarded per
+session cycle, and a multi-minute window after each logout in which login is impossible.
+
+**Diagnosing it on a live machine:**
+
+```bash
+homectl inspect <user>                          # Disk Size vs Disk Usage vs Disk Floor
+journalctl -t systemd-homework -b | grep -E 'Ready to resize|shrinking completed'
+journalctl -u greetd -b                         # silence == blocked in pam_systemd_home
+```
+
+**Mitigation** is to stop the oscillation rather than to make the greeter wait: pin
+`--disk-size=` so `grow` converges, and drop the logout shrink
+(`homectl update <user> --disk-size=<fixed> --auto-resize-mode=grow`), reclaiming space
+explicitly with `homectl resize <user> min` when wanted. Changing what
+`firstboot-wizard.sh` gives new accounts is a Design Gate decision — tracked in #996, not
+applied here.
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 
