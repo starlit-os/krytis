@@ -86,6 +86,10 @@ Order of preference:
 
 Edit `docs/design/bazaar-curated-candidates.md` in place:
 
+- **Rejected candidates stay in the mirror.** When the user drops a Bluefin pick, keep
+  its row, strike it through, and list it in the doc's **Decided** section. Deleting the
+  row would make the next refresh report it as "added" and propose it again. If Bluefin
+  itself later removes a struck app, remove it from both places.
 - Add, remove, rename and move rows so each section table mirrors Bluefin's list, in
   Bluefin's order. Update the per-section counts in the headings and the snapshot line
   (SHA, date, totals).

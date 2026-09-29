@@ -109,6 +109,13 @@ These were preinstalled on the ISO and have been removed from `live/src/flatpaks
 | **Smile** | Dropped. | [Flathub](https://flathub.org/apps/it.mijorus.smile) · `it.mijorus.smile` |
 | **Pinta** | Moves to the curated page: "Bluefin Recommends" or a category, not decided yet. It's a krytis addition, since Bluefin doesn't curate it. | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
 
+Bluefin candidates rejected for krytis's curated page. These rows stay in *The list* so
+it keeps mirroring Bluefin, struck through so a refresh doesn't propose them again:
+
+| App | Decision | Links |
+|---|---|---|
+| **Damask** | Dropped. | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
+
 Removing an app from `live/src/flatpaks` only affects new ISO builds and the installs
 made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 
@@ -118,7 +125,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 
 | App | Summary | Links |
 |---|---|---|
-| **Damask** | Automatically set wallpapers from online sources † | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
+| ~~**Damask**~~ | ~~Automatically set wallpapers from online sources †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
 | **Sitra** | Get fonts from online sources | [Flathub](https://flathub.org/apps/io.github.sitraorg.sitra) · `io.github.sitraorg.sitra` |
 | **Speed of Sound** | Voice typing for the Linux desktop | [Flathub](https://flathub.org/apps/io.speedofsound.SpeedOfSound) · `io.speedofsound.SpeedOfSound` |
 | **Fotema** | Photo gallery † | [Flathub](https://flathub.org/apps/app.fotema.Fotema) · `app.fotema.Fotema` |
