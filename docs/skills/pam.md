@@ -593,10 +593,26 @@ object path from the keyring *label*, giving `/org/freedesktop/secrets/collectio
 capital L. **0.7.0.alpha uses lowercase `login`**, matching gnome-keyring, and logs
 `Setting up collection 'login' (alias: default)` at startup.
 
-**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks `refs/heads/main`
-(`ref: v0.6.0-alpha-256-g886813eb…`; that describe prefix is misleading — 0.7.0.alpha is a
-lightweight tag git-describe ignores, and the element says so), which is well past
-0.7.0.alpha. So on a current image the path is `/org/freedesktop/secrets/collection/login`
+**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks `refs/heads/main`, which
+is well past 0.7.0.alpha. Do not read its `ref:` as a version — the describe prefix is
+permanently `v0.6.0-alpha-*` because upstream's `0.7.0.alpha` is a lightweight tag that
+git-describe ignores (the element says so, and `docs/skills/bst.md` § The track job's PR
+title/version covers what that breaks). Ask the running system instead — this answers it
+whatever the pin says, and does not depend on journal retention:
+
+```console
+$ busctl --user --list tree org.freedesktop.secrets | grep collection/
+/org/freedesktop/secrets/collection/login
+/org/freedesktop/secrets/collection/login/1
+…
+```
+
+Observed on `adora`, 2026-09-29, alongside the daemon's own startup line
+`oo7_daemon::service: Setting up collection 'login' (alias: default).` — note the same boot
+logs `creating 'Login' keyring` one line earlier: that is the keyring **label**, still
+capitalised, and it is exactly what made 0.6.0 derive a capital-L path. The label did not
+change; the path derivation did. So on a current image the path is
+`/org/freedesktop/secrets/collection/login`
 and `secret-tool lock --collection=login`, which is what every command elsewhere in this
 file uses. **The rest of this section is the 0.6.0 behaviour, kept as version history** —
 read `Login` as `login` when running any of it against a current krytis, and read the
@@ -1177,7 +1193,7 @@ Do **not** relax `10-krytis-auth.conf` itself to make tooling work, and do not r
 a reason to revisit § Priority above: the fix belongs in the debug-only live environment,
 which is not a krytis release artifact.
 
-## systemd-homed disk-space management: `--auto-resize-mode` defaults to `off`, and an explicit `homectl resize` silently disables rebalancing
+## systemd-homed disk-space management: `--auto-resize-mode` defaults to `shrink-and-grow` on LUKS2/btrfs, and an explicit `homectl resize` silently disables rebalancing
 
 **Symptom, found on a real deployed machine (2026-09-08):** the physical disk backing
 `/sysroot` was 95% full while the mounted home filesystem (`df -h /var/home/<user>`) reported
@@ -1199,26 +1215,217 @@ has `DefaultStorage=`/`DefaultFileSystemType=`):
   turn off the automatic [rebalancing]" — so any one-off `homectl resize <user> <size>` an
   admin runs by hand permanently disables the self-healing background pass for that account,
   with no warning. Re-enable with `homectl update <user> --rebalance-weight=100`.
-- `--auto-resize-mode=` (default **off**) is separate from rebalancing: `grow` expands the
-  image to `--disk-size=` on login if smaller; `shrink-and-grow` additionally shrinks it back
-  to the minimum the used space allows on a **clean logout**, every session. Neither is enabled
-  by default — a homed image only ever grows unless one of these two mechanisms is active.
+- `--auto-resize-mode=` is separate from rebalancing: `grow` expands the image to the size
+  configured via `--disk-size=` on login if it is currently smaller; `shrink-and-grow`
+  additionally shrinks it back on a **clean logout**, every session, to the minimum the used
+  space and file system constraints permit. **It defaults to `shrink-and-grow` whenever the
+  LUKS2 backend is used with btrfs inside it**, `off` otherwise — `man homectl` (systemd 261):
+  *"Defaults to `shrink-and-grow`, if LUKS2/btrfs is used, otherwise is off."* krytis's homed
+  accounts are exactly LUKS2 + btrfs, so every krytis home already shrinks on every clean
+  logout with no configuration at all.
+
+  **This bullet used to say the default was `off`, and that "a homed image only ever grows
+  unless one of these two mechanisms is active". Both are false on systemd 261; corrected by
+  #996**, which also found what the real default costs — see § A logout shrink blocks the
+  next login below. The `--auto-resize-mode=shrink-and-grow` that
+  `files/systemd-firstboot/firstboot-wizard.sh` passes is therefore a **no-op**: it sets the
+  value homed already uses.
 
 **Reclaiming space after the fact:** `homectl resize <user> min` (per `man homectl`, btrfs
 supports this **while the user is logged in** — unlike ext4, which needs the home
 deactivated/logged-out first, and xfs, which cannot shrink at all). Note this resize call
 itself flips `Rebalance` to `off` per the mechanism above, so pair it with
-`--rebalance-weight=100` (or just use `--auto-resize-mode=shrink-and-grow` going forward
-instead of one-off manual resizes).
+`--rebalance-weight=100`.
 
 **Do not "fix" this by enabling `--luks-discard=on` (online discard).** `homectl inspect`
 normally shows `LUKS Discard: online=no offline=yes` — that split is systemd's deliberate
 default, not a misconfiguration: online discard thin-provisions the home area live, so if the
 *outer* filesystem fills up, the *inner* one gets I/O errors mid-write instead of behaving like
 a normal disk. `--auto-resize-mode`/`--rebalance-weight` reclaim space through explicit,
-bounded resize operations instead, which is why krytis's first-boot wizard sets
-`--auto-resize-mode=shrink-and-grow` on the initial account rather than touching discard (see
-`docs/design/first-boot-setup.md`, `files/systemd-firstboot/firstboot-wizard.sh`).
+bounded resize operations instead, which is why krytis's first-boot wizard does not touch
+discard (see `docs/design/first-boot-setup.md`,
+`files/systemd-firstboot/firstboot-wizard.sh`).
+
+## A logout shrink blocks the next login: "Login service stopped responding. Restart greetd."
+
+**Symptom (`adora`, real hardware, 2026-09-29, twice — #996):** log out of the desktop, then
+try to log back in at the greeter within the same boot. The password prompt accepts input,
+then noctalia-greeter reports **"Login service stopped responding. Restart greetd."** Logging
+in at a fresh boot always works.
+
+**greetd is not the problem, and restarting it does not help.** `systemctl status greetd`
+shows it `active (running)` the whole time. The greeter's `create_session` request blocks
+inside `pam_systemd_home`, which waits on systemd-homed, which is busy running a
+`systemd-homework` shrink of the user's LUKS/btrfs home image triggered by the logout that
+just happened. homed serialises operations on a given home area, so the acquire cannot start
+until the shrink finishes.
+
+The diagnostic that separates the two: **a healthy `create_session` logs
+`pam_systemd_home(greetd:auth): Home for user <u> successfully acquired` within about a
+second.** In this failure greetd logs *nothing at all* between the greeter's request and the
+greeter's own 60 s timeout:
+
+```
+09:02:01  systemd-homed:     Got notification that all sessions of user lily ended, deactivating automatically
+09:02:01  systemd-homed:     lily: changing state active → deactivating
+09:02:02  noctalia-greeter:  [INF] [greeter-surface] greetd: create_session for 'lily'
+09:02:04  systemd-homework:  Discarded unused 11.2G.
+09:02:05  systemd-homework:  Ready to resize image size 84G → 73.1G, partition size …, file system size …
+          (greetd: silence)
+09:03:02  noctalia-greeter:  [ERR] [greeter] greetd request 'create_session' timed out after 60100 ms
+```
+
+**Raising the greeter timeout is not a fix.** An uninterrupted shrink on the same machine
+the same morning took **eleven minutes** (`08:46:49 Ready to resize image size 109G → 73.1G`
+→ `08:57:48 LUKS device shrinking completed`).
+
+**Why the shrink is that big — a per-session churn loop.** With `--disk-size=` unset, homed's
+default sizing is 85% of the free space on the backing filesystem, so login grows the image
+to ~109G; the `shrink-and-grow` default then shrinks it back toward the floor (~73G) at
+logout. `journalctl -t systemd-homework | grep "Ready to resize"` showed the identical
+`109G → 73G` line on five separate days. That is ~36 GB written and ~36 GB discarded per
+session cycle, and a multi-minute window after each logout in which login is impossible.
+
+**Diagnosing it on a live machine:**
+
+```bash
+homectl inspect <user>                          # Disk Size vs Disk Usage vs Disk Floor
+journalctl -t systemd-homework -b | grep -E 'Ready to resize|shrinking completed'
+journalctl -u greetd -b                         # silence == blocked in pam_systemd_home
+```
+
+**Fix, applied by #996.** Stop the oscillation rather than make the greeter wait.
+`files/systemd-firstboot/firstboot-wizard.sh` now creates the initial account with:
+
+```
+--auto-resize-mode=off --rebalance-weight=off --disk-size=35%
+```
+
+On an **existing** machine the wizard has already run, so apply it by hand once (admin auth,
+graphical via noctalia's polkit agent):
+
+```bash
+homectl update <user> --auto-resize-mode=off --rebalance-weight=off
+homectl resize <user> <size>    # only if the current size is wrong
+```
+
+### Four facts that decide the size, and are easy to get wrong
+
+- **`homectl update --disk-size=` does not resize anything.** homework's `update` verb
+  (`src/home/homework.c`, systemd v261) never calls `home_resize`; only the `resize` verb
+  does. With auto-resize off, writing `diskSize` into the record changes the image by
+  nothing. The operative call is `homectl resize`.
+- **`homectl resize` always needs admin auth.** `org.freedesktop.home1.resize-home` is
+  `auth_admin_keep` for `allow_active` too, and there is no `resize-home-by-owner` variant.
+  Nor does the update path dodge it: `diskSize` is absent from systemd's default
+  `selfModifiableFields` (`src/shared/user-record.c`), so `bus_home_update_record` selects
+  `update-home` (admin) rather than `update-home-by-owner` (`allow_active=yes`). This is why
+  #996 shipped no GUI — see #998.
+- **The LUKS2 image is allocated in full, not sparsely.** `stat` on a real
+  `/var/home/<user>.home` reports allocated blocks exactly equal to apparent size, and
+  growing one 84G → 150G moved `df /sysroot` used from 186G to 252G *at once*. So with
+  auto-resize off the chosen size is consumed on disk immediately and nothing reclaims it.
+  This is what makes homed's own 85% default unacceptable here, and it is the reverse of the
+  intuition that an unused image costs nothing.
+- **A percentage is relative to *free* space at creation, not to the disk.**
+  `calculate_initial_image_size()` in `src/home/homework-luks.c` takes `statfs` `f_bavail` of
+  the backing filesystem as the upper boundary. So `35%` self-scales and cannot over-commit,
+  and it is only ever evaluated once, at creation.
+
+**Grow and shrink are not symmetric, and the gap is three orders of magnitude.** Both
+measured on `adora`, same machine, same week:
+
+| Direction | Change | Elapsed | Why |
+|---|---|---|---|
+| grow | 84G → 150G | **1 s** | metadata + allocation |
+| shrink | 109G → 84G | **659 s** | btrfs block-group relocation, scaling with data in use |
+
+So guessing the size low costs a one-second `homectl resize` later; guessing high costs both
+wasted disk and an 11-minute operation to undo. **Start small and grow.** That asymmetry is
+the whole reason the wizard's default is well under homed's own.
+
+### Prior art: there is no official homed tuning guide, and the only advice anyone gives is "turn it off"
+
+Checked 2026-09-29, because this is obviously not a krytis-specific failure. **No upstream or
+distro document covers homed resize performance at all:**
+
+- [`systemd.io/HOME_DIRECTORY`](https://systemd.io/HOME_DIRECTORY/) is an on-disk *format*
+  spec (LUKS2 token layout, permitted file systems). No operational guidance.
+- `man homectl` is reference material: it documents what each mode does, and the one
+  performance-adjacent warning it carries is about ext4 needing a logout to shrink — not
+  about how long shrinking takes.
+- The [ArchWiki systemd-homed page](https://wiki.archlinux.org/title/Systemd-homed) has
+  installation, storage backends, SSH unlocking, rescue mounting and a Troubleshooting
+  section — and **nothing** on resize or login latency.
+
+What exists instead is a four-year trail of issue threads and forum posts that all land on
+the same workaround:
+
+| Source | Finding |
+|---|---|
+| [Arch BBS 281563](https://bbs.archlinux.org/viewtopic.php?id=281563) (2022, marked SOLVED) | 2.2T image / 1.2T used, login took **2 minutes**. Accepted answer: `homectl update <user> --auto-resize-mode=off --rebalance-weight=off`. Reporter: "It worked. Much faster now." This is the canonical answer for "homed login is slow". |
+| [systemd#22901](https://github.com/systemd/systemd/issues/22901) | "On shutdown, homed resizes until it gets killed" — byte-for-byte the same log shape as ours, including `Allocated additional …G` and `Worker process for home <u> is still running while exiting`. Closed with no fix; the reporter's workaround was `TimeoutStopSec=infinity` drop-ins on `systemd-homed.service`/`systemd-homed-activate.service`, and he notes **the same shrink then recurs on every subsequent shutdown**. |
+| [systemd#24937](https://github.com/systemd/systemd/issues/24937) | Open since 2022: the image grows to fill the whole backing partition while under half full inside; reporter ran `homectl resize <u> <size>` manually "every ~week". A later commenter was **locked out** by it (`Activation failed: No space left on device`). |
+| [systemd#27625](https://github.com/systemd/systemd/issues/27625) | Same excessive-space behaviour under `--auto-resize-mode=grow`. |
+| [systemd#35719](https://github.com/systemd/systemd/issues/35719) | f2fs homes need `--auto-resize-mode=off` to activate at all. |
+
+Two facts worth extracting, both confirmed by more than one independent report:
+
+- **The shrink path re-allocates before it shrinks.** `Discarded unused 11.2G` → `Ready to
+  resize …` → `Allocated additional 11.1G` looks like a logging bug on first read; #22901
+  shows the identical trio (`Discarded unused 153.2G` … `Allocated additional 153.2G`). The
+  offline discard immediately before a shrink is wasted work, not a reclaim.
+- **The shrink is btrfs block-group relocation**, which is why it scales with *used* data
+  rather than with the amount being reclaimed. #22901's kernel log shows minutes of
+  `BTRFS info: relocating block group …` between the resize being announced and it
+  completing. A home that is 89% full has the most data to relocate and the least to gain.
+
+Until #996 krytis's first-boot wizard asked for the one setting every upstream thread tells
+people to disable. It no longer does.
+
+## The lock screen authenticates through `login`, not `greetd` — and noctalia#4283 hits krytis as shipped
+
+**Neither this file nor `docs/skills/desktop.md` said which PAM service the locker opens
+before #996.** It matters: every PAM decision made for the greeter is invisible to the lock
+screen, and vice versa.
+
+krytis ships no separate locker — no swaylock, gtklock, hyprlock or waylock is packaged or
+present on a live machine. **noctalia itself is the lock screen**, an `ext-session-lock-v1`
+client (`src/shell/lockscreen/lock_screen.cpp`), with niri/umbriel as the lock server.
+`files/umbriel/config.toml` autostarts noctalia, and `elements/config/logind-lid.bst` states
+it outright: *"Krytis ships no swayidle/hypridle/swaylock and needs none."* There is no lock
+keybind at all — lock is reached from noctalia's own panel, `loginctl lock-session`, lid
+close, or an idle action.
+
+**The service name is hardcoded `"login"`** in `lock_screen.cpp` (`const std::string
+pamService = "login";`), not a config key. `/etc/pam.d/login` is freedesktop-sdk's (from
+`components/shadow.bst`, per `files/fakecap-manifest.tsv`) and `include`s `system-auth` in
+all four phases, so the locker runs krytis's `system-auth` from
+`elements/config/u2f-config.bst`. Two consequences:
+
+- `pam_systemd_home.so` is on that path in all four phases, so homed users do unlock
+  correctly.
+- `auth sufficient pam_u2f.so cue pinverification` is **live on the lock screen**, unlike the
+  greeter, where `elements/config/greetd-config.bst` has it commented out for #585. A FIDO2
+  decision taken for `greetd` does not carry to the locker.
+
+**[noctalia#4283](https://github.com/noctalia-dev/noctalia/issues/4283) therefore applies to
+krytis as shipped.** The lock screen re-supplies the same rejected password to every
+`PAM_PROMPT_ECHO_OFF`, so `pam_systemd_home`'s five retries all consume it and a mistyped
+password takes 12–15 s to be reported instead of ~3 s. Confirmed present at krytis's pinned
+ref: `pamConversation()` in `src/auth/pam_authenticator.cpp` answers every `ECHO_OFF` from
+the same `PamConversationData.password` pointer with no once-only guard. The issue is open
+upstream with no fix, and upstream v5.2.0 does not address it — bumping the pin will not help.
+
+**This one is ours to fix, not upstream's — tracked in #999.** `elements/desktop/noctalia.bst`
+already pins the **kitten-lily fork** (`github:kitten-lily/noctalia.git`,
+`track: feat/system-prompter`), so the change lands in a repo krytis owns and no Upstream Gate
+applies. The fix shape is swaylock's
+([swaylock#447](https://github.com/swaywm/swaylock/pull/447)): answer the first `ECHO_OFF`
+with the password, return `PAM_CONV_ERR` for any later one — a single flag in
+`PamConversationData`. Opening the matching PR against `noctalia-dev/noctalia` is worth doing
+rather than carrying the patch forever, but that is Upstream Gate work and needs explicit
+instruction.
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 

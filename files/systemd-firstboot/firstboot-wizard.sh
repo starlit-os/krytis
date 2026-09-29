@@ -57,18 +57,54 @@ fi
 # IS the admin account. --prompt-groups=no is what keeps that value -- were the
 # groups prompt left on, an interactive answer would overwrite memberOf wholesale.
 #
-# --auto-resize-mode=shrink-and-grow is NOT homed's own default (that's "off").
-# Without it, the LUKS/btrfs backing image only ever grows: homed's per-user
-# encrypted home area can end up sized far past what's actually stored, with
-# no reclaim path short of an admin manually running `homectl resize <user>
-# min`. shrink-and-grow makes homed grow the image to --disk-size on login (if
-# smaller) and shrink it back to the minimum the used space allows on a clean
-# logout, automatically, every session -- see docs/skills/pam.md § systemd-homed
-# disk-space management. `--disk-size=` is left unset (homed's own default,
-# 85% of free space on the LUKS backend, is fine here).
+# --auto-resize-mode=off --disk-size=35% is the #996 decision. Do not restore
+# shrink-and-grow: on systemd 261 that is already homed's default for a
+# LUKS2+btrfs home ("Defaults to shrink-and-grow, if LUKS2/btrfs is used,
+# otherwise is off" -- man homectl), i.e. what homectl firstboot would produce
+# unprompted, and it is actively harmful here. It shrinks the image on every
+# clean logout; the shrink is btrfs block-group relocation so it scales with
+# data in use (11 minutes measured on real hardware), and while it runs
+# pam_systemd_home blocks, so the next login dies with the greeter's "Login
+# service stopped responding. Restart greetd." Every upstream thread on homed
+# resize latency reaches the same workaround -- see docs/skills/pam.md
+# § A logout shrink blocks the next login, and its Prior art subsection.
+#
+# --disk-size=35% replaces homed's own default of 85% of free space. The size
+# matters much more once auto-resize is off, because the LUKS2 image is
+# allocated in full at creation, not sparsely, so the value chosen here is
+# consumed on disk immediately and nothing reclaims it later. Measured on real
+# hardware: growing one home 84G -> 150G raised `df /sysroot` used from 186G to
+# 252G at once, and `stat` reports allocated blocks exactly equal to apparent
+# size. Sizing is relative to FREE space on the backing filesystem at creation
+# time (homework-luks.c calculate_initial_image_size uses statfs f_bavail), so
+# it self-scales and cannot over-commit.
+#
+# Why deliberately small rather than generous -- the two directions are not
+# symmetric, and the gap is three orders of magnitude. Both measured on adora:
+#
+#   grow   84G -> 150G   1 second     (metadata + allocation)
+#   shrink 109G -> 84G   659 seconds  (btrfs block-group relocation)
+#
+# So guessing low costs a one-second `homectl resize` later, while guessing
+# high costs both wasted disk and an 11-minute operation to undo. 35% also
+# leaves room for the OS side: bootc deployments, system flatpaks and root
+# container storage measured ~101 GB on a well-used krytis machine. For
+# reference, the first operator to size this by hand chose 150G against 74.7G
+# in use -- roughly 2x actual usage, well under half of free space.
+#
+# --rebalance-weight=off is redundant but kept explicit: homectl already
+# forces rebalanceWeight to off whenever --disk-size= is given
+# (homectl.c parse_disk_size_field), and that implicit coupling is exactly the
+# kind of thing that changes without notice.
+#
+# Adjusting the size afterwards needs `homectl resize <user> <size>`, which is
+# admin-authenticated (org.freedesktop.home1.resize-home is auth_admin_keep
+# even for an active session, and there is no by-owner variant). noctalia is
+# the polkit agent, so that prompt is graphical. A GUI control for it is #998.
 if ! homectl firstboot --prompt-new-user --prompt-shell=no \
         --prompt-groups=no --member-of=wheel \
-        --auto-resize-mode=shrink-and-grow --mute-console=yes; then
+        --auto-resize-mode=off --rebalance-weight=off --disk-size=35% \
+        --mute-console=yes; then
     log "initial user creation failed"
 fi
 
