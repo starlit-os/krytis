@@ -40,9 +40,8 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
   (`org.gnome.Mahjongg` is fine; a shell-extension manager wouldn't be) needs a check
   under niri.
-- **Proprietary and paid apps** (Chrome, Edge, Opera, Slack, Spotify, Postman, Obsidian,
-  PyCharm Professional, CLion, Plex/Plexamp) are a policy question for #245, not a
-  technical one.
+- **Proprietary and paid apps are out.** They're struck from the list and recorded
+  under *Decided*.
 - **Blocklist interplay:** Bluefin's `blocklist.yaml` hides `com.visualstudio.code-oss`,
   editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. Any krytis
   blocklist is a separate decision from the curated list.
@@ -115,6 +114,28 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | App | Decision | Links |
 |---|---|---|
 | **Damask** | Dropped. | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
+| **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
+| **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
+| **Discord** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
+| **Ecosia Browser** | Proprietary: a closed vendor binary from Ecosia's CDN with no source repo. Its declared license couldn't be read from the sandbox. | [Flathub](https://flathub.org/apps/org.ecosia.Browser) · `org.ecosia.Browser` |
+| **Google Chrome** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.Chrome) · `com.google.Chrome` |
+| **Microsoft Edge** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.microsoft.Edge) · `com.microsoft.Edge` |
+| **Mozilla VPN** | Paid: MPL-2.0, but it needs a Mozilla VPN subscription. | [Flathub](https://flathub.org/apps/org.mozilla.vpn) · `org.mozilla.vpn` |
+| **Obsidian** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
+| **Opera** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.opera.Opera) · `com.opera.Opera` |
+| **Plex** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/tv.plex.PlexDesktop) · `tv.plex.PlexDesktop` |
+| **Plexamp** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.plexamp.Plexamp) · `com.plexamp.Plexamp` |
+| **Postman** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.getpostman.Postman) · `com.getpostman.Postman` |
+| **PyCharm Professional** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
+| **Slack** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.slack.Slack) · `com.slack.Slack` |
+| **Spotify** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.spotify.Client) · `com.spotify.Client` |
+| **Steam** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
+| **Steam Link** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
+| **Visual Studio Code** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.visualstudio.code) · `com.visualstudio.code` |
+| **Vivaldi** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.vivaldi.Vivaldi) · `com.vivaldi.Vivaldi` |
+
+Policy: **no proprietary or paid apps** on krytis's curated page. A refresh drops
+any new Bluefin pick that fails that rule the same way (see the skill).
 
 Removing an app from `live/src/flatpaks` only affects new ISO builds and the installs
 made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
@@ -146,17 +167,17 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 |---|---|---|
 | **Firefox** | Web browser † | [Flathub](https://flathub.org/apps/org.mozilla.firefox) · `org.mozilla.firefox` |
 | **Brave** | Chromium-based browser with built-in ad blocking | [Flathub](https://flathub.org/apps/com.brave.Browser) · `com.brave.Browser` |
-| **Google Chrome** | The browser built to be yours | [Flathub](https://flathub.org/apps/com.google.Chrome) · `com.google.Chrome` |
-| **Microsoft Edge** | Chromium-based web browser | [Flathub](https://flathub.org/apps/com.microsoft.Edge) · `com.microsoft.Edge` |
-| **Opera** | Your personal browser | [Flathub](https://flathub.org/apps/com.opera.Opera) · `com.opera.Opera` |
-| **Vivaldi** | Feature-packed web browser | [Flathub](https://flathub.org/apps/com.vivaldi.Vivaldi) · `com.vivaldi.Vivaldi` |
-| **Ecosia Browser** | Chromium-based browser from the tree-planting search engine † | [Flathub](https://flathub.org/apps/org.ecosia.Browser) · `org.ecosia.Browser` |
+| ~~**Google Chrome**~~ | ~~The browser built to be yours~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.google.Chrome) · `com.google.Chrome` |
+| ~~**Microsoft Edge**~~ | ~~Chromium-based web browser~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.microsoft.Edge) · `com.microsoft.Edge` |
+| ~~**Opera**~~ | ~~Your personal browser~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.opera.Opera) · `com.opera.Opera` |
+| ~~**Vivaldi**~~ | ~~Feature-packed web browser~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.vivaldi.Vivaldi) · `com.vivaldi.Vivaldi` |
+| ~~**Ecosia Browser**~~ | ~~Chromium-based browser from the tree-planting search engine †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.ecosia.Browser) · `org.ecosia.Browser` |
 
 ### Media (12)
 
 | App | Summary | Links |
 |---|---|---|
-| **Spotify** | Online music streaming service | [Flathub](https://flathub.org/apps/com.spotify.Client) · `com.spotify.Client` |
+| ~~**Spotify**~~ | ~~Online music streaming service~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.spotify.Client) · `com.spotify.Client` |
 | **YTMDesktop** | Free cross platform Desktop Player for YouTube Music | [Flathub](https://flathub.org/apps/app.ytmdesktop.ytmdesktop) · `app.ytmdesktop.ytmdesktop` |
 | **Shortwave** | Listen to internet radio † | [Flathub](https://flathub.org/apps/de.haeckerfelix.Shortwave) · `de.haeckerfelix.Shortwave` |
 | **Amberol** | Plays music, and nothing else † | [Flathub](https://flathub.org/apps/io.bassi.Amberol) · `io.bassi.Amberol` |
@@ -164,8 +185,8 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Easy Effects** | Audio effects for PipeWire applications † | [Flathub](https://flathub.org/apps/com.github.wwmm.easyeffects) · `com.github.wwmm.easyeffects` |
 | **JamesDSP** | Open-source audio effect processor for Pipewire | [Flathub](https://flathub.org/apps/me.timschneeberger.jdsp4linux) · `me.timschneeberger.jdsp4linux` |
 | **Jellyfin Desktop** | Jellyfin desktop client | [Flathub](https://flathub.org/apps/org.jellyfin.JellyfinDesktop) · `org.jellyfin.JellyfinDesktop` |
-| **Plex** | Plex client for desktop computers | [Flathub](https://flathub.org/apps/tv.plex.PlexDesktop) · `tv.plex.PlexDesktop` |
-| **Plexamp** | Beautiful music player for Plex | [Flathub](https://flathub.org/apps/com.plexamp.Plexamp) · `com.plexamp.Plexamp` |
+| ~~**Plex**~~ | ~~Plex client for desktop computers~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/tv.plex.PlexDesktop) · `tv.plex.PlexDesktop` |
+| ~~**Plexamp**~~ | ~~Beautiful music player for Plex~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.plexamp.Plexamp) · `com.plexamp.Plexamp` |
 | **Blanket** | Listen to ambient sounds † | [Flathub](https://flathub.org/apps/com.rafaelmardojai.Blanket) · `com.rafaelmardojai.Blanket` |
 | **Parabolic** | Download web video and audio | [Flathub](https://flathub.org/apps/org.nickvision.tubeconverter) · `org.nickvision.tubeconverter` |
 
@@ -175,7 +196,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 |---|---|---|
 | **Collabora Office** | LibreOffice-based office suite † | [Flathub](https://flathub.org/apps/com.collaboraoffice.Office) · `com.collaboraoffice.Office` |
 | **ONLYOFFICE Desktop Editors** | Office productivity suite | [Flathub](https://flathub.org/apps/org.onlyoffice.desktopeditors) · `org.onlyoffice.desktopeditors` |
-| **Slack** | Business communication | [Flathub](https://flathub.org/apps/com.slack.Slack) · `com.slack.Slack` |
+| ~~**Slack**~~ | ~~Business communication~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.slack.Slack) · `com.slack.Slack` |
 | **Blender** | 3D modelling, animation and rendering suite † | [Flathub](https://flathub.org/apps/org.blender.Blender) · `org.blender.Blender` |
 | **Exhibit** | 3D model viewer (F3D-based) † | [Flathub](https://flathub.org/apps/io.github.nokse22.Exhibit) · `io.github.nokse22.Exhibit` |
 | **GIMP** | Raster image editor † | [Flathub](https://flathub.org/apps/org.gimp.GIMP) · `org.gimp.GIMP` |
@@ -185,23 +206,23 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Audacity** | Audacity is the world's most popular audio editing and recording app | [Flathub](https://flathub.org/apps/org.audacityteam.Audacity) · `org.audacityteam.Audacity` |
 | **Ardour** | Digital audio workstation † | [Flathub](https://flathub.org/apps/org.ardour.Ardour) · `org.ardour.Ardour` |
 | **Planify** | Task manager with Todoist / Nextcloud sync † | [Flathub](https://flathub.org/apps/io.github.alainm23.planify) · `io.github.alainm23.planify` |
-| **Obsidian** | Markdown-based knowledge base | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
+| ~~**Obsidian**~~ | ~~Markdown-based knowledge base~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
 | **Logseq** | Connect your notes and knowledge | [Flathub](https://flathub.org/apps/com.logseq.Logseq) · `com.logseq.Logseq` |
 
 ### Games (15)
 
 | App | Summary | Links |
 |---|---|---|
-| **Steam** | Launcher for the Steam software distribution service | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
+| ~~**Steam**~~ | ~~Launcher for the Steam software distribution service~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
 | **Heroic** | Play Epic, GOG and Amazon Games | [Flathub](https://flathub.org/apps/com.heroicgameslauncher.hgl) · `com.heroicgameslauncher.hgl` |
-| **Discord** | Talk, play, hang out | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
+| ~~**Discord**~~ | ~~Talk, play, hang out~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
 | **Lutris** | Video game preservation platform | [Flathub](https://flathub.org/apps/net.lutris.Lutris) · `net.lutris.Lutris` |
 | **ProtonPlus** | Manage Proton, Wine, DXVK, and VKD3D tools for Linux game launchers | [Flathub](https://flathub.org/apps/com.vysp3r.ProtonPlus) · `com.vysp3r.ProtonPlus` |
 | **GPU Screen Recorder** | Low-overhead hardware-encoded screen recorder / replay buffer † | [Flathub](https://flathub.org/apps/com.dec05eba.gpu_screen_recorder) · `com.dec05eba.gpu_screen_recorder` |
 | **Protontricks** | Apps and fixes for Proton games | [Flathub](https://flathub.org/apps/com.github.Matoking.protontricks) · `com.github.Matoking.protontricks` |
 | **OBS Studio** | Live stream and record videos | [Flathub](https://flathub.org/apps/com.obsproject.Studio) · `com.obsproject.Studio` |
 | **Boatswain** | Control Elgato Stream Deck devices † | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
-| **Steam Link** | Stream games from another computer with Steam | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
+| ~~**Steam Link**~~ | ~~Stream games from another computer with Steam~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
 | **Mahjongg** | Match tiles and clear the board † | [Flathub](https://flathub.org/apps/org.gnome.Mahjongg) · `org.gnome.Mahjongg` |
 | **SDL Sopwith** | Classic side-scrolling biplane shoot-'em-up † | [Flathub](https://flathub.org/apps/io.github.fragglet.sdl_sopwith) · `io.github.fragglet.sdl_sopwith` |
 | **Sudoku** | Solve puzzles in style | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
@@ -229,7 +250,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Pigment** | Get color palettes from images | [Flathub](https://flathub.org/apps/com.jeffser.Pigment) · `com.jeffser.Pigment` |
 | **Eyedropper** | Pick and format colours † | [Flathub](https://flathub.org/apps/com.github.finefindus.eyedropper) · `com.github.finefindus.eyedropper` |
 | **SysD Manager** | A user-friendly application to manage systemd's units | [Flathub](https://flathub.org/apps/io.github.plrigaux.sysd-manager) · `io.github.plrigaux.sysd-manager` |
-| **Mozilla VPN** | A fast, secure and easy to use VPN. Built by the makers of Firefox | [Flathub](https://flathub.org/apps/org.mozilla.vpn) · `org.mozilla.vpn` |
+| ~~**Mozilla VPN**~~ | ~~A fast, secure and easy to use VPN. Built by the makers of Firefox~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.mozilla.vpn) · `org.mozilla.vpn` |
 | **RClone Manager** | Browse and sync cloud storage | [Flathub](https://flathub.org/apps/io.github.zarestia_dev.rclone-manager) · `io.github.zarestia_dev.rclone-manager` |
 
 ### Sustainability & Education (12)
@@ -264,12 +285,12 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 |---|---|---|
 | **Gitte** | Git GUI client † | [Flathub](https://flathub.org/apps/de.wwwtech.gitte) · `de.wwwtech.gitte` |
 | **Zed** | High-performance code editor | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
-| **Visual Studio Code** | Code editing. Redefined | [Flathub](https://flathub.org/apps/com.visualstudio.code) · `com.visualstudio.code` |
+| ~~**Visual Studio Code**~~ | ~~Code editing. Redefined~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.visualstudio.code) · `com.visualstudio.code` |
 | **VSCodium** | Telemetry-less code editing | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
 | **IntelliJ IDEA** | Java and Kotlin IDE | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
-| **PyCharm Professional** | Python IDE (proprietary, paid) | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
-| **CLion** | A cross-platform IDE for C and C++ | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
-| **Android Studio** | IDE for Android app development | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
+| ~~**PyCharm Professional**~~ | ~~Python IDE (proprietary, paid)~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
+| ~~**CLion**~~ | ~~A cross-platform IDE for C and C++~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
+| ~~**Android Studio**~~ | ~~IDE for Android app development~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **Builder** | IDE for GNOME / Flatpak development † | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |
 | **Arduino IDE v2** | Open-source electronics prototyping platform | [Flathub](https://flathub.org/apps/cc.arduino.IDE2) · `cc.arduino.IDE2` |
 | **Brief** | Browse command-line cheatsheets | [Flathub](https://flathub.org/apps/io.github.shonebinu.Brief) · `io.github.shonebinu.Brief` |
@@ -287,7 +308,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Podman Desktop** | Manage Podman and other container engines from one UI † | [Flathub](https://flathub.org/apps/io.podman_desktop.PodmanDesktop) · `io.podman_desktop.PodmanDesktop` |
 | **Headlamp** | Kubernetes UI † | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
 | **Freelens** | Free IDE for Kubernetes | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
-| **Postman** | Platform for building and using APIs | [Flathub](https://flathub.org/apps/com.getpostman.Postman) · `com.getpostman.Postman` |
+| ~~**Postman**~~ | ~~Platform for building and using APIs~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.getpostman.Postman) · `com.getpostman.Postman` |
 | **DBeaver Community** | Free Universal Database Tool | [Flathub](https://flathub.org/apps/io.dbeaver.DBeaverCommunity) · `io.dbeaver.DBeaverCommunity` |
 | **Codd** | Lightweight PostgreSQL client | [Flathub](https://flathub.org/apps/io.github.anil_e.Codd) · `io.github.anil_e.Codd` |
 | **Dev Toolbox** | Dev tools at your fingertips | [Flathub](https://flathub.org/apps/me.iepure.devtoolbox) · `me.iepure.devtoolbox` |

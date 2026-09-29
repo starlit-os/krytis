@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #MISE description="Diff Bluefin's Bazaar curated app list (projectbluefin/common) against the SHA recorded in docs/design/bazaar-curated-candidates.md"
 #USAGE flag "--list" help="Print the full current list as TSV (section, app id) instead of a diff"
-#USAGE flag "--summaries" help="Look up each added app's name/summary on the Flathub API"
+#USAGE flag "--summaries" help="Look up each added app's name, summary and license on the Flathub API"
 """Report what changed in Bluefin's Bazaar curated recommendations.
 
 Bluefin's curated list lives in projectbluefin/common at
@@ -88,7 +88,10 @@ def flathub(appid):
     try:
         with urllib.request.urlopen(url, timeout=15) as r:
             d = json.load(r)
-        return f"{d.get('name', '?')} — {d.get('summary', '?')}"
+        # project_license: krytis curates no proprietary apps, so a
+        # `LicenseRef-proprietary` here is an automatic drop.
+        return (f"{d.get('name', '?')} — {d.get('summary', '?')} "
+                f"[{d.get('project_license', 'license ?')}]")
     except Exception as e:  # noqa: BLE001 — report and carry on
         return f"(flathub lookup failed: {e.__class__.__name__})"
 

@@ -86,6 +86,18 @@ Order of preference:
 
 Edit `docs/design/bazaar-curated-candidates.md` in place:
 
+- **Policy: no proprietary or paid apps.** Check every added app's license before
+  proposing it. `--summaries` prints it from the Flathub API. In the sandbox, read
+  `<project_license>` from the metainfo in `github.com/flathub/<id>`, or from the
+  upstream repo. An app is out if any of these hold:
+  - it declares `LicenseRef-proprietary`;
+  - it is a vendor binary with no source (its manifest downloads a prebuilt tarball
+    from the vendor's CDN, as with Ecosia);
+  - it needs a paid subscription to be useful, even under a FOSS license (as with
+    Mozilla VPN).
+
+  Record the drop under **Decided** with the reason. Don't ask again: the user settled
+  this for all future picks.
 - **Rejected candidates stay in the mirror.** When the user drops a Bluefin pick, keep
   its row, strike it through, and list it in the doc's **Decided** section. Deleting the
   row would make the next refresh report it as "added" and propose it again. If Bluefin
