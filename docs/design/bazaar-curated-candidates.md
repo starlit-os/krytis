@@ -33,7 +33,8 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   warning people away from.
 - **krytis already ships some of these natively.** Zed (`elements/desktop/zed.bst`)
   duplicates `dev.zed.Zed`. Equibop (`elements/desktop/equibop.bst`) covers the same
-  need as `com.discordapp.Discord`. Zen (`elements/desktop/zen-browser.bst`) sits
+  need as `com.discordapp.Discord`. The #245 wiring plan blocklists both IDs, so they
+  can't go on krytis's page (see *Contract with the wiring* below). Zen (`elements/desktop/zen-browser.bst`) sits
   beside the Browsers row. And Bluefin's `app.drey.Warp` is a file-transfer app,
   **not** the Warp terminal in `elements/desktop/warp.bst`.
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
@@ -45,6 +46,22 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
 - **Blocklist interplay:** Bluefin's `blocklist.yaml` hides `com.visualstudio.code-oss`,
   editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. Any krytis
   blocklist is a separate decision from the curated list.
+
+## Contract with the wiring
+
+The #245 wiring work
+([comment](https://github.com/starlit-os/krytis/issues/245#issuecomment-5887731857))
+ships krytis's own `curated.yaml` as a skeleton: the rows, banners and section titles.
+The curation work owns only the ID list inside each `appids.list`. Every list change
+has to satisfy five rules:
+
+1. Every ID resolves: `flatpak remote-info flathub <id>` succeeds. A delisted or renamed
+   ID fails silently.
+2. No ID is also in krytis's `blocklist.yaml`, because the blocklist wins. The plan
+   blocks at least `dev.zed.Zed` and `com.discordapp.Discord`.
+3. The modern schema only.
+4. No `image:` under `banner:` unless branding art lands in the same change.
+5. Changing a list touches no other file. If it has to, raise that on #245.
 
 ## Currently preinstalled by krytis
 

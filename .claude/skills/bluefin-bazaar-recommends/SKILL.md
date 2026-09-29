@@ -104,6 +104,14 @@ Flathub link and one line on how it fits krytis (niri, not GNOME; no Homebrew;
 proprietary or free). The doc is only the candidate pool. Choosing which apps go into
 krytis's own `curated.yaml` is #245's decision and the user's, so don't pre-select.
 
+When the user does pick, the picks go into the `appids.list` entries of krytis's
+`curated.yaml` and nowhere else. The #245 wiring owns the rows, banners, titles,
+`bazaar.yaml` and `blocklist.yaml`. The five rules a list change must meet are in the
+candidate doc's **Contract with the wiring** section. Check rules 1 and 2 before
+proposing a list: every ID must pass `flatpak remote-info flathub <id>`, and no ID may
+appear in `blocklist.yaml`. flathub.org is blocked in the cloud sandbox, so rule 1 can
+only be checked on a dev machine. Say so rather than skipping it.
+
 ### 5. Commit
 
 Commit the doc update, marker included, as one `docs(bazaar): …` commit on a no-issue
