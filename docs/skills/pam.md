@@ -1401,11 +1401,15 @@ ref: `pamConversation()` in `src/auth/pam_authenticator.cpp` answers every `ECHO
 the same `PamConversationData.password` pointer with no once-only guard. The issue is open
 upstream with no fix, and upstream v5.2.0 does not address it — bumping the pin will not help.
 
-**This one is ours to fix, not upstream's.** `elements/desktop/noctalia.bst` already pins the
-**kitten-lily fork** (`github:kitten-lily/noctalia.git`, `track: feat/system-prompter`), so
-the change lands in a repo krytis owns. The fix shape is swaylock's
+**This one is ours to fix, not upstream's — tracked in #999.** `elements/desktop/noctalia.bst`
+already pins the **kitten-lily fork** (`github:kitten-lily/noctalia.git`,
+`track: feat/system-prompter`), so the change lands in a repo krytis owns and no Upstream Gate
+applies. The fix shape is swaylock's
 ([swaylock#447](https://github.com/swaywm/swaylock/pull/447)): answer the first `ECHO_OFF`
-with the password, return `PAM_CONV_ERR` for any later one.
+with the password, return `PAM_CONV_ERR` for any later one — a single flag in
+`PamConversationData`. Opening the matching PR against `noctalia-dev/noctalia` is worth doing
+rather than carrying the patch forever, but that is Upstream Gate work and needs explicit
+instruction.
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 
