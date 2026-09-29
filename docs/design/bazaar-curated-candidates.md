@@ -114,6 +114,10 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | App | Decision | Links |
 |---|---|---|
 | **Damask** | Dropped. | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
+| **DBeaver Community** | Dropped. | [Flathub](https://flathub.org/apps/io.dbeaver.DBeaverCommunity) · `io.dbeaver.DBeaverCommunity` |
+| **Codd** | Dropped. | [Flathub](https://flathub.org/apps/io.github.anil_e.Codd) · `io.github.anil_e.Codd` |
+| **Carabiner** | Dropped. | [Flathub](https://flathub.org/apps/io.github.sugarycandybar.Carabiner) · `io.github.sugarycandybar.Carabiner` |
+| **Freelens** | Dropped. | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
@@ -314,14 +318,14 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 |---|---|---|
 | **Podman Desktop** | Manage Podman and other container engines from one UI † | [Flathub](https://flathub.org/apps/io.podman_desktop.PodmanDesktop) · `io.podman_desktop.PodmanDesktop` |
 | **Headlamp** | Kubernetes UI † | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
-| **Freelens** | Free IDE for Kubernetes | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
+| ~~**Freelens**~~ | ~~Free IDE for Kubernetes~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
 | ~~**Postman**~~ | ~~Platform for building and using APIs~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.getpostman.Postman) · `com.getpostman.Postman` |
-| **DBeaver Community** | Free Universal Database Tool | [Flathub](https://flathub.org/apps/io.dbeaver.DBeaverCommunity) · `io.dbeaver.DBeaverCommunity` |
-| **Codd** | Lightweight PostgreSQL client | [Flathub](https://flathub.org/apps/io.github.anil_e.Codd) · `io.github.anil_e.Codd` |
+| ~~**DBeaver Community**~~ | ~~Free Universal Database Tool~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.dbeaver.DBeaverCommunity) · `io.dbeaver.DBeaverCommunity` |
+| ~~**Codd**~~ | ~~Lightweight PostgreSQL client~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.github.anil_e.Codd) · `io.github.anil_e.Codd` |
 | **Dev Toolbox** | Dev tools at your fingertips | [Flathub](https://flathub.org/apps/me.iepure.devtoolbox) · `me.iepure.devtoolbox` |
 | **Forge Sparks** | Git forge (GitHub/Gitea/Forgejo) notifications † | [Flathub](https://flathub.org/apps/com.mardojai.ForgeSparks) · `com.mardojai.ForgeSparks` |
 | **SSH Pilot** | Manage your servers with ease | [Flathub](https://flathub.org/apps/io.github.mfat.sshpilot) · `io.github.mfat.sshpilot` |
 | **RustConn** | Manage SSH, RDP, and VNC connections | [Flathub](https://flathub.org/apps/io.github.totoshko88.RustConn) · `io.github.totoshko88.RustConn` |
-| **Carabiner** | Create and manage network tunnels | [Flathub](https://flathub.org/apps/io.github.sugarycandybar.Carabiner) · `io.github.sugarycandybar.Carabiner` |
+| ~~**Carabiner**~~ | ~~Create and manage network tunnels~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.github.sugarycandybar.Carabiner) · `io.github.sugarycandybar.Carabiner` |
 | **Digger** | Modern, advanced DNS lookup tool | [Flathub](https://flathub.org/apps/io.github.tobagin.digger) · `io.github.tobagin.digger` |
 | **Echo** | Ping websites | [Flathub](https://flathub.org/apps/io.github.lo2dev.Echo) · `io.github.lo2dev.Echo` |
