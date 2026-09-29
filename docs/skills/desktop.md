@@ -559,6 +559,53 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
   removing a patch (once upstream absorbs it, as happened with
   `0001-show-pam-info-cue.patch`) needs the same row deleted there.
 
+### Contributing back to `noctalia-dev`: no AI policy exists, but the PR template is bot-enforced
+
+Relevant because krytis carries fork patches it may want to upstream (#999), and because
+krytis's own commits carry `Assisted-by:` trailers per `AGENTS.md`.
+
+**There is no AI/LLM contribution policy anywhere in `noctalia-dev`, checked 2026-09-29.**
+Zero matches for `AI|LLM|GPT|Claude|Copilot|ChatGPT|Codex|generative|AI-generated|
+AI-assisted|machine-generated|slop` across `CONTRIBUTING.md`, `README.md`, `ARCHITECTURE.md`,
+`BUILDING.md`, `CREDITS.md`, `SCOPE.md`, `.github/PULL_REQUEST_TEMPLATE.md`, all three
+`.github/ISSUE_TEMPLATE/*`, and `.github/workflows/scripts/enforce-pr-template.py`, in each of
+`noctalia`, `umbriel` and `noctalia-greeter`, plus the `noctalia-dev/.github` org profile
+README. Re-run before relying on this — it is an absence claim and absences are exactly what
+rots:
+
+```bash
+for r in noctalia umbriel noctalia-greeter; do
+  for f in CONTRIBUTING.md README.md SCOPE.md .github/PULL_REQUEST_TEMPLATE.md; do
+    curl -sfL "https://raw.githubusercontent.com/noctalia-dev/$r/main/$f"
+  done
+done | grep -niE '\b(AI|LLM|Copilot|generative|AI-generated|AI-assisted)\b'
+```
+
+All three repos are **MIT**, and none has a `CODE_OF_CONDUCT`, a DCO, or a `Signed-off-by`
+requirement (`gh api repos/noctalia-dev/<r>/community/profile`). So nothing obliges disclosure
+of AI assistance and nothing forbids it. Krytis's `Assisted-by:` trailer is therefore safe to
+carry upstream, and dropping it would be the unusual choice, not keeping it.
+
+**What upstream does enforce is structural, and a bot acts on it.**
+`.github/workflows/enforce-pr-template.yml` runs `enforce-pr-template.py` on open, edit,
+reopen and ready-for-review; a PR missing required structure is **commented on and converted
+back to Draft** (it is never closed). Required: the `## Summary`, `## Motivation`,
+`## Type of Change`, `## Testing` and `## Checklist` headings, with the Checklist wording
+kept verbatim from the template, exactly one change type checked, and every Checklist box
+ticked before leaving Draft. `CONTRIBUTING.md` adds: one feature/fix/refactor per PR,
+Conventional Commits, `just format` with clang-format v22+, user docs under `docs/user/`
+updated in the *same commit* as the code, and new user-facing strings added only to
+`assets/translations/en.json`.
+
+Their testing rule is close enough to krytis's to reuse the same judgement: unit tests only
+for observable deterministic contracts, explicitly **not** for trivial forwarding, getters,
+or mock-modelled visual behavior; bug fixes reproduce first and add a regression test only
+where it buys durable coverage.
+
+**None of this authorises opening the PR.** `AGENTS.md`'s Upstream Gate still applies —
+`noctalia-dev` is outside `starlit-os/` and `kitten-lily/`, so publishing there needs an
+explicit instruction naming that action.
+
 ## Lid close locks then suspends — noctalia holds the logind delay inhibit
 
 *Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7).*
