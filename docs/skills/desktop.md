@@ -2439,8 +2439,8 @@ refresh. Non-obvious points:
   are.
 - **krytis preinstalls Flatpaks through two paths that have drifted apart.** The image's
   first-boot `files/flatpak-preinstall/flatpak-preinstall.sh` installs only Bazaar. The
-  live ISO's `live/src/flatpaks`, inherited from dakota-iso and still headed `# Bluefin
-  system flatpaks`, bakes in 14 more (Papers, Loupe, Showtime, Flatseal and others). So a
+  live ISO's `live/src/flatpaks`, inherited from dakota-iso's Bluefin list, bakes in 11
+  more (Papers, Loupe, Showtime, Flatseal and others). So a
   system installed from the ISO has them, and a system reached by `bootc switch` doesn't.
   Check both files before claiming what "krytis preinstalls".
 - **flathub.org is blocked from the cloud-agent sandbox.** The Flathub API

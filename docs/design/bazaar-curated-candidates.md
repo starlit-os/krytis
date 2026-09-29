@@ -78,9 +78,9 @@ krytis preinstalls Flatpaks through two paths, and they don't install the same s
 | Image first boot | `files/flatpak-preinstall/flatpak-preinstall.sh` | Every krytis system, including one reached by `bootc switch`. It installs **only Bazaar**. |
 | Live ISO | `live/src/flatpaks`, baked into the squashfs by `live/src/install-flatpaks.sh` | The live session, and installs made from the ISO. The file header says the installer copies them to the target offline (`flatpak_var_path` in `live/src/configure-live-krytis.sh`). |
 
-So a system installed from the ISO has all 15 entries (Bazaar included), while a system that reached krytis by
-`bootc switch` has only Bazaar. `live/src/flatpaks` came over with the dakota-iso fork and
-still carries the header `# Bluefin system flatpaks`. Nothing in `files/` or `elements/`
+So a system installed from the ISO has all 12 entries (Bazaar included), while a system that reached krytis by
+`bootc switch` has only Bazaar. `live/src/flatpaks` came over with the dakota-iso fork's
+Bluefin list. Nothing in `files/` or `elements/`
 depends on any entry in it: no MIME default or config references them.
 The "no native …" notes below come from the image's `.desktop` inventory:
 `grep -E '^/\./usr/share/applications/.*\.desktop' files/fakecap-manifest.tsv`.
@@ -98,9 +98,19 @@ The "no native …" notes below come from the image's `.desktop` inventory:
 | **Firmware** | Install firmware on devices (fwupd front-end) † | ISO | | [Flathub](https://flathub.org/apps/org.gnome.Firmware) · `org.gnome.Firmware` |
 | **Mission Center** | Monitor system resource usage | ISO | | [Flathub](https://flathub.org/apps/io.missioncenter.MissionCenter) · `io.missioncenter.MissionCenter` |
 | **Flatseal** | Manage Flatpak permissions | ISO | | [Flathub](https://flathub.org/apps/com.github.tchx84.Flatseal) · `com.github.tchx84.Flatseal` |
-| **Ignition** | Manage startup apps and scripts | ISO | GNOME-style autostart entries. Under niri, `spawn-at-startup` is the other startup mechanism, and Ignition doesn't manage it. | [Flathub](https://flathub.org/apps/io.github.flattool.Ignition) · `io.github.flattool.Ignition` |
-| **Smile** | An emoji picker | ISO | | [Flathub](https://flathub.org/apps/it.mijorus.smile) · `it.mijorus.smile` |
-| **Pinta** | Edit images and paint digitally | ISO | | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
+
+### Decided
+
+These were preinstalled on the ISO and have been removed from `live/src/flatpaks`:
+
+| App | Decision | Links |
+|---|---|---|
+| **Ignition** | Dropped. It manages GNOME-style autostart entries, not niri's `spawn-at-startup`. | [Flathub](https://flathub.org/apps/io.github.flattool.Ignition) · `io.github.flattool.Ignition` |
+| **Smile** | Dropped. | [Flathub](https://flathub.org/apps/it.mijorus.smile) · `it.mijorus.smile` |
+| **Pinta** | Moves to the curated page: "Bluefin Recommends" or a category, not decided yet. It's a krytis addition, since Bluefin doesn't curate it. | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
+
+Removing an app from `live/src/flatpaks` only affects new ISO builds and the installs
+made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 
 ## The list
 
