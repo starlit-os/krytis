@@ -1,13 +1,14 @@
 # Grype ignore rules for confirmed false positives / provably-unreachable matches.
-# Two distinct classes, each documented where its entries start below:
+# Two distinct classes, each documented where its entries start below. The two
+# classes are pinned differently on purpose — see "How each class is pinned".
 #
 # 1. Cross-ecosystem stock-matcher false positives (docs/skills/sbom.md § Mitigated:
 #    Grype stock-matcher cross-ecosystem false positives). package.type is empty (no
 #    purl/CPE), so Grype checked the bare package name against every GHSA language
 #    namespace instead of the artifact's real ecosystem. Verified per-entry via
-#    matchDetails[0].searchedBy.namespace on a real scan (2026-08-05, Grype 0.116.1) —
-#    each `namespace` named in a comment below is the *wrong* ecosystem the match came
-#    from, not the artifact's real one.
+#    matchDetails[0].searchedBy.namespace on a real scan (first established 2026-08-05,
+#    Grype 0.116.1; re-verified 2026-09-29, Grype 0.119.0) — each `namespace` named
+#    below is the *wrong* ecosystem the match came from, not the artifact's real one.
 #
 # 2. Dependency-graph-proven unreachable rust-matcher/purl-scoped matches (docs/skills/
 #    sbom.md § Mitigated: dependency-graph-proven unreachable crate versions, issue
@@ -18,47 +19,158 @@
 #    when the full reachability graph from every enabled build target has been walked
 #    and shown to exclude the vulnerable crate entirely.
 #
-# Every entry, either class, is pinned to name+version+vulnerability, not name alone:
-# if the underlying BST element/vendor snapshot bumps to a new version, the rule stops
-# applying and Grype will re-flag it — re-verify before re-adding (class 1: re-check
-# searchedBy.namespace; class 2: re-walk the dependency graph, the new version may
-# introduce a new reachable path).
+#    The `bitnami`-namespace entries (Pillow, sqlite) are a third, smaller shape: a
+#    real advisory for that exact project whose cited fixed-in version is *below* the
+#    installed one. Pinned like class 2 for the same reason — see below.
+#
+# How each class is pinned
+# ------------------------
+# Class 1 rules carry `namespace` + `package.name` and deliberately NO
+# `package.version`. The defect being suppressed is that a native/Python artifact was
+# searched in a *foreign language namespace*; that mismatch is a property of the name
+# and the namespace, not of the version, and it cannot become true at some later
+# version. A version pin therefore bought no safety — it only guaranteed the rule went
+# inert on the next routine dependency bump and the same false positive re-blocked a
+# PR at Critical (observed three times: markdown 3.10.2→3.10.3 and shaderc 2025.3→
+# 2026.3 on 2026-09-01, then networkx 3.6.1→3.7 and shaderc 2026.3→2026.4 on
+# freedesktop-sdk 26.08.1→26.08.2, PR #993). `namespace` replaces the version pin as
+# the guard and is strictly tighter than what it replaces: a *correctly*-namespaced
+# advisory against the same package is still reported. Proof that this is not
+# over-broad is in-tree — GNU `tar` 1.35's 17 npm GHSAs are ignored below via
+# `github:language:javascript`, while the Rust `tar` 0.4.45 crate's
+# GHSA-3pv8-6f4r-ffg2 (`github:language:rust`) is NOT suppressed and still reports.
+#
+# Class 2 and the `bitnami` entries keep an exact `package.version`, because those
+# judgments ARE version-dependent: "this crate version is unreachable from any enabled
+# build target" and "the installed version already postdates the cited fix" are both
+# claims about one specific version. A bump there must re-open the question, so the
+# rule going inert is the correct behaviour, not a maintenance bug.
+#
+# Grype semantics relied on here (verified against grype/match/ignore.go at v0.119.0,
+# `getIgnoreConditionsForRule`): every populated field is an AND-ed condition and an
+# empty field imposes none, so omitting `version` matches any version;
+# `package.version` is exact string equality with no glob/range support; `namespace`
+# is compared against the match's `.vulnerability.namespace`.
 ignore:
+  # ── Class 1: cross-ecosystem false positives (no version pin; see header) ──
   # json: nlohmann/json (C++, components/nlohmann-json.bst)
   - vulnerability: GHSA-3c6g-pvg8-gqw2
+    namespace: github:language:javascript
     package:
       name: json
-      version: "3.12.0"
   # libidn2: GNU libidn2 (C, components/libidn2.bst)
   - vulnerability: GHSA-j6m4-68hc-mqq9
+    namespace: github:language:javascript
     package:
       name: libidn2
-      version: "2.3.8"
   # libnotify: GNOME libnotify (C, gnome-build-meta.bst:sdk/libnotify.bst) —
   # matched against npm's unrelated "libnotify" desktop-notification wrapper.
   - vulnerability: GHSA-6898-wx94-8jq8
+    namespace: github:language:javascript
     package:
       name: libnotify
-      version: "0.8.8"
-  # markdown: Python-Markdown (components/python3-markdown.bst)
+  # markdown: Python-Markdown (components/python3-markdown.bst) — a real Python
+  # package, but searched in the *javascript* namespace, not its own.
   - vulnerability: GHSA-wx77-rp39-c6vg
+    namespace: github:language:javascript
     package:
       name: markdown
-      version: "3.10.3"
-  # networkx: NetworkX (components/python3-networkx.bst)
+  # networkx: NetworkX (components/python3-networkx.bst) — same shape as markdown:
+  # a Python package matched against an npm "Malware in networkx" advisory whose
+  # constraint is ">=0 (semantic)", i.e. every version, in the wrong ecosystem.
   - vulnerability: GHSA-m4cf-q2p6-q6pv
+    namespace: github:language:javascript
     package:
       name: networkx
-      version: "3.6.1"
-  # paste: vendored copy in desktop/mesa-all-codecs.bst
+  # paste: the Rust `paste` crate vendored in desktop/mesa-all-codecs.bst, matched
+  # against PyPI's unrelated "Paste" WSGI framework.
   - vulnerability: GHSA-27px-qpmj-qg38
+    namespace: github:language:python
     package:
       name: paste
-      version: "1.0.14"
   - vulnerability: GHSA-7gfc-2v6g-6w9f
+    namespace: github:language:python
     package:
       name: paste
-      version: "1.0.14"
+  # shaderc: Google shaderc (C++, components/shaderc.bst)
+  - vulnerability: GHSA-3h68-ppv2-8p9v
+    namespace: github:language:javascript
+    package:
+      name: shaderc
+  # tar: GNU tar (C, bootstrap/base-sdk/tar.bst + components/tar.bst) matched against
+  # npm tar/node-tar. The Rust `tar` crate's own advisories live in
+  # github:language:rust and are deliberately still reported.
+  - vulnerability: GHSA-23hp-3jrh-7fpw
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-34x7-hfp2-rc4v
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-3jfq-g458-7qm9
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-5955-9wpr-37jh
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-83g3-92jg-28cx
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-8qq5-rm4j-mr97
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-8x88-c5mf-7j5w
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-9ppj-qmqm-q256
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-f5x3-32g6-xq36
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-gfjr-3jmm-4g9v
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-gvwx-54wh-qm9j
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-j44m-qm6p-hp7m
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-qffp-2rhf-9h96
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-r292-9mhp-454m
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-r6q2-hw4h-h46w
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-vmf3-w455-68vh
+    namespace: github:language:javascript
+    package:
+      name: tar
+  - vulnerability: GHSA-w8wr-v893-vjvp
+    namespace: github:language:javascript
+    package:
+      name: tar
+
+  # ── bitnami namespace: right project, cited fix predates what we ship ──
+  # Version-pinned on purpose: the claim is about this exact installed version.
   # Pillow: python3-pillow (components/python3-pillow.bst) — Grype's "bitnami"
   # namespace stock-matcher (no purl) matches CVEs whose cited fixed version
   # is far below the actually-installed version (12.3.0 is newer than every
@@ -71,7 +183,23 @@ ignore:
     package:
       name: Pillow
       version: "12.3.0"
-  # rustls-webpki 0.101.7 (class 2, via rustls 0.21.12): part of freedesktop-sdk's
+  # sqlite: components/sqlite.bst — same "bitnami" stock-matcher issue as
+  # Pillow above: installed 3.53.4 postdates every fixed-in version cited.
+  - vulnerability: BIT-sqlite-2025-6965
+    package:
+      name: sqlite
+      version: "3.53.4"
+  - vulnerability: BIT-sqlite-2024-0232
+    package:
+      name: sqlite
+      version: "3.53.4"
+  - vulnerability: BIT-sqlite-2025-29088
+    package:
+      name: sqlite
+      version: "3.53.4"
+
+  # ── Class 2: dependency-graph-proven unreachable (version-pinned; see header) ──
+  # rustls-webpki 0.101.7 (via rustls 0.21.12): part of freedesktop-sdk's
   # gstreamer-plugins-rs.bst cargo2 vendor snapshot for the whole gst-plugins-rs
   # workspace, but dependency-graph-traced (issue #500, via the real upstream
   # Cargo.lock at ref 0.15.3-0-g6302bea23b53e6461c104f9543df887a63b2d6ec) to be
@@ -95,90 +223,3 @@ ignore:
     package:
       name: rustls-webpki
       version: "0.101.7"
-  # shaderc: Google shaderc (C++, components/shaderc.bst)
-  - vulnerability: GHSA-3h68-ppv2-8p9v
-    package:
-      name: shaderc
-      version: "2026.3"
-  # sqlite: components/sqlite.bst — same "bitnami" stock-matcher issue as
-  # Pillow above: installed 3.53.4 postdates every fixed-in version cited.
-  - vulnerability: BIT-sqlite-2025-6965
-    package:
-      name: sqlite
-      version: "3.53.4"
-  - vulnerability: BIT-sqlite-2024-0232
-    package:
-      name: sqlite
-      version: "3.53.4"
-  - vulnerability: BIT-sqlite-2025-29088
-    package:
-      name: sqlite
-      version: "3.53.4"
-  # tar: GNU tar (C, bootstrap/base-sdk/tar.bst + components/tar.bst)
-  - vulnerability: GHSA-23hp-3jrh-7fpw
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-34x7-hfp2-rc4v
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-3jfq-g458-7qm9
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-5955-9wpr-37jh
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-83g3-92jg-28cx
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-8qq5-rm4j-mr97
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-8x88-c5mf-7j5w
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-9ppj-qmqm-q256
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-f5x3-32g6-xq36
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-gfjr-3jmm-4g9v
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-gvwx-54wh-qm9j
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-j44m-qm6p-hp7m
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-qffp-2rhf-9h96
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-r292-9mhp-454m
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-r6q2-hw4h-h46w
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-vmf3-w455-68vh
-    package:
-      name: tar
-      version: "1.35"
-  - vulnerability: GHSA-w8wr-v893-vjvp
-    package:
-      name: tar

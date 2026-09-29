@@ -112,7 +112,7 @@ every affected package has `.artifact.purl == null` and `matchDetails[0].matcher
 **not** match the artifact's real ecosystem — Grype's fallback for purl-less packages
 checks the bare name against every GHSA language namespace, not just a plausible one:
 
-| Package (installed) | Real identity | Matched against |
+| Package (version at first triage) | Real identity | Matched against |
 |---|---|---|
 | `tar` 1.35 | GNU tar (C, `tar.bst`) | `github:language:javascript` — npm `tar`/`node-tar` (17 distinct GHSAs, `fixed-in` values like `7.5.21` that GNU tar's own versioning has never reached) |
 | `libidn2` 2.3.8 | GNU libidn2 (C) | `github:language:javascript` |
@@ -134,17 +134,22 @@ GHSAs was matched twice (34 raw matches).
 **Fix — `.grype.yaml` ignore rules, not enrichment-script changes.** Broader purl/CPE
 enrichment for every BST-element-is-the-package case would cover most of the C/C++/
 non-cargo/non-pypi graph — too large and too risky (a wrong CPE assignment reintroduces
-the same class of mismatch) for the 8 confirmed instances actually found. Instead,
+the same class of mismatch) for the confirmed instances actually found. Instead,
 `mise/tasks/vuln-scan` passes `grype --config .grype.yaml`, and the repo-root
-`.grype.yaml` lists every confirmed (`vulnerability`, `package.name`,
-`package.version`) triple as an `ignore:` rule (Grype's own suppression mechanism,
-documented in `grype config`) — 25 when this class was first triaged, 33 today across
-11 package names after the `bitnami` and class-2 additions documented below. Grep the
-file rather than trusting a count here.
-Pinned to the exact installed version, not name alone:
-a version bump on the underlying BST element makes the rule stop applying, and Grype
-re-flags the match — re-verify `matchDetails[0].searchedBy.namespace` before re-adding
-rather than assuming the same package name is always safe to ignore.
+`.grype.yaml` lists each confirmed instance as an `ignore:` rule (Grype's own
+suppression mechanism, documented in `grype config`). Grep the file rather than
+trusting a count here.
+
+**Class-1 rules are keyed on (`vulnerability`, `package.name`, `namespace`) with no
+`package.version`** — changed 2026-09-29, see § *Version pins were the wrong guard for
+class 1* below. The defect is that a native/Python artifact was searched in a foreign
+language namespace; that is a property of the name and the namespace, never of the
+version, so a version pin guarded nothing and merely guaranteed the rule went inert on
+the next dependency bump. `namespace` is the guard instead, and it is strictly tighter
+than the version pin it replaced: a *correctly*-namespaced advisory against the same
+package still reports. Proven in-tree — GNU `tar`'s 17 npm GHSAs are suppressed via
+`github:language:javascript` while the Rust `tar` crate's `GHSA-3pv8-6f4r-ffg2`
+(`github:language:rust`) is not.
 
 **This does not generalize.** Any *new* purl-less BST-element package that happens to
 share a name with an unrelated ecosystem's advisory will still false-positive the same
@@ -167,21 +172,37 @@ different Grype data source. Check `matchDetails[0].searchedBy.namespace == "bit
 the same way as the GHSA-language case; the same manual "is the cited fixed-in version
 actually below what's installed" verification applies before ignoring.
 
-### Version-pinned ignore rules silently stop suppressing on every element bump
+### Version pins were the wrong guard for class 1 (but stay correct for class 2 and `bitnami`)
 
-Confirmed for real, same 2026-09-01 re-scan: two entries already in `.grype.yaml`
-(`markdown` pinned to `3.10.2`, `shaderc` pinned to `2025.3`) had gone stale — routine
-`chore(deps)` bumps moved the installed versions to `3.10.3`/`2026.3` between when the
-rules were written and this scan, so Grype re-flagged both as if unignored (both entries
-have since been re-pinned to the new versions in `.grype.yaml`; that is the whole
-remediation, exactly the
-documented, intended behavior of pinning by version — this is not a bug in the
-ignore-list design, just a reminder that it needs upkeep). There's no automated drift
-check for this the way `mise run systemd-base-check`/`rust-bindgen-check` cover the
-patch-based overrides — a version-pinned `.grype.yaml` entry silently re-flagging on the
-next routine dependency bump is the expected failure mode, not a regression to chase.
-Treat every `mise run vuln-scan` finding with a `namespace` matching one already in
-`.grype.yaml`'s comments as "stale pin, re-verify and bump the version", not "new bug".
+Version-pinned class-1 rules broke on **every** routine dependency bump, three times
+over: `markdown` 3.10.2→3.10.3 and `shaderc` 2025.3→2026.3 (2026-09-01 re-scan, Grype
+0.118.0), then `networkx` 3.6.1→3.7 and `shaderc` 2026.3→2026.4 on the freedesktop-sdk
+26.08.1→26.08.2 junction bump (PR #993, 2026-09-29), where both re-flagged as **new
+Critical** matches and blocked the `Vulnerability Diff` gate on a PR whose only change
+was a junction ref. There is no automated drift check for this the way
+`mise run systemd-base-check`/`rust-bindgen-check` cover the patch-based overrides, so
+each recurrence cost a manual triage round-trip to re-derive a conclusion already
+reached.
+
+Fixed by dropping `package.version` from class-1 rules and adding `namespace:` (see the
+class-1 section above for why that is tighter, not looser). Verified against Grype
+0.119.0 with a synthetic SPDX document: `networkx` at both 3.6.1 and 3.7 ignored,
+`markdown` at a never-yet-shipped 3.11.0 ignored, Rust `tar` 0.4.45 still reported.
+
+**The pin is still right for class 2 and the `bitnami` entries**, and they keep it.
+Those judgments are claims about one specific version — "this crate version is
+unreachable from every enabled build target", "the installed version already postdates
+the cited fix" — so a bump *must* re-open the question. A class-2 rule going inert on a
+version bump is the mechanism working, not upkeep debt. Treat a `bitnami`- or
+`rust-matcher`-namespaced finding whose name already appears in `.grype.yaml` as "stale
+pin, re-verify and bump the version"; a class-1 name appearing there now means
+something genuinely new, because those rules no longer expire.
+
+Grype's rule semantics this depends on, read from `grype/match/ignore.go`
+(`getIgnoreConditionsForRule`) at v0.119.0: every populated field is an AND-ed
+condition and an empty one imposes none, so an omitted `version` matches any version;
+`package.version` is exact string equality with no glob or range support; `namespace`
+is compared against the match's `.vulnerability.namespace`.
 
 ### A stale rule can also go *permanently* dead, not just re-flag (package rename, not a version bump)
 
@@ -196,9 +217,12 @@ freedesktop-sdk's `elements/components/zlib.bst` collapsed from a real build to 
 fdsdk's tree, not krytis's). The SBOM package is now named `zlib-ng`, so
 the old rule's `package.name: zlib` pin can never match again regardless of version.
 
-**Distinguishing this from the routine version-bump case:** a version-bumped rule still
-shows up in a fresh scan's `.matches` (unignored, same name, new version) — that's the
-"re-verify and bump the version" signal above. A **renamed/replaced** package shows up
+**Distinguishing this from the routine version-bump case:** a version-bumped class-2 or
+`bitnami` rule still shows up in a fresh scan's `.matches` (unignored, same name, new
+version) — that's the "re-verify and bump the version" signal above, and it no longer
+applies to class 1, whose rules carry no version. Rename is now the *only* way a
+class-1 rule can go dead, which makes this check the one to run on them. A
+**renamed/replaced** package shows up
 *nowhere* in either `.matches` or `.ignoredMatches` for that name — check the enriched
 SBOM (`jq '.packages[] | select(.name == "<old-name>")'`) before assuming "clean, nothing
 to do"; a zero-hit name can mean "genuinely fixed" or "renamed and still just as
