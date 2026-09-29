@@ -118,6 +118,7 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **Codd** | Dropped. | [Flathub](https://flathub.org/apps/io.github.anil_e.Codd) · `io.github.anil_e.Codd` |
 | **Carabiner** | Dropped. | [Flathub](https://flathub.org/apps/io.github.sugarycandybar.Carabiner) · `io.github.sugarycandybar.Carabiner` |
 | **Freelens** | Dropped. | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
+| **Headlamp** | Dropped. | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
@@ -317,7 +318,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | App | Summary | Links |
 |---|---|---|
 | **Podman Desktop** | Manage Podman and other container engines from one UI † | [Flathub](https://flathub.org/apps/io.podman_desktop.PodmanDesktop) · `io.podman_desktop.PodmanDesktop` |
-| **Headlamp** | Kubernetes UI † | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
+| ~~**Headlamp**~~ | ~~Kubernetes UI †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
 | ~~**Freelens**~~ | ~~Free IDE for Kubernetes~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
 | ~~**Postman**~~ | ~~Platform for building and using APIs~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.getpostman.Postman) · `com.getpostman.Postman` |
 | ~~**DBeaver Community**~~ | ~~Free Universal Database Tool~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.dbeaver.DBeaverCommunity) · `io.dbeaver.DBeaverCommunity` |
