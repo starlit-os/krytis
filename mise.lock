@@ -96,13 +96,13 @@ url = "https://github.com/astral-sh/python-build-standalone/releases/download/20
 provenance = "github-attestations"
 
 [[tools.usage]]
-version = "6.11.1"
+version = "6.12.0"
 backend = "packslip:github.com/jdx/usage"
-specifiers = ["6.11.1"]
+specifiers = ["6.12.0"]
 
 [tools.usage."platforms.linux-x64"]
-checksum = "sha256:afa6cb0e76f88cc6392aeecf21bbcd869747d4eeb60ab84c98d6e6178edc359a"
-url = "https://github.com/jdx/usage/releases/download/v6.11.1/usage-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:c82b39ca9c64e3256284667ca8ddd4c27b7141d842ba054a645ee73d6ab99b17"
+url = "https://github.com/jdx/usage/releases/download/v6.12.0/usage-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [[tools.uv]]
