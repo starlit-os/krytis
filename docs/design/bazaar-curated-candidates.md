@@ -131,6 +131,10 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **IntelliJ IDEA** | Dropped. | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
 | **Builder** | Dropped: too narrow a focus (GNOME/Flatpak app development). | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |
 | **Arduino IDE v2** | Dropped: too narrow a focus (Arduino boards only). | [Flathub](https://flathub.org/apps/cc.arduino.IDE2) · `cc.arduino.IDE2` |
+| **Fedora Media Writer** | Dropped: too narrow a focus (writing install media). | [Flathub](https://flathub.org/apps/org.fedoraproject.MediaWriter) · `org.fedoraproject.MediaWriter` |
+| **Raspberry Pi Imager** | Dropped: too narrow a focus (Raspberry Pi imaging). | [Flathub](https://flathub.org/apps/org.raspberrypi.rpi-imager) · `org.raspberrypi.rpi-imager` |
+| **Blender** | Dropped: a specialist creative tool, not an office or productivity app. | [Flathub](https://flathub.org/apps/org.blender.Blender) · `org.blender.Blender` |
+| **Ardour** | Dropped: a specialist creative tool, not an office or productivity app. | [Flathub](https://flathub.org/apps/org.ardour.Ardour) · `org.ardour.Ardour` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
@@ -214,21 +218,21 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Blanket** | Listen to ambient sounds † | [Flathub](https://flathub.org/apps/com.rafaelmardojai.Blanket) · `com.rafaelmardojai.Blanket` |
 | **Parabolic** | Download web video and audio | [Flathub](https://flathub.org/apps/org.nickvision.tubeconverter) · `org.nickvision.tubeconverter` |
 
-### Office & Productivity (12/14)
+### Office & Productivity (10/14)
 
 | App | Summary | Links |
 |---|---|---|
 | **Collabora Office** | LibreOffice-based office suite † | [Flathub](https://flathub.org/apps/com.collaboraoffice.Office) · `com.collaboraoffice.Office` |
 | **ONLYOFFICE Desktop Editors** | Office productivity suite | [Flathub](https://flathub.org/apps/org.onlyoffice.desktopeditors) · `org.onlyoffice.desktopeditors` |
 | ~~**Slack**~~ | ~~Business communication~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.slack.Slack) · `com.slack.Slack` |
-| **Blender** | 3D modelling, animation and rendering suite † | [Flathub](https://flathub.org/apps/org.blender.Blender) · `org.blender.Blender` |
+| ~~**Blender**~~ | ~~3D modelling, animation and rendering suite †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.blender.Blender) · `org.blender.Blender` |
 | **Exhibit** | 3D model viewer (F3D-based) † | [Flathub](https://flathub.org/apps/io.github.nokse22.Exhibit) · `io.github.nokse22.Exhibit` |
 | **GIMP** | Raster image editor † | [Flathub](https://flathub.org/apps/org.gimp.GIMP) · `org.gimp.GIMP` |
 | **Inkscape** | Vector graphics editor † | [Flathub](https://flathub.org/apps/org.inkscape.Inkscape) · `org.inkscape.Inkscape` |
 | **Krita** | Digital painting † | [Flathub](https://flathub.org/apps/org.kde.krita) · `org.kde.krita` |
 | **Upscaler** | Upscale and enhance images † | [Flathub](https://flathub.org/apps/io.gitlab.theevilskeleton.Upscaler) · `io.gitlab.theevilskeleton.Upscaler` |
 | **Audacity** | Audacity is the world's most popular audio editing and recording app | [Flathub](https://flathub.org/apps/org.audacityteam.Audacity) · `org.audacityteam.Audacity` |
-| **Ardour** | Digital audio workstation † | [Flathub](https://flathub.org/apps/org.ardour.Ardour) · `org.ardour.Ardour` |
+| ~~**Ardour**~~ | ~~Digital audio workstation †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.ardour.Ardour) · `org.ardour.Ardour` |
 | **Planify** | Task manager with Todoist / Nextcloud sync † | [Flathub](https://flathub.org/apps/io.github.alainm23.planify) · `io.github.alainm23.planify` |
 | ~~**Obsidian**~~ | ~~Markdown-based knowledge base~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
 | **Logseq** | Connect your notes and knowledge | [Flathub](https://flathub.org/apps/com.logseq.Logseq) · `com.logseq.Logseq` |
@@ -257,7 +261,7 @@ This is Bluefin's "Games" section, renamed for krytis.
 | **Faugus** | A simple and lightweight app for running games using UMU-Launcher. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/io.github.Faugus.faugus-launcher) · `io.github.Faugus.faugus-launcher` |
 | **Bottles** | Run Windows software. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/com.usebottles.bottles) · `com.usebottles.bottles` |
 
-### Utilities (18/19)
+### Utilities (16/19)
 
 | App | Summary | Links |
 |---|---|---|
@@ -269,8 +273,8 @@ This is Bluefin's "Games" section, renamed for krytis.
 | **Pika Backup** | Borg-based backups † | [Flathub](https://flathub.org/apps/org.gnome.World.PikaBackup) · `org.gnome.World.PikaBackup` |
 | **Ente Auth** | Open-source, cross-platform 2FA authenticator † | [Flathub](https://flathub.org/apps/io.ente.auth) · `io.ente.auth` |
 | **Clapgrep** | Search through all your files, including PDFs and office documents † | [Flathub](https://flathub.org/apps/de.leopoldluley.Clapgrep) · `de.leopoldluley.Clapgrep` |
-| **Fedora Media Writer** | Create a Fedora live USB drive | [Flathub](https://flathub.org/apps/org.fedoraproject.MediaWriter) · `org.fedoraproject.MediaWriter` |
-| **Raspberry Pi Imager** | Raspberry Pi Imaging utility | [Flathub](https://flathub.org/apps/org.raspberrypi.rpi-imager) · `org.raspberrypi.rpi-imager` |
+| ~~**Fedora Media Writer**~~ | ~~Create a Fedora live USB drive~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.fedoraproject.MediaWriter) · `org.fedoraproject.MediaWriter` |
+| ~~**Raspberry Pi Imager**~~ | ~~Raspberry Pi Imaging utility~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.raspberrypi.rpi-imager) · `org.raspberrypi.rpi-imager` |
 | **Cameractrls** | Camera controls for Linux | [Flathub](https://flathub.org/apps/hu.irl.cameractrls) · `hu.irl.cameractrls` |
 | **Decoder** | Scan and generate QR codes † | [Flathub](https://flathub.org/apps/com.belmoussaoui.Decoder) · `com.belmoussaoui.Decoder` |
 | **Constrict** | Compress videos to a target file size † | [Flathub](https://flathub.org/apps/io.github.wartybix.Constrict) · `io.github.wartybix.Constrict` |
