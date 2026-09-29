@@ -103,6 +103,19 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
   free alternative (so far only Steam). They're listed in the doc's **Exceptions**
   table. Never grant one yourself. If a new Bluefin pick looks like a case for one,
   drop it anyway and point it out to the user as a possible exception.
+- **krytis's own edits sit on top of the mirror.** Keep them on every refresh:
+  - *Section renames.* Bluefin's "Games" is krytis's "Gaming". The diff task prints
+    Bluefin's section names, so map them before placing rows.
+  - *krytis additions.* Rows tagged ➕ **krytis addition** (e.g. Faugus and Bottles
+    under Gaming) aren't Bluefin's. They go at the end of their section. Don't remove
+    them because Bluefin doesn't list them. If Bluefin later adds one, drop the tag
+    and move the row to Bluefin's position.
+  - *Headings.* A section heading's total counts krytis additions as well as Bluefin's
+    rows.
+- **No individual games.** Curate launchers and tools (Steam, Heroic, Lutris, Faugus,
+  Bottles, ProtonPlus…), not specific game titles. The maintainer recommends only games
+  they've played, and a single title is too narrow for the page. Drop any game Bluefin
+  adds, and record it under **Decided**.
 - **Rejected candidates stay in the mirror.** When the user drops a Bluefin pick, keep
   its row, strike it through, and list it in the doc's **Decided** section. Deleting the
   row would make the next refresh report it as "added" and propose it again. If Bluefin

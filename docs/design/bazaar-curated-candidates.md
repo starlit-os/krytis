@@ -38,7 +38,7 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   beside the Browsers row. And Bluefin's `app.drey.Warp` is a file-transfer app,
   **not** the Warp terminal in `elements/desktop/warp.bst`.
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
-  (`org.gnome.Mahjongg` is fine; a shell-extension manager wouldn't be) needs a check
+  (a plain GTK app is fine; a shell-extension manager wouldn't be) needs a check
   under niri.
 - **Proprietary and paid apps are out**, except Steam. They're struck from the list,
   and they and the exception are recorded under *Decided*.
@@ -119,6 +119,11 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **Carabiner** | Dropped. | [Flathub](https://flathub.org/apps/io.github.sugarycandybar.Carabiner) · `io.github.sugarycandybar.Carabiner` |
 | **Freelens** | Dropped. | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
 | **Headlamp** | Dropped. | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
+| **Mahjongg** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.gnome.Mahjongg) · `org.gnome.Mahjongg` |
+| **SDL Sopwith** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/io.github.fragglet.sdl_sopwith) · `io.github.fragglet.sdl_sopwith` |
+| **Sudoku** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
+| **Battle for Wesnoth** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
+| **Threadbare** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
@@ -221,7 +226,9 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | ~~**Obsidian**~~ | ~~Markdown-based knowledge base~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
 | **Logseq** | Connect your notes and knowledge | [Flathub](https://flathub.org/apps/com.logseq.Logseq) · `com.logseq.Logseq` |
 
-### Games (12/15)
+### Gaming (9/17)
+
+This is Bluefin's "Games" section, renamed for krytis.
 
 | App | Summary | Links |
 |---|---|---|
@@ -235,11 +242,13 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **OBS Studio** | Live stream and record videos | [Flathub](https://flathub.org/apps/com.obsproject.Studio) · `com.obsproject.Studio` |
 | ~~**Boatswain**~~ | ~~Control Elgato Stream Deck devices †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
 | ~~**Steam Link**~~ | ~~Stream games from another computer with Steam~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
-| **Mahjongg** | Match tiles and clear the board † | [Flathub](https://flathub.org/apps/org.gnome.Mahjongg) · `org.gnome.Mahjongg` |
-| **SDL Sopwith** | Classic side-scrolling biplane shoot-'em-up † | [Flathub](https://flathub.org/apps/io.github.fragglet.sdl_sopwith) · `io.github.fragglet.sdl_sopwith` |
-| **Sudoku** | Solve puzzles in style | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
-| **Battle for Wesnoth** | Turn-based fantasy strategy game † | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
-| **Threadbare** | Endless Access game about learning to make games † | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
+| ~~**Mahjongg**~~ | ~~Match tiles and clear the board †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.gnome.Mahjongg) · `org.gnome.Mahjongg` |
+| ~~**SDL Sopwith**~~ | ~~Classic side-scrolling biplane shoot-'em-up †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.github.fragglet.sdl_sopwith) · `io.github.fragglet.sdl_sopwith` |
+| ~~**Sudoku**~~ | ~~Solve puzzles in style~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
+| ~~**Battle for Wesnoth**~~ | ~~Turn-based fantasy strategy game †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
+| ~~**Threadbare**~~ | ~~Endless Access game about learning to make games †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
+| **Faugus** | A simple and lightweight app for running games using UMU-Launcher. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/io.github.Faugus.faugus-launcher) · `io.github.Faugus.faugus-launcher` |
+| **Bottles** | Run Windows software. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/com.usebottles.bottles) · `com.usebottles.bottles` |
 
 ### Utilities (18/19)
 
