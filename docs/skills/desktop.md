@@ -2106,8 +2106,8 @@ check follow-up; the earlier claim is preserved as a lesson, not repeated.
 **pcre2 is not a real fdsdk gap — it's shipped under `bootstrap/`, not
 `components/`.** The original plan vendored `desktop/pcre2.bst` on the strength of
 "absent from freedesktop-sdk's `components/`" alone. fdsdk ships pcre2 as
-`freedesktop-sdk.bst:bootstrap/pcre2.bst` (autotools, JIT-enabled, pinned
-`pcre2-10.47` with its own `exclude: ['*-RC*']` — the same RC-exclusion trap
+`freedesktop-sdk.bst:bootstrap/pcre2.bst` (autotools, JIT-enabled, with its own
+`exclude: ['*-RC*']` — the same RC-exclusion trap
 documented in `docs/skills/bst.md` § excluding a bad tag, discovered independently
 here before finding fdsdk already does it) — pulled into literally every image via
 `runtime-gnu.bst` → `bootstrap/grep.bst` (`grep -P`). A second vendored pcre2
@@ -2116,9 +2116,14 @@ caught by actually building the element, not by `mise validate` (which only reso
 the graph, it doesn't stage a sandbox). **Check freedesktop-sdk's `bootstrap/` element
 directory as well as its `components/` before concluding fdsdk doesn't ship something.** Depend on
 the existing bootstrap element directly instead (`core/openssh.bst`'s
-`bootstrap/libxcrypt.bst` dependency is the existing precedent for this). The
-vulnerable 10.47 pin this surfaced is tracked separately — issue #812, not fixed by
-this element since it isn't this element's dependency to control.
+`bootstrap/libxcrypt.bst` dependency is the existing precedent for this).
+The vulnerable `pcre2-10.47` pin this surfaced was tracked as issue #812 and fixed
+upstream, never here: freedesktop-sdk 26.08.2 bumped that element to
+`pcre2-10.48-0-g7978954d`, closing CVE-2026-89160/89161, and krytis inherited it with
+the junction bump in PR #993. That is the *intended* resolution path for anything under
+a junction — `docs/skills/dakota.md` rules out carrying a `patch_queue` on one, because
+a junction-level patch invalidates every downstream element's cache key rather than
+just the patched piece.
 
 **`sed` needs an explicit `bootstrap/sed.bst` build-depend — it isn't in
 `runtime-gnu.bst`.** `runtime-gnu.bst` = `runtime-minimal.bst` (glibc, symlinks,

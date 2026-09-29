@@ -39,10 +39,12 @@ kind: cmake
 # man pages) — "not permitted to overlap" at build time, caught by actually building
 # this element, not just `mise validate`. Depend on the existing bootstrap element
 # directly instead, same pattern as core/openssh.bst's
-# freedesktop-sdk.bst:bootstrap/libxcrypt.bst dependency. See issue #812
-# for the separate finding this surfaced: fdsdk's bootstrap/pcre2.bst is pinned to
-# pcre2-10.47, vulnerable to CVE-2026-89157/89158/89160/89161 (fixed in 10.48) —
-# already present in krytis's image today, independent of ananicy-cpp.
+# freedesktop-sdk.bst:bootstrap/libxcrypt.bst dependency. Issue #812 tracked the
+# separate finding this surfaced — fdsdk's bootstrap/pcre2.bst was pinned to
+# pcre2-10.47, vulnerable to CVE-2026-89160/89161 (the other two of that batch are
+# 32-bit-only, so x86_64-only krytis never exposed them). Resolved upstream, not here:
+# freedesktop-sdk 26.08.2 moved that element to pcre2-10.48, and krytis picked it up
+# with the junction bump in PR #993.
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-cmake.bst
