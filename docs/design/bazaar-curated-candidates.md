@@ -40,8 +40,8 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
   (`org.gnome.Mahjongg` is fine; a shell-extension manager wouldn't be) needs a check
   under niri.
-- **Proprietary and paid apps are out.** They're struck from the list and recorded
-  under *Decided*.
+- **Proprietary and paid apps are out**, except Steam. They're struck from the list,
+  and they and the exception are recorded under *Decided*.
 - **Blocklist interplay:** Bluefin's `blocklist.yaml` hides `com.visualstudio.code-oss`,
   editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. Any krytis
   blocklist is a separate decision from the curated list.
@@ -129,13 +129,19 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **PyCharm Professional** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
 | **Slack** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.slack.Slack) · `com.slack.Slack` |
 | **Spotify** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.spotify.Client) · `com.spotify.Client` |
-| **Steam** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
 | **Steam Link** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
 | **Visual Studio Code** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.visualstudio.code) · `com.visualstudio.code` |
 | **Vivaldi** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.vivaldi.Vivaldi) · `com.vivaldi.Vivaldi` |
 
 Policy: **no proprietary or paid apps** on krytis's curated page. A refresh drops
 any new Bluefin pick that fails that rule the same way (see the skill).
+
+**Exceptions** are made one at a time, for a proprietary app that has no free
+alternative:
+
+| App | Why it's allowed | Links |
+|---|---|---|
+| **Steam** | Nothing else gives access to a Steam library. Heroic and Lutris cover other stores. Steam Link stays dropped, because Moonlight/Sunshine-style streaming is the free alternative. | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
 
 Removing an app from `live/src/flatpaks` only affects new ISO builds and the installs
 made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
@@ -213,7 +219,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 
 | App | Summary | Links |
 |---|---|---|
-| ~~**Steam**~~ | ~~Launcher for the Steam software distribution service~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
+| **Steam** | Launcher for the Steam software distribution service. **Policy exception**, see *Decided* | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
 | **Heroic** | Play Epic, GOG and Amazon Games | [Flathub](https://flathub.org/apps/com.heroicgameslauncher.hgl) · `com.heroicgameslauncher.hgl` |
 | ~~**Discord**~~ | ~~Talk, play, hang out~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
 | **Lutris** | Video game preservation platform | [Flathub](https://flathub.org/apps/net.lutris.Lutris) · `net.lutris.Lutris` |

@@ -98,6 +98,11 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
 
   Record the drop under **Decided** with the reason. Don't ask again: the user settled
   this for all future picks.
+
+  **Exceptions** are the user's call, one app at a time: a proprietary app that has no
+  free alternative (so far only Steam). They're listed in the doc's **Exceptions**
+  table. Never grant one yourself. If a new Bluefin pick looks like a case for one,
+  drop it anyway and point it out to the user as a possible exception.
 - **Rejected candidates stay in the mirror.** When the user drops a Bluefin pick, keep
   its row, strike it through, and list it in the doc's **Decided** section. Deleting the
   row would make the next refresh report it as "added" and propose it again. If Bluefin
