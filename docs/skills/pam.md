@@ -593,10 +593,26 @@ object path from the keyring *label*, giving `/org/freedesktop/secrets/collectio
 capital L. **0.7.0.alpha uses lowercase `login`**, matching gnome-keyring, and logs
 `Setting up collection 'login' (alias: default)` at startup.
 
-**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks `refs/heads/main`
-(`ref: v0.6.0-alpha-256-g886813eb…`; that describe prefix is misleading — 0.7.0.alpha is a
-lightweight tag git-describe ignores, and the element says so), which is well past
-0.7.0.alpha. So on a current image the path is `/org/freedesktop/secrets/collection/login`
+**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks `refs/heads/main`, which
+is well past 0.7.0.alpha. Do not read its `ref:` as a version — the describe prefix is
+permanently `v0.6.0-alpha-*` because upstream's `0.7.0.alpha` is a lightweight tag that
+git-describe ignores (the element says so, and `docs/skills/bst.md` § The track job's PR
+title/version covers what that breaks). Ask the running system instead — this answers it
+whatever the pin says, and does not depend on journal retention:
+
+```console
+$ busctl --user --list tree org.freedesktop.secrets | grep collection/
+/org/freedesktop/secrets/collection/login
+/org/freedesktop/secrets/collection/login/1
+…
+```
+
+Observed on `adora`, 2026-09-29, alongside the daemon's own startup line
+`oo7_daemon::service: Setting up collection 'login' (alias: default).` — note the same boot
+logs `creating 'Login' keyring` one line earlier: that is the keyring **label**, still
+capitalised, and it is exactly what made 0.6.0 derive a capital-L path. The label did not
+change; the path derivation did. So on a current image the path is
+`/org/freedesktop/secrets/collection/login`
 and `secret-tool lock --collection=login`, which is what every command elsewhere in this
 file uses. **The rest of this section is the 0.6.0 behaviour, kept as version history** —
 read `Login` as `login` when running any of it against a current krytis, and read the
