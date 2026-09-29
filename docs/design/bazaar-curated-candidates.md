@@ -59,7 +59,7 @@ krytis preinstalls Flatpaks through two paths, and they don't install the same s
 | Image first boot | `files/flatpak-preinstall/flatpak-preinstall.sh` | Every krytis system, including one reached by `bootc switch`. It installs **only Bazaar**. |
 | Live ISO | `live/src/flatpaks`, baked into the squashfs by `live/src/install-flatpaks.sh` | The live session, and installs made from the ISO. The file header says the installer copies them to the target offline (`flatpak_var_path` in `live/src/configure-live-krytis.sh`). |
 
-So a system installed from the ISO has all 16 apps, while a system that reached krytis by
+So a system installed from the ISO has all 15 entries (Bazaar included), while a system that reached krytis by
 `bootc switch` has only Bazaar. `live/src/flatpaks` came over with the dakota-iso fork and
 still carries the header `# Bluefin system flatpaks`. Nothing in `files/` or `elements/`
 depends on any entry in it: no MIME default or config references them.
