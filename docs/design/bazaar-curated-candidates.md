@@ -4,8 +4,9 @@
 
 Candidate Flatpaks for krytis's Bazaar "Curated" page
 ([#245](https://github.com/starlit-os/krytis/issues/245)), mirrored from Bluefin's
-list. Nothing on this page is shipped yet. It's the pool that #245's own `curated.yaml`
-gets picked from.
+list. The rows **not** struck through are krytis's **initial curated list**: 90 apps,
+plus Pinta once its section is decided. It will be refined over time. The wiring's
+`curated.yaml` takes its `appids.list` entries from these rows.
 
 - **Source:** `system_files/bluefin/etc/bazaar/curated.yaml` in
   [`projectbluefin/common`](https://github.com/projectbluefin/common/blob/main/system_files/bluefin/etc/bazaar/curated.yaml).
