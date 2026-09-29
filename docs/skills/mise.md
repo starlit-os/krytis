@@ -1025,7 +1025,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794) |
 | Docs & upstreams | `docs-links` `upstream-sync` |
-| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)) |
+| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 | Element pin checks | `abseil-cpp-check` `rust-bindgen-check` `systemd-base-check` `gnome-disk-utility-check` — assert a forked override still matches the freedesktop-sdk / gnome-build-meta element it was copied from; `libdisplay-info-check` — whether the 0.3.0 hold can be dropped yet; `greetd-relock` — regenerate greetd's `Cargo.lock` bump patch |
@@ -1056,6 +1056,26 @@ check once it does; running the *task* right after `write` is no longer a
 false negative, but running some *other* stale tool/script that shells out to
 plain `git grep` on your own would be. See #867/#868's PR thread for the full
 trace of the false-positive-then-CI-failure.
+
+**`large-blob-check` scans the tree, not the diff — the diff-scoped version of this
+gate would not have caught what motivated it.** A 46 MiB Proton Pass CLI binary sat
+tracked at the repo root as `pc.tar.gz` for two months (#1004): added by an accidental
+`git add` in `e3b241c` (#452), named like an archive, referenced by nothing, and
+uncovered by `.gitignore` — no pattern narrow enough to be safe would have matched an
+arbitrary filename. A diff-scoped check only ever sees the commit that introduces a
+blob, so anything that lands before the gate exists, or survives a rebase/branch split,
+becomes permanently invisible. Checking `git ls-tree` re-asserts the invariant on every
+run instead, which means a pre-existing offender has to be removed or consciously
+allowlisted.
+
+The allowlist lives in the task file itself, as `path <TAB> reason` — currently one
+entry, `files/fakecap-manifest.tsv` (35.5 MiB, committed on purpose; see
+[`../design/composefs-chunkah.md`](../design/composefs-chunkah.md) § The
+fakecap-manifest.tsv). An entry whose path is no longer tracked **fails the gate** the
+same as an oversized file: a stale exemption would otherwise silently excuse a future
+file re-added at that path. `--max-bytes` and `--ref` override the 5 MiB ceiling and
+the revision checked, which is also how to see the failure for yourself —
+`mise run large-blob-check --ref e3b241c` still reports the original offender.
 
 ### Hidden tasks
 
