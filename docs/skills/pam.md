@@ -1278,18 +1278,45 @@ journalctl -t systemd-homework -b | grep -E 'Ready to resize|shrinking completed
 journalctl -u greetd -b                         # silence == blocked in pam_systemd_home
 ```
 
-**Mitigation** is to stop the oscillation rather than to make the greeter wait. Two shapes,
-both in wide use upstream (see Prior art below):
+**Fix, applied by #996.** Stop the oscillation rather than make the greeter wait.
+`files/systemd-firstboot/firstboot-wizard.sh` now creates the initial account with:
 
-- `homectl update <user> --auto-resize-mode=off --rebalance-weight=off` — the answer every
-  upstream thread converges on. No grow, no shrink, image stays where it is; reclaim becomes
-  explicit (`homectl resize <user> min`, which btrfs supports while the user is logged in).
-- `homectl update <user> --disk-size=<fixed> --auto-resize-mode=grow` — keeps auto-grow but
-  pins its target, so `grow` is a no-op once the image is at size and there is never a logout
-  shrink.
+```
+--auto-resize-mode=off --rebalance-weight=off --disk-size=50%
+```
 
-Changing what `firstboot-wizard.sh` gives new accounts is a Design Gate decision — tracked in
-#996, not applied here.
+On an **existing** machine the wizard has already run, so apply it by hand once (admin auth,
+graphical via noctalia's polkit agent):
+
+```bash
+homectl update <user> --auto-resize-mode=off --rebalance-weight=off
+homectl resize <user> <size>    # only if the current size is wrong
+```
+
+### Four facts that decide the size, and are easy to get wrong
+
+- **`homectl update --disk-size=` does not resize anything.** homework's `update` verb
+  (`src/home/homework.c`, systemd v261) never calls `home_resize`; only the `resize` verb
+  does. With auto-resize off, writing `diskSize` into the record changes the image by
+  nothing. The operative call is `homectl resize`.
+- **`homectl resize` always needs admin auth.** `org.freedesktop.home1.resize-home` is
+  `auth_admin_keep` for `allow_active` too, and there is no `resize-home-by-owner` variant.
+  Nor does the update path dodge it: `diskSize` is absent from systemd's default
+  `selfModifiableFields` (`src/shared/user-record.c`), so `bus_home_update_record` selects
+  `update-home` (admin) rather than `update-home-by-owner` (`allow_active=yes`). This is why
+  #996 shipped no GUI — see #998.
+- **The LUKS2 image is allocated in full, not sparsely.** `stat` on a real
+  `/var/home/<user>.home` reports allocated blocks exactly equal to apparent size. So with
+  auto-resize off the chosen size is consumed on disk immediately and nothing reclaims it.
+  This is what makes homed's own 85% default unacceptable here, and it is the reverse of the
+  intuition that an unused image costs nothing.
+- **A percentage is relative to *free* space at creation, not to the disk.**
+  `calculate_initial_image_size()` in `src/home/homework-luks.c` takes `statfs` `f_bavail` of
+  the backing filesystem as the upper boundary. So `50%` self-scales and cannot over-commit,
+  and it is only ever evaluated once, at creation.
+
+Direction of the guess follows the cost asymmetry: **growing is a cheap allocation, shrinking
+is the multi-minute block-group relocation above.** Start small and grow.
 
 ### Prior art: there is no official homed tuning guide, and the only advice anyone gives is "turn it off"
 
@@ -1327,8 +1354,8 @@ Two facts worth extracting, both confirmed by more than one independent report:
   `BTRFS info: relocating block group …` between the resize being announced and it
   completing. A home that is 89% full has the most data to relocate and the least to gain.
 
-So krytis's first-boot wizard currently asks for the one setting every upstream thread tells
-people to disable. That is the substance of #996.
+Until #996 krytis's first-boot wizard asked for the one setting every upstream thread tells
+people to disable. It no longer does.
 
 ## The lock screen authenticates through `login`, not `greetd` — and noctalia#4283 hits krytis as shipped
 
