@@ -2413,6 +2413,36 @@ Bazaar itself is a `--system` flatpak (`files/flatpak-preinstall/flatpak-preinst
 #66), not a BST element — nothing to add to the dependency graph for this class of plugin,
 just the settings.toml enable + the niri-side daemon spawn.
 
+## Bluefin's Bazaar curated list
+
+Bluefin's curated Bazaar page, the candidate source for #245, is
+`system_files/bluefin/etc/bazaar/curated.yaml` in **projectbluefin/common**. Don't look
+for it in dakota, which doesn't configure Bazaar, or in the legacy `ublue-os/bluefin`
+repo. A search of the legacy repo is how #245 first concluded that Bluefin had "no
+positive list".
+
+krytis mirrors that list as candidates in `docs/design/bazaar-curated-candidates.md`.
+The last-mined common SHA sits in an HTML-comment marker in the same file.
+`mise run bazaar-recommends-diff` reports what has changed since that SHA, and the
+`bluefin-bazaar-recommends` skill (`.claude/skills/bluefin-bazaar-recommends/`) does the
+refresh. Non-obvious points:
+
+- **The schema changed under the file.** projectbluefin/common#1155 moved from the legacy
+  `css:` + `category:` + bare `appids:` layout to Bazaar 0.9's typed rows
+  (`banner:` / `section:` + `appids: list:`). Bluefin's own
+  [`bazaar.md` skill](https://github.com/projectbluefin/common/blob/main/docs/skills/bazaar.md) says
+  older Bazaar crashes on the modern schema. krytis's `curated.yaml` has to match the
+  Bazaar version that Flathub currently ships.
+- **Some Bluefin picks only work because of Bluefin's install hooks.** VS Code, VSCodium,
+  Zed and the JetBrains IDEs are listed, then intercepted by `bazaar.yaml` + `hooks.py`
+  and redirected to Homebrew. krytis has neither, so those rows can't be copied as they
+  are.
+- **flathub.org is blocked from the cloud-agent sandbox.** The Flathub API
+  (`/api/v2/appstream/<id>`) works on a dev machine only. From the sandbox, get app
+  summaries from the AppStream metainfo in the `github.com/flathub/<id>` packaging repo,
+  or from the upstream repo it builds. Always sanity-check the name, because an upstream
+  tree's first metainfo is often a vendored dependency's.
+
 ## Apps launched from noctalia share its cgroup — one app's OOM kills the shell
 
 By default (`launch_apps_as_systemd_services = false`) noctalia `fork`+`exec`s launcher,

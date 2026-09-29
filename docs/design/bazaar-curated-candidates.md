@@ -1,0 +1,226 @@
+# Bazaar curated candidates (from Bluefin)
+
+<!-- bluefin-curated-sha: 725dbf68ccff8ae2ad74300430f984ee9ea8206c -->
+
+Candidate Flatpaks for krytis's Bazaar "Curated" page
+([#245](https://github.com/starlit-os/krytis/issues/245)), mirrored from Bluefin's
+list. Nothing on this page is shipped yet. It's the pool that #245's own `curated.yaml`
+gets picked from.
+
+- **Source:** `system_files/bluefin/etc/bazaar/curated.yaml` in
+  [`projectbluefin/common`](https://github.com/projectbluefin/common/blob/main/system_files/bluefin/etc/bazaar/curated.yaml).
+  It isn't in dakota, and it isn't in the legacy `ublue-os/bluefin` repo.
+- **Snapshot:** common @ `725dbf68` (2026-09-29): 127 apps in 10 sections, listed below in
+  Bluefin's section order. The HTML comment above records that SHA.
+  `mise run bazaar-recommends-diff` diffs against it.
+- **Refreshing:** use the `bluefin-bazaar-recommends` skill
+  (`.claude/skills/bluefin-bazaar-recommends/`). Don't edit the list or the marker by hand.
+- **Summaries** come from each app's AppStream `<summary>`, read from its Flathub
+  packaging repo or its upstream source repo. Entries marked † were written by hand,
+  either because no metainfo could be fetched (flathub.org is unreachable from the
+  cloud-agent sandbox) or because the lookup found a vendored dependency's metainfo.
+  Check a † entry on its Flathub page before quoting it anywhere user-facing.
+
+## Things to settle before picking
+
+These notes come from comparing Bluefin's setup with krytis's. They aren't in the list itself.
+
+- **Bluefin recommends apps that its own hooks then redirect.** The Desktop Development
+  entries VS Code, VSCodium, Zed and the JetBrains IDEs are intercepted at install time
+  by `etc/bazaar/bazaar.yaml` + `hooks.py`, which steer the user to a Homebrew/`ujust`
+  install. krytis has no Homebrew and no hooks, so copying those rows as they are
+  would install the sandboxed Flatpak. That is exactly the experience Bluefin is
+  warning people away from.
+- **krytis already ships some of these natively.** Zed (`elements/desktop/zed.bst`)
+  duplicates `dev.zed.Zed`. Equibop (`elements/desktop/equibop.bst`) covers the same
+  need as `com.discordapp.Discord`. Zen (`elements/desktop/zen-browser.bst`) sits
+  beside the Browsers row. And Bluefin's `app.drey.Warp` is a file-transfer app,
+  **not** the Warp terminal in `elements/desktop/warp.bst`.
+- **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
+  (`org.gnome.Mahjongg` is fine; a shell-extension manager wouldn't be) needs a check
+  under niri.
+- **Proprietary and paid apps** (Chrome, Edge, Opera, Slack, Spotify, Postman, Obsidian,
+  PyCharm Professional, CLion, Plex/Plexamp) are a policy question for #245, not a
+  technical one.
+- **Blocklist interplay:** Bluefin's `blocklist.yaml` hides `com.visualstudio.code-oss`,
+  editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. Any krytis
+  blocklist is a separate decision from the curated list.
+
+## The list
+
+### Bluefin Recommends (14)
+
+| App | Summary | Links |
+|---|---|---|
+| **Damask** | Automatically set wallpapers from online sources † | [Flathub](https://flathub.org/apps/app.drey.Damask) · `app.drey.Damask` |
+| **Sitra** | Get fonts from online sources | [Flathub](https://flathub.org/apps/io.github.sitraorg.sitra) · `io.github.sitraorg.sitra` |
+| **Speed of Sound** | Voice typing for the Linux desktop | [Flathub](https://flathub.org/apps/io.speedofsound.SpeedOfSound) · `io.speedofsound.SpeedOfSound` |
+| **Fotema** | Photo gallery † | [Flathub](https://flathub.org/apps/app.fotema.Fotema) · `app.fotema.Fotema` |
+| **Video Trimmer** | Trim videos quickly, losslessly † | [Flathub](https://flathub.org/apps/org.gnome.gitlab.YaLTeR.VideoTrimmer) · `org.gnome.gitlab.YaLTeR.VideoTrimmer` |
+| **Whisp** | Minimalist note taking widget | [Flathub](https://flathub.org/apps/io.github.tanaybhomia.Whisp) · `io.github.tanaybhomia.Whisp` |
+| **Test Center** | Install and manage experimental app/system builds from a merge request, branch or bundle † | [Flathub](https://flathub.org/apps/cx.modal.TestCenter) · `cx.modal.TestCenter` |
+| **Eloquent** | Your proofreading assistant | [Flathub](https://flathub.org/apps/re.sonny.Eloquent) · `re.sonny.Eloquent` |
+| **Railway** | Travel with all your train information † | [Flathub](https://flathub.org/apps/de.schmidhuberj.DieBahn) · `de.schmidhuberj.DieBahn` |
+| **Pulp** | Skim excessive RSS/Atom feeds † | [Flathub](https://flathub.org/apps/org.gnome.gitlab.cheywood.Pulp) · `org.gnome.gitlab.cheywood.Pulp` |
+| **Spedread** | GTK speed reading software: Read like a speedrunner! | [Flathub](https://flathub.org/apps/com.github.Darazaki.Spedread) · `com.github.Darazaki.Spedread` |
+| **IceBox** | PDF Maker | [Flathub](https://flathub.org/apps/io.github.pleromix.IceBox) · `io.github.pleromix.IceBox` |
+| **File Shredder** | Securely delete files † | [Flathub](https://flathub.org/apps/com.github.ADBeveridge.Raider) · `com.github.ADBeveridge.Raider` |
+| **Kasasa** | Snip and pin useful information | [Flathub](https://flathub.org/apps/io.github.kelvinnovais.Kasasa) · `io.github.kelvinnovais.Kasasa` |
+
+### Browsers (7)
+
+| App | Summary | Links |
+|---|---|---|
+| **Firefox** | Web browser † | [Flathub](https://flathub.org/apps/org.mozilla.firefox) · `org.mozilla.firefox` |
+| **Brave** | Chromium-based browser with built-in ad blocking | [Flathub](https://flathub.org/apps/com.brave.Browser) · `com.brave.Browser` |
+| **Google Chrome** | The browser built to be yours | [Flathub](https://flathub.org/apps/com.google.Chrome) · `com.google.Chrome` |
+| **Microsoft Edge** | Chromium-based web browser | [Flathub](https://flathub.org/apps/com.microsoft.Edge) · `com.microsoft.Edge` |
+| **Opera** | Your personal browser | [Flathub](https://flathub.org/apps/com.opera.Opera) · `com.opera.Opera` |
+| **Vivaldi** | Feature-packed web browser | [Flathub](https://flathub.org/apps/com.vivaldi.Vivaldi) · `com.vivaldi.Vivaldi` |
+| **Ecosia Browser** | Chromium-based browser from the tree-planting search engine † | [Flathub](https://flathub.org/apps/org.ecosia.Browser) · `org.ecosia.Browser` |
+
+### Media (12)
+
+| App | Summary | Links |
+|---|---|---|
+| **Spotify** | Online music streaming service | [Flathub](https://flathub.org/apps/com.spotify.Client) · `com.spotify.Client` |
+| **YTMDesktop** | Free cross platform Desktop Player for YouTube Music | [Flathub](https://flathub.org/apps/app.ytmdesktop.ytmdesktop) · `app.ytmdesktop.ytmdesktop` |
+| **Shortwave** | Listen to internet radio † | [Flathub](https://flathub.org/apps/de.haeckerfelix.Shortwave) · `de.haeckerfelix.Shortwave` |
+| **Amberol** | Plays music, and nothing else † | [Flathub](https://flathub.org/apps/io.bassi.Amberol) · `io.bassi.Amberol` |
+| **VLC** | Media player † | [Flathub](https://flathub.org/apps/org.videolan.VLC) · `org.videolan.VLC` |
+| **Easy Effects** | Audio effects for PipeWire applications † | [Flathub](https://flathub.org/apps/com.github.wwmm.easyeffects) · `com.github.wwmm.easyeffects` |
+| **JamesDSP** | Open-source audio effect processor for Pipewire | [Flathub](https://flathub.org/apps/me.timschneeberger.jdsp4linux) · `me.timschneeberger.jdsp4linux` |
+| **Jellyfin Desktop** | Jellyfin desktop client | [Flathub](https://flathub.org/apps/org.jellyfin.JellyfinDesktop) · `org.jellyfin.JellyfinDesktop` |
+| **Plex** | Plex client for desktop computers | [Flathub](https://flathub.org/apps/tv.plex.PlexDesktop) · `tv.plex.PlexDesktop` |
+| **Plexamp** | Beautiful music player for Plex | [Flathub](https://flathub.org/apps/com.plexamp.Plexamp) · `com.plexamp.Plexamp` |
+| **Blanket** | Listen to ambient sounds † | [Flathub](https://flathub.org/apps/com.rafaelmardojai.Blanket) · `com.rafaelmardojai.Blanket` |
+| **Parabolic** | Download web video and audio | [Flathub](https://flathub.org/apps/org.nickvision.tubeconverter) · `org.nickvision.tubeconverter` |
+
+### Office & Productivity (14)
+
+| App | Summary | Links |
+|---|---|---|
+| **Collabora Office** | LibreOffice-based office suite † | [Flathub](https://flathub.org/apps/com.collaboraoffice.Office) · `com.collaboraoffice.Office` |
+| **ONLYOFFICE Desktop Editors** | Office productivity suite | [Flathub](https://flathub.org/apps/org.onlyoffice.desktopeditors) · `org.onlyoffice.desktopeditors` |
+| **Slack** | Business communication | [Flathub](https://flathub.org/apps/com.slack.Slack) · `com.slack.Slack` |
+| **Blender** | 3D modelling, animation and rendering suite † | [Flathub](https://flathub.org/apps/org.blender.Blender) · `org.blender.Blender` |
+| **Exhibit** | 3D model viewer (F3D-based) † | [Flathub](https://flathub.org/apps/io.github.nokse22.Exhibit) · `io.github.nokse22.Exhibit` |
+| **GIMP** | Raster image editor † | [Flathub](https://flathub.org/apps/org.gimp.GIMP) · `org.gimp.GIMP` |
+| **Inkscape** | Vector graphics editor † | [Flathub](https://flathub.org/apps/org.inkscape.Inkscape) · `org.inkscape.Inkscape` |
+| **Krita** | Digital painting † | [Flathub](https://flathub.org/apps/org.kde.krita) · `org.kde.krita` |
+| **Upscaler** | Upscale and enhance images † | [Flathub](https://flathub.org/apps/io.gitlab.theevilskeleton.Upscaler) · `io.gitlab.theevilskeleton.Upscaler` |
+| **Audacity** | Audacity is the world's most popular audio editing and recording app | [Flathub](https://flathub.org/apps/org.audacityteam.Audacity) · `org.audacityteam.Audacity` |
+| **Ardour** | Digital audio workstation † | [Flathub](https://flathub.org/apps/org.ardour.Ardour) · `org.ardour.Ardour` |
+| **Planify** | Task manager with Todoist / Nextcloud sync † | [Flathub](https://flathub.org/apps/io.github.alainm23.planify) · `io.github.alainm23.planify` |
+| **Obsidian** | Markdown-based knowledge base | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
+| **Logseq** | Connect your notes and knowledge | [Flathub](https://flathub.org/apps/com.logseq.Logseq) · `com.logseq.Logseq` |
+
+### Games (15)
+
+| App | Summary | Links |
+|---|---|---|
+| **Steam** | Launcher for the Steam software distribution service | [Flathub](https://flathub.org/apps/com.valvesoftware.Steam) · `com.valvesoftware.Steam` |
+| **Heroic** | Play Epic, GOG and Amazon Games | [Flathub](https://flathub.org/apps/com.heroicgameslauncher.hgl) · `com.heroicgameslauncher.hgl` |
+| **Discord** | Talk, play, hang out | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
+| **Lutris** | Video game preservation platform | [Flathub](https://flathub.org/apps/net.lutris.Lutris) · `net.lutris.Lutris` |
+| **ProtonPlus** | Manage Proton, Wine, DXVK, and VKD3D tools for Linux game launchers | [Flathub](https://flathub.org/apps/com.vysp3r.ProtonPlus) · `com.vysp3r.ProtonPlus` |
+| **GPU Screen Recorder** | Low-overhead hardware-encoded screen recorder / replay buffer † | [Flathub](https://flathub.org/apps/com.dec05eba.gpu_screen_recorder) · `com.dec05eba.gpu_screen_recorder` |
+| **Protontricks** | Apps and fixes for Proton games | [Flathub](https://flathub.org/apps/com.github.Matoking.protontricks) · `com.github.Matoking.protontricks` |
+| **OBS Studio** | Live stream and record videos | [Flathub](https://flathub.org/apps/com.obsproject.Studio) · `com.obsproject.Studio` |
+| **Boatswain** | Control Elgato Stream Deck devices † | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
+| **Steam Link** | Stream games from another computer with Steam | [Flathub](https://flathub.org/apps/com.valvesoftware.SteamLink) · `com.valvesoftware.SteamLink` |
+| **Mahjongg** | Match tiles and clear the board † | [Flathub](https://flathub.org/apps/org.gnome.Mahjongg) · `org.gnome.Mahjongg` |
+| **SDL Sopwith** | Classic side-scrolling biplane shoot-'em-up † | [Flathub](https://flathub.org/apps/io.github.fragglet.sdl_sopwith) · `io.github.fragglet.sdl_sopwith` |
+| **Sudoku** | Solve puzzles in style | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
+| **Battle for Wesnoth** | Turn-based fantasy strategy game † | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
+| **Threadbare** | Endless Access game about learning to make games † | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
+
+### Utilities (19)
+
+| App | Summary | Links |
+|---|---|---|
+| **Warp** | Fast and secure file transfer (magic-wormhole) † | [Flathub](https://flathub.org/apps/app.drey.Warp) · `app.drey.Warp` |
+| **LocalSend** | Share files to nearby devices | [Flathub](https://flathub.org/apps/org.localsend.localsend_app) · `org.localsend.localsend_app` |
+| **SyncThingy** | SyncThingy = Syncthing + simple tray indicator | [Flathub](https://flathub.org/apps/com.github.zocker_160.SyncThingy) · `com.github.zocker_160.SyncThingy` |
+| **Apostrophe** | Markdown editor † | [Flathub](https://flathub.org/apps/org.gnome.gitlab.somas.Apostrophe) · `org.gnome.gitlab.somas.Apostrophe` |
+| **Save Desktop** | Save your desktop configuration | [Flathub](https://flathub.org/apps/io.github.vikdevelop.SaveDesktop) · `io.github.vikdevelop.SaveDesktop` |
+| **Pika Backup** | Borg-based backups † | [Flathub](https://flathub.org/apps/org.gnome.World.PikaBackup) · `org.gnome.World.PikaBackup` |
+| **Ente Auth** | Open-source, cross-platform 2FA authenticator † | [Flathub](https://flathub.org/apps/io.ente.auth) · `io.ente.auth` |
+| **Clapgrep** | Search through all your files, including PDFs and office documents † | [Flathub](https://flathub.org/apps/de.leopoldluley.Clapgrep) · `de.leopoldluley.Clapgrep` |
+| **Fedora Media Writer** | Create a Fedora live USB drive | [Flathub](https://flathub.org/apps/org.fedoraproject.MediaWriter) · `org.fedoraproject.MediaWriter` |
+| **Raspberry Pi Imager** | Raspberry Pi Imaging utility | [Flathub](https://flathub.org/apps/org.raspberrypi.rpi-imager) · `org.raspberrypi.rpi-imager` |
+| **Cameractrls** | Camera controls for Linux | [Flathub](https://flathub.org/apps/hu.irl.cameractrls) · `hu.irl.cameractrls` |
+| **Decoder** | Scan and generate QR codes † | [Flathub](https://flathub.org/apps/com.belmoussaoui.Decoder) · `com.belmoussaoui.Decoder` |
+| **Constrict** | Compress videos to a target file size † | [Flathub](https://flathub.org/apps/io.github.wartybix.Constrict) · `io.github.wartybix.Constrict` |
+| **Switcheroo** | Convert and manipulate images † | [Flathub](https://flathub.org/apps/io.gitlab.adhami3310.Converter) · `io.gitlab.adhami3310.Converter` |
+| **Pigment** | Get color palettes from images | [Flathub](https://flathub.org/apps/com.jeffser.Pigment) · `com.jeffser.Pigment` |
+| **Eyedropper** | Pick and format colours † | [Flathub](https://flathub.org/apps/com.github.finefindus.eyedropper) · `com.github.finefindus.eyedropper` |
+| **SysD Manager** | A user-friendly application to manage systemd's units | [Flathub](https://flathub.org/apps/io.github.plrigaux.sysd-manager) · `io.github.plrigaux.sysd-manager` |
+| **Mozilla VPN** | A fast, secure and easy to use VPN. Built by the makers of Firefox | [Flathub](https://flathub.org/apps/org.mozilla.vpn) · `org.mozilla.vpn` |
+| **RClone Manager** | Browse and sync cloud storage | [Flathub](https://flathub.org/apps/io.github.zarestia_dev.rclone-manager) · `io.github.zarestia_dev.rclone-manager` |
+
+### Sustainability & Education (12)
+
+| App | Summary | Links |
+|---|---|---|
+| **Endless Key** | Offline library of educational content for learners † | [Flathub](https://flathub.org/apps/org.endlessos.Key) · `org.endlessos.Key` |
+| **Memorize** | Study flashcards | [Flathub](https://flathub.org/apps/io.github.david_swift.Flashcards) · `io.github.david_swift.Flashcards` |
+| **Keypunch** | Practise your typing skills † | [Flathub](https://flathub.org/apps/no.bragefuglseth.Keypunch) · `no.bragefuglseth.Keypunch` |
+| **Tux Paint** | Drawing program for children † | [Flathub](https://flathub.org/apps/org.tuxpaint.Tuxpaint) · `org.tuxpaint.Tuxpaint` |
+| **Memorado** | Memorise with spaced-repetition flashcards † | [Flathub](https://flathub.org/apps/im.bernard.Memorado) · `im.bernard.Memorado` |
+| **Egghead** | Learn while having fun | [Flathub](https://flathub.org/apps/io.github.josephmawa.Egghead) · `io.github.josephmawa.Egghead` |
+| **Nucleus** | Explore the periodic table † | [Flathub](https://flathub.org/apps/page.codeberg.lo_vely.Nucleus) · `page.codeberg.lo_vely.Nucleus` |
+| **TurboWarp** | Make games, animations, and stories | [Flathub](https://flathub.org/apps/org.turbowarp.TurboWarp) · `org.turbowarp.TurboWarp` |
+| **RISC-V Adventure** | A quest through the layers of computer architecture (simulated RISC-V processor) † | [Flathub](https://flathub.org/apps/io.github.GGalya1.RiscvAdventure) · `io.github.GGalya1.RiscvAdventure` |
+| **Museum of All Things** | Explore an infinite 3D museum | [Flathub](https://flathub.org/apps/as.may.moat) · `as.may.moat` |
+| **Multiplication Puzzle** | Practise times tables with a puzzle game † | [Flathub](https://flathub.org/apps/app.drey.MultiplicationPuzzle) · `app.drey.MultiplicationPuzzle` |
+| **Spelling Bee** | Learn new English words | [Flathub](https://flathub.org/apps/io.github.josephmawa.SpellingBee) · `io.github.josephmawa.SpellingBee` |
+
+### AI and Machine Learning (4)
+
+| App | Summary | Links |
+|---|---|---|
+| **Alpaca** | Chat with AI models | [Flathub](https://flathub.org/apps/com.jeffser.Alpaca) · `com.jeffser.Alpaca` |
+| **Newelle** | AI chatbot | [Flathub](https://flathub.org/apps/io.github.qwersyk.Newelle) · `io.github.qwersyk.Newelle` |
+| **Jan** | Private offline AI assistant | [Flathub](https://flathub.org/apps/ai.jan.Jan) · `ai.jan.Jan` |
+| **Whis** | Turn speech into text | [Flathub](https://flathub.org/apps/ink.whis.Whis) · `ink.whis.Whis` |
+
+### Desktop Development (17)
+
+| App | Summary | Links |
+|---|---|---|
+| **Gitte** | Git GUI client † | [Flathub](https://flathub.org/apps/de.wwwtech.gitte) · `de.wwwtech.gitte` |
+| **Zed** | High-performance code editor | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
+| **Visual Studio Code** | Code editing. Redefined | [Flathub](https://flathub.org/apps/com.visualstudio.code) · `com.visualstudio.code` |
+| **VSCodium** | Telemetry-less code editing | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
+| **IntelliJ IDEA** | Java and Kotlin IDE | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
+| **PyCharm Professional** | Python IDE (proprietary, paid) | [Flathub](https://flathub.org/apps/com.jetbrains.PyCharm-Professional) · `com.jetbrains.PyCharm-Professional` |
+| **CLion** | A cross-platform IDE for C and C++ | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
+| **Android Studio** | IDE for Android app development | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
+| **Builder** | IDE for GNOME / Flatpak development † | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |
+| **Arduino IDE v2** | Open-source electronics prototyping platform | [Flathub](https://flathub.org/apps/cc.arduino.IDE2) · `cc.arduino.IDE2` |
+| **Brief** | Browse command-line cheatsheets | [Flathub](https://flathub.org/apps/io.github.shonebinu.Brief) · `io.github.shonebinu.Brief` |
+| **Icon Library** | Find the right icon to use † | [Flathub](https://flathub.org/apps/org.gnome.design.IconLibrary) · `org.gnome.design.IconLibrary` |
+| **Embellish** | Install nerd fonts | [Flathub](https://flathub.org/apps/io.github.getnf.embellish) · `io.github.getnf.embellish` |
+| **Collision** | Check hashes for your files † | [Flathub](https://flathub.org/apps/dev.geopjr.Collision) · `dev.geopjr.Collision` |
+| **Elastic** | Design spring animations † | [Flathub](https://flathub.org/apps/app.drey.Elastic) · `app.drey.Elastic` |
+| **ASCII Draw** | Sketch diagrams in ASCII † | [Flathub](https://flathub.org/apps/io.github.nokse22.asciidraw) · `io.github.nokse22.asciidraw` |
+| **Concessio** | Understand file permissions | [Flathub](https://flathub.org/apps/io.github.ronniedroid.concessio) · `io.github.ronniedroid.concessio` |
+
+### Cloud Native Development (13)
+
+| App | Summary | Links |
+|---|---|---|
+| **Podman Desktop** | Manage Podman and other container engines from one UI † | [Flathub](https://flathub.org/apps/io.podman_desktop.PodmanDesktop) · `io.podman_desktop.PodmanDesktop` |
+| **Headlamp** | Kubernetes UI † | [Flathub](https://flathub.org/apps/io.kinvolk.Headlamp) · `io.kinvolk.Headlamp` |
+| **Freelens** | Free IDE for Kubernetes | [Flathub](https://flathub.org/apps/app.freelens.Freelens) · `app.freelens.Freelens` |
+| **Postman** | Platform for building and using APIs | [Flathub](https://flathub.org/apps/com.getpostman.Postman) · `com.getpostman.Postman` |
+| **DBeaver Community** | Free Universal Database Tool | [Flathub](https://flathub.org/apps/io.dbeaver.DBeaverCommunity) · `io.dbeaver.DBeaverCommunity` |
+| **Codd** | Lightweight PostgreSQL client | [Flathub](https://flathub.org/apps/io.github.anil_e.Codd) · `io.github.anil_e.Codd` |
+| **Dev Toolbox** | Dev tools at your fingertips | [Flathub](https://flathub.org/apps/me.iepure.devtoolbox) · `me.iepure.devtoolbox` |
+| **Forge Sparks** | Git forge (GitHub/Gitea/Forgejo) notifications † | [Flathub](https://flathub.org/apps/com.mardojai.ForgeSparks) · `com.mardojai.ForgeSparks` |
+| **SSH Pilot** | Manage your servers with ease | [Flathub](https://flathub.org/apps/io.github.mfat.sshpilot) · `io.github.mfat.sshpilot` |
+| **RustConn** | Manage SSH, RDP, and VNC connections | [Flathub](https://flathub.org/apps/io.github.totoshko88.RustConn) · `io.github.totoshko88.RustConn` |
+| **Carabiner** | Create and manage network tunnels | [Flathub](https://flathub.org/apps/io.github.sugarycandybar.Carabiner) · `io.github.sugarycandybar.Carabiner` |
+| **Digger** | Modern, advanced DNS lookup tool | [Flathub](https://flathub.org/apps/io.github.tobagin.digger) · `io.github.tobagin.digger` |
+| **Echo** | Ping websites | [Flathub](https://flathub.org/apps/io.github.lo2dev.Echo) · `io.github.lo2dev.Echo` |

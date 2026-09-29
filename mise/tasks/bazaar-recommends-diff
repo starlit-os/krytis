@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+#MISE description="Diff Bluefin's Bazaar curated app list (projectbluefin/common) against the SHA recorded in docs/design/bazaar-curated-candidates.md"
+#USAGE flag "--list" help="Print the full current list as TSV (section, app id) instead of a diff"
+#USAGE flag "--summaries" help="Look up each added app's name/summary on the Flathub API"
+"""Report what changed in Bluefin's Bazaar curated recommendations.
+
+Bluefin's curated list lives in projectbluefin/common at
+system_files/bluefin/etc/bazaar/curated.yaml — not in dakota and not in the
+legacy ublue-os/bluefin repo (#245). krytis mines it for Flatpak candidates; the
+last-mined commit is recorded in docs/design/bazaar-curated-candidates.md as
+
+    <!-- bluefin-curated-sha: <sha> -->
+
+This task clones/fetches projectbluefin/common as a sibling of krytis's main
+checkout (same convention as `mise run upstream-sync`), parses curated.yaml at
+that SHA and at HEAD, and prints added / removed / moved app ids plus the
+commits that touched Bazaar config in between. It does not edit anything —
+updating the doc and the marker is the bluefin-bazaar-recommends skill's job.
+
+curated.yaml is parsed with a regex walk rather than a YAML library: krytis's
+Python deps don't include one, and only two keys matter (the section title and
+the app-id list), and it has to read both schemas: the legacy one
+(`category:` + bare `appids:`) that predates projectbluefin/common#1155 and the
+modern `section:` + `appids: list:` one, since a diff can span the switch.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+UPSTREAM = "projectbluefin/common"
+BRANCH = "main"
+CURATED = "system_files/bluefin/etc/bazaar/curated.yaml"
+BAZAAR_DIR = "system_files/bluefin/etc/bazaar/"
+DOC = Path("docs/design/bazaar-curated-candidates.md")
+MARKER = re.compile(r"<!-- bluefin-curated-sha: ([0-9a-f]{40}) -->")
+APPID = re.compile(r"^\s*-\s+([A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+){2,})\s*$")
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), *args], check=True,
+                          capture_output=True, text=True).stdout
+
+
+def checkout_path():
+    # Sibling of the *main* worktree, not $PWD — see mise/tasks/upstream-sync.
+    porcelain = subprocess.run(["git", "worktree", "list", "--porcelain"], check=True,
+                               capture_output=True, text=True).stdout
+    main = porcelain.splitlines()[0].split(" ", 1)[1]
+    return Path(main).parent / "bluefin-common"
+
+
+def parse(text):
+    """Return [(section title, app id)] in file order."""
+    out, section, pending_title, in_list = [], None, False, False
+    for line in text.splitlines():
+        s = line.strip()
+        # `- section:` is the modern (Bazaar 0.9+) row; `category:` the legacy one.
+        if s in ("- section:", "section:", "category:"):
+            section, in_list = None, False
+        elif s.startswith("title:"):
+            value = s[len("title:"):].strip().strip("'\"")
+            if value:
+                section = section or value
+            else:
+                pending_title = True
+            in_list = False
+        elif pending_title and s.startswith("en:"):
+            section = section or s[3:].strip().strip("'\"")
+            pending_title = False
+        elif s in ("list:", "appids:"):  # modern nests `list:`; legacy doesn't
+            in_list = True
+        elif in_list:
+            m = APPID.match(line)
+            if m:
+                out.append((section or "?", m.group(1)))
+            elif s and not s.startswith("#"):
+                in_list = False
+    return out
+
+
+def flathub(appid):
+    url = f"https://flathub.org/api/v2/appstream/{appid}"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            d = json.load(r)
+        return f"{d.get('name', '?')} — {d.get('summary', '?')}"
+    except Exception as e:  # noqa: BLE001 — report and carry on
+        return f"(flathub lookup failed: {e.__class__.__name__})"
+
+
+def main():
+    list_only = os.environ.get("usage_list") == "true"
+    summaries = os.environ.get("usage_summaries") == "true"
+
+    repo = checkout_path()
+    if not (repo / ".git").is_dir():
+        print(f"==> cloning https://github.com/{UPSTREAM} to {repo}", file=sys.stderr)
+        subprocess.run(["git", "clone", "--quiet", "--branch", BRANCH,
+                        f"https://github.com/{UPSTREAM}.git", str(repo)], check=True)
+    git(repo, "fetch", "--quiet", "origin", BRANCH)
+    head = git(repo, "rev-parse", f"origin/{BRANCH}").strip()
+    new = parse(git(repo, "show", f"{head}:{CURATED}"))
+    if not new:
+        sys.exit(f"ERROR: parsed 0 app ids from {CURATED}@{head[:12]} — schema changed? "
+                 "Fix parse() before trusting any diff.")
+
+    if list_only:
+        for section, appid in new:
+            print(f"{section}\t{appid}")
+        return
+
+    m = MARKER.search(DOC.read_text()) if DOC.exists() else None
+    if not m:
+        sys.exit(f"ERROR: no '<!-- bluefin-curated-sha: ... -->' marker in {DOC}")
+    old_sha = m.group(1)
+
+    print(f"==> {UPSTREAM} {CURATED}")
+    print(f"    recorded {old_sha[:12]} → HEAD {head}")
+    if old_sha == head:
+        print("    up to date — nothing to mine")
+        return
+
+    old = parse(git(repo, "show", f"{old_sha}:{CURATED}"))
+    old_map, new_map = dict((a, s) for s, a in old), dict((a, s) for s, a in new)
+    added = [(s, a) for s, a in new if a not in old_map]
+    removed = [(s, a) for s, a in old if a not in new_map]
+    moved = [(old_map[a], s, a) for s, a in new if a in old_map and old_map[a] != s]
+
+    print(f"\n    {len(old)} → {len(new)} apps")
+    print(f"\n  Added ({len(added)}):")
+    for s, a in added:
+        line = f"    + {a:48} [{s}]  https://flathub.org/apps/{a}"
+        print(line + (f"\n        {flathub(a)}" if summaries else ""))
+    print(f"\n  Removed ({len(removed)}):")
+    for s, a in removed:
+        print(f"    - {a:48} [{s}]")
+    print(f"\n  Moved ({len(moved)}):")
+    for o, s, a in moved:
+        print(f"    ~ {a:48} {o} → {s}")
+
+    print("\n  Commits touching Bazaar config (read bodies: curation PRs describe each app):")
+    print(git(repo, "log", "--oneline", f"{old_sha}..{head}", "--", BAZAAR_DIR).rstrip()
+          or "    (none)")
+    print(f"\n  New marker: <!-- bluefin-curated-sha: {head} -->")
+
+
+if __name__ == "__main__":
+    main()
