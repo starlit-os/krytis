@@ -53,7 +53,8 @@
 # (see desktop/nlohmann-json.bst) -- use the krytis-vendored element, same as
 # desktop/noctalia.bst / desktop/noctalia-greeter.bst.
 #
-# libinput (>=1.23), pixman (>=0.43.0), wayland-server (>=1.24): resolve
+# libinput (>=1.23), pixman (>=0.43.0), wayland-server (>=1.24), and xcb /
+# xcb-icccm / xcb-ewmh (added by upstream's native Xwayland): resolve
 # transitively through desktop/wlroots.bst's own `depends:` (BuildStream
 # stages `depends` at build time too, recursively) -- no explicit entry
 # needed here. xkbcommon and cairo/pangocairo do NOT resolve transitively
@@ -66,10 +67,12 @@
 # deps -- included anyway since both are already-packaged, low-cost, and
 # meaningfully improve on the "silently skip the feature" fallback.
 #
-# xwayland-satellite: a *runtime* PATH dependency (`general.xwayland = true`
-# in config), not a build-time link dependency -- umbriel execs it, doesn't
-# link it. Already unconditionally shipped by stacks/desktop.bst (shared with
-# niri), so not re-declared here.
+# Xwayland: native since upstream 16d50317, which replaced the
+# xwayland-satellite supervisor with wlroots' own Xwayland and made
+# meson.build error() unless wlroots has WLR_HAS_XWAYLAND=1. That is why
+# desktop/wlroots.bst builds -Dxwayland=enabled (#1040). The Xwayland binary
+# (`general.xwayland = true`, started lazily on the first X11 client) ships
+# via stacks/desktop.bst, so it is not re-declared here.
 #
 # Update-path gate: upstream noctalia-dev/umbriel has no tags/releases yet
 # (checked as of 2026-09; see #774/#775). Uses kind: git_repo,

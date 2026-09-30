@@ -40,6 +40,14 @@ build-depends:
 # libEGL.so.1/libGLESv2.so.2 themselves come from components/libglvnd.bst,
 # already a runtime dep of extensions/mesa/mesa.bst below.
 - freedesktop-sdk.bst:components/mesa-headers.bst
+# xwayland.pc gates wlroots' whole Xwayland feature: xwayland/meson.build does
+# dependency('xwayland', required: get_option('xwayland')) and subdir_done()s
+# on a miss, before it even looks at the xcb libs below. Without this build-dep
+# -Dxwayland=auto compiled Xwayland out silently (WLR_HAS_XWAYLAND=0) until
+# desktop/umbriel.bst started refusing to configure against it (#1040). The
+# Xwayland binary itself ships through stacks/desktop.bst; wlroots bakes the
+# path from xwayland.pc and execs it lazily on the first X11 client.
+- freedesktop-sdk.bst:components/xwayland.bst
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
@@ -91,10 +99,18 @@ variables:
   # not in the sandbox pkgconfig path. This does not change what the greeter
   # renders with: elements/config/greetd-config.bst pins WLR_RENDERER=pixman on
   # the session command, and niri is smithay, not wlroots.
+  # xwayland=enabled, not auto: desktop/umbriel.bst hard-requires
+  # WLR_HAS_XWAYLAND (#1040), and auto hid the missing xwayland.pc for the
+  # element's whole life. Its xcb libs add no element: xcb-composite/-res are
+  # in xorg-lib-xcb and xcb-ewmh/-icccm in xcb-util-wm, both already in
+  # depends above. cage picks it up via wlroots' have_xwayland
+  # pkg-config variable and gains a lazy X socket; nothing starts Xwayland
+  # until an X11 client connects.
   meson-local: >-
     -Dexamples=false
     -Dbackends=libinput,drm,x11
     -Drenderers=gles2,vulkan
+    -Dxwayland=enabled
 
 sources:
 - kind: tar
