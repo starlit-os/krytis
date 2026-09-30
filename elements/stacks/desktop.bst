@@ -174,6 +174,9 @@ depends:
   # xdg-terminal-exec: XDG terminal execution spec — allows apps and the desktop
   # to open a terminal without hardcoding a specific emulator. Closes #171.
   - desktop/xdg-terminal-exec.bst
+  # xdg-terminals.list: pins the command-executing terminal to ghostty and
+  # excludes seance, which ignores `-e` (krytis#1005).
+  - config/xdg-terminals-list.bst
   # desktop-file-utils: provides update-desktop-database, which builds the
   # mimeinfo.cache that GIO reads to answer "which app handles this MIME type
   # or URL scheme". Needed in two places, both of which were broken without it

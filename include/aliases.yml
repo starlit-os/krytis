@@ -19,7 +19,6 @@ aliases:
   proton_me: https://proton.me/
   pypi: https://files.pythonhosted.org/packages/
   qemu: https://download.qemu.org/
-  warp_releases: https://releases.warp.dev/
 
   # git aliases
   codeberg: https://codeberg.org/
