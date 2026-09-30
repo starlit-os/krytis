@@ -2550,3 +2550,47 @@ noctalia's template always hits the *append* branch, not the *create* one.
 alongside this, for any account-creation path that bypasses skel copy; it is
 not removed.
 
+
+## seance: tracking omp (oh-my-pi) sessions with a user extension (#1018)
+
+seance ships agent wrappers (`/usr/share/seance/bin/{claude,codex,pi,opencode,agy}`) that
+report status to its sidebar. There is none for omp. Stage 1 of #1018 fills the gap without
+touching the image: `scripts/omp-seance.js` is an omp extension that drives seance's existing
+`seance ctl pi-hook`. Install it with `mise run omp-seance:install [--profile <name>]` and
+exercise it with `mise run omp-seance:test` (real omp, stub seance, spends model tokens). The
+design and the verification record are in `docs/plans/2026-09-30-omp-seance-user-extension.md`.
+What was non-obvious (checked against omp 18.4.3 and seance 0.1.7):
+
+- **omp extensions must be ES modules.** The CommonJS `module.exports = function (pi)` that
+  seance's own `pi` wrapper writes fails in omp with `Extension does not export a valid
+  factory function`. The auto-scanned `~/.omp/agent/extensions/` only picks up `.ts` / `.js`,
+  so the file is `seance.js` containing `export default`. `.mjs` works only via `-e`.
+- **Subagents run your extension too.** A `task` subagent reuses the parent's extension
+  paths and fires its own `session_start`, `tool_call` and `session_shutdown`. Unguarded,
+  a subagent's shutdown clears the pane's status mid-turn. Every handler returns early on
+  `!ctx.hasUI`: subagents (and `omp -p`, `--mode rpc --no-ui`) have it false, and the main
+  session in the TUI or `--mode rpc` has it true.
+- **Signal "done" with `session_stop`, not `agent_end`.** omp never emits `session_stop`
+  for subagent sessions. The handler must resolve to `undefined`; `{continue: true}` starts
+  another turn.
+- **A throw in a `tool_call` handler blocks the tool** (omp fails closed). Wrap handlers,
+  and never `execSync` from one. Here the calls go through one serial queue of `Bun.spawn`
+  children, so omp never waits and the pre/post order holds.
+- **Concurrent tools need in-flight tracking.** omp emits every `tool_call` before any
+  finishes. The first sibling's `tool_result` must re-report the still-running one (a long
+  `bash`) rather than reset the status to Running.
+- **seance shows an unknown `tool_name` verbatim.** Sending `pre-tool-use` with
+  `{"tool_name":"Needs input"}` on omp's `ask` tool yields a **Needs input** status even
+  though `pi-hook` has no `notification` event. omp's own `ask.notify` supplies the
+  notification.
+- **De-duplicating notifications.** seance already turns omp's own OSC notifications into
+  entries. To keep one completion notification per turn, the extension overrides
+  `completion.notify` to `off` via `lookup(...)` from
+  `@oh-my-pi/pi-coding-agent/config/registry` against `pi.pi.settings` (the singleton omp's
+  event controller reads). It only does this when `isConfigured` is false, and only in the
+  tracked main session.
+- **Testing:** `omp --mode rpc` with `{"type":"get_state"}` on stdin loads extensions and
+  fires `session_start` / `session_shutdown` without a model call. `omp -p ""` is not
+  model-free: an empty prompt still starts a turn. seance drops notifications for a
+  **visible** pane, so move the pane off-screen before counting `seance ctl --json
+  list-notifications`.
