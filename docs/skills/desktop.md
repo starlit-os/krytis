@@ -1500,6 +1500,38 @@ Always diagnose MIME/scheme association with `gio mime`, never `xdg-mime query d
 
 **Repairing an already-deployed system** (the image fix only affects new deployments' `/usr`; `/var/lib/flatpak` is runtime state either way): once an image carrying `desktop-file-utils` is booted, any `flatpak install`/`update` re-fires the trigger and rebuilds the exports cache. To associate a single scheme immediately without waiting, set an explicit default — `gio mime x-scheme-handler/steam com.valvesoftware.Steam.desktop` — which writes `~/.config/mimeapps.list` and bypasses the cache entirely.
 
+## TerminalEmulator is a category, not a capability (#1005)
+
+krytis has two jobs for a terminal, and different terminals do them:
+
+| Role | Terminal | Wired by |
+|---|---|---|
+| The terminal a human opens | `seance` | `Mod+Return` in `files/niri/binds.kdl` and `files/umbriel/binds.toml` |
+| The terminal that runs a command for another program | `ghostty` | `/etc/xdg/xdg-terminals.list` (`config/xdg-terminals-list.bst`); noctalia's own discovery |
+
+They are split because **`Categories=…TerminalEmulator;` says nothing about whether an app can execute a command.** `xdg-terminal-exec` treats every entry carrying it as a candidate, and for any entry without `X-TerminalArgExec` it falls back to `-e`. Two terminals krytis has shipped declare the category and do not implement `-e`:
+
+- **warp** (`Exec=warp-terminal %U`). It was the automatic pick until #1005 removed it, so "open in terminal" was broken for as long as warp was in the image:
+
+  ```console
+  $ xdg-terminal-exec --print-id --print-cmd -- echo hi
+  dev.warp.Warp.desktop
+  warp-terminal
+  -e
+  echo
+  hi
+  ```
+
+- **seance** (`Exec=seance`). `seance --help` documents only `seance` (GUI) and `seance ctl <cmd>`, which controls an instance that is already running. `seance -e echo hi` exits 0, prints nothing, opens no window and runs nothing. With warp excluded and no list shipped, the automatic pick was **seance**, not ghostty, even though ghostty sorts first alphabetically. Don't assume the fallback order is alphabetical, or that it stays the same when the set of installed entries changes.
+
+A terminal that ignores `-e` fails silently: exit 0, no window, nothing in the journal. **Any image with more than one `TerminalEmulator` entry must ship `/etc/xdg/xdg-terminals.list` naming the command-capable one.** krytis's list also excludes seance by name (`-com.seance.app.desktop`), so it can never be picked as a fallback. The list goes in the system config tier (`$XDG_CONFIG_DIRS`), not in `%{datadir}`: `xdg-terminal-exec` reads the data-dir copy as its lowest-priority fallback. That is why `desktop/xdg-terminal-exec.bst` moves upstream's own list to `%{docdir}` (see `docs/skills/zirconium-hawaii.md` § xdg-terminal-exec Install Quirk).
+
+To check a candidate before trusting it, look for the `X-TerminalArg*` keys in its desktop entry, then run the command yourself. `--print-id --print-cmd` shows the argv without launching anything. A per-user `~/.config/xdg-terminals.list` overrides the system list, even for an entry the system list excludes (verified).
+
+**noctalia uses a separate mechanism that looks like the same one.** `src/system/terminal_launch.cpp` in noctalia-dev/noctalia wraps `Terminal=true` launcher entries and `noctalia.runInTerminal()`. It never reads `xdg-terminals.list`. It tries `$TERMINAL`, then a hardcoded list (`x-terminal-emulator`, `ghostty`, `kitty`, `alacritty`, `wezterm`, `foot`, `konsole`, `gnome-terminal`, `kgx`, `ptyxis`, `xterm`), and appends `-e sh -lc <cmd>` (`--` for gnome-terminal/kgx/ptyxis). krytis has no `x-terminal-emulator`, so noctalia lands on ghostty with no configuration. To change noctalia's choice you set `$TERMINAL`, and **never to seance**, because every `Terminal=true` app would then no-op. A `terminalCommand` key in `~/.config/noctalia/settings.json` is legacy; current noctalia reads `~/.local/state/noctalia/settings.toml`, which has no equivalent.
+
+**Window rules follow the split.** ghostty keeps its 1/3-column rule in `files/niri/rules.kdl` and `files/umbriel/rules.toml`. seance has no rule on purpose: it runs its own niri-style pane strip, so the layout's 0.66667 default width fits it and a 1/3 column would be cramped. Its `app_id` is `com.seance.app`, for anyone who adds a rule later.
+
 ## Locale Data
 
 `config/locale-data.bst` (kind: script) replaces `freedesktop-sdk.bst:components/locales.bst` in `stacks/base-system.bst`. It generates only the locales Krytis needs instead of the full glibc SUPPORTED list (~400+ entries).

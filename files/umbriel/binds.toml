@@ -23,10 +23,12 @@
 [keybinds]
 
 # ── Applications and session ─────────────────────────────────────────────────
-# niri: `Mod+Return hotkey-overlay-title=... { spawn "ghostty"; }`. Overrides
+# niri: `Mod+Return hotkey-overlay-title=... { spawn "seance"; }`. Overrides
 # upstream's spawn:kitty. Only `action` is set so upstream's own repeat = false
-# merges through key-by-key.
-"Mod+Return" = { action = "spawn:ghostty" }
+# merges through key-by-key. seance is the terminal a human opens; ghostty
+# stays the command-executing terminal via /etc/xdg/xdg-terminals.list
+# (krytis#1005).
+"Mod+Return" = { action = "spawn:seance" }
 "Mod+E" = "spawn:nautilus"
 
 # niri: `Mod+Shift+7 { show-hotkey-overlay; }` -- Mod+Shift+/ on a US layout.
