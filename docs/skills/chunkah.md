@@ -93,6 +93,14 @@ a regression. The committed TSV has since grown to 367,869 rows over 584
 distinct elements (fdsdk 26.08rc.1 + gnome-51, `eee241c`) — same shape, more
 graph.
 
+**A `skip` can also mean "artifact not in the local cache". In that case the TSV is truncated and the task still exits 0.** The script catches every checkout failure, prints `skip (checkout/tar failed)`, and carries on, so it cannot tell an element with no content apart from one whose artifact simply isn't on disk. #1005 hit the second case. The image was built with `mise run build --pull`, and the regeneration skipped 14 elements with `No artifacts have been cached yet for that element`:
+
+- eleven fdsdk `components/_private/*-base.bst` parents (`gcc-base`, `pipewire-base`, `util-linux-base`, `cups-base`, …)
+- `overrides/systemd-base.bst`
+- `sdk-deps/gvfs.bst`
+
+The public elements the image actually composes from filter their files out of these parents. A build can therefore finish without ever having the parents' artifacts locally, but `/usr/manifest.json` still credits the files to the parents. The run wrote 349,958 rows and exited 0, but files present in the image were missing from it: `/usr/include/c++/16.2.0/**` had zero rows, and there were 32,300 deletions against the committed TSV. **Before committing a regenerated TSV, count the `skip` lines in the task output and check which elements they name.** More than the handful of `kind: stack`/`script` elements with no own content means the output is incomplete. Either get the missing artifacts into the local cache first (`bst artifact pull` / `bst build` on the named elements), or change only the rows your change affects (what #1005 did: drop the removed element's rows, add the new element's row, keep the file `LC_ALL=C`-sorted).
+
 **Known low-severity risks, worth knowing but not worth fixing:** ~4.6% of
 distinct paths in `files/fakecap-manifest.tsv` are attributed to more than
 one element (e.g. shared config files installed by multiple related

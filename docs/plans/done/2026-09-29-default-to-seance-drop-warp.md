@@ -231,7 +231,7 @@ comment so a future reader does not "fix" the omission.
   to element wrappers. That is a record of a past scan, not a claim about the current
   image; leave the sentence, since rewriting it would falsify the evidence it cites.
 
-- [ ] **Step 6: regenerate the fakecap manifest**
+- [x] **Step 6: regenerate the fakecap manifest**
 
   After the image builds (Phase 3 Step 1):
 
@@ -243,9 +243,18 @@ comment so a future reader does not "fix" the omission.
   artifact and is slow; run it once, after the build, not before. Not CI-verified, so it
   will silently rot if skipped.
 
+  **Result (deviation):** the full regeneration exited 0 but its output was truncated. It
+  skipped 14 elements whose artifacts were not in the local cache (fdsdk
+  `_private/*-base` filter parents, `overrides/systemd-base.bst`, `sdk-deps/gvfs.bst`),
+  and `/usr/include/c++/16.2.0/**` had zero rows although the image ships it. That TSV
+  was not committed. The commit instead applies only this change's delta to the committed
+  TSV: 148 `desktop/warp.bst` rows dropped, 1 `config/xdg-terminals-list.bst` row added,
+  file still `LC_ALL=C`-sorted. See `docs/skills/chunkah.md` § fakecap-manifest.tsv
+  generation.
+
 ## Phase 3 — verification
 
-- [ ] **Step 1: build**
+- [x] **Step 1: build**
 
   ```shell
   mise run build
@@ -254,6 +263,10 @@ comment so a future reader does not "fix" the omission.
   Ends with `lint` + `umbriel-config-validate` on its own — do not run `mise run lint`
   separately (AGENTS.md § Verification). `umbriel-config-validate` is the gate that
   catches a bad `spawn:seance` action name; confirm it passed rather than assuming.
+
+  **Result:** built (`localhost/krytis:latest`, 2026-09-30); `umbriel-config-validate`
+  re-run against it: `OK` for both `/etc/xdg/umbriel/config.toml` and
+  `/etc/skel/.config/umbriel/config.toml`.
 
 - [x] **Step 2: docs**
 
@@ -264,7 +277,7 @@ comment so a future reader does not "fix" the omission.
   Deleting `elements/desktop/warp.bst` and `mise/tasks/warp-update` invalidates any
   backticked reference to those paths in markdown (checker classes 3 and 4).
 
-- [ ] **Step 3: terminal selection, in the built image**
+- [x] **Step 3: terminal selection, in the built image**
 
   ```shell
   mise run boot-vm   # or boot-test for automated pass/fail
@@ -279,6 +292,15 @@ comment so a future reader does not "fix" the omission.
   ls /usr/lib/warp-terminal                          # → No such file or directory
   ```
 
+  **Result** (`podman run` against the built image, not a VM boot):
+  `/etc/xdg/xdg-terminals.list` is present; `xdg-terminal-exec` → `com.mitchellh.ghostty.desktop`,
+  `/usr/bin/ghostty --gtk-single-instance=true -e true`; `warp-terminal` is absent;
+  `/usr/lib/warp-terminal` is absent; `dev.warp.Warp.desktop` is absent. The expected
+  `grep -c warp /usr/manifest.json → 0` was **wrong**: the result is 2, both from
+  fdsdk's `components/gstreamer-plugins-rs.bst` vendoring the unrelated Rust HTTP crate
+  `warp` 0.4.3. That is not Warp the terminal. Both binds reached the image:
+  `/etc/niri/binds.kdl:16` and `/etc/xdg/umbriel/binds.toml:31` spawn seance.
+
 - [ ] **Step 4: the bind, on both compositors**
 
   niri session: `Mod+Return` opens seance; `Mod+Shift+7` shows "Open a Terminal: seance".
@@ -289,12 +311,19 @@ comment so a future reader does not "fix" the omission.
   A compositor smoke run (`mise run compositor-smoke`) does not exercise a keybind — this
   step is manual, and the PR must say so rather than implying automation covered it.
 
-- [ ] **Step 5: vuln-scan delta**
+- [x] **Step 5: vuln-scan delta**
 
   Removing a vendored `.deb` moves the match count. Re-run the scan and confirm the
   change is subtractive only; `.grype.yaml` needs no new ignores (verified: it has no
   warp entries today). If a *new* advisory appears, triage per
   `.claude/skills/vuln-scan-triage/` — do not blanket-ignore.
+
+  **Result:** no delta, which contradicts the "moves the match count" prediction above.
+  I ran `mise run vuln-scan` on this branch and on its merge base `95b3452` (a detached
+  worktree). Both scans report the same 6 matches (4× `rustls-webpki` 0.102.8,
+  `owning_ref` 0.4.1, `tar` 0.4.45); a set diff on (name, version, advisory) shows 0 added
+  and 0 removed. Package count is 8680 in both. warp never contributed a match: a
+  hand-installed `.deb` payload has no purl.
 
 ## Phase 4 — skill write-back (same commits, not a follow-up)
 
