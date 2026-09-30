@@ -320,7 +320,9 @@ passes only when a 14-letter dictionary word is rejected *as a dictionary word*.
 create-cracklib-dict`. Upstream already fixed half of this class once. krytis carries no
 override for it: overriding `components/cracklib.bst` means mirroring an fdsdk element,
 which then needs its own drift check (see `mise run gnome-disk-utility-check`), and the
-gate already stops a regression from shipping.
+gate already stops a regression from shipping. Nothing has been filed on freedesktop-sdk,
+by maintainer decision. #1041 tracks the upstream fix. After a junction bump, check
+whether `cracklib.bst` gained the dependency and close #1041 if so.
 
 **Inventory of the rest** (2026-09-30, fdsdk 26.08.2). Dump `%{public}` for the whole
 graph with `mise run bst show --deps all --format $'@@ELEM %{name}\n%{public}'
