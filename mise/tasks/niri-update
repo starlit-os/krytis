@@ -25,12 +25,12 @@ trap 'rm -rf "$TMPDIR"' EXIT
 BASE_URL="https://github.com/${REPO}"
 
 echo "==> Downloading source tarball..."
-curl -sSfL "${BASE_URL}/archive/refs/tags/${LATEST_TAG}.tar.gz" -o "${TMPDIR}/src.tar.gz"
+curl -sSfL --retry 3 --retry-delay 10 "${BASE_URL}/archive/refs/tags/${LATEST_TAG}.tar.gz" -o "${TMPDIR}/src.tar.gz"
 SRC_SHA=$(sha256sum "${TMPDIR}/src.tar.gz" | awk '{print $1}')
 echo "    sha256=${SRC_SHA}"
 
 echo "==> Downloading vendored-dependencies tarball..."
-curl -sSfL "${BASE_URL}/releases/download/${LATEST_TAG}/niri-${LATEST_VER}-vendored-dependencies.tar.xz" \
+curl -sSfL --retry 3 --retry-delay 10 "${BASE_URL}/releases/download/${LATEST_TAG}/niri-${LATEST_VER}-vendored-dependencies.tar.xz" \
   -o "${TMPDIR}/vnd.tar.xz"
 VND_SHA=$(sha256sum "${TMPDIR}/vnd.tar.xz" | awk '{print $1}')
 echo "    sha256=${VND_SHA}"

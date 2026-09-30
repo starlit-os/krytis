@@ -1198,7 +1198,7 @@ Codeberg has no `gh`-compatible CLI. Use the Gitea-compatible REST API with `cur
 
 ```bash
 API="https://codeberg.org/api/v1/repos/<owner>/<repo>/releases?limit=1"
-LATEST_TAG=$(curl -sf "$API" | jq -r '.[0].tag_name')
+LATEST_TAG=$(curl -sf --retry 3 --retry-delay 10 "$API" | jq -r '.[0].tag_name')
 ```
 
 No auth token needed for public repos. Do **not** add `GH_TOKEN` to the CI step env — it only applies to `gh` CLI calls. The CI job for a Codeberg element omits the `env: GH_TOKEN:` block entirely.
@@ -1208,13 +1208,43 @@ Tarball URL pattern: `https://codeberg.org/<owner>/<repo>/archive/<tag>.tar.gz`.
 ### SHA extraction pattern
 
 ```bash
-curl -sSfL "$URL" -o "$TMPDIR/src.tar.gz"
+curl -sSfL --retry 3 --retry-delay 10 "$URL" -o "$TMPDIR/src.tar.gz"
 NEW_SHA=$(sha256sum "$TMPDIR/src.tar.gz" | awk '{print $1}')
 CURRENT_SHA=$(grep 'ref:' "$ELEMENT" | awk '{print $2}')
 sed -i "s|ref: ${CURRENT_SHA}|ref: ${NEW_SHA}|" "$ELEMENT"
 ```
 
 Use `mktemp -d` + `trap 'rm -rf "$TMPDIR"' EXIT` for the temp directory.
+
+### Every `curl` carries `-f --retry 3 --retry-delay 10`
+
+Every `curl` in `mise/tasks/` passes `-f` and `--retry 3 --retry-delay 10` (#825). Without
+retries, one transient upstream blip fails the whole scheduled tracker job: the
+2026-09-11 `track-game-devices-udev` failure was a Codeberg API `504 Gateway Time-out`
+that returned `200` when retried seconds later. `--retry` only retries transient
+failures (timeout, HTTP 408/429/500/502/503/504), so a 404 still fails on the first
+attempt; the worst case adds 30s of sleep, and no `track-bst-sources.yml` job sets
+`timeout-minutes`, so the 360-minute default applies.
+
+**`--retry` requires `-f` on any `curl` whose output goes to stdout.** Without `-f`, curl
+treats an error response as a normal body and writes it to stdout, then writes each
+retry's body after it. curl 8.21 against a server that returns 504, 504, then 200:
+
+```
+curl -sSL  --retry 3 … | cat   → "gateway\ngateway\nok\n"   exit 0
+curl -sSfL --retry 3 … | cat   → "ok\n"                     exit 0
+```
+
+`-o <file>` truncates the file before each retry, so it only collects the final
+attempt, but without `-f` a persistent error still exits 0 and the task hashes the
+error page as though it were the tarball. With `-f`, it exits 22.
+
+Where a fetch failure should only produce a warning (`equibop-update`'s icon-drift
+probe), catch it explicitly with `$(curl -f … | sha256sum …) || var="unfetchable"`.
+Dropping `-f` for this corrupts stdout on retry.
+
+Python trackers do not get this from curl: `mise/lib/zig_zon.py`'s `download()` (used by
+`ghostty-update`/`seance-update`) uses `urllib.request.urlopen` with no retry.
 
 ### Container images a task runs are dependencies too
 

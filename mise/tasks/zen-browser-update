@@ -26,7 +26,7 @@ for ARCH in x86_64 aarch64; do
   URL="https://github.com/zen-browser/desktop/releases/download/${LATEST_VER}/zen.linux-${ARCH}.tar.xz"
   FILE="${TMPDIR}/zen.linux-${ARCH}.tar.xz"
   echo "==> Downloading ${URL}..."
-  curl -sSL "$URL" -o "$FILE"
+  curl -fsSL --retry 3 --retry-delay 10 "$URL" -o "$FILE"
   SHA256=$(sha256sum "$FILE" | awk '{print $1}')
   echo "    ${ARCH} sha256=${SHA256}"
 
