@@ -1243,8 +1243,12 @@ Where a fetch failure should only produce a warning (`equibop-update`'s icon-dri
 probe), catch it explicitly with `$(curl -f … | sha256sum …) || var="unfetchable"`.
 Dropping `-f` for this corrupts stdout on retry.
 
-Python trackers do not get this from curl: `mise/lib/zig_zon.py`'s `download()` (used by
-`ghostty-update`/`seance-update`) uses `urllib.request.urlopen` with no retry.
+Python trackers don't get this from curl, so they reimplement it. `mise/lib/zig_zon.py`'s
+`download()` is used by `ghostty-update`/`seance-update` for the source tarball and every
+dep in the transitive Zig closure, 30+ fetches per run. It retries the same transient set
+(HTTP 408/429/500/502/503/504, or a timeout), 3 times with a 10s delay, and reopens the
+destination `"wb"` on each attempt (#1023). A new Python tracker needs the same policy;
+a bare `urllib.request.urlopen` fails the whole run on a single blip.
 
 ### Container images a task runs are dependencies too
 

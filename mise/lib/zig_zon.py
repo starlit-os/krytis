@@ -20,7 +20,10 @@ import hashlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -49,11 +52,37 @@ def sha256_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
+# Same policy as the shell trackers' `curl -f --retry 3 --retry-delay 10`
+# (docs/skills/mise.md § Every `curl` carries `-f --retry 3 --retry-delay 10`):
+# retry only what curl calls transient, so a 404 still fails on the first try.
+RETRIES = 3
+RETRY_DELAY = 10
+_TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504}
+
+
+def _transient(exc: OSError) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in _TRANSIENT_HTTP
+    if isinstance(exc, urllib.error.URLError):
+        return isinstance(exc.reason, TimeoutError)
+    return isinstance(exc, TimeoutError)
+
+
 def download(url: str, dest: str | Path, user_agent: str = "krytis-zig-update/1.0") -> None:
     req = urllib.request.Request(url, headers={"User-Agent": user_agent})
-    with urllib.request.urlopen(req) as resp, open(dest, "wb") as out:
-        while chunk := resp.read(65536):
-            out.write(chunk)
+    for attempt in range(1, RETRIES + 2):
+        try:
+            # "wb" per attempt: a retry must never append to a partial body.
+            with urllib.request.urlopen(req) as resp, open(dest, "wb") as out:
+                while chunk := resp.read(65536):
+                    out.write(chunk)
+            return
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt > RETRIES or not _transient(exc):
+                raise
+            print(f"      {url}: {exc} — retry {attempt}/{RETRIES} in {RETRY_DELAY}s",
+                  file=sys.stderr)
+            time.sleep(RETRY_DELAY)
 
 
 def parse_zon_deps(content: str) -> list[str]:
