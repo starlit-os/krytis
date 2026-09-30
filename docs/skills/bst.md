@@ -278,6 +278,75 @@ reading an older example anywhere (including elsewhere in this file) that shows
 bare `runtime-minimal.bst` on a `kind: manual` element, it predates the fdsdk
 26.08 split — fix it in place rather than copying it forward.
 
+## An integration command's tools are not implied by the element that ships it
+
+*Discovered via #1001, 2026-09-30 — `bst artifact checkout desktop/oo7.bst` printed
+`cracklib-format: line 15: gzip: command not found` and then `SUCCESS Running commands`.*
+
+`public: bst: integration-commands` run at stage time against **whatever closure is
+staged** — the image compose, or the runtime closure of the element you `bst artifact
+checkout` — not against the closure of the element that declares them. BuildStream runs
+each one as `sh -e -c <command>` (`buildstream/element.py`, `Element.integrate`) and
+judges it by exit status alone. A missing tool therefore fails loudly only when it is
+called at the top level of the command. It succeeds silently when it sits in a
+non-final pipeline stage, or inside a helper script that has no `set -e`.
+
+freedesktop-sdk's `components/cracklib.bst` hits both. Its integration command runs
+`create-cracklib-dict`, which is `exec cracklib-format "$@" | cracklib-packer`, and
+`cracklib-format` is a `set -e`-less `/bin/sh` script whose first stage is `gzip -cdf`,
+followed by `grep`/`tr`/`cut`/`sort`. The element's own runtime closure
+(`mise run bst show --deps run --format '%{name}' freedesktop-sdk.bst:components/cracklib.bst`)
+is `runtime-minimal.bst` + `zlib-ng` + `bootstrap/grep.bst`. No sh, no coreutils, no
+gzip. `runtime-gnu.bst` supplies sh and coreutils in practice, but not gzip. So any
+closure without gzip feeds `cracklib-packer` nothing, and it **writes no files at all**:
+
+- `/usr/share/cracklib/pw_dict.{pwd,pwi}` are gone (the command `rm -f`s them first).
+- libpwquality answers every password with `error loading dictionary`, so
+  `pam_pwquality` (`requisite` in `system-auth`/`password-auth`,
+  `elements/config/u2f-config.bst`) rejects **every** password change. #1001 predicted
+  an empty dictionary that accepts everything. Reproducing it in a derived image shows
+  it fails closed instead.
+- `cracklib-check` prints `error loading dictionary` and **exits 0**, so it cannot be
+  used as an assertion.
+
+The shipped image is correct only because its full closure happens to stage gzip.
+`mise run cracklib-dict-check` (the last step of `mise run build`, so `publish.yml`
+runs it too) turns that into an assertion. It runs `pwscore` inside the image, which
+goes through libpwquality and `pwquality.conf`'s `dictpath` the way PAM does, and it
+passes only when a 14-letter dictionary word is rejected *as a dictionary word*.
+
+**The real fix is upstream, one line.** Add `bootstrap/gzip.bst` to `cracklib.bst`'s
+`runtime-depends:`, next to the existing `bootstrap/grep.bst # needed for
+create-cracklib-dict`. Upstream already fixed half of this class once. krytis carries no
+override for it: overriding `components/cracklib.bst` means mirroring an fdsdk element,
+which then needs its own drift check (see `mise run gnome-disk-utility-check`), and the
+gate already stops a regression from shipping.
+
+**Inventory of the rest** (2026-09-30, fdsdk 26.08.2). Dump `%{public}` for the whole
+graph with `mise run bst show --deps all --format $'@@ELEM %{name}\n%{public}'
+oci/krytis/image.bst`. The `\n` is required, because `%{public}` does not start on a new
+line and without it the name is glued to the first YAML key. Then split on `@@ELEM`,
+strip ANSI codes, and parse each chunk's YAML body. 25 elements carry
+`integration-commands`. For every tool they call,
+`command -v` plus `head -1` inside `localhost/krytis:latest` showed one of two cases.
+
+- **ELF binaries:** `ldconfig`, `localedef`, `fc-cache`, `glib-compile-schemas`,
+  `gio-querymodules`, `gtk-update-icon-cache`, `gtk-query-immodules-3.0`,
+  `update-mime-database`, `update-desktop-database`, `xmlcatalog`, `trust`, `dconf`,
+  `python3`.
+- **The only other script:** `update-ca-trust`, which is `set -eu` with no pipelines.
+
+`install-info`, `dot` and `hotdoc` are absent from the image; their elements (texinfo,
+graphviz, hotdoc) are build-only. None of these tools appears in a non-final pipeline
+stage or an `if` condition, so under `sh -e` a missing one fails the stage. cracklib is
+the only silent case. Re-run the inventory after an fdsdk or gnome-build-meta junction
+bump.
+
+**When writing integration commands in a krytis element:** list every tool the command
+runs in `runtime-depends:`, even ones that are "always there". Don't put a tool that
+might be missing anywhere except the final stage of a pipeline. End the command with an
+assertion on what it produced (`test -s <output>`), not on its exit status.
+
 ## System-wide mise tasks via BST element
 
 **File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly in `/etc/mise/config.toml` using `[tasks.*]` TOML blocks pointing to the script files. Ship both: the scripts (for execution) and `config.toml` (for discovery).
@@ -809,7 +878,7 @@ Verify the override actually resolves (not silently ignored) with `mise bst show
 >
 > `core/openssh.bst` now **prepends** `Include %{sysconfdir}/{sshd,ssh}_config.d/*.conf` to both files. Prepending is load-bearing: OpenSSH keeps the **first** value obtained for most keywords, and the shipped `sshd_config` sets `AuthorizedKeysFile` further down, so an appended `Include` could never be overridden by a drop-in. `ssh_config`'s own header states the same rule ("host-specific definitions should be at the beginning"), and the systemd ssh-proxy drop-in is exactly such a set of `Host` blocks. Verify with `head -5 /etc/ssh/sshd_config` and `sshd -T | grep authorizedkeyscommand`.
 
-**Gotcha while verifying this class of fix:** `mise lint` alone (per its own `#MISE description`) assumes `mise run load-image` already ran — it just does `podman build` against the *existing* `localhost/krytis-input:latest` tag. If that tag predates your element change, `mise lint` will pass while still testing the *old* content, silently. Use `mise run build [--force]` (which chains `generate-image-version` → `load-image` → `lint` → `umbriel-config-validate`) to force a real `oci/krytis/image.bst` rebuild before trusting lint output for an element-level change — `mise bst build <element>` in isolation only proves the element itself builds, not that the full image picked it up.
+**Gotcha while verifying this class of fix:** `mise lint` alone (per its own `#MISE description`) assumes `mise run load-image` already ran — it just does `podman build` against the *existing* `localhost/krytis-input:latest` tag. If that tag predates your element change, `mise lint` will pass while still testing the *old* content, silently. Use `mise run build [--force]` (which chains `generate-image-version` → `load-image` → `lint` → `umbriel-config-validate` → `cracklib-dict-check`) to force a real `oci/krytis/image.bst` rebuild before trusting lint output for an element-level change — `mise bst build <element>` in isolation only proves the element itself builds, not that the full image picked it up.
 
 ### Mirroring a junction element to patch its *source*
 

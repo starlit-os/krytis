@@ -9,6 +9,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Understand BST element syntax and patterns | [`docs/skills/bst.md`](skills/bst.md) |
 | Add a package to Krytis | [`docs/skills/bst.md`](skills/bst.md) § Adding a Package |
 | Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § *A cached failed artifact is replayed, not rebuilt* |
+| Write or debug an element's `integration-commands`, or a `mise run cracklib-dict-check` failure | [`docs/skills/bst.md`](skills/bst.md) § An integration command's tools are not implied by the element that ships it |
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
 | Package a Zig project, or regenerate a `build.zig.zon` dep list | [`docs/skills/bst.md`](skills/bst.md) § Zig Projects |
