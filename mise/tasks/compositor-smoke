@@ -95,13 +95,19 @@ case "$COMPOSITOR" in
     greeter)
         # The greeter compositor is what greetd actually launches, with the
         # same renderer pin elements/config/greetd-config.bst uses.
+        #
+        # WLR_LOG=info: upstream's noctalia-greeter-session defaults
+        # WLR_LOG=error, and since noctalia-greeter v1.6.0 the compositor
+        # honours it (v1.5.0 hardcoded its wlr_log_init level). At `error`
+        # none of the markers below are logged, so this check failed on every
+        # image from the v1.6.0 bump (e0541b6) until #1040.
         LAUNCH='noctalia-greeter-session'
         REQUIRE=(
             'Creating pixman renderer'
             'greeter output: HEADLESS-1'
             'started greeter:'
         )
-        ENV_EXTRA='export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 NOCTALIA_GREETER_LOG=stderr;'
+        ENV_EXTRA='export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 NOCTALIA_GREETER_LOG=stderr WLR_LOG=info;'
         ;;
     cage)
         LAUNCH='cage -- /bin/true'

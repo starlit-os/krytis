@@ -25,9 +25,13 @@ not a niri replacement — ships as a second selectable greetd session
 
 Dependency overlap with the existing niri/noctalia stack is unusually high:
 `desktop/wlroots.bst` is already pinned to `0.20.2`, inside umbriel's
-required `wlroots-0.20 >=0.20.1,<0.21.0` range, and
-`desktop/xwayland-satellite.bst` (X11 app support, PATH lookup at runtime —
-not a build/link dependency) is already packaged for niri. umbriel's own
+required `wlroots-0.20 >=0.20.1,<0.21.0` range. X11 support is **not** shared
+with niri any more: upstream `16d50317` replaced umbriel's xwayland-satellite
+supervisor with wlroots' native Xwayland and made `meson.build` `error()` unless
+wlroots has `WLR_HAS_XWAYLAND=1`. That broke `main` at #1017 until
+`desktop/wlroots.bst` got `-Dxwayland=enabled` (#1040, see
+[`bst.md`](bst.md) § wlroots-0.20 Constraints). niri still uses
+`desktop/xwayland-satellite.bst`. umbriel's own
 scene-graph fork (`umbrielfx`, a SceneFX hard fork) builds in-tree as a
 static archive via `subdir('umbrielfx')` in `meson.build` — unlike niri, no
 separate cargo-vendoring step is needed. The one genuinely new packaging
@@ -842,6 +846,16 @@ Each variant asserts positive markers, never the absence of errors (a compositor
 and `output 'HEADLESS-1': applied mode=`; the greeter must reach `greeter output: HEADLESS-1`
 and `started greeter:`; cage must create the pixman renderer and start the backend.
 `--shipped-config` adds `spawned 'noctalia' on WAYLAND_DISPLAY=`.
+
+**The greeter variant needs `WLR_LOG=info`, and it silently lost it at noctalia-greeter
+v1.6.0.** Upstream's `noctalia-greeter-session` exports `WLR_LOG="${WLR_LOG:-error}"` (checked at v1.3.1, v1.5.0 and v1.6.0).
+Up to v1.5.0 the compositor ignored that and hardcoded its `wlr_log_init` level. v1.6.0 reads
+it (the binary now carries `unrecognized WLR_LOG=%s; using info`). From the bump (`e0541b6`)
+onward, all three greeter markers vanished while the greeter came up fine and presented
+frames: a false FAIL with an empty tail. The task has set `WLR_LOG=info` since #1040, which
+is how it was found. `localhost/krytis:sealed` (v1.5.0) passed without it. When a marker
+check fails and the tail is empty, look for a log-level default in the launch wrapper before
+suspecting the compositor.
 
 **Those umbriel markers were wrong until #980, and wrong in a way that inverted what the task
 covered.** They used to be `initialized EGL`, `OpenGL ES vendor=` and `output HEADLESS-1` —
