@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+#MISE description="Exercise scripts/omp-seance.js against real omp and a stub seance (spends model tokens) (#1018)"
+#USAGE flag "--model <model>" default="haiku" help="omp model for the three prompted scenarios"
+
+# Drives the real omp in --mode rpc (the only scripted mode where the main
+# session has ctx.hasUI == true, like the interactive TUI) with a stub `seance`
+# first on PATH that records every `seance ctl pi-hook …` call. It proves the
+# extension's event map and its subagent/print-mode/opt-out gating; it does NOT
+# prove what real seance does with the calls — that is the live check in
+# docs/plans/2026-09-30-omp-seance-user-extension.md step 4.
+#
+# --no-extensions keeps an installed ~/.omp/agent/extensions/seance.js (or any
+# other user extension) out of the run; the explicit -e path still loads.
+set -euo pipefail
+
+command -v omp >/dev/null || { echo "ERROR: omp not on PATH (mise use -g oh-my-pi)" >&2; exit 1; }
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/bin" "$WORK/cwd"
+
+cat >"$WORK/bin/seance" <<'STUB'
+#!/usr/bin/env python3
+import json, os, sys
+data = sys.stdin.read()
+try:
+    payload = json.loads(data) if data.strip() else None
+except ValueError:
+    payload = data
+with open(os.environ["OMP_SEANCE_TEST_LOG"], "a") as f:
+    f.write(json.dumps({"argv": sys.argv[1:], "stdin": payload}) + "\n")
+STUB
+chmod +x "$WORK/bin/seance"
+
+EXT="${MISE_PROJECT_ROOT}/scripts/omp-seance.js" WORK="$WORK" MODEL="${usage_model:-haiku}" python3 <<'PY'
+import json, os, secrets, subprocess, sys
+
+ext, work, model = os.environ["EXT"], os.environ["WORK"], os.environ["MODEL"]
+cwd = os.path.join(work, "cwd")
+log = os.path.join(work, "calls.jsonl")
+token = "seance-probe-" + secrets.token_hex(4)
+with open(os.path.join(cwd, "note.txt"), "w") as f:
+    f.write(token + "\n")
+
+base = {k: v for k, v in os.environ.items()
+        if k not in ("SEANCE_OMP_HOOKS_DISABLED", "SEANCE_PI_HOOKS_DISABLED", "SEANCE_PI_SESSION_DIR")}
+base.update(PATH=f"{work}/bin:{os.environ['PATH']}", OMP_SEANCE_TEST_LOG=log,
+            SEANCE_SURFACE_ID="4242", SEANCE_WORKSPACE_ID="4242", SEANCE_SOCKET_PATH="/nonexistent")
+OMP = ["omp", "--no-session", "--no-extensions", "-e", ext]
+failures = []
+
+def calls():
+    if not os.path.exists(log):
+        return []
+    with open(log) as f:
+        out = [json.loads(line) for line in f if line.strip()]
+    os.remove(log)
+    return out
+
+def env_with(**over):
+    env = dict(base)
+    for k, v in over.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    return env
+
+def rpc(commands, env, timeout=300):
+    """Send RPC commands; for a prompt, wait for session_settled. EOF triggers session_shutdown."""
+    p = subprocess.Popen(OMP + ["--mode", "rpc", "--model", model], cwd=cwd, env=env, text=True,
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    for c in commands:
+        p.stdin.write(json.dumps(c) + "\n")
+    p.stdin.flush()
+    wait_settle = any(c["type"] == "prompt" for c in commands)
+    for line in p.stdout:
+        try:
+            frame = json.loads(line)
+        except ValueError:
+            continue
+        if frame.get("type") == "response" and frame.get("success") is False:
+            p.kill()
+            raise SystemExit(f"omp rejected {frame.get('command')}: {frame.get('error')}")
+        if not wait_settle and frame.get("type") == "response":
+            break
+        if frame.get("type") == "session_settled":
+            break
+    p.stdin.close()
+    p.wait(timeout=timeout)
+    return calls()
+
+def hooks(cs):
+    return [c["argv"][2] if len(c["argv"]) > 2 else "?" for c in cs]
+
+def check(name, cond, cs):
+    print(("PASS " if cond else "FAIL ") + name)
+    if not cond:
+        failures.append(name)
+        for c in cs:
+            print("    ", json.dumps(c))
+
+def tool_names(cs):
+    return [c["stdin"].get("tool_name") for c in cs if c["argv"][2:3] == ["pre-tool-use"]]
+
+STATE = [{"type": "get_state"}]
+
+# ── Model-free gating (factory runs, session_start + session_shutdown fire) ──
+cs = rpc(STATE, env_with())
+check("active: startup + shutdown each clear stale status", hooks(cs) == ["session-end", "session-end"]
+      and all(c["argv"][:2] == ["ctl", "pi-hook"] for c in cs), cs)
+cs = rpc(STATE, env_with(SEANCE_OMP_HOOKS_DISABLED="1"))
+check("SEANCE_OMP_HOOKS_DISABLED=1: no calls", cs == [], cs)
+cs = rpc(STATE, env_with(SEANCE_PI_HOOKS_DISABLED="1"))
+check("SEANCE_PI_HOOKS_DISABLED=1: no calls", cs == [], cs)
+cs = rpc(STATE, env_with(SEANCE_SURFACE_ID=None))
+check("outside seance: no calls", cs == [], cs)
+
+# ── Plain turn ──
+cs = rpc([{"type": "prompt", "message":
+           "Use the read tool on note.txt in the current directory, then reply with exactly its contents."}], env_with())
+h = hooks(cs)
+read_calls = [c for c in cs if c["argv"][2:3] == ["pre-tool-use"] and c["stdin"].get("tool_name") == "Read"]
+stop = [c for c in cs if c["argv"][2:3] == ["stop"]]
+check("plain: session-end, prompt-submit … stop, session-end",
+      len(h) >= 6 and h[0] == "session-end" and h[1] == "prompt-submit" and h[-2:] == ["stop", "session-end"]
+      and h.count("stop") == 1 and h.count("session-end") == 2 and h.count("prompt-submit") == 1, cs)
+# Concurrent tools: a tool_result re-reports a still-running sibling, so only
+# the final tool status before stop is guaranteed to be post-tool-use.
+check("plain: last tool status before stop is post-tool-use (Running)",
+      "pre-tool-use" in h and h[h.index("stop") - 1] == "post-tool-use", cs)
+check("plain: read translated to Read + file_path",
+      any(str(c["stdin"].get("tool_input", {}).get("file_path", "")).endswith("note.txt") for c in read_calls), cs)
+check("plain: stop carries cwd and the assistant's last message",
+      len(stop) == 1 and stop[0]["stdin"].get("cwd") == cwd and token in stop[0]["stdin"].get("last_assistant_message", ""), cs)
+
+# ── Subagent turn: the subagent's own session_start/tool calls/shutdown must not leak ──
+cs = rpc([{"type": "prompt", "message":
+           "Use the task tool to spawn exactly one subagent whose only job is to read note.txt in the current "
+           "directory and report its contents. Do not read the file yourself. Then reply with exactly its contents."}],
+         env_with())
+h = hooks(cs)
+names = tool_names(cs)
+check("subagent: a subagent was actually spawned (Agent)", "Agent" in names, cs)
+check("subagent: session-end only first and last, one stop, stop last-but-one",
+      h.count("session-end") == 2 and h[0] == "session-end" and h[-1] == "session-end"
+      and h.count("stop") == 1 and h[-2] == "stop" and h.count("prompt-submit") == 1, cs)
+check("subagent: no subagent-only tool (yield) reported", "yield" not in names, cs)
+
+# ── Print mode: ctx.hasUI is false, nothing is tracked ──
+subprocess.run(OMP + ["--model", model, "-p", "Reply with just: pong"], cwd=cwd, env=env_with(),
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=True)
+cs = calls()
+check("print mode (-p): no calls", cs == [], cs)
+
+if failures:
+    print(f"\n{len(failures)} check(s) failed.")
+    sys.exit(1)
+print("\nAll checks passed.")
+PY

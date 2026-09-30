@@ -15,6 +15,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Package a prebuilt desktop app — choose `.deb` vs portable tarball, defuse an Electron self-updater | [`docs/skills/bst.md`](skills/bst.md) § Electron self-updaters on a read-only image |
 | Backport a patch onto a release pinned by a junction | [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
+| Make seance's sidebar track omp (oh-my-pi) sessions, or write an omp extension (`mise run omp-seance:install`, `mise run omp-seance:test`) | [`docs/skills/desktop.md`](skills/desktop.md) § seance: tracking omp (oh-my-pi) sessions with a user extension (#1018) |
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
 | Understand why krytis runs oo7 rather than gnome-keyring, and what the cutover cost (#84, closed 2026-09-04) | [`docs/design/secrets-service.md`](design/secrets-service.md) |
 | Re-pin oo7, or check whether an upstream oo7 fix actually helps krytis (`mise run oo7-prompter-test`, `mise run oo7-login-race-test`) | [`docs/skills/pam.md`](skills/pam.md) § *oo7's prompter detection, and the patch krytis no longer needs*, § *Login auto-unlock is lost to a race* |

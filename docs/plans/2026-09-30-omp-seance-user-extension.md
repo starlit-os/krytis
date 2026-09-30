@@ -103,9 +103,9 @@ excludes subagents, `-p` print mode and `--mode rpc --no-ui`.
 | `agent_start` | `prompt-submit` | `{}` | **Running** |
 | `tool_call`, `toolName === "ask"` | `pre-tool-use` | `{"tool_name":"Needs input"}` | **Needs input** (unknown names are shown verbatim) |
 | `tool_call`, any other tool | `pre-tool-use` | translated, see below | Tool description |
-| `tool_result` | `post-tool-use` | `{}` | **Running** |
+| `tool_result` | `pre-tool-use` of the newest still-running sibling, else `post-tool-use` | sibling's payload / `{}` | That sibling's description, else **Running** |
 | `tool_approval_requested` | `pre-tool-use` | `{"tool_name":"Needs approval"}` | **Needs approval** (only with `tools.approvalMode` ≠ `yolo`) |
-| `tool_approval_resolved` | `post-tool-use` | `{}` | **Running** |
+| `tool_approval_resolved` | as `tool_result` | | |
 | `session_stop` | `stop` | `{"cwd": ctx.cwd, "last_assistant_message": <text>}` | "Completed in \<project\>" notification + **Idle** |
 | `session_shutdown` | `session-end` | `{}` | Status cleared |
 
@@ -113,6 +113,14 @@ excludes subagents, `-p` print mode and `--mode rpc --no-ui`.
 The `session_stop` handler must return `undefined`; a returned `{continue: true}` would make omp
 run another turn. `agent_start` is used rather than `input` because it also covers queued
 follow-up and steering turns.
+
+**In-flight tracking (added during implementation).** omp runs independent tool calls
+concurrently and emits every `tool_call` at arg-prep time, before any of them finishes. The
+first live run showed the naive map above going wrong: with `read` and `bash sleep` in one
+response, `read`'s `tool_result` reset the sidebar to **Running** while the sleep still ran. The
+extension keeps a `toolCallId → payload` map, cleared on `agent_start` and `session_stop`.
+A `tool_result` re-reports the newest remaining entry and sends `post-tool-use` only when the
+map is empty. A pending approval is an entry too, so it wins while its siblings finish.
 
 The **Needs input** notification is omp's own: the `ask` tool calls `TERMINAL.sendNotification`
 (gated by `ask.notify`, default `on`), and seance already surfaces it via `src/osc_parser.zig`.
@@ -154,8 +162,10 @@ yields the bare verb (`Editing`), never an error.
 
 ### Notification de-duplication
 
-At factory time, if `lookup("completion.notify")` is **not** `isConfigured`, override it to
-`"off"` for this process. `stop` then produces the only completion notification, the richer one
+In the main session's `session_start` (not at factory time, so untracked `-p` runs keep omp's
+own notification), if `lookup("completion.notify")` is **not** `isConfigured`, override it to
+`"off"`. `pi.pi` is omp's package namespace, so `pi.pi.settings` is the same singleton omp's
+event controller reads. `stop` then produces the only completion notification, the richer one
 (project name + last message). A user who has set `completion.notify` explicitly keeps their
 choice and gets both. `ask.notify` is left alone because it is the Needs-input notification
 (see above). `error.notify` defaults to `off` and is left alone.
@@ -164,8 +174,8 @@ choice and gets both. `ask.notify` is left alone because it is the Needs-input n
 
 ### 1. Extension
 
-- [ ] Write `scripts/omp-seance.js` per *Design*, with the marker comment on line 1.
-- [ ] Load check without a model call:
+- [x] Write `scripts/omp-seance.js` per *Design*, with the marker comment on line 1.
+- [x] Load check without a model call:
       `echo '{"type":"get_state"}' | omp --mode rpc --no-session -e scripts/omp-seance.js`.
       Expect no `Failed to load extension` line. RPC mode runs the factory, answers `get_state`
       and exits on EOF (verified with a probe). **Not** `omp -p ""`: an empty print-mode
@@ -173,15 +183,18 @@ choice and gets both. `ask.notify` is left alone because it is the Needs-input n
 
 ### 2. `omp-seance:install`
 
-- [ ] `mise/tasks/omp-seance/install`: bash, `#MISE description=…` header, and `#USAGE` flags
+- [x] `mise/tasks/omp-seance/install`: bash, `#MISE description=…` header, and `#USAGE` flags
       `--profile <name>` and `--remove`, following `mise/tasks/fido2/enroll-signing`
       (dev-host tooling, not image content). It must:
       - resolve the target directory as in *Files* and `mkdir -p` it;
       - refuse to overwrite an unmarked `seance.js`;
       - `install -m 0644` the file;
       - print the installed path.
-- [ ] `--remove` deletes only a marked file. It is a no-op with a message if the file is absent.
-- [ ] Re-running `install` is idempotent (compare checksums; report "up to date").
+- [x] `--remove` deletes only a marked file. It is a no-op with a message if the file is absent.
+- [x] Re-running `install` is idempotent (compare checksums; report "up to date").
+      Exercised against a temp `PI_CODING_AGENT_DIR`: fresh install, "up to date", `--profile`
+      path, refusal to overwrite or remove a foreign `seance.js` (exit 1), remove, and remove
+      when absent.
 
 ### 3. `omp-seance:test` (automated, real model calls)
 
@@ -197,53 +210,71 @@ inline `python3` JSONL driver:
 The stub environment is `SEANCE_SURFACE_ID=4242 SEANCE_WORKSPACE_ID=4242 SEANCE_SOCKET_PATH=/nonexistent`.
 The prompts use a fixture file in a temp cwd. Assertions per scenario:
 
-- [ ] **Plain turn** ("read `note.txt` with the read tool, reply with its contents"):
-      - the hook sequence is exactly `session-end, prompt-submit, pre-tool-use, post-tool-use, stop, session-end`;
-      - the `pre-tool-use` payload is `{"tool_name":"Read","tool_input":{"file_path":<…>/note.txt}}`;
-      - `stop.last_assistant_message` contains the fixture text.
-- [ ] **Subagent turn** ("use the task tool to have one subagent read `note.txt`"):
-      - exactly one `stop`;
+- [x] **Plain turn** ("read `note.txt` with the read tool, reply with its contents"):
+      - the sequence starts `session-end, prompt-submit` and ends `stop, session-end`, with
+        exactly one `stop` and one `prompt-submit`, and `post-tool-use` right before `stop`.
+        With in-flight tracking, a `tool_result` can legitimately re-send `pre-tool-use`, so
+        pre/post counts need not match;
+      - a `pre-tool-use` payload is `{"tool_name":"Read","tool_input":{"file_path":<…>note.txt}}`;
+      - `stop` carries the fixture cwd, and its `last_assistant_message` contains the fixture text.
+- [x] **Subagent turn** ("use the task tool to have one subagent read `note.txt`"):
+      - an `Agent` `pre-tool-use` was sent (the subagent really ran);
+      - exactly one `stop`, second to last;
       - the only `session-end` calls are the first and the last line;
-      - no `pre-tool-use` sits between the subagent's spawn and the parent's `stop` unless it is
-        the parent's own tool (`Agent`, `wait`). This is the regression guard for the
-        subagent-shutdown bug in #1018.
-- [ ] **Opt-out**: `SEANCE_OMP_HOOKS_DISABLED=1` gives zero stub calls. So does
-      `SEANCE_PI_HOOKS_DISABLED=1`.
-- [ ] **Outside seance**: `SEANCE_SURFACE_ID` unset gives zero stub calls.
-- [ ] **Print mode**: `omp -p` with the seance env set gives zero stub calls.
-- [ ] Exits non-zero, printing the stub log, on any failed assertion.
+      - no `yield` `pre-tool-use`. `yield` is the subagent-only return tool, so seeing it means
+        subagent events leaked. This is the regression guard for the subagent-shutdown bug in
+        #1018.
+- [x] **Opt-out**: `SEANCE_OMP_HOOKS_DISABLED=1` gives zero stub calls. So does
+      `SEANCE_PI_HOOKS_DISABLED=1`. These, **outside seance** and a positive control use a
+      model-free `get_state` RPC run.
+- [x] **Outside seance**: `SEANCE_SURFACE_ID` unset gives zero stub calls.
+- [x] **Print mode**: `omp -p` with the seance env set gives zero stub calls.
+- [x] Exits non-zero, printing the stub log, on any failed assertion.
+
+Result 2026-09-30, `--model haiku`: all 12 checks PASS (~46 s). **Mutation check:** with the
+`ctx.hasUI` guard removed, three checks FAIL (the subagent `session-end` / `stop` ordering, the
+subagent `yield` leak, and print mode). So the harness does catch the bug it exists for.
 
 The task header states that it spends model tokens. The model is overridable with `--model`.
 
 ### 4. Live check in a seance pane (manual)
 
-- [ ] `mise run omp-seance:install`, then open a **new** seance pane and run `omp`.
-- [ ] One prompt that reads and edits a file: the sidebar shows Running → `Reading x` /
-      `Editing x` → Idle, labelled **Pi**.
-- [ ] Exactly one completion notification for that turn:
-      `seance ctl --json list-notifications` gains one entry, titled "Completed in \<project\>".
-- [ ] A prompt that makes the agent use `ask`: **Needs input** in the sidebar plus omp's
-      "Waiting for input" notification. Answering it returns the status to Running.
-- [ ] A turn with a subagent: the status never drops to cleared or Idle before the parent turn
-      ends.
-- [ ] `/exit` clears the status. So does exiting with Ctrl+C.
-- [ ] `kill -9` of omp leaves the status stuck (expected). Starting `omp` again in the same
-      pane clears it (the `session_start` → `session-end`).
-- [ ] `SEANCE_OMP_HOOKS_DISABLED=1 omp` is untracked. So is `omp` in a non-seance terminal.
+Run 2026-09-30 in a scratch seance workspace, driven with `seance ctl send` / `read-screen` and
+`niri msg action screenshot-window`. **Notifications for a visible pane are dropped by seance
+by design** (`NotificationCenter.emit` returns early when the pane is visible), so the pane was
+moved off-screen (`select-workspace`) before counting.
+
+- [x] `mise run omp-seance:install`, then open a **new** seance pane and run `omp`.
+- [x] Read + `bash sleep` in one response: after `read` finished, the sidebar read
+      **Pi: Running sleep 25** until the sleep ended, then **Pi: Idle**. Before in-flight
+      tracking it read **Pi: Running** here. `Editing x` was not exercised live; the
+      translation is shared with `Read` and covered by the stub trace.
+- [x] Exactly one completion notification per turn: `list-notifications` showed
+      `Completed in omp-live | live-check-alpha`, with no omp-native "Complete" beside it.
+- [x] `ask`: **Pi: Needs input** in the sidebar plus omp's `omp: Waiting for input`
+      notification. After answering: **Pi: Idle**.
+- [ ] A turn with a subagent, live. Not run; covered by the `omp-seance:test` subagent
+      scenario and its mutation check.
+- [x] `/exit` clears the status. Exiting with Ctrl+C was not exercised.
+- [x] `kill -9` of omp leaves the status stuck (**Pi: Idle** remained). Starting `omp` again in
+      the same pane cleared it.
+- [ ] `SEANCE_OMP_HOOKS_DISABLED=1 omp` / a non-seance terminal, live. Not run; both are
+      covered by the model-free gating checks in `omp-seance:test`.
 
 ### 5. Docs and PR
 
-- [ ] New section in `docs/skills/desktop.md` covering:
+- [x] New section in `docs/skills/desktop.md` covering:
       - the ESM-only loading;
       - the `ctx.hasUI` subagent gate, and why `session_stop` beats `agent_end`;
       - the fail-closed `tool_call` handlers;
       - the settings-override de-dup;
-      - the `pi-hook` + verbatim-status trick for Needs input.
-- [ ] Add a `docs/SKILL.md` routing row if the section does not fit an existing row.
-- [ ] Update #1018's stage-1 section: Needs input *is* available (via omp's own `ask`
+      - the `pi-hook` + verbatim-status trick for Needs input;
+      - in-flight tracking and the model-free RPC load check.
+- [x] Add a `docs/SKILL.md` routing row if the section does not fit an existing row.
+- [x] Update #1018's stage-1 section: Needs input *is* available (via omp's own `ask`
       notification plus the status trick).
-- [ ] `mise run docs-links`.
-- [ ] Commit (`feat(omp): track omp sessions in seance via user extension`, `Refs #1018`) and
+- [x] `mise run docs-links`.
+- [x] Commit (`feat(omp): track omp sessions in seance via user extension`, `Refs #1018`) and
       open the PR. This PR changes no image input. Whether AGENTS.md's build/boot-test gate
       applies to dev-host tooling is a Merge Gate question for the human. The PR body carries
       the `omp-seance:test` output and the step-4 results instead.
@@ -252,8 +283,8 @@ The task header states that it spends model tokens. The model is overridable wit
 
 Use it for day-to-day work and log observations as comments on #1018. Watch for:
 
-- status flicker or a stale label during parallel tool calls (`post-tool-use` from the first
-  call sets Running while the second still runs);
+- a stale or wrong label with concurrent tools that in-flight tracking does not cover (e.g. a
+  tool whose `tool_result` never fires);
 - missing or duplicated notifications;
 - sessions resumed with `/resume` or switched with `/new`;
 - `--profile` sessions (need their own `install --profile`);

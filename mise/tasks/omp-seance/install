@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#MISE description="Install (or --remove) the omp extension that reports omp sessions to seance's sidebar (#1018)"
+#USAGE flag "--profile <name>" help="Install into an omp --profile's agent dir instead of the default one"
+#USAGE flag "--remove" help="Delete the installed extension (only if it carries the krytis marker)"
+
+# Dev-host tooling, not image content: omp is installed per user through mise,
+# so its extensions live in the user's omp agent dir. Stage 1 of #1018; see
+# docs/plans/2026-09-30-omp-seance-user-extension.md.
+#
+# Copies rather than symlinks: a symlink into a worktree dies when the worktree
+# is pruned and omp would then log a load error on every start.
+set -euo pipefail
+
+SRC="${MISE_PROJECT_ROOT}/scripts/omp-seance.js"
+MARKER="// krytis omp-seance — installed by mise run omp-seance:install"
+
+# Same resolution as omp's getAgentDir(): --profile wins, then PI_CODING_AGENT_DIR.
+if [[ -n "${usage_profile:-}" ]]; then
+  AGENT_DIR="${HOME}/.omp/profiles/${usage_profile}/agent"
+else
+  AGENT_DIR="${PI_CODING_AGENT_DIR:-${HOME}/.omp/agent}"
+fi
+# .js, not .mjs: omp auto-scans only .ts/.js in extension directories.
+DEST="${AGENT_DIR}/extensions/seance.js"
+
+is_ours() { [[ "$(head -n1 "$1")" == "$MARKER" ]]; }
+
+if [[ "${usage_remove:-false}" == "true" ]]; then
+  if [[ ! -e "$DEST" ]]; then
+    echo "==> ${DEST} not present — nothing to remove."
+  elif is_ours "$DEST"; then
+    rm -- "$DEST"
+    echo "==> Removed ${DEST}"
+  else
+    echo "ERROR: ${DEST} is not the krytis omp-seance extension (marker missing) — leaving it alone." >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+[[ "$(head -n1 "$SRC")" == "$MARKER" ]] || { echo "ERROR: ${SRC} lost its marker line." >&2; exit 1; }
+
+if [[ -e "$DEST" ]]; then
+  if ! is_ours "$DEST"; then
+    echo "ERROR: ${DEST} exists and is not the krytis omp-seance extension — refusing to overwrite." >&2
+    exit 1
+  fi
+  if cmp -s "$SRC" "$DEST"; then
+    echo "==> ${DEST} is up to date."
+    exit 0
+  fi
+fi
+
+install -D -m 0644 "$SRC" "$DEST"
+echo "==> Installed ${DEST}"
+echo "    Takes effect for omp sessions started from now on, in seance panes only."
