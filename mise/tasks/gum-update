@@ -29,12 +29,12 @@ ARM64_FILE="gum_${LATEST_VER}_Linux_arm64.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}"
 
 echo "==> Downloading ${X64_FILE}..."
-curl -sSL "${BASE_URL}/${X64_FILE}" -o "${TMPDIR}/${X64_FILE}"
+curl -fsSL --retry 3 --retry-delay 10 "${BASE_URL}/${X64_FILE}" -o "${TMPDIR}/${X64_FILE}"
 X64_SHA=$(sha256sum "${TMPDIR}/${X64_FILE}" | awk '{print $1}')
 echo "    sha256=${X64_SHA}"
 
 echo "==> Downloading ${ARM64_FILE}..."
-curl -sSL "${BASE_URL}/${ARM64_FILE}" -o "${TMPDIR}/${ARM64_FILE}"
+curl -fsSL --retry 3 --retry-delay 10 "${BASE_URL}/${ARM64_FILE}" -o "${TMPDIR}/${ARM64_FILE}"
 ARM64_SHA=$(sha256sum "${TMPDIR}/${ARM64_FILE}" | awk '{print $1}')
 echo "    sha256=${ARM64_SHA}"
 

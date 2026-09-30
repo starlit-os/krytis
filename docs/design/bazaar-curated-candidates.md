@@ -39,7 +39,7 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   need as `com.discordapp.Discord`. The #245 wiring plan blocklists both IDs, so they
   can't go on krytis's page (see *Contract with the wiring* below). Zen (`elements/desktop/zen-browser.bst`) sits
   beside the Browsers row. And Bluefin's `app.drey.Warp` is a file-transfer app,
-  **not** the Warp terminal in `elements/desktop/warp.bst`.
+  **not** the Warp terminal krytis shipped until #1005 dropped it.
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
   (a plain GTK app is fine; a shell-extension manager wouldn't be) needs a check
   under niri.

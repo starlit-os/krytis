@@ -28,7 +28,7 @@ TARBALL="NerdFontsSymbolsOnly.tar.xz"
 URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${TARBALL}"
 
 echo "==> Downloading ${TARBALL}..."
-curl -sSfL "${URL}" -o "${TMPDIR}/${TARBALL}"
+curl -sSfL --retry 3 --retry-delay 10 "${URL}" -o "${TMPDIR}/${TARBALL}"
 NEW_SHA=$(sha256sum "${TMPDIR}/${TARBALL}" | awk '{print $1}')
 echo "    sha256=${NEW_SHA}"
 

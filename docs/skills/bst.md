@@ -892,7 +892,7 @@ overrides/systemd-base.bst [line 15 column 0]: Dictionary did not contain expect
 
 pointing at the `(@)` line itself. Copy the body.
 
-**Override at the freedesktop-sdk junction even when the element lives in gnome-build-meta.** The entry goes in `elements/freedesktop-sdk.bst`, never in `elements/gnome-build-meta.bst`. The live line is `components/_private/systemd-base.bst: overrides/systemd-base.bst` — fdsdk 26.08 privatised the path, so an override written against the pre-bump `components/systemd-base.bst` spelling matches nothing and is silently ignored (re-check it on every junction bump, per § Auditing a fdsdk major-version bump). gnome-build-meta's own `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` are `kind: filter` elements over freedesktop-sdk's systemd-base, and gnome-build-meta resolves that through *krytis's* fdsdk junction (`overrides: freedesktop-sdk.bst: freedesktop-sdk.bst`), so a single entry redirects the whole graph. Verify:
+**Override at the freedesktop-sdk junction when the element lives in the fdsdk namespace, even if gnome-build-meta supplies it.** For systemd-base, the entry goes in `elements/freedesktop-sdk.bst`, not `elements/gnome-build-meta.bst`. (An element in gnome-build-meta's *own* namespace is the opposite case; see § Overriding a gnome-build-meta-namespace element below.) The live line is `components/_private/systemd-base.bst: overrides/systemd-base.bst` — fdsdk 26.08 privatised the path, so an override written against the pre-bump `components/systemd-base.bst` spelling matches nothing and is silently ignored (re-check it on every junction bump, per § Auditing a fdsdk major-version bump). gnome-build-meta's own `core-deps/systemd.bst` and `core-deps/systemd-libs.bst` are `kind: filter` elements over freedesktop-sdk's systemd-base, and gnome-build-meta resolves that through *krytis's* fdsdk junction (`overrides: freedesktop-sdk.bst: freedesktop-sdk.bst`), so a single entry redirects the whole graph. Verify:
 
 ```shell
 mise bst show --deps all --format '%{name}' stacks/base-system.bst | grep systemd
@@ -926,6 +926,54 @@ patch -p1 --dry-run -d /tmp/chk < patches/systemd/update-utmp-shorten-comm.patch
 Delete the mirror, its patch, the check task and the overrides entry as soon as the junction ships a release containing the fix — every one of these is a temporary hold on an upstream bug, not a permanent fork.
 
 **Second worked example, mirroring the junction's *own* namespace instead of a cross-project one:** `elements/overrides/rust-bindgen.bst` + `patches/rust-bindgen/` (#498) mirrors freedesktop-sdk's own `components/rust-bindgen.bst` (not a gnome-build-meta redirect) to drop bindgen's unused `bindgen-tests/tests/quickchecking` workspace member and regenerate its `cargo2` vendoring, eliminating a `rand` 0.8.5 CVE the same way greetd dropped `agreety` (see "Dropping an unused workspace member" below) — except the vulnerable crate lives in an upstream-owned build tool, not a krytis-owned element, so the fix has to go through the mirror-and-override mechanism instead of a direct patch. **Gotcha specific to same-namespace mirrors:** step 2 of the duplicate-with-one-change recipe (prefixing sibling `components/*.bst` refs with `freedesktop-sdk.bst:`) means a naive drift check diffs every `depends:`/`build-depends:` line as "changed" even when nothing actually drifted — gnome-build-meta-sourced mirrors like `systemd-base.bst` don't hit this because gnome-build-meta's own elements already reference freedesktop-sdk components with the full `freedesktop-sdk.bst:` prefix (cross-project from the start). `mise run rust-bindgen-check` strips the prefix back off (`sed 's/freedesktop-sdk\.bst:components\//components\//'`) before diffing against the raw upstream file — copy that normalization step for any future same-namespace mirror.
+
+### Overriding a gnome-build-meta-namespace element
+
+*Source: #641, verified 2026-09-30 while planning `docs/plans/2026-09-30-gtk3-realistic-floor.md`.*
+
+`elements/gnome-build-meta.bst` accepts element entries under `config.overrides:` exactly
+like `elements/freedesktop-sdk.bst` does. Paths in gnome-build-meta's own namespace
+(`core/`, `core-deps/`, `sdk/`) are overridden there. Test entry:
+
+```yaml
+# elements/gnome-build-meta.bst
+  overrides:
+    freedesktop-sdk.bst: freedesktop-sdk.bst
+    core-deps/xdg-user-dirs-gtk.bst: freedesktop-sdk.bst:components/xdg-user-dirs.bst
+```
+
+What it showed, measured with `mise run bst -- show --format '%{name} %{full-key}'`:
+
+- `--deps run gnome-build-meta.bst:core/nautilus.bst` lists
+  `freedesktop-sdk.bst:components/xdg-user-dirs.bst` in place of the overridden element.
+- **Redirecting a `runtime-depends:` edge costs no rebuild.** `core/nautilus.bst`'s key did
+  not change (`b9f00495…` before and after), because an element's key covers its build
+  scope, not its runtime-only deps.
+- Adding the entry does not perturb keys elsewhere: `sdk/gtk.bst` stayed `30eb86e1…`.
+
+Replacing a `depends:`/`build-depends:` target is different: every element whose build
+scope contains it rebuilds. Before choosing a target, estimate the cascade as the fixpoint
+of "any element with a changed element in its build-deps' runtime closure". Overriding
+`sdk/gtk+-3.bst` rebuilds 61 image elements. Overriding fdsdk's
+`components/gstreamer-plugins-base.bst` rebuilds 53, including `sdk/gtk.bst`.
+
+### Default-`auto` meson features are *on* in both junctions
+
+fdsdk's `meson-global` carries `-Dauto_features=enabled` and gnome-build-meta's carries
+`--auto-features=enabled`. Every `feature` option left at `auto` is therefore **enabled**
+whenever its dependency is present in the sandbox. That is how an element picks up a GTK3
+backend nobody asked for:
+
+- libportal's `backend-gtk3` (gnome-build-meta disables only the Qt backends);
+- gstreamer's `gtk3` sinks in plugins-good and plugins-bad;
+- libdecor's and plymouth's `gtk`.
+
+plugins-bad declares no GTK3 dependency at all and still builds `gtkwaylandsink`, because
+plugins-base's runtime edge stages GTK3 into its sandbox. So "which optional backends did
+this element build?" has to be answered from the artifact (`readelf -d` / file list), not
+from the element's `meson-local`. The same applies to a mirror: it resolves `meson-global`
+in *krytis's* project scope. Compare `%{vars}` of the upstream element and the mirror
+before trusting that only your flag differs.
 
 ## Adding a Package
 

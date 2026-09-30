@@ -45,7 +45,7 @@ echo "==> Comparing $OVERRIDE against freedesktop-sdk ${SHA:0:12}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-if ! curl -fsSL "$URL" -o "$TMP/upstream.bst"; then
+if ! curl -fsSL --retry 3 --retry-delay 10 "$URL" -o "$TMP/upstream.bst"; then
     echo "==> Could not fetch $URL" >&2
     exit 1
 fi

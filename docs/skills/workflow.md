@@ -334,16 +334,44 @@ Confirmed 2026-09-10 on #793 (issue #656, a `track-bst-sources.yml` GitHub-App-t
 
 ## Stacked PRs
 
-Stack when the next piece of work needs a file state that only exists in an open PR — a prerequisite (#24 → #25) or the same lines of one config (#26 → #27). Base the child on the parent branch and say so in the body, so the reviewer knows the order:
+Stack when the next piece of work needs a file state that only exists in an open PR — a prerequisite (#24 → #25) or the same lines of one config (#26 → #27). **Link every stack as a native GitHub stack** (`gh stack`, public preview; first used for #1022 → #1024 as stack #1026). Once linked, each PR's merge box shows the stack map, and every layer is checked against `main`'s rules even when its base branch is another PR's branch.
+
+One-time setup per dev machine: `gh extension install github/gh-stack`.
+
+### Creating a stack
+
+krytis keeps one worktree per branch, so create the branches and PRs as usual, then link the PRs. `gh stack link` works from PR numbers alone and needs no local stack tracking:
 
 ```shell
 git worktree add -b <child-branch> <base>/<path> <parent-branch>
 cd <worktree-path> && gh pr create --base <parent-branch> --title "..."
+gh stack link <parent-pr> <child-pr>      # bottom → top; prints "Created stack … (stack #N)"
+gh stack link <N> <next-pr>               # append a later layer to stack #N
 ```
+
+Also put `Stacked on #<parent>` in the child's body, so the order is readable without the stack map.
+
+### Merging a stack
+
+- **Merging a PR also merges every unmerged PR below it**, in one operation. Merging the top PR lands the whole stack, so approving the top PR approves every layer under it.
+- **`main` moving ahead of the bottom branch does not block the merge.** Stack #1026 (#1022 → #1024) merged on 2026-09-30, after `main` had moved from `17e06b0`, the bottom branch's fork point, to `7296d87`. There was no rebase, and nothing was rewritten. Merging the top PR produced a single merge commit, `436a89b`, with parents `7296d87` (`main`) and `ce5e735` (the top layer's head). Both PRs show that as their merge commit, and `ce5e735` kept its SHA and its *Verified* signature. GitHub's docs describe this situation as non-linear, but under merge-commit-only it merges as-is.
+- **A rebase is only needed when GitHub actually shows "Rebase stack".** Its docs name the other trigger: new commits pushed to a lower layer that the upper layers lack. **Never click that button.** GitHub's [Managing stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/managing-stacked-pull-requests#rebasing-your-stack) states that its server-side cascading rebase creates *unsigned* commits. Ruleset "Main" requires signatures with no bypass, so the stack could not merge afterwards. Rebase locally instead, so your own key signs each rewritten commit (one FIDO2 touch per commit):
+
+  ```shell
+  # from the top layer's worktree
+  gh stack checkout <N>                       # imports stack #N for local tracking
+  git -C <other-layer-worktree> switch --detach   # once for each other layer's worktree
+  gh stack rebase
+  gh stack push                               # --force-with-lease per branch
+  ```
+
+  Detach the other worktrees first. `gh stack rebase` runs `git rebase --onto <new> <old> <branch>` for each layer, and that checks the branch out. Git refuses to check out a branch that another worktree holds: `fatal: '<branch>' is already used by worktree at …` (reproduced in a scratch repo).
+- **Merging only the bottom PR is still unobserved.** #1026 merged all at once from the top, so GitHub's "automatically rebased" retarget of the next PR never ran. The first time a stack merges bottom-first, check that the retargeted PR's commits still show *Verified*, then replace this bullet with what happened. If GitHub rewrote them, they are unsigned, so run the local rebase above.
+- Merges through the API must use the asynchronous merge endpoint, because the legacy merge endpoints can't merge a stacked PR. Auto-merge is not supported for stacks.
 
 ### The parent's merge no longer breaks the child
 
-Since #697 switched `main` to merge-commit-only, merging the parent does not rewrite its commits — their SHAs land on `main` untouched, as the second parent of the merge commit. GitHub retargets the child PR to `main` and it stays `MERGEABLE`. Nothing to do: no rebase, no force-push.
+Since #697 switched `main` to merge-commit-only, merging the parent does not rewrite its commits — their SHAs land on `main` untouched, as the second parent of the merge commit. GitHub retargets the child PR to `main` and git sees it as `MERGEABLE`, with no rebase or force-push needed. Native stacks keep this property (see § Merging a stack above).
 
 Verified in a scratch repo (`git merge --no-ff parent` on `main`, then merging the child):
 

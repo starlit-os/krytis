@@ -13,7 +13,7 @@ ELEMENT="elements/dev/qemu.bst"
 # it offline. Widen this glob to `[0-9]+\.[0-9]+\.[0-9]+` once one does
 # (and add it to depends: in elements/dev/qemu.bst).
 echo "==> Fetching latest QEMU 10.x release listing..."
-LATEST_VER=$(curl -sSL https://download.qemu.org/ \
+LATEST_VER=$(curl -fsSL --retry 3 --retry-delay 10 https://download.qemu.org/ \
   | grep -oE 'qemu-10\.[0-9]+\.[0-9]+\.tar\.xz"' \
   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
   | sort -V | tail -1)
@@ -33,7 +33,7 @@ TMPFILE=$(mktemp)
 trap 'rm -f "${TMPFILE}"' EXIT
 
 echo "==> Downloading ${TARBALL} to compute checksum..."
-curl -sSL "https://download.qemu.org/${TARBALL}" -o "${TMPFILE}"
+curl -fsSL --retry 3 --retry-delay 10 "https://download.qemu.org/${TARBALL}" -o "${TMPFILE}"
 SHA256=$(sha256sum "${TMPFILE}" | cut -d' ' -f1)
 
 echo "==> Updating ${ELEMENT}: ${CURRENT_VER} -> ${LATEST_VER}"

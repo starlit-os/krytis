@@ -40,7 +40,7 @@ for entry in "${CERTS[@]}"; do
     upstream_name="${rest%%:*}"
     want_cn="${rest#*:}"
 
-    curl -sSfL --max-time 120 "${BASE}/$(urlencode "${upstream_name}")" \
+    curl -sSfL --max-time 120 --retry 3 --retry-delay 10 "${BASE}/$(urlencode "${upstream_name}")" \
         -o "${CERTS_DIR}/${local_name}"
 
     openssl x509 -inform DER -in "${CERTS_DIR}/${local_name}" -noout 2>/dev/null || {

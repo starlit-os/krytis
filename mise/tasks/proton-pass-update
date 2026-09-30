@@ -8,7 +8,7 @@ ELEMENT="elements/desktop/proton-pass.bst"
 API_URL="https://proton.me/download/PassDesktop/linux/x64/version.json"
 
 echo "==> Fetching latest Proton Pass release..."
-LATEST_VER=$(curl -s "$API_URL" | python3 -c "
+LATEST_VER=$(curl -sf --retry 3 --retry-delay 10 "$API_URL" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 releases = [r for r in data['Releases'] if r['CategoryName'] == 'Stable']
@@ -32,7 +32,7 @@ DEB_URL="https://proton.me/download/pass/linux/proton-pass_${LATEST_VER}_amd64.d
 DEB_FILE="${TMPDIR}/proton-pass_${LATEST_VER}_amd64.deb"
 
 echo "==> Downloading ${DEB_URL}..."
-curl -sSL "$DEB_URL" -o "$DEB_FILE"
+curl -fsSL --retry 3 --retry-delay 10 "$DEB_URL" -o "$DEB_FILE"
 SHA256=$(sha256sum "$DEB_FILE" | awk '{print $1}')
 echo "    sha256=${SHA256}"
 
