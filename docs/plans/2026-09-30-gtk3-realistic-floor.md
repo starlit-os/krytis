@@ -3,16 +3,19 @@
 **Issue:** #641 · **Branch:** `641-investigate-dropping-gtk3` (this plan) · **Status: ready, not started.**
 
 GTK3 ships in the image for 15 different reasons (#641 has the full map). Four of them krytis
-cannot change: zen-browser, Equibop, Proton Pass and `xdg-desktop-portal-gtk` (#181, blocked).
-This plan removes every other one. Afterwards GTK3 ships *only* because of those four, and
-the eventual removal is theirs to unlock rather than an archaeology project.
+cannot change today: zen-browser, Equibop, Proton Pass and `xdg-desktop-portal-gtk`.
+Steps 0–5 remove every other one, after which GTK3 ships *only* because of those four.
+Step 6 investigates replacing xdg-desktop-portal-gtk, the only one of the four that krytis
+controls.
 
-Each step is independently landable as its own PR, in the order given. Steps 1–4 are cheap
-and self-contained. Step 5 is the expensive one.
+Each step is independently landable as its own PR, in the order given, and each has a
+sub-issue under #641. Steps 1–4 are cheap and self-contained. Step 5 is the expensive one.
+Step 6 is research that ends in a Design Gate decision.
 
 ## Non-goals
 
-- **#181 / `xdg-desktop-portal-gtk`.** Blocked, see [Why xdg-desktop-portal-gtk stays](#why-xdg-desktop-portal-gtk-stays).
+- **Removing `xdg-desktop-portal-gtk` in this plan.** Step 6 (#181) finds and evaluates a
+  replacement. Removal waits for the human's pick of backend (see [Why xdg-desktop-portal-gtk stays](#why-xdg-desktop-portal-gtk-stays)).
 - **`gtk+-3` itself.** Leave gnome-build-meta's element alone. `-Dbroadway_backend=false` would
   drop `broadwayd` and `im-broadway.so`, but overriding `sdk/gtk+-3.bst` rebuilds 61 elements
   (measured below) for two files.
@@ -20,8 +23,11 @@ and self-contained. Step 5 is the expensive one.
   stay as long as those do.
 - **Anything against gnome-build-meta or freedesktop-sdk.** The upstream candidates at the end
   are proposals only (AGENTS.md § Third-party repositories).
-- **Portal routing.** The dead `portals/niri.portal` written by `config/xdg-portals.bst`, and
-  Umbriel's missing Settings/Wallpaper backends, are real but not GTK3. File them separately.
+- **Portal routing and the Secret portal.** These are real but not GTK3, and are filed
+  separately: #1027 (dead `portals/niri.portal`), #1028 (no `impl.portal.Secret` backend;
+  niri routes it to the absent gnome-keyring), #1029 (Umbriel routes almost everything to
+  gtk or nothing). #1029 decides how much of xdp-gtk the Umbriel session depends on, so step 6
+  reads it first.
 
 ## Baseline (measured 2026-09-30, `main` @ `88fba34`)
 
@@ -127,7 +133,7 @@ runtime closures, excluding stacks/oci/config; from the same graph dump):
 No upstream artifact cache can serve krytis keys anyway (`project.conf`, x86_64_v3), so this
 is a one-time rebuild into the bow cache, not a permanent cost.
 
-## Step 0 — `mise run gtk3-audit` (measurement and ratchet)
+## Step 0 — `mise run gtk3-audit` (measurement and ratchet) · #1030
 
 Lands first, so every later step has a before/after and a regression guard.
 
@@ -158,7 +164,7 @@ file. Add a bogus row and it fails as stale.
 explaining that a graph query misses undeclared DT_NEEDED consumers (Proton Pass,
 plugins-bad) and that an ELF scan does not.
 
-## Step 1 — Proton Pass declares its runtime deps
+## Step 1 — Proton Pass declares its runtime deps · #1031
 
 `elements/desktop/proton-pass.bst` `depends:` is only `runtime-gnu.bst`, yet `Proton Pass`
 links:
@@ -185,7 +191,7 @@ day zen-browser and Equibop stop pulling in GTK3.
 
 **Cost:** rebuilds `desktop/proton-pass.bst` only (`kind: manual`).
 
-## Step 2 — Drop `xdg-user-dirs-gtk`
+## Step 2 — Drop `xdg-user-dirs-gtk` · #1032
 
 It ships, but nothing ever runs it:
 
@@ -224,7 +230,7 @@ graph half.
 - `docs/skills/desktop.md`: the autostart § (~line 1060) lists
   `core-deps/xdg-user-dirs-gtk.bst` as shipping an autostart entry. Remove it.
 
-## Step 3 — gnome-disk-utility 51.beta
+## Step 3 — gnome-disk-utility 51.beta · #1033
 
 No stable 51 exists: `download.gnome.org/sources/gnome-disk-utility/` has `46/` then `51/`,
 and `51/` has only `51.beta` (2026-07-30). gnome-build-meta's `gnome-51` stable arm keeps
@@ -308,7 +314,7 @@ mirror.
   notes change from "stable arm" to "nightly arm".
 - `docs/skills/mise.md`: `gnome-disk-utility-check` row.
 
-## Step 4 — gnome-build-meta mirrors: libportal, gnome-desktop, libcanberra
+## Step 4 — gnome-build-meta mirrors: libportal, gnome-desktop, libcanberra · #1034
 
 Depends on step 3: 46.1 needs `libcanberra-gtk3` at `meson setup`.
 
@@ -350,7 +356,7 @@ mirrors in steps 4–5, not eight near-identical `*-check` tasks.
 - The image contains no `libportal-gtk3`, `libgnome-desktop-3` or `libcanberra-gtk3`.
 - `mise run gtk3-mirror-check` passes. Delete the allowlist rows.
 
-## Step 5a — freedesktop-sdk mirrors: libdecor, plymouth
+## Step 5a — freedesktop-sdk mirrors: libdecor, plymouth · #1035
 
 **Breakage Gate (AGENTS.md):** plymouth is a build-dep of `core/initramfs.bst` and draws the
 boot splash. Stop for human sign-off before merging.
@@ -384,7 +390,7 @@ Add both rows to `gtk3-mirror-check`.
 The image has no SDL3 client to smoke-test client-side decorations with, so say so in the PR
 rather than claiming it.
 
-## Step 5b — freedesktop-sdk mirrors: gstreamer-plugins-{base,good,bad}
+## Step 5b — freedesktop-sdk mirrors: gstreamer-plugins-{base,good,bad} · #1036
 
 The expensive step: a one-time rebuild of about 50 elements, including GTK4, libadwaita,
 gstreamer-plugins-rs, pipewire, niri and noctalia. It also carries a recurring resync cost,
@@ -409,7 +415,54 @@ accepts the change, skip this step.
 - screencast through the portal still works (pipewire and xdp rebuilt);
 - delete the allowlist rows.
 
-## Step 6 — Floor reached
+## Step 6 — Evaluate xdg-desktop-portal-gtk alternatives · #181
+
+Research, then a decision. Find a non-GTK3 backend for every interface xdp-gtk serves on
+krytis (see [Why xdg-desktop-portal-gtk stays](#why-xdg-desktop-portal-gtk-stays)).
+
+**What must be replaced.** xdp-gnome already covers FileChooser, Print, Access, Account,
+AppChooser and DynamicLauncher; Umbriel only needs rerouting to it (#1029). Three interfaces
+are left:
+
+- **Inhibit.** xdp-gnome's `gnome.portal` doesn't list it. xdp-gtk's `src/inhibit.c` tries
+  `org.gnome.SessionManager` and falls back to `org.freedesktop.ScreenSaver`, which niri owns.
+- **Notification.** xdp-gnome's `src/notification.c:158` talks only to `org.gtk.Notifications`
+  (gnome-shell); nothing on the krytis bus owns that name. xdp-gtk uses
+  `org.freedesktop.Notifications`, which noctalia owns. That is why niri pins
+  `Notification=gtk`.
+- **Email.** Only gtk and kde implement it. Losing it may be acceptable.
+
+**Candidates.** Starting point: the Arch Wiki [XDG Desktop Portal § List of backends and
+interfaces](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
+table (revision 884317), narrowed to the three interfaces above:
+
+| Backend | Inhibit | Notification | Email | Notes |
+|---|---|---|---|---|
+| xdg-desktop-portal-xapp | yes | – | – | **links `gtk+-3.0`** (`src/meson.build`), so it is ruled out |
+| xdg-desktop-portal-kde | yes | yes | yes | Qt6 + KF6 closure and Qt-styled dialogs; measure the closure with `docs/skills/bst.md` § Survey the reverse-dep set before assuming a junction library is "already there" |
+| xdg-desktop-portal-dde | yes | yes | – | Qt6 + Deepin libraries; likely the same objection as KDE |
+| luminous, cosmic, wlr, hyprland, gtk4 (AUR git) | – | – | – | none of the three |
+| xdg-desktop-portal-umbriel (noctalia-dev, already shipped) | not yet | not yet | – | these two would sit naturally next to its ScreenCast/Screenshot; proposing that upstream needs a go-ahead (Upstream Gate) |
+| a small krytis-owned backend | bridge to `org.freedesktop.ScreenSaver` | bridge to `org.freedesktop.Notifications` | optional | new code, e.g. Rust with ashpd's backend API. This is exactly what xdp-gtk does for the two, minus GTK. |
+
+**Work:**
+
+1. On a booted image, run `/usr/libexec/xdg-desktop-portal --replace --verbose` under each
+   session and record which backend serves each interface. That confirms or corrects the
+   routing tables above.
+2. Measure the KDE closure (set-difference recipe) before ruling it in or out.
+3. Ask what noctalia-dev plans for xdg-desktop-portal-umbriel. Report back; open nothing
+   upstream unasked.
+4. If nothing fits, write a spec for a minimal krytis-owned backend: interfaces, D-Bus name,
+   `.portal` file, routing for both sessions, and update path. Put it in `docs/design/`.
+5. **Design Gate:** the human picks the backend. The removal itself is a follow-up PR:
+   - drop `gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst` from
+     `stacks/desktop.bst`;
+   - under **both** sessions, smoke-test Inhibit (a video player keeps the screen awake),
+     Flatpak notifications, the file chooser and Print;
+   - delete xdp-gtk's `gtk3-audit` rows.
+
+## Step 7 — Floor reached
 
 - Step 0's allowlist equals the floor:
   - **elements:** `desktop/zen-browser.bst`, `desktop/equibop.bst`, `desktop/proton-pass.bst`,
@@ -430,14 +483,14 @@ Routing in the built image, and live on a krytis host:
   so those land on gtk too.
 - **umbriel session:** `umbriel-portals.conf` is `default=umbriel;gtk`, and `umbriel.portal`
   only implements ScreenCast and Screenshot. Under Umbriel, xdp-gtk **is** the FileChooser,
-  and also Print, Notification, Inhibit, Access, Account, Email and DynamicLauncher.
+  and also Print, Notification, Inhibit, Access, Account, Email and DynamicLauncher (#1029).
 - **Live bus:** xdp-gtk bridges `Notification` to `org.freedesktop.Notifications` (owned by
   noctalia) and `Inhibit` to `org.freedesktop.ScreenSaver` (owned by niri). Nothing else in the
   image implements `org.freedesktop.impl.portal.Inhibit`.
 
-Unblocking #181 needs a non-GTK3 backend for Inhibit and Notification that works under both
-sessions, plus Umbriel routing that sends FileChooser, Print and Access to xdp-gnome. That is
-a Design Gate decision, not part of this plan.
+Removing it needs a non-GTK3 backend for Inhibit and Notification that works under both
+sessions, plus Umbriel routing that sends FileChooser, Print and Access to xdp-gnome. Step 6
+evaluates the options. Picking one is a Design Gate decision.
 
 ## Upstream candidates (propose only — Upstream Gate)
 
@@ -451,9 +504,17 @@ Each one accepted upstream deletes a krytis mirror and its `gtk3-mirror-check` r
   `components/gtk3.bst` edge (examples are disabled, nothing links it). The `gtk3` sinks in
   good and bad are a harder sell, since Flatpak runtime users may want them.
 
-## Proposed sub-issues
+## Sub-issues
 
-Each ≤ 5 words, parented to #641, so every step gets a `gh641/<n>-<slug>` worktree:
-*Add GTK3 audit task* · *Declare Proton Pass dependencies* · *Drop xdg-user-dirs-gtk* ·
-*Bump Disks to 51 beta* · *Strip GTK3 from GNOME mirrors* · *Strip GTK3 from fdsdk mirrors*
-(5a and 5b as two PRs).
+All are parented to #641; nested worktrees go under `gh641/<n>-<slug>`.
+
+| Step | Issue |
+|---|---|
+| 0 | #1030 Add GTK3 audit task |
+| 1 | #1031 Declare Proton Pass dependencies |
+| 2 | #1032 Drop xdg-user-dirs-gtk |
+| 3 | #1033 Bump Disks to 51 beta |
+| 4 | #1034 Strip GTK3 from GNOME mirrors (needs #1033) |
+| 5a | #1035 Strip GTK3 from libdecor, plymouth |
+| 5b | #1036 Strip GTK3 from GStreamer plugins |
+| 6 | #181 Investigate dropping xdg-desktop-portal-gtk (body rewritten as the alternatives evaluation) |
