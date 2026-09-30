@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#MISE description="Assert the built image's cracklib dictionary rejects a dictionary word through pam_pwquality's library (krytis#1001)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to check"
+
+# Why this exists: krytis#1001. freedesktop-sdk's components/cracklib.bst
+# generates /usr/share/cracklib/pw_dict in an integration command
+# (create-cracklib-dict -> cracklib-format | cracklib-packer), and
+# cracklib-format's first pipeline stage is `gzip -cdf`. cracklib.bst's own
+# runtime closure carries grep but not gzip (nor sh or coreutils), so the
+# command only works when something else in the staged closure happens to
+# supply them. When gzip is absent the pipeline is fed nothing, cracklib-packer
+# writes no files, and the integration command still exits 0 — BuildStream
+# reports SUCCESS. `bst artifact checkout desktop/oo7.bst` does exactly this.
+#
+# The image is correct today only because its full closure contains gzip.
+# Without a dictionary, libpwquality answers every password with "error
+# loading dictionary" — pam_pwquality is `requisite` in system-auth and
+# password-auth (config/u2f-config.bst), so every password change fails.
+#
+# The assertion is behaviour, not file presence or size: a known dictionary
+# word must be rejected *as a dictionary word*. pwscore rather than
+# cracklib-check because pwscore goes through libpwquality with
+# /etc/security/pwquality.conf's dictpath — the path pam_pwquality takes — and
+# because cracklib-check exits 0 whether or not its dictionary loaded.
+#
+# The probe word is 14 characters so a later minlen hardening in
+# pwquality.conf cannot short-circuit the check before cracklib runs.
+#
+# See docs/skills/bst.md § An integration command's tools are not implied by
+# the element that ships it.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+IMAGE="${usage_image:-localhost/krytis:latest}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) IMAGE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+if ! podman image exists "$IMAGE"; then
+    echo "==> FAILED: no such image '$IMAGE' — run 'mise run build' first." >&2
+    exit 1
+fi
+
+WORD=administration
+EXPECT="it is based on a dictionary word"
+
+echo "==> Checking the cracklib dictionary inside $IMAGE..."
+
+# Not a pipeline on the host side: capture pwscore's own exit status.
+out=$(podman run --rm --entrypoint sh "$IMAGE" -c \
+    'printf "%s\n" "$1" | pwscore 2>&1' _ "$WORD")
+rc=$?
+echo "$out" | sed 's/^/    /'
+
+if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -qF "$EXPECT"; then
+    echo "==> cracklib-dict-check PASSED: pwscore rejected '$WORD' as a dictionary word."
+    exit 0
+fi
+
+echo "==> cracklib-dict-check FAILED: pwscore did not reject '$WORD' as a dictionary word (rc=$rc)." >&2
+if printf '%s\n' "$out" | grep -qF "error loading dictionary"; then
+    echo "    /usr/share/cracklib/pw_dict.* is missing: cracklib.bst's integration" >&2
+    echo "    command ran without gzip (or sh/coreutils) staged and produced nothing." >&2
+elif [ "$rc" -eq 0 ]; then
+    echo "    The word scored as acceptable: the dictionary is empty or dictcheck" >&2
+    echo "    is disabled in /etc/security/pwquality.conf." >&2
+fi
+echo "    See docs/skills/bst.md § An integration command's tools are not implied" >&2
+echo "    by the element that ships it (krytis#1001)." >&2
+exit 1
