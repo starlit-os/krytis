@@ -1024,7 +1024,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794) |
-| Docs & upstreams | `docs-links` `upstream-sync` |
+| Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list) |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |

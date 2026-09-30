@@ -34,6 +34,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) |
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
 | Sync the dakota/zirconium-hawaii/dakota-iso mirrors and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
+| Refresh Bluefin's Bazaar curated app list as Flatpak candidates (#245, `mise run bazaar-recommends-diff`) | [`docs/design/bazaar-curated-candidates.md`](design/bazaar-curated-candidates.md), skill: `.claude/skills/bluefin-bazaar-recommends/` |
 | Audit a skill/design doc for rot, or fact-check a claim that sent you hunting for a file that isn't there (`mise run docs-links`) | skill: `.claude/skills/skill-rot-audit/`, [`AGENTS.md`](../AGENTS.md) § Skill files rot too |
 | Generate/attach the SBOM or run the Grype vuln scan (`mise run sbom`, `mise run vuln-scan`, `mise run push`) | [`docs/skills/sbom.md`](skills/sbom.md) |
 | Re-check Grype vuln-scan false positives, or update `.grype.yaml`'s ignore list | [`docs/skills/sbom.md`](skills/sbom.md) § Mitigated: Grype `stock-matcher`..., skill: `.claude/skills/vuln-scan-triage/` |

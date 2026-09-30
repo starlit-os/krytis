@@ -1,4 +1,6 @@
-# Bluefin system flatpaks
+# krytis live-ISO system flatpaks (inherited from dakota-iso's Bluefin list).
+# What stays preinstalled vs. moves to Bazaar's curated page is decided in
+# docs/design/bazaar-curated-candidates.md (#245).
 # Installed into the live squashfs at build time (committed to layer, not cache).
 # Copied offline to the target by tuna-installer during installation.
 #
@@ -6,12 +8,9 @@
 # Releases bundle (not on Flathub) earlier in build.sh.
 #
 # Format: one app ID per line, resolved from the flathub remote.
-com.github.PintaProject.Pinta
 com.github.tchx84.Flatseal
-io.github.flattool.Ignition
 io.github.kolunmi.Bazaar
 io.missioncenter.MissionCenter
-it.mijorus.smile
 org.gnome.Firmware
 org.gnome.Logs
 org.gnome.Loupe
