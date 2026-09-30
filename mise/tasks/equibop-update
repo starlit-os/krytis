@@ -12,7 +12,10 @@ ELEMENT="elements/desktop/equibop.bst"
 check_icon_drift() {
   local tag="$1" pinned upstream
   pinned=$(grep -A1 'github_raw:' "${ELEMENT}" | grep -oP 'ref: \K\S+')
-  upstream=$(curl -sSL "https://raw.githubusercontent.com/Equicord/Equibop/${tag}/build/icon.svg" | sha256sum | awk '{print $1}')
+  # Non-fatal on purpose: an icon that 404s at the new tag is drift to report,
+  # not a reason to abort the version bump.
+  upstream=$(curl -fsSL --retry 3 --retry-delay 10 "https://raw.githubusercontent.com/Equicord/Equibop/${tag}/build/icon.svg" | sha256sum | awk '{print $1}') \
+    || upstream="unfetchable (curl failed)"
 
   if [ "${pinned}" != "${upstream}" ]; then
     echo "==> WARNING: upstream build/icon.svg changed at ${tag}"
@@ -58,7 +61,7 @@ for ARCH in x86_64 aarch64; do
   FILE="${TMPDIR}/${NEW_NAME}"
 
   echo "==> Downloading ${URL}..."
-  curl -fsSL "$URL" -o "$FILE"
+  curl -fsSL --retry 3 --retry-delay 10 "$URL" -o "$FILE"
   SHA256=$(sha256sum "$FILE" | awk '{print $1}')
   echo "    ${ARCH} sha256=${SHA256}"
 

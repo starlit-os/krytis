@@ -80,7 +80,7 @@ WANT="${1:-}"
 fetch_sha() {
     local url="$1" out
     out="$(mktemp)"
-    curl -fsSL -A "$UA" "$url" -o "$out" || { rm -f "$out"; return 1; }
+    curl -fsSL --retry 3 --retry-delay 10 -A "$UA" "$url" -o "$out" || { rm -f "$out"; return 1; }
     sha256sum "$out" | awk '{print $1}'
     rm -f "$out"
 }
@@ -163,7 +163,7 @@ update_one() {
         # Tag list is ordered newest-first by the API's default (updated desc);
         # sort explicitly so a re-tagged old release cannot win.
         local tag
-        tag=$(curl -fsS -A "$UA" "https://gitlab.freedesktop.org/api/v4/projects/${proj}/repository/tags?per_page=50" \
+        tag=$(curl -fsS --retry 3 --retry-delay 10 -A "$UA" "https://gitlab.freedesktop.org/api/v4/projects/${proj}/repository/tags?per_page=50" \
               | jq -r '.[].name' | grep -E '^v?[0-9]+(\.[0-9]+)*$' | sed 's/^v//' \
               | sort -V | tail -1)
         new="$tag"
@@ -174,7 +174,7 @@ update_one() {
         ;;
       pypi)
         cur=$(url_lines "$element" | grep -oP "${locator//-/[-_]}-\K[0-9][0-9.]*(?=\.tar\.gz)" | head -1)
-        local meta; meta=$(curl -fsS -A "$UA" "https://pypi.org/pypi/${locator}/json")
+        local meta; meta=$(curl -fsS --retry 3 --retry-delay 10 -A "$UA" "https://pypi.org/pypi/${locator}/json")
         new=$(printf '%s' "$meta" | jq -r '.info.version')
         url=$(printf '%s' "$meta" | jq -r --arg v "$new" '.releases[$v][] | select(.packagetype=="sdist") | .url')
         # Take the API's own path rather than rebuilding one: PEP 625 changed
@@ -184,7 +184,7 @@ update_one() {
         ;;
       zig-series)
         cur=$(url_lines "$element" | grep -oP "download/\K[0-9][0-9.]*(?=/zig-x86_64)" | head -1)
-        new=$(curl -fsS -A "$UA" https://ziglang.org/download/index.json \
+        new=$(curl -fsS --retry 3 --retry-delay 10 -A "$UA" https://ziglang.org/download/index.json \
               | jq -r 'keys[]' | grep -E "^${locator}\." | sort -V | tail -1 || true)
         [ -n "$new" ] || { echo "    no ${locator}.x release published yet — nothing to do"; return 0; }
         url="https://ziglang.org/download/${new}/zig-x86_64-linux-${new}.tar.xz"

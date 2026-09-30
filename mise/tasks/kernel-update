@@ -11,7 +11,7 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "==> Fetching CachyOS v3 package database..."
-curl -sSL "${CACHYOS_MIRROR}/cachyos-v3.db" -o "${TMPDIR}/cachyos-v3.db"
+curl -fsSL --retry 3 --retry-delay 10 "${CACHYOS_MIRROR}/cachyos-v3.db" -o "${TMPDIR}/cachyos-v3.db"
 
 # The .db file is a tar.gz (pacman standard); try gz then xz then zst
 if ! tar -xz -C "${TMPDIR}" -f "${TMPDIR}/cachyos-v3.db" 2>/dev/null; then
@@ -55,7 +55,7 @@ CURRENT_REF=$(awk '/^  ref:/{print $2}' "${ELEMENT}")
 # 34704347353 died on the mismatch 20 minutes into the build. So pin what the
 # mirror really serves, not what it claims to serve.
 echo "==> Downloading artifact to verify its checksum..."
-curl -sSL "${CACHYOS_MIRROR}/${FILENAME}" -o "${TMPDIR}/${FILENAME}"
+curl -fsSL --retry 3 --retry-delay 10 "${CACHYOS_MIRROR}/${FILENAME}" -o "${TMPDIR}/${FILENAME}"
 REAL_SHA=$(sha256sum "${TMPDIR}/${FILENAME}" | cut -d' ' -f1)
 
 if [ "${REAL_SHA}" != "${SHA256}" ]; then

@@ -36,7 +36,7 @@ echo "==> Override holds libdisplay-info at ${HELD}"
 # What the junction would otherwise give us.
 SDK_REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/freedesktop-sdk.bst | head -1)"
 SDK_SHA="${SDK_REF##*-g}"
-UPSTREAM_BST="$(curl -fsSL "https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SDK_SHA}/elements/components/libdisplay-info.bst")" || {
+UPSTREAM_BST="$(curl -fsSL --retry 3 --retry-delay 10 "https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SDK_SHA}/elements/components/libdisplay-info.bst")" || {
     echo "==> Could not fetch freedesktop-sdk's libdisplay-info.bst" >&2
     exit 1
 }
@@ -53,7 +53,7 @@ if [ "$HELD" = "$JUNCTION" ]; then
 fi
 
 # The real gate: has libdisplay-info-sys grown support for the junction's version?
-LATEST_CRATE="$(curl -fsSL -H 'User-Agent: krytis-libdisplay-info-check' \
+LATEST_CRATE="$(curl -fsSL --retry 3 --retry-delay 10 -H 'User-Agent: krytis-libdisplay-info-check' \
     https://crates.io/api/v1/crates/libdisplay-info-sys \
     | grep -oP '"max_stable_version":"\K[^"]+')" || {
     echo "==> Could not query crates.io for libdisplay-info-sys" >&2

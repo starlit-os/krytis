@@ -30,12 +30,12 @@ ARM64_FILE="pangolin-cli_linux_arm64"
 BASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}"
 
 echo "==> Downloading ${AMD64_FILE}..."
-curl -sSL "${BASE_URL}/${AMD64_FILE}" -o "${TMPDIR}/${AMD64_FILE}"
+curl -fsSL --retry 3 --retry-delay 10 "${BASE_URL}/${AMD64_FILE}" -o "${TMPDIR}/${AMD64_FILE}"
 AMD64_SHA=$(sha256sum "${TMPDIR}/${AMD64_FILE}" | awk '{print $1}')
 echo "    sha256=${AMD64_SHA}"
 
 echo "==> Downloading ${ARM64_FILE}..."
-curl -sSL "${BASE_URL}/${ARM64_FILE}" -o "${TMPDIR}/${ARM64_FILE}"
+curl -fsSL --retry 3 --retry-delay 10 "${BASE_URL}/${ARM64_FILE}" -o "${TMPDIR}/${ARM64_FILE}"
 ARM64_SHA=$(sha256sum "${TMPDIR}/${ARM64_FILE}" | awk '{print $1}')
 echo "    sha256=${ARM64_SHA}"
 

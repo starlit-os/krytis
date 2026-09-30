@@ -59,7 +59,7 @@ URL_PATH=$(grep -oP '^\s+url: github_files:\K.*' "${ELEMENT}" | head -1)
 TAR_REF=$(grep -A1 "url: github_files:${URL_PATH}" "${ELEMENT}" | grep -oP 'ref: \K\S+')
 
 echo "==> Downloading https://github.com/${URL_PATH}"
-curl -sSfL "https://github.com/${URL_PATH}" -o "${TMPDIR}/src.tar.gz"
+curl -sSfL --retry 3 --retry-delay 10 "https://github.com/${URL_PATH}" -o "${TMPDIR}/src.tar.gz"
 GOT_SHA=$(sha256sum "${TMPDIR}/src.tar.gz" | awk '{print $1}')
 if [ "${GOT_SHA}" != "${TAR_REF}" ]; then
     echo "ERROR: tarball sha256 mismatch — element says ${TAR_REF}, got ${GOT_SHA}" >&2

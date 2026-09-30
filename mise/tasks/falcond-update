@@ -40,7 +40,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 ARCHIVE="${LATEST_TAG}.tar.gz"
 echo "==> Downloading ${ARCHIVE}..."
-curl -fsSL -A "$UA" "https://github.com/${REPO}/archive/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
+curl -fsSL --retry 3 --retry-delay 10 -A "$UA" "https://github.com/${REPO}/archive/${ARCHIVE}" -o "${TMPDIR}/${ARCHIVE}"
 SHA=$(sha256sum "${TMPDIR}/${ARCHIVE}" | awk '{print $1}')
 echo "    sha256=${SHA}"
 
