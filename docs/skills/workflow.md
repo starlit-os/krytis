@@ -601,6 +601,8 @@ When citing a section, **delimit the anchor** — `docs/skills/pam.md § *Login 
 
 Three categories may go in `docs/.links-ignore`: docs a design doc forward-references but that nobody has written yet; paths belonging to an upstream repo (freedesktop-sdk, dakota, dakota-iso, zirconium-hawaii, bootc) quoted as a source citation; and paths or tasks this repo deliberately cites as *absent* — deleted on purpose, or proposed and never built, where the citation is the record of that decision. Anything else is rot — fix the reference.
 
+**Prefer writing an upstream `docs/…` path as one contiguous `owner/repo/docs/…` token over adding it to `docs/.links-ignore`.** Example: `projectbluefin/common/docs/skills/bazaar.md`, not the repo name in one code span followed by the bare path in another. The path check's negative lookbehind (`mise/tasks/docs-links`) refuses to match `docs/` straight after a `/`, so the qualified form is skipped. The bare form fails the check even when the owning repo is named right next to it. The qualified form also names the owning repo inline, which AGENTS.md § *What the first sweep learned about how rot gets in* asks for. An ignore entry is global: an entry for Bluefin's skill path would mask a future broken reference to a krytis file with the same path. Upstreams share this repo's `docs/skills/` layout, so that collision is likely. Keep `.links-ignore` for references that can't be rewritten, such as quotes and code comments.
+
 ## Self-Improvement Loop
 
 Before committing — when you hit a non-obvious pattern, workaround, or convention:
