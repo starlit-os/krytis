@@ -937,6 +937,41 @@ Staleness is the live hazard: Microsoft adds revocations on their own schedule.
 titled with the delta. Re-run `mise run seal-uki && mise run enroll-test` before
 merging one — the digest changes, so the sealed image must be rebuilt anyway.
 
+### Proving a revocation is enforced needs a binary `db` would otherwise trust (#534)
+
+`mise run dbx-check <binary>` computes the PE Authenticode SHA-256 and reports whether a
+dbx revokes the image, by hash or by an X509 entry matching a certificate in its PKCS#7
+signature. `--dbx` takes the committed `.esl`, a signed `.auth`, or the firmware's live
+efivar (4-byte attribute prefix). The digest reproduces `pesign --hash` exactly: Ubuntu
+`shim-signed` 1.58's `724de684…` and `dbffd70a…`, recorded in #534 from pesign. It avoids
+pesign's own trap of printing the digest glued to the input path with no separator.
+
+Three things that are not obvious when sourcing a T4 step-6 candidate:
+
+- **Current distro media is never revoked**, by construction: distros do not ship
+  binaries firmware refuses. Ubuntu's `shimx64.efi.signed.previous` is the tempting
+  one and is not in dbx.
+- **Microsoft's `dbx_info_msft_latest.json`** (`microsoft/secureboot_objects`,
+  `PreSignedObjects/DBX/`) maps every revoked hash to company, filename and often a
+  source ("found in CentOS-7-x86_64-DVD-1511.iso"). Start from that, not from guessing
+  pre-BootHole media. It surfaced CentOS 7.2's shim, still on
+  `vault.centos.org/7.2.1511/os/x86_64/EFI/BOOT/BOOTX64.EFI`, revoked by hash and signed
+  `MS Windows UEFI Driver Publisher` → `MS Corporation UEFI CA 2011`, the chain step 5
+  showed loading.
+- **"Revoked" alone does not make a valid candidate.** A bionic-era
+  `grubx64.efi.signed` reports `REVOKED by signer cert … Canonical Ltd. Secure Boot
+  Signing` (the #502 entry), but the firmware would refuse it anyway, since Canonical's
+  CA was never in `db`. Only shim enforces those two X509 entries. A step-6 pass needs a
+  binary whose issuer *is* in `db`, so the refusal can only come from dbx.
+
+The CentOS hash is in every dbx krytis has shipped, from the first committed
+`dbx.esl` (2026-08-02, 443 hashes, no X509) onward. So a refusal proves the firmware
+*enforces* dbx; it does not prove the enrolled dbx is *current*. `enroll-test`'s
+byte-exact match (#757) covers currency. This matters on the #535 ThinkPad: its live dbx
+efivar, minus the 4-byte attribute prefix, is byte-identical to that first `dbx.esl`.
+Enrollment is one-shot, so neither #502's two certificate revocations nor #755's union
+ever reached it.
+
 ## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
 
 A UKI measures and signs its kernel cmdline *inside* the image. Nothing at install time

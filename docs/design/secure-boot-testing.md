@@ -188,7 +188,9 @@ actually running it, with expected values and failure signatures, is
       `db.auth`. No offline MS-signed binary is available for the VM path. #535: Ubuntu
       shim 15.8 (MS Corporation UEFI CA 2011) loaded.
 - [ ] A revoked binary is **refused** under enforcement. Untested in #535: no revoked
-      binary could be sourced. Tracked in #534 (see also G-5).
+      binary could be sourced. A verified candidate now exists (CentOS 7.2's shim,
+      confirmed with `mise run dbx-check`); only the hardware boot remains. Tracked in
+      #534 (see also G-5).
 - [ ] FIDO2 LUKS unlock under a sealed UKI: `mise fido2:enroll-luks`, reboot, expect a
       key-touch unlock with no passphrase prompt. **Failed** in #535 and root-caused:
       `systemd-gpt-auto-generator` builds the root volume's options itself and ignores
@@ -514,9 +516,11 @@ silently keeps trusting what it should not. `track-bst-sources.yml` grew a
 `track-microsoft-dbx` job that refreshes it and opens a PR describing the delta
 ("443 → N revocations").
 
-What is still untested is whether a revoked binary is actually *refused* — that needs
-a Microsoft-signed binary from the revocation list, which is a T4/hardware item
-alongside "a Microsoft-signed EFI binary still runs".
+What is still untested is whether a revoked binary is actually *refused*. That is a
+T4/hardware item alongside "a Microsoft-signed EFI binary still runs". Sourcing the
+binary is no longer the obstacle: `mise run dbx-check` confirms a candidate against
+`dbx.esl` (or a machine's live efivar), and CentOS 7.2's vault shim is a verified one.
+See `docs/secure-boot-enrollment.md` § *6. A revoked binary is refused*.
 
 ### G-6 · One firmware, one architecture
 
