@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+#MISE description="Audit what still pulls GTK3 into the image (element graph + ELF scan) against a ratcheting allowlist"
+#MISE depends=["generate-image-version"]
+#USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image to scan (must already be built/loaded)"
+"""Ratchet for #641: GTK3 may only ship for the reasons listed below.
+
+Two independent measurements, because each misses what the other sees:
+
+  Graph half  Elements in the runtime closure of oci/krytis/stack.bst whose
+              runtime deps name gnome-build-meta.bst:sdk/gtk+-3.bst (fdsdk's
+              components/gtk3.bst resolves to it via the junction override).
+              Blind to binaries that link GTK3 without declaring it — Proton
+              Pass, and gstreamer-plugins-bad, which finds GTK3 through
+              plugins-base's runtime edge.
+
+  Image half  Every ELF under /usr of the built image whose DT_NEEDED names
+              libgtk-3/libgdk-3, or a library that is itself GTK3-only
+              (libhandy-1, libcanberra-gtk3, libportal-gtk3, libgailutil-3,
+              libgnome-desktop-3). Sees what actually ships, not why.
+
+Both are compared against an allowlist, and the task fails in two directions:
+
+  unexpected  a hit with no allowlist row — something new pulls GTK3 in;
+  stale       a row with no hit — a step removed a consumer but left its row.
+
+The second rule is the ratchet: every step of
+docs/plans/2026-09-30-gtk3-realistic-floor.md deletes its own rows in the same
+PR, or this task goes red. When only "floor" rows remain, the plan is done.
+
+The image half runs inside `podman unshare` (rootless `podman image mount`
+needs the user namespace). It re-executes this script there with
+GTK3_AUDIT_SCAN set, so the graph half never runs as namespace-root.
+"""
+
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+
+GTK3 = "gnome-build-meta.bst:sdk/gtk+-3.bst"
+STACK = "oci/krytis/stack.bst"
+
+# DT_NEEDED entries that mean "this object needs GTK3".
+FLAGGED = re.compile(
+    r"^lib(gtk-3|gdk-3|gailutil-3|handy-1|canberra-gtk3|portal-gtk3|gnome-desktop-3)\.so"
+)
+
+# Removal tags: "floor" = stays until the app itself moves off GTK3, or #181
+# replaces xdg-desktop-portal-gtk. "#NNNN" = the #641 sub-issue whose PR must
+# delete the row.
+ELEMENTS = {
+    "desktop/zen-browser.bst": ("floor", "prebuilt Firefox build"),
+    "desktop/equibop.bst": ("floor", "prebuilt Electron app"),
+    "gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst": ("floor", "Inhibit/Notification/Email backend, #181"),
+    "desktop/gnome-disk-utility.bst": ("#1033", "46.1 is GTK3; 51 is GTK4"),
+    "gnome-build-meta.bst:core-deps/libhandy.bst": ("#1033", "only consumer is gnome-disks 46.1"),
+    "gnome-build-meta.bst:core-deps/xdg-user-dirs-gtk.bst": ("#1032", "Nautilus runtime-depends; never runs"),
+    "gnome-build-meta.bst:sdk/libportal.bst": ("#1034", "backend-gtk3 auto-enabled, zero consumers"),
+    "gnome-build-meta.bst:core/gnome-desktop.bst": ("#1034", "legacy_library defaults on"),
+    "gnome-build-meta.bst:core-deps/libcanberra.bst": ("#1034", "gtk3 support; only gnome-disks 46.1 uses it"),
+    "freedesktop-sdk.bst:components/libdecor.bst": ("#1035", "gtk plugin auto-enabled"),
+    "freedesktop-sdk.bst:components/plymouth.bst": ("#1035", "x11 renderer auto-enabled"),
+    "freedesktop-sdk.bst:components/gstreamer-plugins-good.bst": ("#1036", "gtksink auto-enabled"),
+    "freedesktop-sdk.bst:components/gstreamer-plugins-base.bst": ("#1036", "dead dependency edge, links nothing"),
+}
+
+LIB = "/usr/lib/*-linux-gnu"
+FILES = {
+    # gtk+-3 itself — present as long as anything on the floor is.
+    f"{LIB}/libgtk-3.so.*": ("floor", "gtk+-3"),
+    f"{LIB}/libgailutil-3.so.*": ("floor", "gtk+-3"),
+    f"{LIB}/gtk-3.0/3.0.0/immodules/im-*.so": ("floor", "gtk+-3"),
+    f"{LIB}/gtk-3.0/3.0.0/printbackends/libprintbackend-*.so": ("floor", "gtk+-3"),
+    "/usr/bin/gtk-encode-symbolic-svg": ("floor", "gtk+-3"),
+    "/usr/bin/gtk-launch": ("floor", "gtk+-3"),
+    "/usr/bin/gtk-query-immodules-3.0": ("floor", "gtk+-3"),
+    "/usr/bin/gtk-query-settings": ("floor", "gtk+-3"),
+    # Prebuilt apps.
+    "/usr/lib/zen-browser/*": ("floor", "zen-browser"),
+    "/usr/lib/equibop/equibop": ("floor", "equibop"),
+    "/usr/lib/proton-pass/Proton Pass": ("floor", "proton-pass; undeclared until #1031"),
+    "/usr/libexec/xdg-desktop-portal-gtk": ("floor", "xdg-desktop-portal-gtk, #181"),
+    # Removable.
+    "/usr/bin/gnome-disks": ("#1033", "gnome-disk-utility 46.1"),
+    "/usr/bin/gnome-disk-image-mounter": ("#1033", "gnome-disk-utility 46.1"),
+    f"{LIB}/libhandy-1.so.*": ("#1033", "libhandy"),
+    "/usr/bin/xdg-user-dirs-gtk-update": ("#1032", "xdg-user-dirs-gtk"),
+    f"{LIB}/libportal-gtk3.so.*": ("#1034", "libportal"),
+    f"{LIB}/libgnome-desktop-3.so.*": ("#1034", "gnome-desktop"),
+    "/usr/libexec/gnome-desktop-debug/test-*": ("#1034", "gnome-desktop, links libgnome-desktop-3"),
+    f"{LIB}/libcanberra-gtk3.so.*": ("#1034", "libcanberra"),
+    f"{LIB}/gtk-3.0/modules/libcanberra-gtk3-module.so": ("#1034", "libcanberra"),
+    "/usr/bin/canberra-gtk-play": ("#1034", "libcanberra"),
+    f"{LIB}/libdecor/plugins-1/libdecor-gtk.so": ("#1035", "libdecor"),
+    f"{LIB}/plymouth/renderers/x11.so": ("#1035", "plymouth"),
+    f"{LIB}/gstreamer-1.0/libgstgtk.so": ("#1036", "gstreamer-plugins-good"),
+    f"{LIB}/gstreamer-1.0/libgstgtkwayland.so": ("#1036", "gstreamer-plugins-bad, undeclared edge"),
+}
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def graph_hits():
+    out = subprocess.run(
+        ["./mise/tasks/bst", "show", "--deps", "all",
+         "--format", "@@%{name}|%{runtime-deps}", STACK],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    runtime, current = {}, None
+    for raw in out.splitlines():
+        line = ANSI.sub("", raw)
+        if line.startswith("@@"):
+            current, rest = line[2:].split("|", 1)
+            runtime[current] = []
+            line = rest
+        if current is None:
+            continue
+        line = line.strip()
+        if line.startswith("- "):
+            runtime[current].append(line[2:].strip())
+    if STACK not in runtime:
+        sys.exit(f"ERROR: bst show output had no record for {STACK}")
+
+    closure, todo = set(), [STACK]
+    while todo:
+        name = todo.pop()
+        if name not in closure:
+            closure.add(name)
+            todo.extend(runtime.get(name, ()))
+    return sorted(n for n in closure if GTK3 in runtime.get(n, ()))
+
+
+def scan_mounted(root):
+    """Return {"/usr/…": [flagged sonames]} for every ELF under root/usr."""
+    elves = []
+    for dirpath, dirnames, filenames in os.walk(os.path.join(root, "usr")):
+        if os.path.relpath(dirpath, root) == "usr/lib":
+            dirnames[:] = [d for d in dirnames if d != "debug"]
+        for fn in filenames:
+            path = os.path.join(dirpath, fn)
+            try:
+                if os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                with open(path, "rb") as f:
+                    if f.read(4) == b"\x7fELF":
+                        elves.append(path)
+            except OSError:
+                continue
+
+    hits = {}
+    for i in range(0, len(elves), 256):
+        batch = elves[i:i + 256]
+        out = subprocess.run(["readelf", "-d", "-W", *batch],
+                             capture_output=True, text=True).stdout
+        # readelf only prints "File:" headers when given several files.
+        current = batch[0] if len(batch) == 1 else None
+        for line in out.splitlines():
+            if line.startswith("File: "):
+                current = line[6:]
+            elif "(NEEDED)" in line and current:
+                soname = line.rsplit("[", 1)[-1].rstrip("]")
+                if FLAGGED.match(soname):
+                    hits.setdefault("/" + os.path.relpath(current, root), []).append(soname)
+    return hits
+
+
+def image_hits(tag):
+    """Run the scan inside the user namespace; parse its JSON."""
+    if os.geteuid() == 0:
+        return scan_image(tag)
+    env = dict(os.environ, GTK3_AUDIT_SCAN=tag)
+    out = subprocess.run(["podman", "unshare", sys.executable, os.path.abspath(__file__)],
+                         check=True, capture_output=True, text=True, env=env).stdout
+    return json.loads(out)
+
+
+def scan_image(tag):
+    root = subprocess.run(["podman", "image", "mount", tag], check=True,
+                          capture_output=True, text=True).stdout.strip()
+    try:
+        return scan_mounted(root)
+    finally:
+        subprocess.run(["podman", "image", "unmount", tag], capture_output=True)
+
+
+def compare(kind, hits, allow, match, detail=lambda h: ""):
+    unexpected = [h for h in hits if not any(match(h, row) for row in allow)]
+    stale = [row for row in allow if not any(match(h, row) for h in hits)]
+    for h in unexpected:
+        print(f"  UNEXPECTED {kind}: {h}{detail(h)}")
+    for row in stale:
+        step, why = allow[row]
+        print(f"  STALE row ({step}, {why}): {row} — matches nothing; delete it")
+    return not unexpected and not stale
+
+
+def main():
+    if "GTK3_AUDIT_SCAN" in os.environ:
+        json.dump(scan_image(os.environ["GTK3_AUDIT_SCAN"]), sys.stdout)
+        return
+
+    os.chdir(subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True,
+                            capture_output=True, text=True).stdout.strip())
+    tag = os.environ.get("usage_tag") or "localhost/krytis:latest"
+
+    print(f"==> Graph: runtime closure of {STACK} → dependents of {GTK3}")
+    elements = graph_hits()
+    graph_ok = compare("element", elements, ELEMENTS, lambda h, row: h == row)
+    print(f"    {len(elements)} element(s)")
+
+    print(f"==> Image: DT_NEEDED scan of {tag}")
+    files = image_hits(tag)
+    files_ok = compare("file", sorted(files), FILES, fnmatch.fnmatchcase,
+                       lambda p: f" (needs {', '.join(files[p])})")
+    print(f"    {len(files)} file(s)")
+
+    left = sorted({step for step, _ in [*ELEMENTS.values(), *FILES.values()] if step != "floor"})
+    if graph_ok and files_ok:
+        print("==> gtk3-audit passed." + (f" Rows still to remove: {' '.join(left)}" if left
+                                        else " Only the floor remains."))
+        return
+    print("==> gtk3-audit FAILED. A new GTK3 consumer needs a row (or a fix); a removed one"
+          " needs its row deleted. See docs/plans/2026-09-30-gtk3-realistic-floor.md.")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
