@@ -173,4 +173,5 @@ append a correction beside it (AGENTS.md § What the first sweep learned).
 - **niri routes GlobalShortcuts, RemoteDesktop, Clipboard and InputCapture to xdp-gnome**,
   and niri v26.04 implements none of the Shell/Mutter names xdp-gnome needs for them (see the
   `src/dbus/` list above and #1029's dependency table). It is the same failure class #1029
-  fixes for Umbriel. Not filed, and not changed here, because this plan changes no routing.
+  fixes for Umbriel. Filed as #1054, with its upstream status. Not changed here, because this
+  plan changes no routing.
