@@ -37,3 +37,12 @@ config:
   overrides:
     # Make gnome-build-meta use our local fdsdk junction
     freedesktop-sdk.bst: freedesktop-sdk.bst
+    # Drop xdg-user-dirs-gtk (#1032) by redirecting it to the package it wraps. It ships
+    # but never runs on krytis: its autostart entry is `OnlyShowIn=GNOME;LXDE;Unity;` +
+    # `X-systemd-skip=true`, and `user-dirs-update-gtk.service` is static and wanted by
+    # nothing. Nautilus's only link to it is gnome-build-meta's `runtime-depends:`. The
+    # directories come from `xdg-user-dirs.service` (fdsdk components/xdg-user-dirs.bst).
+    # Remove when gnome-build-meta drops that `runtime-depends:`. If upstream renames the
+    # path, this entry silently matches nothing; `mise run gtk3-audit` catches that (the
+    # element reappears in its graph half).
+    core-deps/xdg-user-dirs-gtk.bst: freedesktop-sdk.bst:components/xdg-user-dirs.bst

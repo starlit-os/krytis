@@ -1071,8 +1071,7 @@ anything on krytis, and each is easy to get backwards:
   `systemd-xdg-autostart-generator` turns every `/etc/xdg/autostart` entry into a user unit
   on each session. This is not GNOME-only plumbing that krytis skipped — an entry shipped by
   any element (`sdk/at-spi2-core.bst`, `core-deps/localsearch.bst`,
-  `core-deps/xdg-user-dirs-gtk.bst`, `components/xdg-user-dirs.bst` all ship one today) will
-  be started.
+  `components/xdg-user-dirs.bst` all ship one today) will be started.
 - **`OnlyShowIn`/`NotShowIn` still filter.** The generator translates them into conditions on
   `XDG_CURRENT_DESKTOP`, which is `niri` here (table above). So a GNOME-scoped entry is
   generated and then skipped — the binary behind it is dead weight, no matter how
