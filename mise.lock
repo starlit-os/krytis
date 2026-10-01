@@ -76,14 +76,14 @@ url = "https://github.com/oras-project/oras/releases/download/v1.3.4/oras_1.3.4_
 url_api = "https://api.github.com/repos/oras-project/oras/releases/assets/532778544"
 
 [[tools.pass-cli]]
-version = "2.4.1"
+version = "2.4.2"
 backend = "github:protonpass/pass-cli"
-specifiers = ["2.4.1"]
+specifiers = ["2.4.2"]
 
 [tools.pass-cli."platforms.linux-x64"]
-checksum = "sha256:f4188430466e0a3d668b56791a8b430162cb20ceb108fed4fdbfcfe77d3080e6"
-url = "https://github.com/protonpass/pass-cli/releases/download/2.4.1/pass-cli-linux-x86_64"
-url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/578598849"
+checksum = "sha256:4089bdf5981140ac5bee65d2d79bf98767537f54d33197b79e5f86c630714842"
+url = "https://github.com/protonpass/pass-cli/releases/download/2.4.2/pass-cli-linux-x86_64"
+url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/602793618"
 
 [[tools.python]]
 version = "3.12.14"
