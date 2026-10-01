@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Build an element (default oci/krytis/image.bst) into the BuildStream cache only — no podman load, lint or tests"
+#MISE depends=["generate-image-version"]
+#USAGE arg "[element]" help="Element to build, relative to elements/ (default: oci/krytis/image.bst)"
+#USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
+#USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
+#USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
+
+# The bst half of `load-image`, alone. Use it to refill the local cache (after
+# eviction, a junction bump, or before several worktrees build at once) without
+# touching localhost/krytis-input:latest or localhost/krytis:latest, which
+# `build` would overwrite.
+#
+#   mise run warm-cache --pull                      # whole image, pulling from bow
+#   mise run warm-cache --pull desktop/niri.bst     # one element and its deps
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+CONTAINER=${usage_container:+--container}
+PUSH=${usage_push:+--push}
+PULL=${usage_pull:+--pull}
+if [ -z "$CONTAINER" ] && [ "${BST_CONTAINER:-false}" = "true" ]; then
+    CONTAINER=--container
+fi
+ELEMENT="${usage_element:-oci/krytis/image.bst}"
+
+# --retry-failed for the same reason as load-image: a cached failure is not
+# authoritative, rebuild it.
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build --retry-failed "$ELEMENT"
