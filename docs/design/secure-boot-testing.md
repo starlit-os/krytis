@@ -163,26 +163,43 @@ a boot that comes up fine with enforcement silently off proves nothing.
 
 ### T4 — real hardware (manual, per release)
 
-Nothing below has ever been executed. It is the honest edge of our coverage.
+Executed once, on one machine: a Lenovo ThinkPad (MTM 21HES06C1G, UEFI N3QET52W 1.52)
+against `ghcr.io/starlit-os/krytis:sealed` `sha256:398829f8…`, 2026-08-07. The full run
+record, measured certificate deltas and per-step evidence are on #535. One firmware is
+still one firmware (G-6): a pass here is a data point, not coverage of the class.
 
 This list is the *inventory* — what is uncovered and why. The ordered procedure for
 actually running it, with expected values and failure signatures, is
 [`docs/secure-boot-enrollment.md`](../secure-boot-enrollment.md) § T4.
 
-- [ ] Firmware in Setup Mode, `secure-boot-enroll manual`: the systemd-boot menu
+- [x] Firmware in Setup Mode, `secure-boot-enroll manual`: the systemd-boot menu
       offers the key set, the user selects it, enrollment succeeds, the machine boots
-      enforcing. (In a VM `if-safe` auto-enrols and never shows the prompt, so the
-      prompt path is untested.)
-- [ ] OEM keys are replaced, not merged — confirm the documented limitation is what
-      users actually see, and that the machine still boots.
-- [ ] A Microsoft-signed EFI binary still runs (Option ROM, UEFI shell, or a Windows
+      enforcing. (In a VM `if-safe` auto-enrols and never shows the prompt, so this is
+      T4-only.) #535: prompt text matched the runbook verbatim, self-rebooted, and the
+      TPM PCR barrier ran and succeeded on the next boot. The menu-entry wording itself
+      was not captured.
+- [x] OEM keys are replaced, not merged — confirm the documented limitation is what
+      users actually see, and that the machine still boots. #535: every variable size
+      matched the prediction to the byte; `db` lost both Lenovo CAs with no observable
+      device loss. That run had no pre-enrollment device list to diff against; #536
+      added the baseline to step 1.
+- [x] A Microsoft-signed EFI binary still runs (Option ROM, UEFI shell, or a Windows
       dual-boot entry) — this is the *only* real test of bundling the MS CAs into
-      `db.auth`. No offline MS-signed binary is available for the VM path.
+      `db.auth`. No offline MS-signed binary is available for the VM path. #535: Ubuntu
+      shim 15.8 (MS Corporation UEFI CA 2011) loaded.
+- [ ] A revoked binary is **refused** under enforcement. Untested in #535: no revoked
+      binary could be sourced. Tracked in #534 (see also G-5).
 - [ ] FIDO2 LUKS unlock under a sealed UKI: `mise fido2:enroll-luks`, reboot, expect a
-      key-touch unlock with no passphrase prompt. The `rd.luks.options=` bake is
-      verified statically; the unlock is not.
-- [ ] `bootc upgrade` to a newer sealed image, then reboot, still enforcing.
-- [ ] `bootc rollback` under enforcement.
+      key-touch unlock with no passphrase prompt. **Failed** in #535 and root-caused:
+      `systemd-gpt-auto-generator` builds the root volume's options itself and ignores
+      `rd.luks.options=`, so FIDO2 was never attempted. Fixed by #543/#544
+      (`elements/config/fido2-root-unlock.bst`'s `krytis-fido2-root-unlock.service`), whose
+      presence in the initrd `elements/core/initramfs.bst` asserts at build time. The
+      unlock itself has **not** been re-run on hardware since. That unit runs
+      `headless=yes`, so the credential must be enrolled touch-only — see
+      `docs/skills/fido2.md` § *`mise fido2:enroll-luks` does not pass that flag*.
+- [x] `bootc upgrade` to a newer sealed image, then reboot, still enforcing. #535.
+- [x] `bootc rollback` under enforcement. #535.
 
 ---
 
