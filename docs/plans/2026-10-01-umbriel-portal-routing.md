@@ -47,7 +47,21 @@ Umbriel table for `portal-routing-check`.
   ("Compositor service channel missing, portal dialogs may misbehave") when
   `org.gnome.Mutter.ServiceChannel` is absent. The display-state and introspect trackers only
   watch their names. So routing to gnome under Umbriel does not take the whole backend down.
-  "May misbehave" means dialogs may not attach to their parent window. Step 4 checks this.
+- **Umbriel parents portal dialogs itself.** umbriel#214 ("center dialogs over their parent and
+  support xdg-foreign", merged 2026-09-10 as `936fb9c562`) is already in krytis's pinned ref
+  `229d64a`. xdp-gnome and xdp-gtk dialogs should therefore open centred over the requesting
+  app's window, whether or not the Mutter service channel exists. umbriel#215 (attach modal
+  dialogs to their parent: shade the parent and follow it as it moves) is still open. Step 4
+  checks what actually happens.
+- **Nobody upstream is tracking any of the `none`-pinned interfaces.** As of 2026-10-01,
+  `xdg-desktop-portal-umbriel`'s README lists only ScreenCast and Screenshot, and all 14 of its
+  issues/PRs concern those two. In `noctalia-dev/umbriel`'s 353 issues/PRs, the only related
+  one is umbriel#259 (forward XWayland global key grabs, e.g. Discord push-to-talk). It is
+  open with no comments, and it covers X11 clients only, not the GlobalShortcuts portal.
+  umbriel ships no libei/EIS. Any new interface would have to come from
+  xdg-desktop-portal-umbriel itself, and `SCOPE.md` puts wallpaper handling in the shell, so
+  Wallpaper will never come from umbriel. Expect these pins to stay for a long time. That
+  is why step 2 makes their removal automatic. #1055 tracks getting real backends for them.
 
 ## Decisions (Design Gate)
 
@@ -138,6 +152,22 @@ Before the change, run the task against a scratch image with the conf bind-mount
 (`-v files/xdg-desktop-portal:/etc/xdg/xdg-desktop-portal:ro,Z` on the same `podman run`).
 That confirms the table before paying for a build.
 
+- [ ] Add a **stale-`none`** rule to `portal-routing-check`. The table above can't catch the
+      case where umbriel grows one of the pinned interfaces: a `none` pin wins whatever is
+      installed (#1027 plan), so the effective backend stays `none` and the check stays
+      green.
+  - Keep an `OWN_BACKEND` map in the task, `{"Umbriel": "umbriel"}`.
+  - For each `<interface>=none` key in `/etc/xdg/xdg-desktop-portal/<d>-portals.conf`, fail
+    when that desktop's own backend's `.portal` file lists the interface in `Interfaces=`,
+    with "umbriel now implements <iface>: drop the pin". The task already reads every
+    `.portal` file.
+  - niri has no entry. It isn't a portal backend, and its gaps close inside niri itself
+    (#1054), where no `.portal` file can show it.
+  - `gnome` is deliberately not checked. It declares every pinned interface and is the
+    reason for the pins.
+  - **Negative check:** bind-mount a copy of `umbriel.portal` with `GlobalShortcuts` appended
+    over `/usr/share/xdg-desktop-portal/portals/umbriel.portal`. The rule must fail.
+
 ## Step 3 — Docs
 
 Every place that claims Umbriel routes `default=umbriel;gtk`:
@@ -169,8 +199,9 @@ Every place that claims Umbriel routes `default=umbriel;gtk`:
     finding, confirmed live).
   - A Flatpak libadwaita app follows the noctalia dark/light toggle **live**, without a
     restart.
-  - A Flatpak file chooser opens (Nautilus) and returns a file. Note whether it attaches to
-    the parent window (the libgxdp "may misbehave" warning). If it doesn't, record it in the
+  - A Flatpak file chooser opens (Nautilus) and returns a file. Because of umbriel#214, expect
+    it centred over the app's window. Expect it not to be modal yet: umbriel#215 is still
+    open, so the parent can still be focused. If it isn't centred, record that in the
     desktop.md section. It is not a blocker.
   - `journalctl --user -u xdg-desktop-portal-gnome` shows startup warnings only, nothing
     failing.
