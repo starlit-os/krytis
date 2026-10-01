@@ -108,7 +108,8 @@ LOCAL_ADDITIONS=(
 # nightly arm and the conditional scaffolding.
 #
 # Not a sed range: `sed '/start/,/end/'` restarts scanning once the range
-# closes and would mangle any later conditional (see systemd-base-check).
+# closes and would mangle any later conditional (docs/skills/bst.md
+# § Auditing a fdsdk major-version bump, item 6).
 flatten_channel_block() {
     awk '
         $0 == "(?):"                       { cond = 1; next }

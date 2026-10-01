@@ -2175,7 +2175,7 @@ just the patched piece.
 gcc-libs, utf-locale) + `bash` + `coreutils`. `sed` is its own separate GNU package,
 not part of coreutils, and nothing in this element's dependency chain happens to
 pull it in transitively otherwise (unlike `grep`, which rides in via `libselinux`).
-`overrides/systemd-base.bst` already carries this same explicit
+gnome-build-meta's `core-deps/systemd-base.bst` carries this same explicit
 `bootstrap/sed.bst` build-depend for the same reason — check what a `sed`/`awk`/
 `grep`/`diffutils` call in `install-commands` actually needs before assuming
 `runtime-gnu.bst` covers it.
@@ -2278,8 +2278,8 @@ zirconium-hawaii's own (full-workspace) `gamerslop/scx-scheds.bst`:**
   shells out to `clang` directly (`clang -target bpf -c ...`) and never calls `bpftool` — vmlinux.h
   ships pre-generated inside `scx_utils`'s own `vmlinux.tar.zst`, decoded at build time with the
   pure-Rust `ruzstd` crate. `freedesktop-sdk.bst:components/bpf-maybe.bst` (bpftool + vmlinuxh) is
-  therefore **not** a dependency here, unlike `overrides/systemd-base.bst`'s own bpf-framework
-  build, which does need it.
+  therefore **not** a dependency here, unlike gnome-build-meta's `core-deps/systemd-base.bst`,
+  whose bpf-framework build does need it.
 - `libbpf-rs`'s default feature is `vendored-libbpf`: it compiles libbpf from a bundled source
   snapshot against the *system's* libelf/zlib (`components/elfutils.bst`, `components/zlib.bst`
   in `build-depends`, for headers). **Verified 2026-09-07 via a completed sandboxed build:**

@@ -41,8 +41,12 @@ config:
     components/libsecret.bst: gnome-build-meta.bst:sdk/libsecret.bst
     components/zenity.bst: gnome-build-meta.bst:void/zenity.bst
     components/linux-module-cert.bst: gnome-build-meta.bst:gnomeos/linux-module-cert.bst
-    # gnome-build-meta's systemd-base + backported update-utmp comm fix (#417)
-    components/_private/systemd-base.bst: overrides/systemd-base.bst
+    # Load-bearing, not a leftover: gnome-build-meta's systemd/systemd-libs
+    # filters read freedesktop-sdk.bst:components/_private/systemd-base.bst, and
+    # without this line that is fdsdk's own build (v261.2 at 26.08.2, which
+    # still fails systemd-update-utmp.service on every boot, #417).
+    # gnome-build-meta pins v261.3, the first release carrying the fix.
+    components/_private/systemd-base.bst: gnome-build-meta.bst:core-deps/systemd-base.bst
     components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst
     components/systemd-ukify.bst: gnome-build-meta.bst:core-deps/systemd-ukify.bst
     components/systemd-libs.bst: gnome-build-meta.bst:core-deps/systemd-libs.bst

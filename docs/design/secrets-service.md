@@ -258,7 +258,7 @@ dependency is real but not structural — traced against upstream gcr's actual
   math is gcr's own vendored `libegg`, not GTK. `gcr_lib`'s full dependency list is
   `[glib_deps, p11kit_dep, libegg_dep, gck_dep]`; `libegg`'s only non-glib dependency is
   `crypto_deps` (libgcrypt by default, or gnutls).
-- p11-kit and libgcrypt are already in krytis's base system (`overrides/systemd-base.bst`,
+- p11-kit and libgcrypt are already in krytis's base system (`gnome-build-meta.bst:core-deps/systemd-base.bst`,
   pulled in for cryptsetup), so linking `libgcr-4.so` adds only itself plus `gck` (gcr's thin
   PKCS#11 GObject wrapper — glib + p11-kit only) to the closure. No new crypto backend, no new
   p11-kit.

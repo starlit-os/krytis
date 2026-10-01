@@ -180,7 +180,7 @@ over: `markdown` 3.10.2→3.10.3 and `shaderc` 2025.3→2026.3 (2026-09-01 re-sc
 26.08.1→26.08.2 junction bump (PR #993, 2026-09-29), where both re-flagged as **new
 Critical** matches and blocked the `Vulnerability Diff` gate on a PR whose only change
 was a junction ref. There is no automated drift check for this the way
-`mise run systemd-base-check`/`rust-bindgen-check` cover the patch-based overrides, so
+`mise run rust-bindgen-check`/`gnome-disk-utility-check` cover the mirrored overrides, so
 each recurrence cost a manual triage round-trip to re-derive a conclusion already
 reached.
 
