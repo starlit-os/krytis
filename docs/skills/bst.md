@@ -931,11 +931,13 @@ Delete the mirror, its patch, the check task and the overrides entry as soon as 
 
 ### Overriding a gnome-build-meta-namespace element
 
-*Source: #641, verified 2026-09-30 while planning `docs/plans/2026-09-30-gtk3-realistic-floor.md`.*
+*Source: #641, verified 2026-09-30 while planning `docs/plans/2026-09-30-gtk3-realistic-floor.md`;
+shipped in #1032.*
 
 `elements/gnome-build-meta.bst` accepts element entries under `config.overrides:` exactly
 like `elements/freedesktop-sdk.bst` does. Paths in gnome-build-meta's own namespace
-(`core/`, `core-deps/`, `sdk/`) are overridden there. Test entry:
+(`core/`, `core-deps/`, `sdk/`) are overridden there. The live entry drops
+xdg-user-dirs-gtk by redirecting it to the package it wraps:
 
 ```yaml
 # elements/gnome-build-meta.bst
