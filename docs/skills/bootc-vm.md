@@ -242,17 +242,24 @@ that assertion was worthless: `degraded` *was* the healthy state, so no future
 unit failure could have changed the verdict. The message
 never reaches the kernel: libaudit's `_get_commname()` rejects any `comm`
 argument of 16 bytes or more (`AUDIT_COMM_LEN`, the kernel's `TASK_COMM_LEN`)
-with `EINVAL` before it touches the netlink socket, and every released systemd
-through v261.2 passes the 19-byte `"systemd-update-utmp"`. It only tolerates
-`EPERM`, so the unit exits 1. Upstream fix `b8968c49` shortens the literal to
-`"update-utmp"`; krytis backports it via `elements/overrides/systemd-base.bst`
-until the gnome-build-meta junction reaches **v262** — *not* v261, which is the
-trap the element's own header calls out: `b8968c49` landed on systemd `main` on
-2026-07-29, after the whole v261 series was cut, and was never backported to the
-v261 stable branch, so dropping the override at v261 silently reinstates #417
-with no build error (#642). `mise run systemd-base-check` reports the junction's
-version but cannot tell whether the fix is in it — grep the tag's own
-`src/update-utmp/update-utmp.c` for the short literal instead.
+with `EINVAL` before it touches the netlink socket, and systemd through v261.2
+passes the 19-byte `"systemd-update-utmp"`. It only tolerates `EPERM`, so the
+unit exits 1. Upstream fix `b8968c49` shortens the literal to `"update-utmp"`.
+It landed on systemd `main` on 2026-07-29, after v261 was cut, and was
+backported to the stable branch as `40d1c21160` for **v261.3** (tagged
+2026-09-10).
+
+krytis carried the backport as a patched mirror of gnome-build-meta's
+`core-deps/systemd-base.bst` (#425). Its exit condition was a version, and the
+version went wrong twice: "v261" would have reinstated #417 (#642), and the
+"v262" that replaced it was overtaken by the v261.3 backport, so the mirror held
+systemd at v261.2 while gnome-build-meta already shipped v261.3. The mirror is
+gone (#483). What now holds the fix is the junction override
+`components/_private/systemd-base.bst: gnome-build-meta.bst:core-deps/systemd-base.bst`
+in `elements/freedesktop-sdk.bst`. Deleting that line falls back to fdsdk's own
+systemd-base, which is still v261.2 at fdsdk 26.08.2. To check whether a
+systemd tag has the fix, grep that tag's own `src/update-utmp/update-utmp.c` for
+the short literal; the version number alone does not tell you.
 
 With the unit fixed, `boot-test` asserts `running` and nothing else, prints the
 state it observed, and lists the failed units when there are any — verified on

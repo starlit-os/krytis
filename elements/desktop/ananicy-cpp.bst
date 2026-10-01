@@ -51,7 +51,7 @@ build-depends:
 - freedesktop-sdk.bst:components/pkg-config.bst
 - desktop/nlohmann-json.bst
 # sed (used by install-commands below) is not part of runtime-gnu.bst's closure —
-# same explicit dependency overrides/systemd-base.bst takes for the same reason.
+# gnome-build-meta's core-deps/systemd-base.bst takes the same explicit dependency.
 - freedesktop-sdk.bst:bootstrap/sed.bst
 
 depends:
