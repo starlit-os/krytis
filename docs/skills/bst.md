@@ -977,6 +977,38 @@ from the element's `meson-local`. The same applies to a mirror: it resolves `mes
 in *krytis's* project scope. Compare `%{vars}` of the upstream element and the mirror
 before trusting that only your flag differs.
 
+### "What pulls library X into the image" needs the graph *and* an ELF scan
+
+*Source: `mise/tasks/gtk3-audit` (#1030, step 0 of
+`docs/plans/2026-09-30-gtk3-realistic-floor.md`).*
+
+A graph query (the elements in the runtime closure of `oci/krytis/stack.bst` whose
+`%{runtime-deps}` name the library's element) only sees *declared* edges. Against
+GTK3 on 2026-09-30 it found 13 elements and missed two real consumers that the ELF scan
+caught:
+
+- **`desktop/proton-pass.bst`**: a prebuilt Electron app whose `depends:` is only
+  `runtime-gnu.bst`, yet `Proton Pass` has `libgtk-3.so.0` in DT_NEEDED. It works only
+  because zen-browser and Equibop happen to pull GTK3 in.
+- **`components/gstreamer-plugins-bad.bst`**: declares no GTK3 dependency, but builds
+  `libgstgtkwayland.so` because plugins-base's runtime edge stages GTK3 into its sandbox
+  (see the auto-features section above).
+
+The scan misses something the graph sees too: an element that declares the edge but
+links nothing (fdsdk's `gstreamer-plugins-base`, examples disabled) still drags the
+library into the image. Use both.
+
+`gtk3-audit` is the template: graph half via `./mise/tasks/bst show --deps all --format
+'@@%{name}|%{runtime-deps}'`, with records keyed on the `@@` prefix because runtime deps
+print as a multi-line YAML list. Image half via `podman image mount` plus batched
+`readelf -d -W` (one call per 256 files; readelf prints `File:` headers only when given
+several). Two allowlists fail in both directions, *unexpected* hits and *stale* rows, so
+each removal PR has to delete its own row.
+
+Rootless `podman image mount` only works inside `podman unshare`. Re-exec only the scan
+there (the task sets `GTK3_AUDIT_SCAN` and parses its JSON) and keep `bst` outside, so
+BuildStream never runs as namespace-root against your user-owned cache.
+
 ## Adding a Package
 
 1. Create `elements/desktop/<name>.bst` (or `elements/deps/`, `elements/config/`, etc. depending on what it is — copy a similar existing element)
