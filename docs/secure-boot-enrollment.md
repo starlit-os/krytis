@@ -675,6 +675,18 @@ mise fido2:enroll-luks     # then reboot
 
 - [ ] Reboot prompts for a key touch and unlocks with **no passphrase**
 
+*Before concluding the unlock path is broken:* `mise fido2:enroll-luks` runs a bare
+`systemd-cryptenroll --fido2-device=auto`, and `--fido2-with-client-pin` defaults to
+`yes`. On a key with a PIN set that enrolls a credential `krytis-fido2-root-unlock.service`
+cannot use (it runs `headless=yes`, so it cannot ask for the PIN), and boot falls back to
+the passphrase with no error. Enroll touch-only for this step:
+
+```bash
+sudo systemd-cryptenroll --fido2-device=auto --fido2-with-client-pin=no /dev/<luks-partition>
+```
+
+See `docs/skills/fido2.md` § *`mise fido2:enroll-luks` does not pass that flag*.
+
 *Failure signature:* a passphrase prompt has **two** possible causes, and they need
 different fixes:
 
