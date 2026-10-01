@@ -9,9 +9,9 @@ Two independent measurements, because each misses what the other sees:
   Graph half  Elements in the runtime closure of oci/krytis/stack.bst whose
               runtime deps name gnome-build-meta.bst:sdk/gtk+-3.bst (fdsdk's
               components/gtk3.bst resolves to it via the junction override).
-              Blind to binaries that link GTK3 without declaring it — Proton
-              Pass, and gstreamer-plugins-bad, which finds GTK3 through
-              plugins-base's runtime edge.
+              Blind to binaries that link GTK3 without declaring it, such as
+              gstreamer-plugins-bad, which finds GTK3 through plugins-base's
+              runtime edge.
 
   Image half  Every ELF under /usr of the built image whose DT_NEEDED names
               libgtk-3/libgdk-3, or a library that is itself GTK3-only
@@ -52,6 +52,7 @@ FLAGGED = re.compile(
 # delete the row.
 ELEMENTS = {
     "desktop/zen-browser.bst": ("floor", "prebuilt Firefox build"),
+    "desktop/proton-pass.bst": ("floor", "prebuilt Electron app"),
     "desktop/equibop.bst": ("floor", "prebuilt Electron app"),
     "gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst": ("floor", "Inhibit/Notification/Email backend, #181"),
     "desktop/gnome-disk-utility.bst": ("#1033", "46.1 is GTK3; 51 is GTK4"),
@@ -80,7 +81,7 @@ FILES = {
     # Prebuilt apps.
     "/usr/lib/zen-browser/*": ("floor", "zen-browser"),
     "/usr/lib/equibop/equibop": ("floor", "equibop"),
-    "/usr/lib/proton-pass/Proton Pass": ("floor", "proton-pass; undeclared until #1031"),
+    "/usr/lib/proton-pass/Proton Pass": ("floor", "proton-pass"),
     "/usr/libexec/xdg-desktop-portal-gtk": ("floor", "xdg-desktop-portal-gtk, #181"),
     # Removable.
     "/usr/bin/gnome-disks": ("#1033", "gnome-disk-utility 46.1"),

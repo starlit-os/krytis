@@ -987,9 +987,10 @@ A graph query (the elements in the runtime closure of `oci/krytis/stack.bst` who
 GTK3 on 2026-09-30 it found 13 elements and missed two real consumers that the ELF scan
 caught:
 
-- **`desktop/proton-pass.bst`**: a prebuilt Electron app whose `depends:` is only
-  `runtime-gnu.bst`, yet `Proton Pass` has `libgtk-3.so.0` in DT_NEEDED. It works only
-  because zen-browser and Equibop happen to pull GTK3 in.
+- **`desktop/proton-pass.bst`**: a prebuilt Electron app whose `depends:` was only
+  `runtime-gnu.bst`, yet `Proton Pass` has `libgtk-3.so.0` in DT_NEEDED. It worked only
+  because zen-browser and Equibop happened to pull GTK3 in. #1031 declared its deps, so
+  the graph half now lists it too.
 - **`components/gstreamer-plugins-bad.bst`**: declares no GTK3 dependency, but builds
   `libgstgtkwayland.so` because plugins-base's runtime edge stages GTK3 into its sandbox
   (see the auto-features section above).
@@ -1757,9 +1758,21 @@ systemd/libudev — plus `RPATH: $ORIGIN`, which is what forces the private-dire
 above). It will *not* show `libsecret` (`safeStorage`), `libnotify`, `pipewire`
 (screen share, `@vencord/venmic`), `libXtst`/`libXss`. Cross-check against the `.deb`'s
 `control` `Depends:` line even when shipping the tarball — that list is free metadata and
-catches the dlopened libraries. `libgbm.so.1` is the exception: leave it undeclared, since
-`freedesktop-sdk.bst:vm/mesa-default.bst` in `stacks/desktop.bst` installs the
-`ld.so.conf.d` entry that resolves mesa image-wide.
+catches the dlopened libraries. Then check both against the bundle itself:
+
+- `strings <app-binary> | grep -oE 'lib[A-Za-z0-9_+.-]*\.so(\.[0-9]+)*'` lists what
+  Chromium can dlopen. Most of it (`libva`, `libvulkan_*`, `libGLX_nvidia`, `libunity`)
+  is optional probing; declare only what backs a feature the app uses.
+- `Depends:` is not proof either: Proton Pass's lists `libxtst6`, but nothing in its
+  bundle references libXtst, so `desktop/proton-pass.bst` leaves it out.
+- Native Node modules under `resources/app.asar.unpacked/` have their own DT_NEEDED
+  (Proton Pass's `native.linux-x64-gnu.node` links `libxkbcommon.so.0`). `readelf` them too.
+
+`libgbm.so.1` is DT_NEEDED: declare `freedesktop-sdk.bst:extensions/mesa/mesa.bst` so the
+element's closure is complete, but that alone does not make it loadable. fdsdk installs
+mesa under `%{libdir}/GL/default/lib`; what resolves it is the `ld.so.conf.d` entry that
+`freedesktop-sdk.bst:vm/mesa-default.bst` in `stacks/desktop.bst` installs image-wide.
+`desktop/equibop.bst` and `desktop/proton-pass.bst` carry the comment to copy.
 
 ### A prebuilt binary's RUNPATH into `/usr/local` is dead on bootc
 
