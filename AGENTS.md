@@ -304,6 +304,7 @@ Agents implement autonomously **except** at these gates. Stop and request human 
 | **Breakage Gate** | Changes that affect the boot path, PAM stack, greeter session, or OCI assembly |
 | **Merge Gate** | Final PR approval and merge — always human |
 | **Upstream Gate** | Any interaction with a repository this project does not own — see below |
+| **Toolchain Gate** | A build is about to compile freedesktop-sdk's toolchain (`bootstrap/*`, `components/llvm.bst`, `components/rust.bst`). This usually means the cache is missing, e.g. an unmounted cache drive, not that a rebuild is needed. Stop it and ask. See `docs/skills/mise.md` § Standard build workflow |
 
 When in doubt, open a draft PR with your implementation and ask explicitly.
 
