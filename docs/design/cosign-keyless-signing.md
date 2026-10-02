@@ -78,12 +78,15 @@ The upstream PR that would have fixed this,
 [`containers/image#2235`](https://github.com/containers/image/pull/2235) ("Accept URI
 for Sigstore Signed Images"), was **closed unmerged on 2025-08-26** — not on its
 merits, but because `containers/image` was folded into the
-[`containers/container-libs`](https://github.com/containers/container-libs) monorepo
-and stopped accepting PRs. The maintainer filed
-[`container-libs#34`](https://github.com/containers/container-libs/issues/34) as a
-pointer to the demand; it is still open and nothing has been ported. So URI-SAN
-support does not exist in any released `containers/image`, and **host-side
-enforcement of the keyless signature is still not possible**.
+[`containers/container-libs`](https://github.com/podman-container-tools/container-libs) monorepo
+(since renamed `podman-container-tools/container-libs`) and stopped accepting PRs. The
+maintainer filed
+[`container-libs#34`](https://github.com/podman-container-tools/container-libs/issues/34) as a
+pointer to the demand. Its implementation,
+[`container-libs#625`](https://github.com/podman-container-tools/container-libs/pull/625)
+(`buildSignerURI`), has been open since 2026-02-04 with no maintainer review (checked
+2026-10-01). So URI-SAN support does not exist in any released `containers/image`, and
+**host-side enforcement of the keyless signature is still not possible**.
 
 **Resolution: dual-sign.** Every publish gets both a keyless signature
 (satisfies #60, gives public Rekor transparency and strong workflow-identity
@@ -91,7 +94,7 @@ provenance, used for manual/CI verification) and a signature from a
 maintained static cosign key pair (weaker identity binding — proves
 "signed by whoever holds the repo's cosign key," not "signed by this exact
 workflow run" — but `policy.json`'s `keyPath` verification can check it
-today). If URI-SAN support ever lands — now `containers/container-libs#34`, not the
+today). If URI-SAN support ever lands — now `podman-container-tools/container-libs#625`, not the
 closed `containers/image#2235` — and bootc picks it up, the static-key host
 enforcement could be replaced by keyless enforcement. #418 is that follow-up.
 

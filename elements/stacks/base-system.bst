@@ -104,13 +104,16 @@ depends:
   - freedesktop-sdk.bst:components/sed.bst
   - freedesktop-sdk.bst:components/less.bst
   - freedesktop-sdk.bst:components/which.bst
-  # unzip dropped upstream in fdsdk 26.08 ("Drop info-zip's unzip") — not
-  # renamed, genuinely removed (info-zip unzip 6.0/2009 carried 10
+  # Info-ZIP unzip dropped upstream in fdsdk 26.08 ("Drop info-zip's unzip") —
+  # not renamed, genuinely removed (info-zip unzip 6.0/2009 carried 10
   # accumulated CVE patches in fdsdk's own tree; upstream declined to keep
-  # maintaining it). Not re-vendored here for the same reason. Substitutes
-  # if a user needs zip extraction: `bsdtar -xf <file>.zip` (libarchive,
-  # already a transitive runtime-dep) or `python3 -m zipfile -e <file>.zip
-  # <dir>` (stdlib, no extra dep). Revisit if a concrete `unzip`-CLI need
+  # maintaining it). Not re-vendored here for the same reason.
+  #
+  # /usr/bin/unzip still exists: it is libarchive's bsdunzip under that name
+  # (components/libarchive.bst ships both), and it is NOT option-compatible.
+  # Info-ZIP idioms like `unzip -uod <dir> <zip>` fail with "-n, -o and -u are
+  # contradictory" (checked 2026-10-02 on 26.08.202609282027; dakota 787bf4d).
+  # Nothing in krytis shells out to unzip. Revisit if a concrete Info-ZIP need
   # surfaces (issue #305).
   - freedesktop-sdk.bst:components/rsync.bst
   - freedesktop-sdk.bst:components/jq.bst
