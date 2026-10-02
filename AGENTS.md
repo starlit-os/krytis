@@ -162,6 +162,24 @@ files with `cert-to-efi-sig-list` in two places, which is precisely the tool #43
 silently emitting empty signature lists. When a fix commit contradicts a design doc,
 updating the doc belongs in that commit.
 
+The #1056 triage (2026-10-02) found two more ways rot gets in, both outside what
+`docs-links` can see:
+
+- **Undated claims about someone else's project.** `signing.md` said "no upstream fix is in
+  flight" while podman-container-tools/container-libs#625 had been open for eight months;
+  `desktop.md` said "no activity since 2026-07-25" about a PR that had new comments in
+  September. Any sentence stating the status of an issue or PR in another repository
+  (open, unmerged, unreleased, no activity, nothing in flight) **links it and says "as of
+  YYYY-MM-DD"**. An undated status reads as current forever; a dated one shows its age.
+- **Open issue bodies are documentation too, and fixing PRs never touch them.** #512 still
+  called #250 open seven weeks after it closed, and #418 still listed as an option the very
+  `publish.yml` change whose comment says "That is the gap #418 closes". When a PR changes a
+  fact, grep the **open** krytis issues for it as well as `docs/`
+  (`gh issue list --state open --search '<term> in:body'`), and edit the bodies that state the
+  old version in the same work session. The same goes for inventory tables kept in an issue:
+  #483's carried-patch table was missing six of nine carries (five patched elements and a fork
+  pin), because each was added by a PR whose diff could not show the table.
+
 ---
 
 ## Mandatory Gates
