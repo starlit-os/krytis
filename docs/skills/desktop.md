@@ -2046,8 +2046,11 @@ controllers, and states that other kernel controllers are "not covered here yet"
 shipped pid1 binary contains no `dmem` string at all. This is not version lag a fdsdk
 bump would close: systemd/systemd#37079 (`DeviceMemory{Min,Low,Max}=`) is open,
 `needs-rebase`, and its author marked it draft on 2026-02-27 after a maintainer objected
-that the kernel side is still in flux for anything but GPUs. No activity since
-2026-07-25.
+that the kernel side is still in flux for anything but GPUs. As of 2026-10-01 it is still
+a draft with `needs-rebase`. The only movement is discussion: on 2026-09-12 a commenter
+reported NVIDIA's open kernel modules now register a dmem region
+(`nvidia/<pci-id>/vidmem`), and on 2026-09-14 Werkov discussed how free-text region names
+could be exposed. No new code.
 
 The only remaining path is a manual `echo +dmem > .../cgroup.subtree_control` at every
 level from root down to the app scope, re-applied per login because
