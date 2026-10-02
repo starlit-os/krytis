@@ -126,6 +126,31 @@ range — that range is what the `upstream-lessons` skill mines. The task delibe
 not do any mining itself; parsing commit relevance is a judgment call, not something to
 bake into a shell script.
 
+## Cadence: monthly, human-triggered (#304)
+
+A mining pass is due **monthly** (decided 2026-10-02 in #304). Nothing runs it
+automatically: a person or agent invokes the `upstream-lessons` skill, because every pass
+ends in human review of candidates and a human merge anyway (Merge Gate).
+
+`mise upstream-sync` (and `--check`) is the due signal. Each repo's header line prints
+`last mined <last_checked_date> (N days ago)`, and a repo with a nonempty range whose last
+pass is 30 or more days old gets a `DUE:` line. A repo with nothing new is never due,
+however old its date, because there is nothing to mine. So the routine is: run
+`mise upstream-sync --check` at the start of a month, and mine whatever says `DUE`.
+
+Monthly, not weekly, because of volume. Measured on 2026-10-02, 8 days after the last pass
+(2026-09-24): dakota `testing` had moved 22 commits, dakota-iso 13, zirconium-hawaii 0. A
+month gives a reviewable batch of tens of commits per repo, not a firehose; #304's
+original data point was 172 dakota commits over about three weeks during a busier period.
+If a month's range ever stops being reviewable in one pass, mine the loudest repo more
+often rather than changing the cadence for all three.
+
+Running the task file directly (`./mise/tasks/upstream-sync --check`) does **not** pass
+`--check`: the `#USAGE` flags reach the script only through `mise run`, as `usage_check`.
+Invoked directly it performs a real sync and fast-forwards the sibling checkouts. That is
+harmless, because the range is measured from `last_checked_sha`, not from the checkout's
+`HEAD`, but it is not a preview.
+
 ## Bootstrap State
 
 The first pass (2026-07-09) seeded `last_checked_sha` at each repo's HEAD at the time

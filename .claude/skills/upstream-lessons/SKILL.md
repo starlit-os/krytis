@@ -31,6 +31,11 @@ to the upstream repo.
 If you want to preview without syncing, `mise upstream-sync --check` fetches and reports
 the pending range without updating the local checkout.
 
+The cadence is **monthly** (#304). Each repo's output line shows how long ago it was last
+mined, and a repo with new commits and a pass 30 or more days old is flagged `DUE`. Mine
+the `DUE` repos; mining a non-due repo early is fine, but not required. See
+`docs/skills/upstream-sync.md` § Cadence.
+
 ### 2. Bootstrap case
 
 If a repo has no prior state to diff against — this is the very first run, or
