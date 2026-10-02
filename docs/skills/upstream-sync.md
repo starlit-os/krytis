@@ -155,6 +155,14 @@ The count trigger only fires when someone runs the task, because nothing is sche
 keeps a run *after* a busy stretch manageable by saying "mine now", not by interrupting
 anyone mid-month.
 
+**Revisit the cadence if the count trigger fires more often than the monthly one.** The
+month is meant to be the normal trigger and 50 commits the exception for a busy stretch.
+If the count is what makes repos due on most passes, the monthly cadence is too slow for
+how fast upstream moves, so shorten it or rethink the split, don't just keep mining on the
+count. To make that visible, every mining PR states which trigger made each mined repo due
+(`.claude/skills/upstream-lessons/SKILL.md` step 7); look back over the last few mining PRs
+when deciding.
+
 Running the task file directly (`./mise/tasks/upstream-sync --check`) does **not** pass
 `--check`: the `#USAGE` flags reach the script only through `mise run`, as `usage_check`.
 Invoked directly it performs a real sync and fast-forwards the sibling checkouts. That is
