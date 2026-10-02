@@ -14,9 +14,7 @@
 # Data files (umbriel.portal, umbriel-portals.conf preferring
 # `default=umbriel;gtk` for XDG_CURRENT_DESKTOP=Umbriel, both D-Bus/systemd
 # service units) are all installed by upstream's own meson.build -- no
-# krytis-side portal-routing element needed here, unlike niri's
-# config/xdg-portals.bst (niri isn't a portal implementation itself and needed
-# a hand-authored routing file; umbriel ships its own valid one).
+# krytis-side portal-routing element needed here.
 #
 # Does not link wlroots -- captures via raw wayland-protocols staging
 # extensions (ext-image-capture-source-v1, ext-image-copy-capture-v1,

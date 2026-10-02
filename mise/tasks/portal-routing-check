@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+#MISE description="Assert which xdg-desktop-portal backend serves each portal interface under niri and Umbriel"
+#USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image to check (must already be built/loaded)"
+"""Ratchet for xdg-desktop-portal routing (#1027).
+
+Routing decides which backend serves each org.freedesktop.impl.portal.*
+interface, and a wrong answer is invisible until a Flatpak misbehaves. Three
+inputs move it without anyone touching krytis: niri's niri-portals.conf changes
+with every niri bump, desktop/xdg-desktop-portal-umbriel.bst tracks main and
+ships umbriel-portals.conf, and a backend that grows an interface claims it
+through `default=`.
+
+xdg-desktop-portal resolves routing at startup, before it activates anything,
+so this runs headlessly: one container start, xdp --verbose under each
+desktop's XDG_CURRENT_DESKTOP, and its `Using <backend>.portal for <iface>`
+lines are the answer. An interface with no such line has no backend (none).
+Resolution took ~1.2 s when measured; each run gets XDP_SECONDS.
+
+Fails on:
+  mismatch      an interface resolves to a backend other than the table's;
+  unclassified  an installed .portal file declares an interface the table has
+                no row for — a backend grew one, a human decides;
+  unparsable    an `Error loading …` warning: xdp skips a .portal file it
+                cannot parse, with nothing but that warning (#1027);
+  no config     no `Using portal configuration file` line for a desktop: xdp
+                fell back to the legacy UseIn= matching.
+
+The tables are the expected state. A PR that changes routing on purpose edits
+its rows in the same commit. See docs/skills/desktop.md § xdg-desktop-portal
+routing.
+"""
+
+import os
+import re
+import subprocess
+import sys
+
+XDP_SECONDS = 4
+
+# interface (without the org.freedesktop.impl.portal. prefix) -> (backend, why)
+NIRI_UPSTREAM = "niri-portals.conf default=gnome;gtk"
+EXPECTED = {
+    "niri": {
+        "Access": ("gtk", "niri-portals.conf interface key"),
+        "Account": ("gnome", NIRI_UPSTREAM),
+        "AppChooser": ("gnome", NIRI_UPSTREAM),
+        "Background": ("gnome", NIRI_UPSTREAM),
+        "Clipboard": ("gnome", "needs Mutter RemoteDesktop, niri lacks it (#1054)"),
+        "DynamicLauncher": ("gnome", NIRI_UPSTREAM),
+        "Email": ("gtk", "gnome.portal lacks it"),
+        "FileChooser": ("gnome", "Nautilus"),
+        "GlobalShortcuts": ("gnome", "needs org.gnome.Shell, niri lacks it (#1054)"),
+        "Inhibit": ("gtk", "gnome.portal lacks it"),
+        "InputCapture": ("gnome", "needs Mutter, niri lacks it (#1054)"),
+        "Lockdown": ("gnome", NIRI_UPSTREAM),
+        "Notification": ("gtk", "niri-portals.conf interface key"),
+        "Print": ("gnome", NIRI_UPSTREAM),
+        "RemoteDesktop": ("gnome", "needs Mutter RemoteDesktop, niri lacks it (#1054)"),
+        "ScreenCast": ("gnome", "niri implements Mutter ScreenCast"),
+        "Screenshot": ("gnome", "niri implements org.gnome.Shell.Screenshot"),
+        "Secret": ("none", "routed to gnome-keyring, not installed (#1028)"),
+        "Settings": ("gnome", NIRI_UPSTREAM),
+        "Usb": ("gnome", NIRI_UPSTREAM),
+        "Wallpaper": ("gnome", NIRI_UPSTREAM),
+    },
+    "Umbriel": {
+        "Access": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
+        "Account": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
+        "AppChooser": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Background": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Clipboard": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "DynamicLauncher": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
+        "Email": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
+        "FileChooser": ("gtk", "umbriel-portals.conf default=umbriel;gtk (#1029)"),
+        "GlobalShortcuts": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Inhibit": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
+        "InputCapture": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Lockdown": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Notification": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
+        "Print": ("gtk", "umbriel-portals.conf default=umbriel;gtk (#1029)"),
+        "RemoteDesktop": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "ScreenCast": ("umbriel", "xdg-desktop-portal-umbriel"),
+        "Screenshot": ("umbriel", "xdg-desktop-portal-umbriel"),
+        "Secret": ("none", "no Secret backend installed (#1028)"),
+        "Settings": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Usb": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Wallpaper": ("none", "neither umbriel nor gtk implements it (#1029)"),
+    },
+}
+
+PREFIX = "org.freedesktop.impl.portal."
+USING = re.compile(r"Using (\S+)\.portal for org\.freedesktop\.impl\.portal\.(\w+)")
+SECTION = re.compile(r"^@@(DESKTOP|PORTAL) (.+)$")
+
+
+def probe(tag):
+    """One container: xdp --verbose per desktop, then every .portal file."""
+    script = f"""
+for d in {' '.join(EXPECTED)}; do
+    echo "@@DESKTOP $d"
+    XDG_CURRENT_DESKTOP=$d timeout {XDP_SECONDS} dbus-run-session -- \\
+        /usr/libexec/xdg-desktop-portal --verbose 2>&1
+done
+for f in /usr/share/xdg-desktop-portal/portals/*.portal; do
+    echo "@@PORTAL $f"
+    cat "$f"
+done
+"""
+    return subprocess.run(["podman", "run", "--rm", "--entrypoint", "sh", tag, "-c", script],
+                          check=True, capture_output=True, text=True).stdout
+
+
+def parse(out):
+    xdp, portals, current = {}, {}, None
+    for line in out.splitlines():
+        m = SECTION.match(line)
+        if m:
+            current = m.groups()
+            (xdp if current[0] == "DESKTOP" else portals)[current[1]] = []
+            continue
+        if current:
+            (xdp if current[0] == "DESKTOP" else portals)[current[1]].append(line)
+    return xdp, portals
+
+
+def declared(portals):
+    """Every interface named by an Interfaces= line of an installed .portal file."""
+    ifaces = set()
+    for lines in portals.values():
+        for line in lines:
+            if line.startswith("Interfaces="):
+                ifaces.update(i[len(PREFIX):] for i in line[11:].split(";")
+                              if i.startswith(PREFIX))
+    return ifaces
+
+
+def check_desktop(desktop, lines, universe):
+    ok = True
+    if not any("Using portal configuration file" in l for l in lines):
+        print(f"  NO CONFIG: xdp loaded no portals.conf for {desktop} (legacy UseIn= fallback)")
+        ok = False
+
+    got = {}
+    for line in lines:
+        m = USING.search(line)
+        if m:
+            got.setdefault(m.group(2), set()).add(m.group(1))
+
+    expected = EXPECTED[desktop]
+    for iface in sorted(universe):
+        backends = got.get(iface, {"none"})
+        if iface not in expected:
+            print(f"  UNCLASSIFIED: {iface} → {'/'.join(sorted(backends))} has no row")
+            ok = False
+            continue
+        want, why = expected[iface]
+        if backends != {want}:
+            print(f"  MISMATCH: {iface}: expected {want} ({why}), got {'/'.join(sorted(backends))}")
+            ok = False
+    print(f"    {sum(1 for i in universe if got.get(i))} of {len(universe)} interface(s) served")
+    return ok
+
+
+def main():
+    os.chdir(subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True,
+                            capture_output=True, text=True).stdout.strip())
+    tag = os.environ.get("usage_tag") or "localhost/krytis:latest"
+
+    print(f"==> Resolving portal routing in {tag}")
+    xdp, portals = parse(probe(tag))
+    print(f"    backends: {', '.join(sorted(os.path.basename(p) for p in portals))}")
+
+    ok = True
+    errors = sorted({l.split("Error loading ", 1)[1]
+                     for lines in xdp.values() for l in lines if "Error loading " in l})
+    for e in errors:
+        print(f"  UNPARSABLE: {e}")
+        ok = False
+
+    universe = declared(portals)
+    for desktop in EXPECTED:
+        print(f"==> XDG_CURRENT_DESKTOP={desktop}")
+        ok &= check_desktop(desktop, xdp.get(desktop, []), universe | set(EXPECTED[desktop]))
+
+    if ok:
+        print("==> portal-routing-check passed.")
+        return
+    print("==> portal-routing-check FAILED. A routing change needs its row updated in"
+          " mise/tasks/portal-routing-check, in the same commit as the change."
+          " See docs/skills/desktop.md § xdg-desktop-portal routing.")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -31,6 +31,7 @@ mise load-image               # BST build → podman local storage
 mise lint                     # bootc container lint (squash-all)
 mise umbriel-config-validate  # umbriel validate on the shipped /etc/xdg config (#980)
 mise cracklib-dict-check      # pwscore must reject a dictionary word in the built image (#1001)
+mise portal-routing-check     # which portal backend serves each interface under niri/Umbriel (#1027)
 mise generate-fakecap-manifest # regenerate files/fakecap-manifest.tsv (only when elements change)
 mise chunkify                 # rechunk into composefs-ready component layers
 mise load-image-root          # copy krytis:latest into the ROOT podman store (sudo)
@@ -68,7 +69,8 @@ exhausting input failed (error: write …/containers/storage/overlay-layers/tmp/
 
 `podman image prune -f` clears the dangling layers (freed 33 GB on 2026-09-28, #869), then
 re-run `mise run build --pull --force` — every BST artifact is already cached, so only
-`load-image`/`lint`/`umbriel-config-validate`/`cracklib-dict-check` actually re-run.
+`load-image`/`lint`/`umbriel-config-validate`/`cracklib-dict-check`/`portal-routing-check`
+actually re-run.
 
 **Check the right filesystem.** On a Fedora-derived host `$HOME` is typically its own
 btrfs subvolume: both `~/.local/share/containers/storage` and `~/.cache/buildstream` (50 GB
@@ -137,7 +139,7 @@ process whose parent is `systemd --user` is an orphan.
   success. Observed while testing an element swap: `lint` passed while the image still
   contained the elements the branch had removed. Use `mise run build`
   (`generate-image-version` → `load-image` → `lint` → `umbriel-config-validate` →
-  `cracklib-dict-check`), and confirm
+  `cracklib-dict-check` → `portal-routing-check`), and confirm
   the change by inspecting image *contents* — `podman run --rm localhost/krytis:latest ...`,
   or `/usr/manifest.json` for element-level presence — never by the lint exit code alone.
 - **`mise lint` is a real multi-stage `podman build`, not a fast static check — its
@@ -1054,7 +1056,7 @@ fi
 groups them by purpose, because a hand-maintained copy of the tree rots: the list
 that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**26 of the 104 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**26 of the 105 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. Count from the
 **tree**, not the CLI: `find mise/tasks -type f | wc -l` and
 `grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
@@ -1066,8 +1068,8 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 |---|---|
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `warm-cache [--pull\|--push] [element]` — `bst build --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. Use it to refill an evicted cache or pre-build before several worktrees build at once; `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
-| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
+| Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `portal-routing-check [--tag]` — resolve xdg-desktop-portal routing headlessly under `niri` and `Umbriel` and compare every interface's backend against the table in the task, run by `build`; it also fails on an unparsable `.portal` file (#1027, see [`desktop.md`](desktop.md) § xdg-desktop-portal routing); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
 | Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
