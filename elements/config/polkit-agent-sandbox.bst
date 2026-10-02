@@ -24,13 +24,22 @@
 # for polkit and for anything routed through polkit (run0, GUI privilege
 # prompts, the noctalia polkit agent).
 #
-# Upstream is polkit#633 (see also #622, #623): acknowledged, unfixed, no ETA,
-# and upstream's own advice in the meantime is a unit override. This is that
-# override, relaxing exactly the two options that block the token and nothing
-# else. #874 tracks the upstream fix and carries the removal condition — do
-# not delete this element just because polkit drops the setuid helper
-# (polkit#704) or because the socket unit stops being enabled; read #874
-# first, both of those make the override MORE load-bearing, not less.
+# This override is permanent, and upstream endorses it as the fix. As of
+# 2026-10-02: polkit's maintainer (jrybar-rh, polkit#622, 2026-05-11) found no
+# viable in-polkit fix short of a PAM broker daemon that does not exist, and said
+# the way forward is projects that ship device-touching PAM modules "providing a
+# drop-in override for polkit". bluca called exactly that, Arch's pam-u2f shipping
+# polkit-agent-helper@.service.d/pam-u2f.conf, "the correct way to solve these
+# issues", and polkit#626 (relaxing device access in the upstream unit) was closed
+# unmerged. This is that drop-in, relaxing exactly the two options that block the
+# token and nothing else. #874 tracked an upstream fix and was closed once that
+# was clear.
+#
+# Two changes look like a reason to delete this element and are not: polkit
+# dropping the setuid helper (polkit#704) and the socket unit no longer being
+# enabled. Both make the override MORE load-bearing, not less; see
+# docs/skills/pam.md § polkit's sandboxed PAM helper.
+#
 # Everything the sandbox is actually worth keeping stays: the helper
 # still runs with NoNewPrivileges=yes, SystemCallFilter=@system-service,
 # ProtectSystem=strict, RestrictAddressFamilies=AF_UNIX, PrivateNetwork=yes,
