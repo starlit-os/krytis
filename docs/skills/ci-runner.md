@@ -423,7 +423,14 @@ Measured 2026-09-24 with no build running:
 **`objects/` is fine and must never be touched by hand.** 47G sits under the
 `cache: quota: 50G` that `cache-warm.yml` writes into
 `~/.config/buildstream.conf`, so casd is enforcing its cap exactly as
-configured. It is content-addressed storage: deleting a blob some artifact
+configured. It held only what the target needs to assemble: 685 of 917
+elements cached after run 36978838734 (2026-10-02). Since #1077 cache-warm builds with `--deps all`, so the
+toolchain and every other build-only dependency are cached here too, which pushes
+the cache past 50G. casd then evicts the least recently used artifacts. That costs
+re-pulls from bow, not lost work, because everything built is pushed as it
+finishes. Revisit the quota if run times climb.
+
+It is content-addressed storage: deleting a blob some artifact
 still references breaks the "referenced digest is present" invariant, and
 the damage surfaces later as a corrupt-cache error in an unrelated build.
 There is no safe incremental command either — see § Clearing the CAS, BST

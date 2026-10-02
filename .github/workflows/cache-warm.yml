@@ -277,7 +277,16 @@ jobs:
           # publish run 33872670405 died on the same broken element. cache-warm
           # is the only scheduled job that compiles elements at all (`Checks` is
           # static-only), so its result has to mean something.
-          uv run bst -o x86_64_v3 true --no-interactive build --retry-failed oci/krytis/image.bst
+          #
+          # --deps all (#1077): without it bst plans dynamically and only
+          # requires the target, fetching a build dependency only when
+          # something has to compile. On a warm main nothing does, so the
+          # toolchain (bootstrap/*, components/llvm.bst, components/rust.bst)
+          # was never pulled, built or pushed. The first branch that touched a
+          # Rust element then compiled gcc from scratch (2026-10-02, #1028).
+          # `all` makes every element of the build closure required, so each is
+          # pulled from bow or built here and pushed.
+          uv run bst -o x86_64_v3 true --no-interactive build --deps all --retry-failed oci/krytis/image.bst
 
       - name: Print disk usage after build
         if: always()
@@ -285,8 +294,22 @@ jobs:
           df -h -x fuse || true
           du -sh ~/.cache/buildstream 2>/dev/null || true
 
+      # Counts over the whole build closure (`--deps all`), the same set the
+      # build step now requires, and names what is missing. Before #1077 this
+      # printed "Cached elements: 685" with 232 of 917 absent, toolchain
+      # included, and nothing said so.
       - name: Report cached elements
         if: always()
         run: |
-          CACHED=$(uv run bst show --deps all --format '%{name} %{state}' oci/krytis/image.bst 2>/dev/null | grep -c "cached" || echo 0)
-          echo "::notice::Cached elements: ${CACHED}"
+          uv run bst show --deps all --format '%{state}|%{name}' oci/krytis/image.bst 2>/dev/null \
+            | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z ]+\|' > "${RUNNER_TEMP}/states.txt" || true
+          TOTAL=$(wc -l < "${RUNNER_TEMP}/states.txt")
+          CACHED=$(grep -c '^cached|' "${RUNNER_TEMP}/states.txt" || true)
+          echo "::notice::Cached elements: ${CACHED} of ${TOTAL}"
+          if [ "${CACHED}" -ne "${TOTAL}" ]; then
+            echo "::warning::$((TOTAL - CACHED)) element(s) not cached; first 50 below"
+            # awk, not head: head exits early and grep takes SIGPIPE (141),
+            # which fails the step as soon as it runs under pipefail
+            # (`shell: bash`); this step is `bash -e` today.
+            grep -v '^cached|' "${RUNNER_TEMP}/states.txt" | awk 'NR <= 50'
+          fi

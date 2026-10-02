@@ -27,4 +27,10 @@ ELEMENT="${usage_element:-oci/krytis/image.bst}"
 
 # --retry-failed for the same reason as load-image: a cached failure is not
 # authoritative, rebuild it.
-./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build --retry-failed "$ELEMENT"
+#
+# --deps all (#1077): warm the whole build closure, toolchain included, not
+# just what this tree needs to assemble its own target. bst's default plan only
+# fetches a build dependency when something has to compile, so a warm main left
+# rust/llvm/bootstrap gcc uncached and the first branch that changed a Rust
+# element compiled them from scratch. With --push, everything built is pushed.
+./mise/tasks/bst ${CONTAINER:-} ${PUSH:-} ${PULL:-} build --deps all --retry-failed "$ELEMENT"

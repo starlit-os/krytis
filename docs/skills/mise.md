@@ -107,7 +107,16 @@ Likely causes, in order, and what to check:
    not resolve, or bow (`bst-cache.ririi.dev`) is unreachable. Check the build's
    `Initializing remote caches` line and the `artifacts:` block of the generated
    `--config` file.
-3. **The junction ref, `project.conf` or `include/` changed** in the branch or on `main`.
+3. **The toolchain was never warmed.** Before #1077, `cache-warm.yml` and `mise run
+   warm-cache` built `oci/krytis/image.bst` with bst's default dynamic plan. That plan
+   fetches a build dependency only when something has to compile. On a warm `main`
+   nothing does, so `rust`/`llvm`/`bootstrap/*` were never pulled, built or pushed,
+   while the run still reported success and `Cached elements: 685`. The first branch
+   that changed a Rust element (#1028, 2026-10-02) found all three missing from local,
+   bow and `cache.freedesktop-sdk.io`. **A fast warm on `main` is not evidence that
+   a branch can compile.** Both now pass `--deps all`, and the report step names every
+   uncached element.
+4. **The junction ref, `project.conf` or `include/` changed** in the branch or on `main`.
    This one is a real cache miss; the user still decides whether to spend the hours now.
 
 How to spot it:
@@ -1064,7 +1073,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 
 | Group | Tasks |
 |---|---|
-| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `warm-cache [--pull\|--push] [element]` — `bst build --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. Use it to refill an evicted cache or pre-build before several worktrees build at once; `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
+| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `warm-cache [--pull\|--push] [element]` — `bst build --deps all --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. `--deps all` warms the whole build closure, toolchain included, not just what the target needs to assemble (#1077). Use it to refill an evicted cache or pre-build before several worktrees build at once; `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
