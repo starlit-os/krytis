@@ -3,7 +3,7 @@
 #USAGE arg "[repo]" help="Only sync this repo (matches 'name:' in docs/upstreams.yml); default: all tracked repos"
 #USAGE flag "--check" help="Report pending commits without moving the local checkout (still fetches; skips the --ff-only merge)"
 
-# Cadence (#304): a mining pass is due monthly, or sooner once a range grows past
+# Cadence (#304): a mining pass is due every two weeks, or sooner once a range grows past
 # what one review can absorb. This task does not mine; it only reports, per repo,
 # how long ago the last pass was, and flags a repo DUE when it has new commits AND
 # either its last_checked_date is MINING_CADENCE_DAYS or more old, or the pending
@@ -15,7 +15,7 @@ set -euo pipefail
 TRACKING_FILE="docs/upstreams.yml"
 FILTER="${usage_repo:-}"
 CHECK_ONLY="${usage_check:-false}"
-MINING_CADENCE_DAYS=30
+MINING_CADENCE_DAYS=14
 MINING_MAX_COMMITS=50
 TODAY=$(date -u +%F)
 

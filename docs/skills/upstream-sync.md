@@ -126,40 +126,40 @@ range — that range is what the `upstream-lessons` skill mines. The task delibe
 not do any mining itself; parsing commit relevance is a judgment call, not something to
 bake into a shell script.
 
-## Cadence: monthly or 50 commits, human-triggered (#304)
+## Cadence: every two weeks or 50 commits, human-triggered (#304)
 
-A mining pass is due **monthly, or sooner once a repo has 50 or more unmined commits**
-(decided 2026-10-02 in #304). Nothing runs it automatically: a person or agent invokes the
-`upstream-lessons` skill, because every pass ends in human review of candidates and a human
-merge anyway (Merge Gate).
+A mining pass is due **every two weeks, or sooner once a repo has 50 or more unmined
+commits** (decided 2026-10-02 in #304). Nothing runs it automatically: a person or agent
+invokes the `upstream-lessons` skill, because every pass ends in human review of candidates
+and a human merge anyway (Merge Gate).
 
 `mise upstream-sync` (and `--check`) is the due signal. Each repo's header line prints
 `last mined <last_checked_date> (N days ago)`. A repo with a nonempty range gets a `DUE:`
-line naming whichever trigger fired: its last pass is 30 or more days old, or the range is
+line naming whichever trigger fired: its last pass is 14 or more days old, or the range is
 50 or more commits. A repo with nothing new is never due, however old its date, because
 there is nothing to mine. Both thresholds are constants at the top of the task
 (`MINING_CADENCE_DAYS`, `MINING_MAX_COMMITS`).
 
-The routine: run `mise upstream-sync --check` at the start of a month, and whenever else
-you happen to sync, and mine whatever says `DUE`.
+The routine: run `mise upstream-sync --check` every couple of weeks, and whenever else you
+happen to sync, and mine whatever says `DUE`.
 
 Why both triggers. Time alone lets a busy repo pile up an unreviewable range: #304's
 original data point was 172 dakota commits over about three weeks. Count alone lets a
-quiet repo go unmined for a quarter, which is how a lesson ends up rediscovered the hard
-way. On 2026-10-02, 8 days after the last pass (2026-09-24), dakota `testing` had moved 22
-commits, dakota-iso 13 and zirconium-hawaii 0. At that pace dakota reaches 50 commits in
-about 18 days, so it is usually due by count; dakota-iso (about 49 days) and
-zirconium-hawaii are usually due by the month.
+quiet repo go unmined for months, which is how a lesson ends up rediscovered the hard way.
+On 2026-10-02, 8 days after the last pass (2026-09-24), dakota `testing` had moved 22
+commits, dakota-iso 13 and zirconium-hawaii 0. At that pace a two-week range is about 38
+dakota commits and 23 dakota-iso commits, so every repo should normally come due by time,
+and the 50-commit trigger only fires in a busier stretch than that.
 
 The count trigger only fires when someone runs the task, because nothing is scheduled. It
 keeps a run *after* a busy stretch manageable by saying "mine now", not by interrupting
-anyone mid-month.
+anyone between passes.
 
-**Revisit the cadence if the count trigger fires more often than the monthly one.** The
-month is meant to be the normal trigger and 50 commits the exception for a busy stretch.
-If the count is what makes repos due on most passes, the monthly cadence is too slow for
-how fast upstream moves, so shorten it or rethink the split, don't just keep mining on the
-count. To make that visible, every mining PR states which trigger made each mined repo due
+**Revisit the cadence if the count trigger fires more often than the time one.** Two weeks
+is meant to be the normal trigger and 50 commits the exception for a busy stretch. If the
+count is what makes repos due on most passes, two weeks is too slow for how fast upstream
+moves, so shorten it or rethink the split, don't just keep mining on the count. To make
+that visible, every mining PR states which trigger made each mined repo due
 (`.claude/skills/upstream-lessons/SKILL.md` step 7); look back over the last few mining PRs
 when deciding.
 

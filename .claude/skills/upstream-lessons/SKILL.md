@@ -31,9 +31,9 @@ to the upstream repo.
 If you want to preview without syncing, `mise upstream-sync --check` fetches and reports
 the pending range without updating the local checkout.
 
-The cadence is **monthly, or sooner at 50 unmined commits** (#304). Each repo's output
-line shows how long ago it was last mined. A repo with new commits is flagged `DUE` when its
-last pass is 30 or more days old or its range is 50 or more commits, and the `DUE` line says
+The cadence is **every two weeks, or sooner at 50 unmined commits** (#304). Each repo's
+output line shows how long ago it was last mined. A repo with new commits is flagged `DUE`
+when its last pass is 14 or more days old or its range is 50 or more commits, and the `DUE` line says
 which. Mine the `DUE` repos; mining a non-due repo early is fine, but not required. See
 `docs/skills/upstream-sync.md` § Cadence.
 
@@ -146,8 +146,8 @@ work unless the user ties a specific run to a GitHub issue — branch name like
 `chore/sync-upstream-lessons-<date>`). Open a PR summarizing what was accepted, what was
 deferred (and the precondition that would revisit it, linking issue #479), what was
 rejected outright and why, and the new tracked SHAs. For each mined repo, state which
-trigger made it due (`30 days`, `50 commits`, or `not due, mined early`), copied from the
-`DUE` line. If the count trigger has fired more often than the monthly one over recent
+trigger made it due (`14 days`, `50 commits`, or `not due, mined early`), copied from the
+`DUE` line. If the count trigger has fired more often than the time one over recent
 mining PRs, say so in the PR: that is the signal to revisit the cadence
 (`docs/skills/upstream-sync.md` § Cadence). Check off any issue #479 item promoted
 to accepted this run. Merging is the human's call per the Merge Gate — don't merge it
