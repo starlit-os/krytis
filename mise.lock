@@ -86,13 +86,13 @@ url = "https://github.com/protonpass/pass-cli/releases/download/2.4.2/pass-cli-l
 url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/602793618"
 
 [[tools.python]]
-version = "3.12.14"
+version = "3.12.15"
 backend = "core:python"
-specifiers = ["3.12.14"]
+specifiers = ["3.12.15"]
 
 [tools.python."platforms.linux-x64"]
-checksum = "sha256:72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+checksum = "sha256:7bb1659e3235077b7f63d5b6eb6ce653c6fcd6c5041e9d5f73b42ce10421464d"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261001/cpython-3.12.15+20261001-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 provenance = "github-attestations"
 
 [[tools.usage]]
