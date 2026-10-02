@@ -80,6 +80,52 @@ assume:
 df -h ~/.local/share/containers/storage ~/.cache/buildstream
 ```
 
+**Stop and ask before letting a build rebuild the toolchain.** If a build is about to
+build freedesktop-sdk's toolchain — anything under `freedesktop-sdk.bst:bootstrap/`
+(`bootstrap/build/gcc-stage1.bst`, `gcc-stage2.bst`, `bootstrap/gcc.bst`, …) or
+`components/llvm.bst` / `components/rust.bst` — **stop it and ask the user before
+continuing.** krytis never changes those elements, and the junction ref moves rarely, so
+their artifacts are normally cached locally or in bow. A toolchain build almost always
+means the cache is not where the build expects it, not that the toolchain needs
+rebuilding. Letting it run costs hours, and on a shared machine it also starves every
+other build.
+
+Seen 2026-10-02: a `mise run build --pull` started compiling
+`bootstrap/build/gcc-stage2.bst` from scratch, with 242 of 917 elements missing locally,
+including `components/rust.bst` and `components/llvm.bst`. The cause was the **external
+drive holding the local BuildStream cache was not mounted**, so `~/.cache/buildstream` was
+a near-empty directory on the home volume and everything looked like a miss. Nothing in the
+build output says "your cache is gone"; it just starts building gcc.
+
+Likely causes, in order, and what to check:
+
+1. **The local cache volume isn't mounted.**
+   `findmnt -T ~/.cache/buildstream`: if it reports the home volume rather than the cache
+   drive, the cache is missing. `du -sh ~/.cache/buildstream/cas` shows how much is
+   actually there.
+2. **No remote cache.** The build was started without `--pull`/`--push`, or the token did
+   not resolve, or bow (`bst-cache.ririi.dev`) is unreachable. Check the build's
+   `Initializing remote caches` line and the `artifacts:` block of the generated
+   `--config` file.
+3. **The junction ref, `project.conf` or `include/` changed** in the branch or on `main`.
+   This one is a real cache miss; the user still decides whether to spend the hours now.
+
+How to spot it:
+
+- **Before starting**, look at the plan the build prints. Lines like
+  `waiting <key> freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst` or
+  `fetch needed <key> freedesktop-sdk.bst:components/rust.bst` mean those artifacts are not
+  in the local cache. With `--pull` some may still come from bow, so treat this as a reason
+  to check the causes above, not yet as proof.
+- **While it runs**, a line like
+  `[build:freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst] START` in the build log
+  means the remote did not have it either. That is the point to stop and ask.
+
+When you stop a build, make sure its sandbox stops too. Killing only the `bst` client
+can leave `buildbox-run`/`bwrap` compiling under `systemd --user` with nobody to collect
+the result. Find them with `ps -eo pid,ppid,etimes,args | grep buildbox`; a `buildbox-*`
+process whose parent is `systemd --user` is an orphan.
+
 - `include/image-version.yml` is **gitignored** — generated at build time, never committed.
   `bst` and `validate` tasks declare `depends=["generate-image-version"]` so it's always
   regenerated automatically. `mise bootstrap` also generates it for fresh clones.
