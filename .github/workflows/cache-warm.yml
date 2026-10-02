@@ -160,6 +160,13 @@ jobs:
           [ "${BUILDERS}" -gt "${SLOTS}" ] && BUILDERS=${SLOTS}
           MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))
           echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS} (<=${SLOTS} concurrent compilers)"
+          # casd quota (#1077). --deps all keeps the whole build closure,
+          # toolchain included; the runtime closure alone already filled 46G
+          # of the old 50G. krytis-vps has a 197G disk, so it gets 100G. The
+          # Blacksmith fallback keeps 50G — its disk was not sized for more.
+          # See docs/skills/ci-runner.md § casd quota.
+          if [ "${RUNNER_NAME}" = "krytis-vps" ]; then QUOTA=100G; else QUOTA=50G; fi
+          echo "==> runner ${RUNNER_NAME}: casd quota ${QUOTA}"
 
           cat > ~/.config/buildstream.conf <<EOF
           scheduler:
@@ -171,7 +178,7 @@ jobs:
             key-length: 8
             verbose: False
           cache:
-            quota: 50G
+            quota: ${QUOTA}
           build:
             # max-jobs's runtime env vars (MAKEFLAGS/JOBS for autotools/meson,
             # LTOJOBS for freedesktop-sdk's own meson-conf.yml) are all

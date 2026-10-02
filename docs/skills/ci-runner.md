@@ -424,11 +424,10 @@ Measured 2026-09-24 with no build running:
 `cache: quota: 50G` that `cache-warm.yml` writes into
 `~/.config/buildstream.conf`, so casd is enforcing its cap exactly as
 configured. It held only what the target needs to assemble: 685 of 917
-elements cached after run 36978838734 (2026-10-02). Since #1077 cache-warm builds with `--deps all`, so the
-toolchain and every other build-only dependency are cached here too, which pushes
-the cache past 50G. casd then evicts the least recently used artifacts. That costs
-re-pulls from bow, not lost work, because everything built is pushed as it
-finishes. Revisit the quota if run times climb.
+elements cached after run 36978838734 (2026-10-02). Since #1077 cache-warm builds
+with `--deps all`, so the toolchain and every other build-only dependency are
+cached here too, and krytis-vps's quota went to **100G** in the same change
+(§ casd quota).
 
 It is content-addressed storage: deleting a blob some artifact
 still references breaks the "referenced digest is present" invariant, and
@@ -763,7 +762,13 @@ OutOfSpaceException: disk usage above maximum quota and no inactive blobs are av
 terminate called after throwing an instance of 'std::system_error'
 ```
 
-Use **50G** for a full `cache-warm` build on a machine with adequate disk.
+Use **50G** for a full `cache-warm` build of the image's runtime closure. **krytis-vps
+uses 100G since #1077**, because `--deps all` also keeps the whole build closure
+(toolchain included). Its disk is 197G; on 2026-10-02 63G was in use, 46G of it the CAS.
+100G of CAS leaves roughly 80G for the OS, `cas/tmp` scratch space (§ A killed casd
+leaks `cas/tmp`, and it is the box's disk ratchet (#938)) and `build-iso`'s podman
+storage. `cache-warm.yml` picks the quota by `RUNNER_NAME`; the Blacksmith fallback
+keeps 50G.
 
 ### `actions/cache` path spec determines the version hash
 
