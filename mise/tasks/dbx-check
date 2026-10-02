@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+#MISE description="Report whether EFI binaries are revoked by a dbx (Authenticode SHA-256 + signer certificates)"
+#USAGE flag "--dbx <path>" help="Revocation list to check against: a bare .esl, a signed .auth, or a raw efivarfs dbx variable (default: files/microsoft-uefi-certs/dbx.esl)"
+#USAGE arg "<binary>" var=#true help="PE/COFF EFI binaries to check"
+"""Is this EFI binary revoked by our dbx? Built for #534's T4 step 6.
+
+A dbx revokes images two ways, and this checks both:
+
+  hash  a SHA-256 *Authenticode* digest of the PE image, which skips the
+        checksum field, the certificate-table directory entry and the
+        certificate table itself. A plain sha256sum of the file never
+        matches. `pesign --hash` computes the same digest but prints it
+        glued to the input path with no separator, so the first 64 hex chars
+        have to be cut out by hand (#534); this needs neither pesign nor that
+        trap, and reproduces pesign's digests for Ubuntu's shim-signed 1.58.
+  cert  an X509 entry that matches, byte for byte, a certificate in the
+        binary's PKCS#7 signature. krytis's dbx carries two of these (#502,
+        files/dbx-extra-revocations/).
+
+--dbx accepts the three shapes a dbx turns up in: the committed bare
+EFI_SIGNATURE_LIST (files/microsoft-uefi-certs/dbx.esl), a signed .auth, or
+the firmware's live variable under /sys/firmware/efi/efivars/ (4-byte
+attribute prefix). Pointing it at the efivar on an enrolled machine answers
+"will THIS firmware refuse it", not "should it".
+
+Exit status follows grep: 0 every binary is revoked, 1 at least one is not,
+2 error. Revoked is the success case because the question this answers is
+"is this a valid negative-test candidate".
+"""
+
+import argparse
+import base64
+import hashlib
+import os
+import pathlib
+import re
+import struct
+import subprocess
+import sys
+import uuid
+
+SHA256_GUID = uuid.UUID("c1c41626-504c-4092-aca9-41f936934328")
+X509_GUID = uuid.UUID("a5c059a1-94e4-4aa7-87b5-ab155c2bf072")
+# Every list type the UEFI spec defines. Used only to recognise where the
+# signature lists start; entries of types other than SHA256/X509 are ignored.
+KNOWN_LIST_GUIDS = {
+    SHA256_GUID,
+    X509_GUID,
+    uuid.UUID("3c5766e8-269c-4e34-aa14-ed776e85b3b6"),  # RSA2048
+    uuid.UUID("e2b36190-879b-4a3d-ad8d-f2e7bba32784"),  # RSA2048_SHA256
+    uuid.UUID("826ca512-cf10-4ac9-b187-be01496631bd"),  # SHA1
+    uuid.UUID("67f8444f-8743-48f1-a328-1eaab8736080"),  # RSA2048_SHA1
+    uuid.UUID("0b6e5233-a65c-44c9-9407-d9ab83bfc8bd"),  # SHA224
+    uuid.UUID("ff3e5307-9fd0-48c9-85f1-8ad56c701e01"),  # SHA384
+    uuid.UUID("093e0fae-a6c4-4f50-9f1b-d41e2b89c19a"),  # SHA512
+    uuid.UUID("3bd2a492-96c0-4079-b420-fcf98ef103ed"),  # X509_SHA256
+    uuid.UUID("7076876e-80c2-4ee6-aad2-28b349a6865b"),  # X509_SHA384
+    uuid.UUID("446dbf63-2502-4cda-bcfa-2465d2b0fe9d"),  # X509_SHA512
+}
+WIN_CERT_TYPE_PKCS_SIGNED_DATA = 0x0002
+
+
+class Fail(Exception):
+    pass
+
+
+def esl_start(data: bytes) -> int:
+    """Offset of the first EFI_SIGNATURE_LIST in a .esl, efivar or .auth blob."""
+    def known(off: int) -> bool:
+        return len(data) >= off + 28 and uuid.UUID(bytes_le=data[off:off + 16]) in KNOWN_LIST_GUIDS
+
+    if known(0):
+        return 0                       # bare .esl
+    if known(4):
+        return 4                       # efivarfs: u32 attributes, then the payload
+    if len(data) >= 20:                # .auth: EFI_TIME (16) + WIN_CERTIFICATE (dwLength)
+        off = 16 + struct.unpack_from("<I", data, 16)[0]
+        if known(off):
+            return off
+    raise Fail("not a signature list, .auth or efivar dbx (no known EFI_SIGNATURE_LIST GUID)")
+
+
+def read_dbx(path: str) -> tuple[set[bytes], list[bytes]]:
+    data = pathlib.Path(path).read_bytes()
+    pos = esl_start(data)
+    hashes: set[bytes] = set()
+    certs: list[bytes] = []
+    while pos + 28 <= len(data):
+        list_type = uuid.UUID(bytes_le=data[pos:pos + 16])
+        size, header, sig = struct.unpack_from("<III", data, pos + 16)
+        if size < 28 or pos + size > len(data) or sig <= 16:
+            raise Fail(f"malformed signature list at offset {pos} (size {size}, SignatureSize {sig})")
+        for entry in range(pos + 28 + header, pos + size, sig):
+            payload = data[entry + 16:entry + sig]     # skip the owner GUID
+            if list_type == SHA256_GUID:
+                hashes.add(payload)
+            elif list_type == X509_GUID:
+                certs.append(payload)
+        pos += size
+    if not hashes and not certs:
+        raise Fail("revocation list holds no SHA-256 or X509 entries")
+    return hashes, certs
+
+
+def authenticode_sha256(data: bytes) -> tuple[bytes, bytes]:
+    """PE Authenticode SHA-256, per the Microsoft PE/COFF spec, plus the raw
+    certificate table (empty when the image is unsigned)."""
+    if data[:2] != b"MZ":
+        raise Fail("not a PE image (no MZ header)")
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe:pe + 4] != b"PE\0\0":
+        raise Fail("not a PE image (no PE signature)")
+    nsections = struct.unpack_from("<H", data, pe + 6)[0]
+    opt_size = struct.unpack_from("<H", data, pe + 20)[0]
+    opt = pe + 24
+    magic = struct.unpack_from("<H", data, opt)[0]
+    if magic not in (0x10B, 0x20B):
+        raise Fail(f"unknown optional-header magic {magic:#x}")
+    header_size = struct.unpack_from("<I", data, opt + 60)[0]
+    checksum = opt + 64
+    rva_count_at = opt + (92 if magic == 0x10B else 108)
+    if struct.unpack_from("<I", data, rva_count_at)[0] < 5:
+        raise Fail("no certificate-table data directory")
+    cert_dir = rva_count_at + 4 + 4 * 8          # data directory 4 = security
+    cert_off, cert_size = struct.unpack_from("<II", data, cert_dir)
+
+    h = hashlib.sha256()
+    h.update(data[:checksum])
+    h.update(data[checksum + 4:cert_dir])
+    h.update(data[cert_dir + 8:header_size])
+    hashed = header_size
+
+    sections = []
+    table = pe + 24 + opt_size
+    for i in range(nsections):
+        raw_size, raw_ptr = struct.unpack_from("<II", data, table + 40 * i + 16)
+        if raw_size:
+            sections.append((raw_ptr, raw_size))
+    for raw_ptr, raw_size in sorted(sections):
+        h.update(data[raw_ptr:raw_ptr + raw_size])
+        hashed += raw_size
+
+    # Whatever follows the sections, minus the certificate table, is hashed too.
+    extra = len(data) - (cert_size + hashed)
+    if extra > 0:
+        h.update(data[hashed:hashed + extra])
+
+    certs = data[cert_off:cert_off + cert_size] if cert_off and cert_size else b""
+    return h.digest(), certs
+
+
+def signer_certs(table: bytes) -> list[bytes]:
+    """DER of every certificate embedded in the PKCS#7 signatures."""
+    ders: list[bytes] = []
+    pos = 0
+    while pos + 8 <= len(table):
+        length, _rev, cert_type = struct.unpack_from("<IHH", table, pos)
+        if length < 8:
+            break
+        if cert_type == WIN_CERT_TYPE_PKCS_SIGNED_DATA:
+            out = subprocess.run(
+                ["openssl", "pkcs7", "-inform", "DER", "-print_certs"],
+                input=table[pos + 8:pos + length], capture_output=True,
+            )
+            if out.returncode != 0:
+                raise Fail("openssl could not parse the PKCS#7 signature: "
+                           + out.stderr.decode(errors="replace").strip())
+            for b64 in re.findall(rb"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----",
+                                  out.stdout, re.S):
+                ders.append(base64.b64decode(b"".join(b64.split())))
+        pos += (length + 7) & ~7                  # WIN_CERTIFICATE entries are 8-byte aligned
+    return ders
+
+
+def subject(der: bytes) -> str:
+    out = subprocess.run(["openssl", "x509", "-inform", "DER", "-noout", "-subject"],
+                         input=der, capture_output=True).stdout.decode(errors="replace")
+    return out.strip().removeprefix("subject=").strip() or "<unparseable certificate>"
+
+
+def main() -> int:
+    root = os.environ.get("MISE_PROJECT_ROOT") or os.getcwd()
+    ap = argparse.ArgumentParser(prog="mise run dbx-check")
+    ap.add_argument("--dbx", default=os.path.join(root, "files/microsoft-uefi-certs/dbx.esl"))
+    ap.add_argument("binary", nargs="+")
+    args = ap.parse_args()
+
+    try:
+        hashes, revoked_certs = read_dbx(args.dbx)
+    except (OSError, Fail) as e:
+        print(f"dbx-check: {args.dbx}: {e}", file=sys.stderr)
+        return 2
+    print(f"dbx: {args.dbx} — {len(hashes)} sha256 hash(es), {len(revoked_certs)} x509 cert(s)\n")
+
+    status = 0
+    for path in args.binary:
+        try:
+            digest, table = authenticode_sha256(pathlib.Path(path).read_bytes())
+            chain = signer_certs(table)
+        except (OSError, Fail) as e:
+            print(f"dbx-check: {path}: {e}", file=sys.stderr)
+            return 2
+
+        print(path)
+        print(f"  authenticode sha256  {digest.hex().upper()}")
+        if not chain:
+            print("  signers              (unsigned)")
+        for der in chain:
+            print(f"  signer cert          {subject(der)}")
+
+        reasons = []
+        if digest in hashes:
+            reasons.append("image hash")
+        reasons += [f"signer cert {subject(der)}" for der in chain if der in revoked_certs]
+        if reasons:
+            print(f"  REVOKED              by {'; '.join(reasons)}\n")
+        else:
+            print("  not revoked          neither the image hash nor any signer cert is in this dbx\n")
+            status = 1
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

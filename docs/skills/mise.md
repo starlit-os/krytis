@@ -1021,7 +1021,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `warm-cache [--pull\|--push] [element]` — `bst build --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. Use it to refill an evicted cache or pre-build before several worktrees build at once; `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
-| Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden) |
+| Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
 | Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
@@ -1094,15 +1094,15 @@ precisely because it renames nothing: `track-bst-sources.yml`'s hardcoded
 it needs no AGENTS.md rename approval.
 
 ```bash
-mise tasks --hidden          # all 96 repo tasks (plus any of your own global ones)
-mise tasks                   # the 71 worth scanning
+mise tasks --hidden          # every repo task (plus any of your own global ones)
+mise tasks                   # only the ones worth scanning
 ```
 
 Hidden today:
 
 | Task | Callers |
 |---|---|
-| the 21 `<name>-update` tasks | one `track-bst-sources.yml` job each |
+| every `<name>-update` task | one `track-bst-sources.yml` job each |
 | `generate-image-version` | `load-image` (raw call), `bst`/`validate`/`sbom`/`vuln-scan` via `depends`, `bootstrap`, `cache-warm.yml` |
 | `assert-vault-access` | `publish.yml`, right after `pass-cli login` |
 | `fetch-microsoft-certs` / `fetch-microsoft-dbx` | the secure-boot key flow; `generate-ovmf-vars` prints the command when a cert dir is empty; `track-bst-sources.yml`'s `microsoft-dbx` group runs `fetch-microsoft-dbx` on schedule |

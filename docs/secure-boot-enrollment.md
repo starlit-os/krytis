@@ -627,27 +627,64 @@ against `db.auth`, since all five of Microsoft's `db` CAs are supposed to be enr
 
 ## 6. A revoked binary is refused
 
-The other half, and the harder one to source: you need a binary whose Authenticode
-hash is in the shipped `dbx`. Confirm a candidate *before* trusting the result — the
-dbx holds PE Authenticode hashes, not file checksums:
+The other half: you need a binary that is Microsoft-signed, so `db` would trust it, but
+whose Authenticode hash is in the shipped `dbx`. The dbx holds PE Authenticode hashes,
+not file checksums, so confirm a candidate *before* trusting the result:
 
 ```bash
 # on the desk, not the test machine
-python3 scripts/parse-efi-auth.py --count-esl files/microsoft-uefi-certs/dbx.esl
-#  -> 447            (--count-esl takes the BARE esl; on a .auth it reports
-#                     "malformed signature list", which is the wrapper, not a fault)
-
-pesign --hash --in candidate.efi --digest_type sha256   # pesign package
-#  -> compare that Authenticode hash against the revocation list; a plain
-#     sha256sum of the file will never match, the list holds PE hashes
+mise run dbx-check candidate.efi          # exit 0 = revoked, 1 = not, 2 = error
 ```
 
-Good candidates: a pre-BootHole (CVE-2020-10713) shim or GRUB, or a Windows 7/8-era
-`bootmgfw.efi`.
+**The known-good candidate is CentOS 7.2's shim**, which still sits on the CentOS vault
+(#534):
+
+```bash
+curl -fLO https://vault.centos.org/7.2.1511/os/x86_64/EFI/BOOT/BOOTX64.EFI
+sha256sum BOOTX64.EFI   # 1e6d991a38fe71485597585f2a1f6424bae20a8610c23668398cacc72602fd90
+mise run dbx-check BOOTX64.EFI
+#  authenticode sha256  EB86FA1386FE6E4533B8B938DCC1250616D2F1C14C15E2FCF80834A161018A0A
+#  signer cert          … CN=Microsoft Windows UEFI Driver Publisher
+#  signer cert          … CN=Microsoft Corporation UEFI CA 2011
+#  REVOKED              by image hash
+```
+
+It chains exactly like the Ubuntu shim that step 5 **loads**: `Microsoft Windows UEFI
+Driver Publisher` → `Microsoft Corporation UEFI CA 2011`, which `db` trusts. A refusal
+therefore has only one possible cause, the dbx entry. That makes it a better candidate
+than a Windows `bootmgfw.efi`, whose 149 dbx entries carry no version to source against.
+
+**Finding another candidate.** Microsoft's
+[`dbx_info_msft_latest.json`](https://github.com/microsoft/secureboot_objects/blob/main/PreSignedObjects/DBX/dbx_info_msft_latest.json)
+maps every revoked hash to a company, a filename and often a source. As of 2026-10 its
+445 `images.x64` entries are exactly the hashes in `files/microsoft-uefi-certs/dbx.esl`.
+Pick one that names something still downloadable, fetch it, and `dbx-check` it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DBX/dbx_info_msft_latest.json |
+  jq -r '.images.x64[] | select("\(.filename) \(.description)" | test("rpm|iso|ubuntu"; "i")) |
+         "\(.authenticodeHash[:12]) \(.companyName) \(.filename) \(.description)"'
+```
+
+**On the test machine, check the firmware's live `dbx` too.** That answers "will *this*
+firmware refuse it" rather than "should it", and catches an enrollment that did not
+write the dbx you think it did:
+
+```bash
+mise run dbx-check --dbx /sys/firmware/efi/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f BOOTX64.EFI
+```
+
+Boot it from a USB stick as `/EFI/BOOT/BOOTX64.EFI` via the one-time boot menu, prepared
+exactly as in § *Preparing that USB* above. Never copy it to the internal ESP.
 
 - [ ] The revoked binary is **refused** under enforcement
 
-If you cannot source one, record that as untested rather than passed.
+*Expected:* `Security Violation` / `Access Denied`, or the firmware drops straight back
+to its boot menu. *Failure signature:* `Failed to open \EFI\BOOT\grubx64.efi - Not Found`.
+That is the same line step 5 treats as success, and here it means the shim *ran*, so the
+dbx entry was not enforced.
+
+If you cannot run it, record that as untested rather than passed.
 
 ## 7. FIDO2 LUKS unlock under a sealed UKI
 

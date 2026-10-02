@@ -26,7 +26,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Change or debug **lock screen** authentication — note it runs the `login` stack, so `greetd` decisions do not apply to it | [`docs/skills/pam.md`](skills/pam.md) § The lock screen authenticates through `login`, not `greetd` |
 | Change what the first-boot wizard prompts for or creates (initial account, keymap, timezone) | [`docs/design/first-boot-setup.md`](design/first-boot-setup.md) |
 | Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
-| Generate or debug the firmware key-enrollment `.auth` files, or refresh the dbx revocation list (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
+| Generate or debug the firmware key-enrollment `.auth` files, refresh the dbx revocation list, or check whether a binary is revoked (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `mise run dbx-check`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
 | Decide which boot-chain tests to run for a change, or find what is still untested | [`docs/design/secure-boot-testing.md`](design/secure-boot-testing.md) |
 | Work on gaming support, or wonder why there is no native Steam/gamescope/sysext | [`docs/design/gaming-variant.md`](design/gaming-variant.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
