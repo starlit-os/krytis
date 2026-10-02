@@ -3,11 +3,12 @@
 #USAGE arg "[repo]" help="Only sync this repo (matches 'name:' in docs/upstreams.yml); default: all tracked repos"
 #USAGE flag "--check" help="Report pending commits without moving the local checkout (still fetches; skips the --ff-only merge)"
 
-# Cadence (#304): a mining pass is due monthly. This task does not mine; it only
-# reports, per repo, how long ago the last pass was and flags a repo DUE once it
-# has new commits AND its last_checked_date is MINING_CADENCE_DAYS or more old.
-# A repo with no new commits is never due, however old its date: there is
-# nothing to mine.
+# Cadence (#304): a mining pass is due monthly, or sooner once a range grows past
+# what one review can absorb. This task does not mine; it only reports, per repo,
+# how long ago the last pass was, and flags a repo DUE when it has new commits AND
+# either its last_checked_date is MINING_CADENCE_DAYS or more old, or the pending
+# range is MINING_MAX_COMMITS or more commits. A repo with no new commits is never
+# due, however old its date: there is nothing to mine.
 
 set -euo pipefail
 
@@ -15,6 +16,7 @@ TRACKING_FILE="docs/upstreams.yml"
 FILTER="${usage_repo:-}"
 CHECK_ONLY="${usage_check:-false}"
 MINING_CADENCE_DAYS=30
+MINING_MAX_COMMITS=50
 TODAY=$(date -u +%F)
 
 if [ ! -f "$TRACKING_FILE" ]; then
@@ -81,7 +83,11 @@ for name in "${NAMES[@]}"; do
 
   count=$(git -C "$local_path" rev-list --count "${last_sha}..${new_sha}" 2>/dev/null || echo "?")
   echo "    ${last_sha:0:12}..${new_sha:0:12} (${count} commits) — new HEAD: ${new_sha}"
-  if [ "$age_days" -ge "$MINING_CADENCE_DAYS" ]; then
-    echo "    DUE: last pass is ${age_days} days old (monthly cadence, #304) — run the upstream-lessons skill"
+  reasons=()
+  [ "$age_days" -ge "$MINING_CADENCE_DAYS" ] && reasons+=("last pass is ${age_days} days old")
+  [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge "$MINING_MAX_COMMITS" ] && reasons+=("${count} commits pending")
+  if [ "${#reasons[@]}" -gt 0 ]; then
+    joined=$(printf '%s; ' "${reasons[@]}")
+    echo "    DUE: ${joined%; } (cadence: ${MINING_CADENCE_DAYS} days or ${MINING_MAX_COMMITS} commits, #304) — run the upstream-lessons skill"
   fi
 done
