@@ -423,7 +423,13 @@ Measured 2026-09-24 with no build running:
 **`objects/` is fine and must never be touched by hand.** 47G sits under the
 `cache: quota: 50G` that `cache-warm.yml` writes into
 `~/.config/buildstream.conf`, so casd is enforcing its cap exactly as
-configured. It is content-addressed storage: deleting a blob some artifact
+configured. It held only what the target needs to assemble: 685 of 917
+elements cached after run 36978838734 (2026-10-02). Since #1077 cache-warm builds
+with `--deps all`, so the toolchain and every other build-only dependency are
+cached here too, and krytis-vps's quota went to **100G** in the same change
+(§ casd quota).
+
+It is content-addressed storage: deleting a blob some artifact
 still references breaks the "referenced digest is present" invariant, and
 the damage surfaces later as a corrupt-cache error in an unrelated build.
 There is no safe incremental command either — see § Clearing the CAS, BST
@@ -756,7 +762,48 @@ OutOfSpaceException: disk usage above maximum quota and no inactive blobs are av
 terminate called after throwing an instance of 'std::system_error'
 ```
 
-Use **50G** for a full `cache-warm` build on a machine with adequate disk.
+Use **50G** for a full `cache-warm` build of the image's runtime closure. **krytis-vps
+uses 100G since #1077**, because `--deps all` also keeps the whole build closure
+(toolchain included). Its disk is 197G; on 2026-10-02 63G was in use, 46G of it the CAS.
+100G of CAS leaves roughly 80G for the OS, `cas/tmp` scratch space (§ A killed casd
+leaks `cas/tmp`, and it is the box's disk ratchet (#938)) and `build-iso`'s podman
+storage. `cache-warm.yml` picks the quota by `RUNNER_NAME`; the Blacksmith fallback
+keeps 50G.
+
+### A toolchain rebuild does not fit in 6 hours
+
+With `--deps all`, the first cache-warm after a junction bump compiles freedesktop-sdk's
+toolchain on the VPS. Run 37003574522's first attempt hit the old `timeout-minutes: 360`
+(GitHub's default) after building 123 elements (`bootstrap/build/gcc-stage2` 61 min,
+`bootstrap/gcc` 70 min) without reaching `components/llvm.bst` or `components/rust.bst`.
+Nothing was lost: every artifact pushes to bow as it finishes, so a re-run resumes from
+there. But one rebuild needed several manual restarts. `cache-warm.yml` now sets 1440
+minutes on the VPS (self-hosted jobs may run up to 5 days) and keeps 360 on the
+Blacksmith fallback, using the same condition as `runs-on`.
+
+### Reading a cache-warm run: the cache report
+
+cache-warm writes a job summary rendered by `scripts/cache-summary.py`, the same way
+`vuln-scan.yml` writes its report with `scripts/vuln-summary.py`. It also uploads
+`krytis-cache-report-<run>-<attempt>` (90 days), which holds the summary, `states.tsv`
+(`bst show --deps all` state, full key and name of every element after the build) and
+the teed `bst-build.log`. The summary shows:
+
+- **`N of TOTAL` elements cached** for the whole build closure, plus the toolchain count
+  (`bootstrap/*`, `llvm`, `rust`, the Toolchain Gate's set);
+- a cached/total table per project (krytis, freedesktop-sdk, gnome-build-meta);
+- **this run**: how many elements it built, pulled, pushed and failed, read from the
+  closing `[HH:MM:SS][key][op:element] SUCCESS <element log>` line bst writes per
+  element. The key resolves the name, because the element column is truncated on a narrow
+  terminal. Elements built but **not pushed** are listed explicitly, since the runner's
+  cache will evict them;
+- the built elements, slowest first. Against run 37003574522's first attempt, the slowest
+  was `components/grpc.bst` at 1h21m, ahead of `bootstrap/gcc` at 70m;
+- every uncached element with its state and key, toolchain first.
+
+The build step tees bst's output under `set -o pipefail`. Without pipefail, the step's
+`bash -e` shell would take `tee`'s exit code and a failed build would go green, undoing
+#741.
 
 ### `actions/cache` path spec determines the version hash
 
