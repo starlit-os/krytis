@@ -172,6 +172,7 @@ jobs:
           # See docs/skills/ci-runner.md § casd quota.
           if [ "${RUNNER_NAME}" = "krytis-vps" ]; then QUOTA=100G; else QUOTA=50G; fi
           echo "==> runner ${RUNNER_NAME}: casd quota ${QUOTA}"
+          echo "CACHE_WARM_QUOTA=${QUOTA}" >> "${GITHUB_ENV}"
 
           cat > ~/.config/buildstream.conf <<EOF
           scheduler:
@@ -298,30 +299,48 @@ jobs:
           # Rust element then compiled gcc from scratch (2026-10-02, #1028).
           # `all` makes every element of the build closure required, so each is
           # pulled from bow or built here and pushed.
-          uv run bst -o x86_64_v3 true --no-interactive build --deps all --retry-failed oci/krytis/image.bst
+          # Teed for the cache report below; pipefail so bst's own exit code,
+          # not tee's, decides the step (this step's shell is `bash -e` only).
+          set -o pipefail
+          uv run bst -o x86_64_v3 true --no-interactive build --deps all --retry-failed oci/krytis/image.bst 2>&1 \
+            | tee "${RUNNER_TEMP}/bst-build.log"
 
       - name: Print disk usage after build
         if: always()
         run: |
           df -h -x fuse || true
           du -sh ~/.cache/buildstream 2>/dev/null || true
+          echo "CACHE_WARM_CAS_SIZE=$(du -sh ~/.cache/buildstream/cas 2>/dev/null | cut -f1)" >> "${GITHUB_ENV}"
 
-      # Counts over the whole build closure (`--deps all`), the same set the
-      # build step now requires, and names what is missing. Before #1077 this
-      # printed "Cached elements: 685" with 232 of 917 absent, toolchain
-      # included, and nothing said so.
-      - name: Report cached elements
+      # Same shape as vuln-scan.yml's report: a job summary rendered by a
+      # script, plus the raw inputs as an artifact. The summary covers the
+      # whole build closure (`--deps all`, the set the build step requires):
+      # cached vs total per project, the toolchain count, what this run built
+      # (slowest first), pulled and pushed, anything built but not pushed, and
+      # every uncached element. Before #1077 this step printed a bare
+      # "Cached elements: 685" with 232 of 917 absent, toolchain included.
+      - name: Write cache report
         if: always()
         run: |
-          uv run bst show --deps all --format '%{state}|%{name}' oci/krytis/image.bst 2>/dev/null \
-            | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z ]+\|' > "${RUNNER_TEMP}/states.txt" || true
-          TOTAL=$(wc -l < "${RUNNER_TEMP}/states.txt")
-          CACHED=$(grep -c '^cached|' "${RUNNER_TEMP}/states.txt" || true)
+          uv run bst show --deps all --format '%{state}|%{full-key}|%{name}' oci/krytis/image.bst 2>/dev/null \
+            | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z ]+\|' > "${RUNNER_TEMP}/states.tsv" || true
+          uv run python3 scripts/cache-summary.py "${RUNNER_TEMP}/states.tsv" "${RUNNER_TEMP}/bst-build.log" \
+            | tee "${RUNNER_TEMP}/cache-report.md" >> "${GITHUB_STEP_SUMMARY}"
+          TOTAL=$(wc -l < "${RUNNER_TEMP}/states.tsv")
+          CACHED=$(grep -c '^cached|' "${RUNNER_TEMP}/states.tsv" || true)
           echo "::notice::Cached elements: ${CACHED} of ${TOTAL}"
           if [ "${CACHED}" -ne "${TOTAL}" ]; then
-            echo "::warning::$((TOTAL - CACHED)) element(s) not cached; first 50 below"
-            # awk, not head: head exits early and grep takes SIGPIPE (141),
-            # which fails the step as soon as it runs under pipefail
-            # (`shell: bash`); this step is `bash -e` today.
-            grep -v '^cached|' "${RUNNER_TEMP}/states.txt" | awk 'NR <= 50'
+            echo "::warning::$((TOTAL - CACHED)) element(s) not cached; see the job summary"
           fi
+
+      - name: Upload cache report artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: krytis-cache-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cache-report.md
+            ${{ runner.temp }}/states.tsv
+            ${{ runner.temp }}/bst-build.log
+          retention-days: 90
+          if-no-files-found: warn

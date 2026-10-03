@@ -114,8 +114,9 @@ Likely causes, in order, and what to check:
    while the run still reported success and `Cached elements: 685`. The first branch
    that changed a Rust element (#1028, 2026-10-02) found all three missing from local,
    bow and `cache.freedesktop-sdk.io`. **A fast warm on `main` is not evidence that
-   a branch can compile.** Both now pass `--deps all`, and the report step names every
-   uncached element.
+   a branch can compile.** Both now pass `--deps all`, and cache-warm's job summary
+   lists every uncached element (docs/skills/ci-runner.md § Reading a cache-warm run: the
+   cache report).
 4. **The junction ref, `project.conf` or `include/` changed** in the branch or on `main`.
    This one is a real cache miss; the user still decides whether to spend the hours now.
 

@@ -781,6 +781,30 @@ there. But one rebuild needed several manual restarts. `cache-warm.yml` now sets
 minutes on the VPS (self-hosted jobs may run up to 5 days) and keeps 360 on the
 Blacksmith fallback, using the same condition as `runs-on`.
 
+### Reading a cache-warm run: the cache report
+
+cache-warm writes a job summary rendered by `scripts/cache-summary.py`, the same way
+`vuln-scan.yml` writes its report with `scripts/vuln-summary.py`. It also uploads
+`krytis-cache-report-<run>-<attempt>` (90 days), which holds the summary, `states.tsv`
+(`bst show --deps all` state, full key and name of every element after the build) and
+the teed `bst-build.log`. The summary shows:
+
+- **`N of TOTAL` elements cached** for the whole build closure, plus the toolchain count
+  (`bootstrap/*`, `llvm`, `rust`, the Toolchain Gate's set);
+- a cached/total table per project (krytis, freedesktop-sdk, gnome-build-meta);
+- **this run**: how many elements it built, pulled, pushed and failed, read from the
+  closing `[HH:MM:SS][key][op:element] SUCCESS <element log>` line bst writes per
+  element. The key resolves the name, because the element column is truncated on a narrow
+  terminal. Elements built but **not pushed** are listed explicitly, since the runner's
+  cache will evict them;
+- the built elements, slowest first. Against run 37003574522's first attempt, the slowest
+  was `components/grpc.bst` at 1h21m, ahead of `bootstrap/gcc` at 70m;
+- every uncached element with its state and key, toolchain first.
+
+The build step tees bst's output under `set -o pipefail`. Without pipefail, the step's
+`bash -e` shell would take `tee`'s exit code and a failed build would go green, undoing
+#741.
+
 ### `actions/cache` path spec determines the version hash
 
 `actions/cache` computes an internal **version** from the `path:` input (a hash of paths + compression). This version is part of every lookup — including restore-key prefix matching. **Changing the path spec invalidates all prior cache entries, even those with matching key prefixes.**
