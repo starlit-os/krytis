@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#MISE description="Fail if any freedesktop-sdk toolchain artifact (bootstrap/*, llvm, rust) is in neither the local cache nor a remote"
+#MISE depends=["generate-image-version"]
+#USAGE flag "--push" help="Check krytis's bow Buildbarn cache with push+pull credentials"
+#USAGE flag "--pull" help="Check krytis's bow Buildbarn cache with pull-only credentials"
+
+# The Toolchain Gate (AGENTS.md § Human Decision Points) as a check: before a
+# build that cannot stop to ask, refuse to start one that would compile
+# freedesktop-sdk's toolchain. The toolchain is every element of
+# oci/krytis/image.bst's build closure under freedesktop-sdk.bst:bootstrap/,
+# plus components/llvm.bst and components/rust.bst. krytis never changes those,
+# and since #1077 cache-warm builds and pushes them to bow. One missing from
+# every cache means cache-warm has not run since a junction bump, or bow lost
+# it. The fix is to run cache-warm, not a multi-hour rebuild on a runner that
+# keeps nothing (publish run 36552776326 did exactly that on 2026-09-29).
+#
+# `bst artifact show` reports cached (local), available (on a remote), failed
+# or not cached. Only the last two fail the check. A failed artifact would be
+# rebuilt under --retry-failed, so it counts as missing.
+#
+# Without --pull/--push only the local cache and project-declared remotes
+# (cache.freedesktop-sdk.io) are consulted, never bow.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+REMOTE=""
+[ "${usage_pull:-false}" = "true" ] && REMOTE=--pull
+[ "${usage_push:-false}" = "true" ] && REMOTE=--push
+
+mapfile -t TOOLCHAIN < <(
+    ./mise/tasks/bst show --deps all --format '%{name}' oci/krytis/image.bst 2>/dev/null \
+        | sed 's/\x1b\[[0-9;]*m//g' \
+        | grep -E '^freedesktop-sdk\.bst:(bootstrap/|components/(llvm|rust)\.bst$)'
+)
+if [ "${#TOOLCHAIN[@]}" -eq 0 ]; then
+    echo "==> FAILED: found no toolchain elements in oci/krytis/image.bst's build closure; bst show failed?"
+    exit 1
+fi
+echo "==> Checking ${#TOOLCHAIN[@]} toolchain artifacts${REMOTE:+ (bow via ${REMOTE})}"
+
+# Keep only "<state> <element>" lines for the elements asked about; state may be
+# two words ("not cached"), the element name is always the last field.
+SHOWN="$(./mise/tasks/bst ${REMOTE:-} artifact show "${TOOLCHAIN[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+declare -A STATE=()
+while read -r line; do
+    name="${line##* }"
+    STATE["$name"]="${line% *}"
+done < <(printf '%s\n' "$SHOWN" | grep -E '^\s*(cached|available|failed|not cached) freedesktop-sdk\.bst:' | sed 's/^\s*//')
+
+missing=()
+for el in "${TOOLCHAIN[@]}"; do
+    case "${STATE[$el]:-unreported}" in
+        cached|available) ;;
+        *) missing+=("${STATE[$el]:-unreported}  $el") ;;
+    esac
+done
+
+if [ "${#missing[@]}" -eq 0 ]; then
+    echo "==> toolchain-cache-check passed: all ${#TOOLCHAIN[@]} toolchain artifacts are cached or available."
+    exit 0
+fi
+
+echo "==> FAILED: ${#missing[@]} toolchain artifact(s) are in no cache, so a build would compile them:"
+printf '    %s\n' "${missing[@]}"
+echo "    Run cache-warm first (gh workflow run cache-warm.yml, or mise run warm-cache --push)."
+echo "    See docs/skills/mise.md § Standard build workflow (stop and ask before rebuilding the toolchain)."
+exit 1

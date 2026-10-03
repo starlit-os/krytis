@@ -121,11 +121,13 @@ Likely causes, in order, and what to check:
 
 How to spot it:
 
-- **Before starting**, look at the plan the build prints. Lines like
-  `waiting <key> freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst` or
-  `fetch needed <key> freedesktop-sdk.bst:components/rust.bst` mean those artifacts are not
-  in the local cache. With `--pull` some may still come from bow, so treat this as a reason
-  to check the causes above, not yet as proof.
+- **Before starting**, run `mise run toolchain-cache-check --pull`. It asks the local
+  cache and bow about every toolchain element in the build closure (67 on 2026-10-03)
+  and fails, listing them, if any is `not cached` or `failed`. `bst artifact show` reports
+  `available` for an artifact a remote has, which the plan's state column cannot show.
+  `publish.yml` runs it as its first build-related step (#1077). The plan the build prints
+  only reflects the local cache: `waiting`/`fetch needed` toolchain lines are a reason to
+  run the check, not proof.
 - **While it runs**, a line like
   `[build:freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst] START` in the build log
   means the remote did not have it either. That is the point to stop and ask.
@@ -1063,7 +1065,7 @@ fi
 groups them by purpose, because a hand-maintained copy of the tree rots: the list
 that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**26 of the 104 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**26 of the 106 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. Count from the
 **tree**, not the CLI: `find mise/tasks -type f | wc -l` and
 `grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
@@ -1073,7 +1075,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 
 | Group | Tasks |
 |---|---|
-| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `warm-cache [--pull\|--push] [element]` — `bst build --deps all --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. `--deps all` warms the whole build closure, toolchain included, not just what the target needs to assemble (#1077). Use it to refill an evicted cache or pre-build before several worktrees build at once; `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
+| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `warm-cache [--pull\|--push] [element]` — `bst build --deps all --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. `--deps all` warms the whole build closure, toolchain included, not just what the target needs to assemble (#1077). Use it to refill an evicted cache or pre-build before several worktrees build at once; `toolchain-cache-check [--pull\|--push]` — fail, listing them, if any freedesktop-sdk toolchain artifact (`bootstrap/*`, `llvm`, `rust`) is in neither the local cache nor a remote; `publish.yml` runs it before building (#1077, see § Standard build workflow); `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
