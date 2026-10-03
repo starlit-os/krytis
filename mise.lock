@@ -34,14 +34,14 @@ url = "https://github.com/jdx/fnox/releases/download/v1.36.0/fnox-x86_64-unknown
 signer = "sigstore-oidc:https://github.com/jdx/fnox/.github/workflows/release.yml"
 
 [[tools.grype]]
-version = "0.119.0"
+version = "0.120.0"
 backend = "aqua:anchore/grype"
-specifiers = ["0.119.0"]
+specifiers = ["0.120.0"]
 
 [tools.grype."platforms.linux-x64"]
-checksum = "sha256:3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b"
-url = "https://github.com/anchore/grype/releases/download/v0.119.0/grype_0.119.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/anchore/grype/releases/assets/570620608"
+checksum = "sha256:a5a1218dce63acdac152a6b3b5bb366e7267e36f4069848cf455543b3fa5700e"
+url = "https://github.com/anchore/grype/releases/download/v0.120.0/grype_0.120.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/605770160"
 
 [[tools.gum]]
 version = "2.0.2"
