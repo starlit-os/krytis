@@ -770,6 +770,17 @@ leaks `cas/tmp`, and it is the box's disk ratchet (#938)) and `build-iso`'s podm
 storage. `cache-warm.yml` picks the quota by `RUNNER_NAME`; the Blacksmith fallback
 keeps 50G.
 
+### A toolchain rebuild does not fit in 6 hours
+
+With `--deps all`, the first cache-warm after a junction bump compiles freedesktop-sdk's
+toolchain on the VPS. Run 37003574522's first attempt hit the old `timeout-minutes: 360`
+(GitHub's default) after building 123 elements (`bootstrap/build/gcc-stage2` 61 min,
+`bootstrap/gcc` 70 min) without reaching `components/llvm.bst` or `components/rust.bst`.
+Nothing was lost: every artifact pushes to bow as it finishes, so a re-run resumes from
+there. But one rebuild needed several manual restarts. `cache-warm.yml` now sets 1440
+minutes on the VPS (self-hosted jobs may run up to 5 days) and keeps 360 on the
+Blacksmith fallback, using the same condition as `runs-on`.
+
 ### `actions/cache` path spec determines the version hash
 
 `actions/cache` computes an internal **version** from the `path:` input (a hash of paths + compression). This version is part of every lookup — including restore-key prefix matching. **Changing the path spec invalidates all prior cache entries, even those with matching key prefixes.**

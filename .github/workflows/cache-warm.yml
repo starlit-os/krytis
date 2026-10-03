@@ -46,7 +46,12 @@ jobs:
     # indistinguishable to this ternary whenever both happened to be online,
     # making routing nondeterministic. See docs/skills/ci-runner.md § Always-on VPS runner.
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 'blacksmith-8vcpu-ubuntu-2404' || fromJSON('["self-hosted","linux","x64","krytis-vps"]') }}
-    timeout-minutes: 360
+    # 24h on the VPS, 6h on Blacksmith (#1077). With --deps all a junction
+    # bump rebuilds the toolchain here: run 37003574522's first attempt hit
+    # the old 360 after 123 elements (gcc-stage2 61 min, bootstrap/gcc 70 min)
+    # without reaching llvm or rust. Self-hosted jobs may run up to 5 days;
+    # Blacksmith keeps GitHub's 6h default. Same condition as runs-on above.
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 360 || 1440 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
