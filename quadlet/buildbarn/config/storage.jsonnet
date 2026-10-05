@@ -19,6 +19,11 @@ local common = import 'common.libsonnet';
   maximumMessageSizeBytes: common.maximumMessageSizeBytes,
   global: common.globalWithDiagnostics(':9981'),
 
+  // Local dev/test instance only (`mise buildbarn:install`). bow's real
+  // sizes and layout live in kitten-lily/materia
+  // components/buildbarn/config/storage.jsonnet; don't read capacity
+  // from this file (see docs/skills/ci-runner.md § bow's CAS size and
+  // layout live in materia, and its index can outlive its data).
   contentAddressableStorage: {
     backend: {
       'local': {
