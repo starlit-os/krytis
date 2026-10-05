@@ -175,3 +175,21 @@ append a correction beside it (AGENTS.md § What the first sweep learned).
   `src/dbus/` list above and #1029's dependency table). It is the same failure class #1029
   fixes for Umbriel. Filed as #1054, with its upstream status. Not changed here, because this
   plan changes no routing.
+
+## Outcome (2026-10-05)
+
+Shipped as planned in `53b44dd` (branch `1027-fix-dead-niri-portal-routing`).
+
+- **Step 1.** `mise run portal-routing-check` on the image built 2026-10-01 failed on exactly
+  one thing: `UNPARSABLE: /usr/share/xdg-desktop-portal/portals/niri.portal: Key file does not
+  have group "portal"`. Both expected tables matched *Verified facts* and #1029's § Today with
+  no edits. `XDP_SECONDS` is 4; one run takes about 10 s.
+- **Step 2, regression proof.** On the same image with `niri.portal` removed in a probe
+  layer: `portal-routing-check passed`, niri 20/21 interfaces served, Umbriel 10/21. Routing
+  was identical with and without the file.
+- **Full build.** `mise run build --pull` on the stacked #1028 tree (2026-10-05) ended with
+  `portal-routing-check passed`. Backends were `gnome.portal, gtk.portal, oo7-portal.portal,
+  umbriel.portal`, with no `niri.portal`. `mise boot-test` passed on that image.
+- **Step 3.** `docs/skills/desktop.md` § xdg-desktop-portal routing was rewritten in place.
+  The lowercasing of the desktop name was confirmed from xdp's own log line
+  (`… for desktop 'umbriel'`). `mise run docs-links` passed.

@@ -5,7 +5,7 @@
 Design Gate.** Flatpak apps under Umbriel get different dialogs and settings (see § Visible
 changes), so a human signs off on § Decisions before step 1.
 
-**Depends on** [#1027's plan](2026-10-01-niri-portal-routing-cleanup.md) step 1
+**Depends on** [#1027's plan](done/2026-10-01-niri-portal-routing-cleanup.md) step 1
 (`mise run portal-routing-check`) and its *Verified facts*: the headless resolution command,
 xdp's per-interface fall-through, and the `none` semantics. This plan does not repeat them.
 It does not depend on [#1028](2026-10-01-oo7-secret-portal.md). Whichever of #1028 and #1029

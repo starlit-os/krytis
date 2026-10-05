@@ -5,7 +5,7 @@
 Security Gate.** This is secrets handling (AGENTS.md § Human Decision Points). Step 1 is a
 measurement that informs the decision. Nothing ships until a human answers § Decisions.
 
-**Depends on** [#1027's plan](2026-10-01-niri-portal-routing-cleanup.md) step 1
+**Depends on** [#1027's plan](done/2026-10-01-niri-portal-routing-cleanup.md) step 1
 (`mise run portal-routing-check`) and its *Verified facts*: xdp falls through config files per
 interface, which is what makes a one-key niri delta work. It does not depend on
 [#1029](2026-10-01-umbriel-portal-routing.md). Whichever of #1028 and #1029 lands first
