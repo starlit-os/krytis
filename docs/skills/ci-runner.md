@@ -1411,6 +1411,43 @@ included here because a connection failure investigated from krytis's
 side (`UNAUTHENTICATED`, `PERMISSION_DENIED`) could plausibly be
 misdiagnosed as a krytis-side problem without this context.
 
+### bow's CAS size and layout live in materia, and its index can outlive its data
+
+**materia's config is the source of truth for bow:** `kitten-lily/materia`
+`components/buildbarn/config/storage.jsonnet` and `bb-storage.container.gotmpl`.
+krytis's `quadlet/buildbarn/` is the local dev/test instance, and its sizes say
+nothing about bow. #1094's first draft read the dev file and called bow's CAS 64 GiB;
+it was 150 GiB.
+
+Since materia#137 the CAS **blocks file** is 600 GiB on bow's root SATA SSD, in
+Buildbarn's recommended 8 old / 24 current / 3 new / 3 spare blocks (~15.8 GiB each,
+which is also the largest blob it can hold). The key-location map (1600 MiB) and the
+persistent state stay on bow's NVMe data volume.
+
+Before that, BUG-006 had cut the layout to 2/5/2/1 at 150 GiB. Buildbarn's
+`blobstore.proto` warns that too few "old" blocks make the store FIFO instead of
+LRU-like: data is only refreshed into new blocks when it is read from an old one.
+krytis's toolchain is pushed once and never read back from bow, because cache-warm
+keeps it in its own casd. On 2026-10-03, llvm `ba3c0fc3` and rust `55eef370` were
+gone from storage while bb-asset's index still listed them, and cache-warm run
+37108048862 rebuilt both (4h12m, 1h04m).
+
+**Index and storage can disagree, and BuildStream only asks the index.**
+`bst artifact show` reports `available` from the index remote
+(`_artifactcache.py` `check_remotes_for_element`); only an actual pull touches
+storage. So `mise run toolchain-cache-check` can pass for an artifact whose data is
+gone (#1094 tracks a storage-aware check). A resize that wipes only the CAS
+creates the same state for everything at once. materia's plan for #137 wipes the
+CAS, AC, FSAC and bb-asset's index together for that reason.
+
+**Is the key-location map big enough?** Buildbarn's docs give the check:
+`buildbarn_lossymap_hash_map_put_too_many_iterations_total` and
+`buildbarn_lossymap_hash_map_put_iterations_count{outcome="TooManyAttempts"}` on
+bb-storage's `:9981` must stay 0. Nonzero means entries are being displaced early.
+The counters reset on restart, so read them after a full cache-warm. `:9981` is not
+tunneled; read it from bow, e.g. [INFERENCE]
+`podman run --rm --network newt-net docker.io/curlimages/curl -s http://bb-storage:9981/metrics`.
+
 ### Local push/pull verification against the deployed bow remote (#340)
 
 Done with a hand-written user-config override (not committed, same pattern
