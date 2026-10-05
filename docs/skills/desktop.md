@@ -343,11 +343,10 @@ noctalia's side. Both are `noctalia-dev/` repos — Upstream Gate applies, nothi
 has been filed.
 
 
-**No `config/xdg-portals.bst`-style routing file needed for umbriel** — unlike
-niri (which isn't a portal implementation itself and needed a hand-authored
-`niri.portal` routing file), `xdg-desktop-portal-umbriel` ships its own valid
-`umbriel-portals.conf` (`default=umbriel;gtk`) automatically via its own
-`meson.build`.
+**Umbriel's routing comes from upstream, plus a krytis delta** — `xdg-desktop-portal-umbriel`
+ships its own valid `umbriel-portals.conf` (`default=umbriel;gtk`) via its own
+`meson.build`; krytis adds only `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf`
+(Secret → oo7-portal, #1028). See § xdg-desktop-portal routing.
 
 **Tracking caveat**: as of #774/#775, neither `noctalia-dev/umbriel` nor
 `noctalia-dev/xdg-desktop-portal-umbriel` has tags/releases (checked
@@ -1300,21 +1299,102 @@ which may be stale from a previous branch/session. To actually verify a source c
 landed, run `mise build` (generate-image-version + load-image + lint) or at minimum
 `mise run load-image` before `mise lint`.
 
-## xdg-desktop-portal Backend Routing for niri
+## xdg-desktop-portal routing
 
-`XDG_CURRENT_DESKTOP=niri` is already set in `/etc/environment`, but xdg-desktop-portal also needs a portal configuration file to know which backend to use for each interface. Without this file the daemon cannot resolve a backend and default-app lookups (e.g. opening a URL) fail silently.
+Two kinds of file, easy to confuse:
 
-Ship `/usr/share/xdg-desktop-portal/portals/niri.portal` (see `config/xdg-portals.bst`):
+- **Backend descriptors** — `/usr/share/xdg-desktop-portal/portals/<backend>.portal`, a
+  `[portal]` group with `DBusName=`, `Interfaces=` and (legacy) `UseIn=`. It says what a
+  backend *can* serve; it routes nothing.
+- **Routing** — `<desktop>-portals.conf` (or plain `portals.conf`) with a `[preferred]`
+  group: `default=` plus optional per-interface keys
+  (`org.freedesktop.impl.portal.<Iface>=<backend>;…`).
 
-```ini
-[preferred]
-default=gnome;gtk
-org.freedesktop.impl.portal.Settings=gnome
-org.freedesktop.impl.portal.Wallpaper=gnome
-org.freedesktop.impl.portal.Screenshot=gnome
+Lookup order (portals.conf(5)), highest precedence first: `~/.config/xdg-desktop-portal`,
+`$XDG_CONFIG_DIRS/xdg-desktop-portal` (i.e. `/etc/xdg/xdg-desktop-portal`), then
+`/usr/share/xdg-desktop-portal`. In each directory `<desktop>-portals.conf` is tried before
+`portals.conf`; the desktop name is lowercased (measured: `XDG_CURRENT_DESKTOP=Umbriel` logs
+`Using portal configuration file '…/umbriel-portals.conf' for desktop 'umbriel'`).
+
+**xdp falls through config files per interface.** portals.conf(5) does not document this;
+it is implementation behaviour — `src/xdp-portal-config.c::xdp_portal_config_find` in
+flatpak/xdg-desktop-portal at tag `1.22.1`. Walking the loaded configs from highest
+precedence down, in each one:
+
+1. `none` for the interface (or for `default`, if the interface has no key) → stop, no backend.
+2. The interface's own key names an installed backend that implements it → use that backend.
+3. `default` names one → use that backend.
+4. Otherwise, try the next config file.
+
+So an override can be a one-key delta file (no `default=` needed); everything else keeps
+coming from the lower file. Two traps:
+
+- `none` anywhere in a value list means none (`portal_config_interface_prefers_none` is a
+  `g_strv_contains`): `Screenshot=umbriel;none` is always none. portals.conf cannot express
+  "this backend or nothing".
+- A higher file's `default=` captures every interface its listed backends implement; the
+  lower file is only consulted for interfaces none of them implement.
+
+**Who ships what in krytis:**
+
+| File | Element |
+|---|---|
+| `/usr/share/…/niri-portals.conf` | `desktop/niri.bst` (niri upstream) |
+| `/usr/share/…/umbriel-portals.conf` | `desktop/xdg-desktop-portal-umbriel.bst` (umbriel upstream) |
+| `/etc/xdg/xdg-desktop-portal/{niri,umbriel}-portals.conf` | `config/xdg-desktop-portal-routing.bst` (krytis, from `files/xdg-desktop-portal/`) |
+| `portals/gnome.portal`, `portals/gtk.portal` | gnome-build-meta core-deps (xdg-desktop-portal-gnome / -gtk) |
+| `portals/umbriel.portal` | `desktop/xdg-desktop-portal-umbriel.bst` |
+| `portals/oo7-portal.portal` | `desktop/oo7.bst` (oo7's `portal/` sub-project) |
+
+**krytis's routing files are deltas.** Each `/etc/xdg` file holds only the keys krytis
+changes and no `default=`, so every other interface falls through to the upstream file.
+Today both hold one key, `org.freedesktop.impl.portal.Secret=oo7-portal;` (#1028): niri
+v26.04's file routes Secret to `gnome-keyring`, which krytis does not ship, and umbriel's
+`default=umbriel;gtk` has no Secret backend. The routing value is the `.portal` file's
+basename (`oo7-portal`), not its `DBusName`. Delete the niri key once `desktop/niri.bst`
+pins a release containing niri `02fdd8e758` ("portals: add oo7 as secret portal",
+`Secret=oo7-portal;gnome-keyring;`); `portal-routing-check` fails with `REDUNDANT` when
+that lands. Measured on a probe image: with the delta files removed, Secret resolves to
+none in both sessions even though `oo7-portal.portal` says `UseIn=gnome` — xdp only
+consults `UseIn` when no portals.conf is loaded.
+
+**Resolving routing headlessly** — no session, GPU, seat or root needed:
+
+```shell
+podman run --rm -e XDG_CURRENT_DESKTOP=niri localhost/krytis:latest sh -c \
+  'timeout 5 dbus-run-session -- /usr/libexec/xdg-desktop-portal --verbose 2>&1'
 ```
 
-This routes gnome-specific interfaces to `xdg-desktop-portal-gnome` and everything else to gnome/gtk in preference order. Both backends are already in `stacks/desktop.bst`; this file activates the routing.
+xdp logs `Using portal configuration file '<path>' for desktop '<d>'` per config loaded,
+then `Using <backend>.portal for org.freedesktop.impl.portal.<Iface> (…)` for each
+interface it can serve — that line *is* the routing decision. Backends then fail to
+activate in the container; harmless, routing is decided before activation. An interface
+with no backend logs `Found '<x>' in configuration for …` but no `Using` line.
+
+**`mise run portal-routing-check`** runs that resolution for `niri` and `Umbriel` in one
+container and compares every interface against the EXPECTED tables in
+`mise/tasks/portal-routing-check`. It fails on a backend change, an interface no row
+classifies, any `Error loading …` warning, a desktop with no routing file loaded, or a
+key in an `/etc/xdg` delta that the upstream `/usr/share` file now resolves the same way
+on its own (`REDUNDANT`: upstream caught up, delete the key). It runs at the end of
+`mise run build`. A deliberate routing change edits the EXPECTED rows in the same commit.
+
+**What niri itself implements.** niri v26.04 (niri-wm/niri, `src/dbus/` at tag `v26.04`)
+serves `org.gnome.Shell.Screenshot`, `org.gnome.Shell.Introspect`, and Mutter's
+`ScreenCast`, `DisplayConfig` and `ServiceChannel` — enough for xdg-desktop-portal-gnome's
+Screenshot and ScreenCast. It lacks what xdp-gnome needs for GlobalShortcuts,
+RemoteDesktop, Clipboard and InputCapture (#1054), even though `niri-portals.conf` routes
+them to gnome.
+
+### A `.portal` file without `[portal]` is silently skipped
+
+xdp only parses `portals/*.portal` as descriptors. One without a `[portal]` group is
+skipped with nothing but a warning:
+`Error loading /usr/share/xdg-desktop-portal/portals/<x>.portal: Key file does not have group "portal"`.
+That is how krytis's `config/xdg-portals.bst` — `portals/niri.portal` holding a
+`[preferred]` routing block — sat dead from June 2026 until #1027 deleted it. Measured:
+niri routing is identical with and without it. `portal-routing-check` now fails on that
+warning.
 
 ## Camera Stack
 

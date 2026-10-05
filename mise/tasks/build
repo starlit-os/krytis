@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="generate-image-version + load-image + lint + umbriel-config-validate + cracklib-dict-check — full local build pipeline"
+#MISE description="generate-image-version + load-image + lint + umbriel-config-validate + cracklib-dict-check + portal-routing-check — full local build pipeline"
 #USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
 #USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
 #USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
@@ -29,3 +29,8 @@ FORCE=${usage_force:+--force}
 # else notices — see docs/skills/bst.md § An integration command's tools are
 # not implied by the element that ships it (krytis#1001).
 ./mise/tasks/cracklib-dict-check
+# Same cost class (~10s, one podman run). Portal routing changes with every
+# niri bump and every daily xdg-desktop-portal-umbriel bump, and a wrong route
+# is invisible until a Flatpak misbehaves — see docs/skills/desktop.md
+# § xdg-desktop-portal routing (krytis#1027).
+./mise/tasks/portal-routing-check
