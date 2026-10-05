@@ -46,7 +46,12 @@ jobs:
     # indistinguishable to this ternary whenever both happened to be online,
     # making routing nondeterministic. See docs/skills/ci-runner.md § Always-on VPS runner.
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 'blacksmith-8vcpu-ubuntu-2404' || fromJSON('["self-hosted","linux","x64","krytis-vps"]') }}
-    timeout-minutes: 360
+    # 24h on the VPS, 6h on Blacksmith (#1077). With --deps all a junction
+    # bump rebuilds the toolchain here: run 37003574522's first attempt hit
+    # the old 360 after 123 elements (gcc-stage2 61 min, bootstrap/gcc 70 min)
+    # without reaching llvm or rust. Self-hosted jobs may run up to 5 days;
+    # Blacksmith keeps GitHub's 6h default. Same condition as runs-on above.
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 360 || 1440 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -160,6 +165,14 @@ jobs:
           [ "${BUILDERS}" -gt "${SLOTS}" ] && BUILDERS=${SLOTS}
           MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))
           echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS} (<=${SLOTS} concurrent compilers)"
+          # casd quota (#1077). --deps all keeps the whole build closure,
+          # toolchain included; the runtime closure alone already filled 46G
+          # of the old 50G. krytis-vps has a 197G disk, so it gets 100G. The
+          # Blacksmith fallback keeps 50G — its disk was not sized for more.
+          # See docs/skills/ci-runner.md § casd quota.
+          if [ "${RUNNER_NAME}" = "krytis-vps" ]; then QUOTA=100G; else QUOTA=50G; fi
+          echo "==> runner ${RUNNER_NAME}: casd quota ${QUOTA}"
+          echo "CACHE_WARM_QUOTA=${QUOTA}" >> "${GITHUB_ENV}"
 
           cat > ~/.config/buildstream.conf <<EOF
           scheduler:
@@ -171,7 +184,7 @@ jobs:
             key-length: 8
             verbose: False
           cache:
-            quota: 50G
+            quota: ${QUOTA}
           build:
             # max-jobs's runtime env vars (MAKEFLAGS/JOBS for autotools/meson,
             # LTOJOBS for freedesktop-sdk's own meson-conf.yml) are all
@@ -277,16 +290,57 @@ jobs:
           # publish run 33872670405 died on the same broken element. cache-warm
           # is the only scheduled job that compiles elements at all (`Checks` is
           # static-only), so its result has to mean something.
-          uv run bst -o x86_64_v3 true --no-interactive build --retry-failed oci/krytis/image.bst
+          #
+          # --deps all (#1077): without it bst plans dynamically and only
+          # requires the target, fetching a build dependency only when
+          # something has to compile. On a warm main nothing does, so the
+          # toolchain (bootstrap/*, components/llvm.bst, components/rust.bst)
+          # was never pulled, built or pushed. The first branch that touched a
+          # Rust element then compiled gcc from scratch (2026-10-02, #1028).
+          # `all` makes every element of the build closure required, so each is
+          # pulled from bow or built here and pushed.
+          # Teed for the cache report below; pipefail so bst's own exit code,
+          # not tee's, decides the step (this step's shell is `bash -e` only).
+          set -o pipefail
+          uv run bst -o x86_64_v3 true --no-interactive build --deps all --retry-failed oci/krytis/image.bst 2>&1 \
+            | tee "${RUNNER_TEMP}/bst-build.log"
 
       - name: Print disk usage after build
         if: always()
         run: |
           df -h -x fuse || true
           du -sh ~/.cache/buildstream 2>/dev/null || true
+          echo "CACHE_WARM_CAS_SIZE=$(du -sh ~/.cache/buildstream/cas 2>/dev/null | cut -f1)" >> "${GITHUB_ENV}"
 
-      - name: Report cached elements
+      # Same shape as vuln-scan.yml's report: a job summary rendered by a
+      # script, plus the raw inputs as an artifact. The summary covers the
+      # whole build closure (`--deps all`, the set the build step requires):
+      # cached vs total per project, the toolchain count, what this run built
+      # (slowest first), pulled and pushed, anything built but not pushed, and
+      # every uncached element. Before #1077 this step printed a bare
+      # "Cached elements: 685" with 232 of 917 absent, toolchain included.
+      - name: Write cache report
         if: always()
         run: |
-          CACHED=$(uv run bst show --deps all --format '%{name} %{state}' oci/krytis/image.bst 2>/dev/null | grep -c "cached" || echo 0)
-          echo "::notice::Cached elements: ${CACHED}"
+          uv run bst show --deps all --format '%{state}|%{full-key}|%{name}' oci/krytis/image.bst 2>/dev/null \
+            | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z ]+\|' > "${RUNNER_TEMP}/states.tsv" || true
+          uv run python3 scripts/cache-summary.py "${RUNNER_TEMP}/states.tsv" "${RUNNER_TEMP}/bst-build.log" \
+            | tee "${RUNNER_TEMP}/cache-report.md" >> "${GITHUB_STEP_SUMMARY}"
+          TOTAL=$(wc -l < "${RUNNER_TEMP}/states.tsv")
+          CACHED=$(grep -c '^cached|' "${RUNNER_TEMP}/states.tsv" || true)
+          echo "::notice::Cached elements: ${CACHED} of ${TOTAL}"
+          if [ "${CACHED}" -ne "${TOTAL}" ]; then
+            echo "::warning::$((TOTAL - CACHED)) element(s) not cached; see the job summary"
+          fi
+
+      - name: Upload cache report artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: krytis-cache-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cache-report.md
+            ${{ runner.temp }}/states.tsv
+            ${{ runner.temp }}/bst-build.log
+          retention-days: 90
+          if-no-files-found: warn

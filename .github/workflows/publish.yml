@@ -156,6 +156,18 @@ jobs:
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
+      - name: Toolchain cache gate
+        # Refuse to start a build that would compile freedesktop-sdk's
+        # toolchain (bootstrap/*, llvm, rust): this runner is ephemeral and
+        # pull-only, so hours of compiler builds would be thrown away with it.
+        # That is what publish run 36552776326 did on 2026-09-29 (878 elements
+        # rebuilt, nothing kept). cache-warm builds and pushes the toolchain
+        # since #1077, so this only fires when cache-warm has not run since a
+        # junction bump or bow lost the artifacts; the error names the fix.
+        env:
+          BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+        run: mise run toolchain-cache-check --pull
+
       - name: Scan for vulnerabilities (pre-build gate)
         # Runs before the build so a blocking finding aborts here — no BST
         # build time spent, and mise/tasks/push's own scan-before-push
