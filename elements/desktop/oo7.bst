@@ -1,10 +1,17 @@
-# oo7 — memory-safe Secret Service daemon + PAM module.
+# oo7 — memory-safe Secret Service daemon + PAM module + Secret portal backend.
 # Replaces gnome-keyring. Implements org.freedesktop.secrets in full.
-# Builds two separate meson sub-projects from one cargo workspace:
+# Builds three separate meson sub-projects from one cargo workspace:
 #   server/ → oo7-daemon + oo7-daemon-login (libexecdir) + systemd user unit
 #   pam/    → pam_oo7.so (libdir/security)
-# D-Bus session activation: systemd symlink dbus-org.freedesktop.secrets.service
-# → oo7-daemon.service handles it; no separate D-Bus .service file needed.
+#   portal/ → oo7-portal (libexecdir) + oo7-portal.portal + systemd user unit,
+#             the org.freedesktop.impl.portal.Secret backend (krytis#1028)
+# D-Bus session activation of the daemon: systemd symlink
+# dbus-org.freedesktop.secrets.service → oo7-daemon.service handles it; server/
+# ships no D-Bus .service file. portal/ does ship one
+# (org.freedesktop.impl.portal.desktop.oo7.service), but it is Exec=/bin/false
+# with SystemdService=, so activation still hands off to oo7-portal.service.
+# Each sub-project's cargo custom_target uses its own --target-dir, so the
+# shared dependency graph compiles once per sub-project.
 kind: manual
 
 build-depends:
@@ -35,10 +42,20 @@ config:
       -Dprofile=default \
       -Dpam_moduledir=%{libdir}/security
     ninja -v -j$(nproc) -C pam/_build
+  - |
+    meson setup portal/_build portal \
+      --prefix=%{prefix} \
+      --libexecdir=%{libexecdir} \
+      -Dprofile=default \
+      -Dsystemd=enabled \
+      -Dsystemduserunitdir=%{indep-libdir}/systemd/user \
+      -Ddbus_service_dir=%{datadir}/dbus-1/services
+    ninja -v -j$(nproc) -C portal/_build
 
   install-commands:
   - DESTDIR=%{install-root} ninja -C server/_build install
   - DESTDIR=%{install-root} ninja -C pam/_build install
+  - DESTDIR=%{install-root} ninja -C portal/_build install
   - |
     # krytis#806: pam_oo7.so auto_start spawns the transient oo7-daemon-login
     # helper from the same PAM session stack that starts oo7-daemon.service,

@@ -8,8 +8,9 @@ changes), so a human signs off on § Decisions before step 1.
 **Depends on** [#1027's plan](done/2026-10-01-niri-portal-routing-cleanup.md) step 1
 (`mise run portal-routing-check`) and its *Verified facts*: the headless resolution command,
 xdp's per-interface fall-through, and the `none` semantics. This plan does not repeat them.
-It does not depend on [#1028](2026-10-01-oo7-secret-portal.md). Whichever of #1028 and #1029
-lands first creates the element in step 1. The other adds its file or its line.
+It does not depend on [#1028](done/2026-10-01-oo7-secret-portal.md), which landed first: the
+element in step 1 and a one-key `umbriel-portals.conf` (Secret → oo7-portal) already exist,
+so this plan extends that file and keeps its Secret line.
 
 ## Today (measured 2026-10-01, image built 2026-09-30, xdg-desktop-portal 1.22.1)
 
@@ -106,26 +107,17 @@ Umbriel table for `portal-routing-check`.
   org.freedesktop.impl.portal.InputCapture=none;
   # xdp-gnome only writes org.gnome.desktop.background, which noctalia doesn't read.
   org.freedesktop.impl.portal.Wallpaper=none;
+  # oo7-portal is the only Secret backend; umbriel and gtk implement none. krytis#1028.
+  org.freedesktop.impl.portal.Secret=oo7-portal;
   ```
 
   xdp parses the file with `GKeyFile`, which treats `#` lines as comments. If a comment ever
   breaks parsing, xdp stops loading the file and `portal-routing-check` fails.
-- [ ] `elements/config/xdg-desktop-portal-routing.bst`. Copy the shape of
-      `config/xdg-terminals-list.bst`: `kind: manual`, `kind: local` source
-      `files/xdg-desktop-portal`, and an install loop over `*-portals.conf` into
-      `%{install-root}%{sysconfdir}/xdg/xdg-desktop-portal/`, so #1028 only adds a file.
-      The element header carries the longer rationale:
-  - `/etc/xdg` is the `$XDG_CONFIG_DIRS` tier, which a user can still override in
-    `~/.config` (same reasoning as `xdg-terminals-list.bst`).
-  - xdp falls through config files per interface.
-  - A file here holds only what krytis changes. niri's will be a pure delta (#1028). This
-    Umbriel file's `default=` shadows upstream's file for everything umbriel, gnome or gtk
-    implements.
-- [ ] `elements/stacks/desktop.bst`: add the element under `# ── XDG portals`, with a
-      one-line comment.
-- [ ] `files/fakecap-manifest.tsv`: add
-      `/./etc/xdg/xdg-desktop-portal/umbriel-portals.conf	config/xdg-desktop-portal-routing.bst	monthly`
-      (same form as the `xdg-terminals.list` row), and keep the file `LC_ALL=C`-sorted.
+- [ ] `elements/config/xdg-desktop-portal-routing.bst` already exists (#1028) and installs
+      every `files/xdg-desktop-portal/*-portals.conf`, so this step only rewrites the file.
+      Update the element header: the Umbriel file is no longer a pure delta, because its
+      `default=` shadows upstream's file for everything umbriel, gnome or gtk implements.
+- [ ] `files/fakecap-manifest.tsv` already carries the Umbriel row (#1028); no change.
 
 **Why `default=umbriel;gnome;gtk` and not an explicit allowlist (`default=none` + one key per
 interface).** An allowlist would stop a *future* xdp-gnome interface from landing silently.
@@ -146,7 +138,8 @@ check's expected table is the guard: that change turns `build` red.
 | umbriel | ScreenCast, Screenshot |
 | gnome | Account, AppChooser, DynamicLauncher, FileChooser, Lockdown, Print, Settings, Usb |
 | gtk | Access, Notification (pinned); Email, Inhibit (gnome lacks them) |
-| none | Background, Clipboard, GlobalShortcuts, InputCapture, RemoteDesktop, Wallpaper (pinned); Secret (until #1028) |
+| none | Background, Clipboard, GlobalShortcuts, InputCapture, RemoteDesktop, Wallpaper (pinned) |
+| oo7-portal | Secret (#1028) |
 
 Before the change, run the task against a scratch image with the conf bind-mounted
 (`-v files/xdg-desktop-portal:/etc/xdg/xdg-desktop-portal:ro,Z` on the same `podman run`).

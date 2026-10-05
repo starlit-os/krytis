@@ -41,8 +41,10 @@ dropped.
 `session` phase to send to the daemon. A FIDO2-only login via `pam_u2f sufficient` never
 populates `PAM_AUTHTOK` — pam_u2f doesn't set it, and it short-circuits the stack before
 `pam_unix` would. Result: the oo7 Login collection stays locked for the entire session, and
-since `oo7-daemon` only exposes the `default` alias on an *unlocked* collection, libsecret
-clients that expect it (e.g. Ghostty) get an unexpected Prompt response and crash.
+libsecret clients (e.g. Ghostty) read its items as missing — a locked collection's
+`SearchItems` answers "no such secret" (§ New blocker found while testing, below). The
+`default` alias itself still resolves while locked (`docs/skills/pam.md` § oo7 `default`
+alias on a locked collection).
 
 **This is not a regression** — `gnome-keyring`'s PAM module has the identical shape of gap
 on FIDO2-only login, for the same reason (no password captured, nothing to unlock with).
@@ -522,8 +524,8 @@ and not a prompt. A working prompter does not rescue it, because nothing ever as
 `store` still prompts correctly (writing needs the collection open), so the failure is
 read-shaped and easy to miss in casual testing.
 
-This is arguably the real mechanism behind the Ghostty instability recorded in
-`docs/skills/pam.md` § *oo7 `default` alias requires an unlocked collection*, and it is
+This is the real mechanism behind the Ghostty instability recorded in
+`docs/skills/pam.md` § oo7 `default` alias on a locked collection (the alias itself resolves while locked; measured 2026-10-02), and it is
 **unfixed upstream as of 2026-08-12**. It should be treated as a second, independent hold
 reason alongside oo7#506 — accepting the FIDO2 gap is no longer sufficient to unblock #84,
 because even a user who is willing to unlock manually gets no opportunity to.
@@ -565,6 +567,74 @@ needs* for the measurements.
 re-pin does not have to rediscover this by hand. It failed on unpatched `c2aa2315` and passes
 with the patch — the A/B is quoted in that skill section.
 
+## Secret portal (oo7-portal) — shipping since #1028
+
+Sandboxed apps store secrets through `org.freedesktop.portal.Secret`, not
+`org.freedesktop.secrets`: libsecret ≥ 0.20 inside Flatpak, and Electron/Chromium Flatpaks
+through it. Until #1028 the image had **no backend** for the impl side,
+`org.freedesktop.impl.portal.Secret`: niri v26.04's `niri-portals.conf` routes it to
+`gnome-keyring` (gone since #594) and umbriel's routes it nowhere.
+
+**What ships.** `elements/desktop/oo7.bst` builds oo7's third meson sub-project, `portal/`:
+`/usr/libexec/oo7-portal`, `oo7-portal.portal` (`DBusName=org.freedesktop.impl.portal.desktop.oo7`),
+a D-Bus `.service` that hands off to the `oo7-portal.service` user unit
+(`Requisite=graphical-session.target`, which both sessions reach), and a `NoDisplay` desktop
+file. `config/xdg-desktop-portal-routing.bst` routes `Secret=oo7-portal` in both sessions
+with one-key `/etc/xdg` delta files (`docs/skills/desktop.md` § xdg-desktop-portal routing).
+No downstream patch.
+
+**How it answers** (`portal/src/main.rs` at `bf367dca`). For `RetrieveSecret(handle, app_id, fd)`:
+reject an empty `app_id`; `default_collection()`; if locked, `unlock(None)` (a noctalia
+prompt with no parent window); `search_items({app_id})`; write the found item's secret to
+`fd`, or else mint `Secret::random()`, store it as `Secret Portal token for <app_id>` with
+`replace=true`, and write that. Inside the sandbox, libsecret uses the token as the key to the
+app's own keyring file, so **the token is the only key to everything that app stored**.
+
+### Security Gate decision (2026-10-02)
+
+| # | Question | Decision |
+|---|---|---|
+| D1 | Ship oo7-portal? | Yes |
+| D2 | Carry a patch so the portal never creates a `default` collection and fails instead of minting while locked? | **No — ship upstream as-is**, gated by `mise run oo7-portal-test`. The risk the patch targeted (R1a) was measured not to occur |
+| D3 | Which sessions? | niri and Umbriel |
+
+### Risks
+
+- **R1 — silent token re-mint loses the app's data.** If the lookup ever comes back empty for
+  an app that already has a token, the portal mints a new one; nothing errors.
+  - **R1a, a `default` alias unresolved while Login is locked** (the portal would then
+    `create_collection("Default")` and alias it, and every later lookup would miss). **Does
+    not occur at `bf367dca`.** `load_keyring` assigns `default` to `login` before unlocking,
+    and T2 below measures `ReadAlias default` → Login on a locked keyring discovered on disk.
+  - **R1b, Login re-locks between `unlock()` and `search_items()`** — only a mid-request
+    `oo7-daemon` restart or crash. `SearchItems` on a locked collection returns empty (#585),
+    and `create_item` then prompts to unlock and, with `replace=true`, **overwrites** the
+    app's token. Needs the restart inside a milliseconds-wide window and the user accepting
+    the prompt that follows. Accepted as residual, same class as #585.
+- **R2 — token visibility.** Tokens are ordinary Login items. Any unconfined host process, and
+  any Flatpak with `--talk-name=org.freedesktop.secrets`, can read every app's token. Inherent
+  to the portal design.
+- **R3 — prompt attribution.** If Login is locked, an app's first portal call raises a noctalia
+  unlock prompt that comes from `oo7-portal`, not from the app. With no prompter at all the
+  request never answers; the caller's `Request.Close` aborts it cleanly.
+
+### The gate: `mise run oo7-portal-test`
+
+One `oo7-portal` process on a private bus, with the daemon restarted underneath it:
+
+- **T1** fresh keyring, Login unlocked through the login helper: a repeat call returns the same
+  64-byte token, a second app gets a different one, Login holds exactly two token items.
+- **T2** daemon restarted with no login secret and no prompter on the bus: Login comes up
+  locked from disk, `ReadAlias default` → Login, the call does not answer with a token (it
+  hangs; the test closes it after 5 s), the collection list is unchanged.
+- **T3** daemon restarted unlocked: the first app gets its T1 token back.
+
+Passed on upstream `bf367dca` (daemon from the image, portal built from the same pin) on
+2026-10-02. **Negative control:** the same run against a throwaway portal build whose lookup
+never matches (always mint) fails T1 (`a repeat call returns the same token`) and T3 (`gets
+its T1 token back`) — while the item count stays at two, because `replace=true` overwrites
+silently. That is exactly the failure this gate exists to catch on an oo7 re-pin.
+
 ## Revisit trigger
 
 The migration has shipped, so this is no longer "should we start?" but "can we drop a
@@ -584,6 +654,12 @@ workaround?". Re-read this doc when any of these move:
 - **The noctalia prompter is upstreamed** → repoint `elements/desktop/noctalia.bst` back to
   `noctalia-dev/noctalia` with `track: v*`, and drop `sdk/gcr.bst` only if upstream stops
   linking `GcrSecretExchange`.
+- **`desktop/niri.bst` pins a release containing niri `02fdd8e758`** ("portals: add oo7 as
+  secret portal") → delete the Secret key from `files/xdg-desktop-portal/niri-portals.conf`
+  (and the file, if it is the last key). `mise run portal-routing-check` fails with
+  `REDUNDANT` until you do.
+- **Any oo7 re-pin that touches `portal/` or the client's `default_collection`/`search_items`**
+  → run `mise run oo7-portal-test` before merging; it is the only thing that sees R1.
 
 Until then the workarounds stay. Each is annotated at its call site with the issue number, so
 `git grep 585` finds everything that has to change. (`git grep 588` was the other half of

@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+#MISE description="Assert oo7-portal hands each app a stable token and never mints a new one while Login is locked (krytis#1028)"
+#USAGE flag "--artifact <dir>" help="Directory holding an already-checked-out desktop/oo7.bst artifact (default: check out a fresh one)"
+#USAGE flag "--keep" help="Keep the scratch directory and print its path"
+
+# Guards the one failure of the Secret portal that loses data silently.
+#
+# oo7-portal answers org.freedesktop.impl.portal.Secret.RetrieveSecret with a
+# per-app token, stored as an item in the default collection. Inside the
+# sandbox, libsecret uses that token as the only key to the app's own keyring
+# file. If the portal ever misses the existing item, it mints a fresh one
+# (create_item, replace=true), and everything the app stored before becomes
+# undecryptable — with no error anywhere. See docs/design/secrets-service.md
+# § Secret portal (oo7-portal), risk R1.
+#
+# Three phases, all against one oo7-portal process that stays up while the
+# daemon restarts underneath it (the mid-session restart case, krytis#585):
+#
+#   T1  fresh home, Login unlocked through the login helper: a repeat call
+#       returns the same bytes, a second app gets different bytes, Login holds
+#       exactly two "Secret Portal token for …" items.
+#   T2  daemon restarted with no helper, so Login is discovered on disk and
+#       stays locked, and no prompter exists on the bus. The `default` alias
+#       must still resolve to Login (docs/skills/pam.md § oo7 `default` alias
+#       on a locked collection), the call must not answer with a token, and
+#       the collection list must be unchanged. With no prompter the
+#       portal's unlock() never completes, so the call hangs; the test gives up
+#       after 5 s and closes the request, as xdg-desktop-portal does when the
+#       app cancels. On a real session noctalia's unlock prompt appears there.
+#   T3  daemon restarted with the helper again: the first app gets its T1
+#       bytes back, and Login still holds exactly two tokens.
+#
+# The portal's impl interface takes app_id as an argument, so the test calls
+# it directly; xdg-desktop-portal is not involved.
+#
+# Isolation follows oo7-login-race-test: a private D-Bus session, its own
+# XDG_DATA_HOME and OO7_PAM_SOCKET, so the live keyring is never touched. The
+# private bus also gets its own config with no service directories, so T2
+# cannot D-Bus-activate a real prompter from the host and pop a dialog on the
+# caller's desktop. The rendezvous socket cannot be redirected (both binaries
+# hardcode /run/user/<uid>/oo7-daemon-login.sock); the test refuses to run if
+# one already exists, and removes its own on exit.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+ARTIFACT="${usage_artifact:-}"
+KEEP="${usage_keep:-false}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --artifact) ARTIFACT="$2"; shift 2 ;;
+        --keep) KEEP=true; shift ;;
+        *) shift ;;
+    esac
+done
+
+HELPER_SOCKET="/run/user/$(id -u)/oo7-daemon-login.sock"
+if [ -e "$HELPER_SOCKET" ]; then
+    echo "==> SKIPPED: $HELPER_SOCKET already exists — a real login helper is live."
+    echo "    It self-removes within 120s of login; re-run after that."
+    exit 0
+fi
+
+SCRATCH="$(mktemp -d /var/tmp/oo7-portal-test.XXXXXX)"
+cleanup() {
+    rm -f "$HELPER_SOCKET"
+    if [ "$KEEP" = "true" ]; then
+        echo "==> scratch kept at $SCRATCH"
+    else
+        rm -rf "$SCRATCH"
+    fi
+}
+trap cleanup EXIT
+
+if [ -z "$ARTIFACT" ]; then
+    ARTIFACT="$SCRATCH/artifact"
+    echo "==> Checking out desktop/oo7.bst..."
+    mise run bst artifact checkout desktop/oo7.bst --directory "$ARTIFACT" >/dev/null || {
+        echo "==> FAILED to check out desktop/oo7.bst — build it first."
+        exit 1
+    }
+fi
+
+for bin in oo7-daemon oo7-daemon-login oo7-portal; do
+    if [ ! -x "$ARTIFACT/usr/libexec/$bin" ]; then
+        echo "==> FAILED: no executable at $ARTIFACT/usr/libexec/$bin"
+        exit 1
+    fi
+done
+
+cat >"$SCRATCH/bus.conf" <<EOF
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:dir=$SCRATCH</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+
+# /usr/bin/python3, not the mise-managed python3: only the system one has gi.
+cat >"$SCRATCH/driver.py" <<'PYEOF'
+import glob, os, select, subprocess, sys, time
+from gi.repository import Gio, GLib
+
+ART = os.environ["ARTIFACT"]
+SCRATCH = os.environ["SCRATCH"]
+HELPER_SOCKET = os.environ["HELPER_SOCKET"]
+DAEMON = f"{ART}/usr/libexec/oo7-daemon"
+HELPER = f"{ART}/usr/libexec/oo7-daemon-login"
+PORTAL = f"{ART}/usr/libexec/oo7-portal"
+
+SECRETS = "org.freedesktop.secrets"
+SECRETS_PATH = "/org/freedesktop/secrets"
+LOGIN = "/org/freedesktop/secrets/collection/login"
+PORTAL_NAME = "org.freedesktop.impl.portal.desktop.oo7"
+TOKEN_LABEL = "Secret Portal token for "
+
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+failures = []
+procs = []
+request_n = 0
+
+
+def check(ok, what):
+    print(f"==> {'PASS' if ok else 'FAIL'}: {what}", flush=True)
+    if not ok:
+        failures.append(what)
+    return ok
+
+
+def call(dest, path, iface, method, params, reply, timeout_ms=5000):
+    return bus.call_sync(dest, path, iface, method, params, GLib.VariantType(reply),
+                         Gio.DBusCallFlags.NO_AUTO_START, timeout_ms, None).unpack()
+
+
+def prop(path, iface, name):
+    return call(SECRETS, path, "org.freedesktop.DBus.Properties", "Get",
+                GLib.Variant("(ss)", (iface, name)), "(v)")[0]
+
+
+def has_owner(name):
+    return call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                "NameHasOwner", GLib.Variant("(s)", (name,)), "(b)")[0]
+
+
+def wait_for(pred, what, tries=100):
+    for _ in range(tries):
+        try:
+            if pred():
+                return True
+        except GLib.Error:
+            pass
+        time.sleep(0.1)
+    print(f"    timed out waiting for {what}", flush=True)
+    return False
+
+
+def spawn(argv, log, stdin=None):
+    p = subprocess.Popen(argv, stdin=stdin, stdout=open(f"{SCRATCH}/{log}", "ab"),
+                         stderr=subprocess.STDOUT, env={**os.environ, "RUST_LOG": "debug"})
+    procs.append(p)
+    return p
+
+
+def stop(p):
+    if p and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+
+
+def start_daemon(phase, with_helper):
+    helper = None
+    if with_helper:
+        helper = spawn([HELPER], "helper.log", stdin=subprocess.PIPE)
+        helper.stdin.write(b"krytis-portal-test")
+        helper.stdin.close()
+        wait_for(lambda: os.path.exists(HELPER_SOCKET), "the login helper socket", 50)
+    daemon = spawn([DAEMON], f"daemon-{phase}.log")
+    # Poll the property, not the bus name: oo7-daemon owns the name before
+    # the login collection is set up (see oo7-login-race-test).
+    wait_for(lambda: prop(LOGIN, "org.freedesktop.Secret.Collection", "Locked") in (True, False),
+             "the login collection")
+    return daemon, helper
+
+
+def locked():
+    return prop(LOGIN, "org.freedesktop.Secret.Collection", "Locked")
+
+
+def collections():
+    return sorted(prop(SECRETS_PATH, "org.freedesktop.Secret.Service", "Collections"))
+
+
+def token_items():
+    items = prop(LOGIN, "org.freedesktop.Secret.Collection", "Items")
+    return [i for i in items
+            if prop(i, "org.freedesktop.Secret.Item", "Label").startswith(TOKEN_LABEL)]
+
+
+def retrieve(app_id, timeout_ms=30000):
+    """Return (secret bytes, None) on success, (None, reason) on failure."""
+    global request_n
+    request_n += 1
+    r, w = os.pipe()
+    fds = Gio.UnixFDList.new()
+    idx = fds.append(w)
+    os.close(w)
+    handle = f"/org/freedesktop/portal/desktop/request/1_0/krytis{request_n}"
+    try:
+        reply, _ = bus.call_with_unix_fd_list_sync(
+            PORTAL_NAME, "/org/freedesktop/portal/desktop",
+            "org.freedesktop.impl.portal.Secret", "RetrieveSecret",
+            GLib.Variant("(osha{sv})", (handle, app_id, idx, {})),
+            GLib.VariantType("(ua{sv})"), Gio.DBusCallFlags.NO_AUTO_START,
+            timeout_ms, fds, None)
+        response = reply.unpack()[0]
+    except GLib.Error as e:
+        response, err = None, e.message
+        if e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.TIMED_OUT):
+            err = f"no answer within {timeout_ms // 1000} s"
+            try:
+                call(PORTAL_NAME, handle, "org.freedesktop.impl.portal.Request", "Close",
+                     None, "()")
+                err += ", request closed"
+            except GLib.Error as close_err:
+                err += f", Close failed: {close_err.message}"
+    for fd in fds.steal_fds():
+        os.close(fd)
+    data = b""
+    while select.select([r], [], [], 2)[0]:
+        chunk = os.read(r, 4096)
+        if not chunk:
+            break
+        data += chunk
+    os.close(r)
+    if response is None:
+        return None, err
+    if response != 0:
+        return None, f"response {response}"
+    if not data:
+        return None, "response 0 but no bytes written"
+    return data, None
+
+
+def show(label, result):
+    data, why = result
+    print(f"    {label}: " + (f"{len(data)} bytes" if data else f"failed ({why})"), flush=True)
+    return result
+
+
+try:
+    # ---- T1: fresh home, Login unlocked through the login helper ----------
+    print("==> T1: fresh keyring, Login unlocked", flush=True)
+    daemon, helper = start_daemon("t1", with_helper=True)
+    check(locked() is False, "T1 Login came up unlocked")
+    portal = spawn([PORTAL, "--verbose"], "portal.log")
+    check(wait_for(lambda: has_owner(PORTAL_NAME), "oo7-portal"), "oo7-portal owns its bus name")
+
+    a1, _ = show("org.krytis.Test", retrieve("org.krytis.Test"))
+    a2, _ = show("org.krytis.Test again", retrieve("org.krytis.Test"))
+    b1, _ = show("org.krytis.Other", retrieve("org.krytis.Other"))
+    check(a1 is not None and a1 == a2, "T1 a repeat call returns the same token")
+    check(b1 is not None and b1 != a1, "T1 a second app gets a different token")
+    check(len(token_items()) == 2, f"T1 Login holds exactly two token items (found {len(token_items())})")
+    before = collections()
+    print(f"    collections: {before}", flush=True)
+
+    stop(daemon)
+    stop(helper)
+    keyrings = glob.glob(f"{os.environ['XDG_DATA_HOME']}/keyrings/**/*.keyring", recursive=True)
+    check(bool(keyrings), f"T1 Login was written to disk ({', '.join(os.path.basename(k) for k in keyrings) or 'nothing'})")
+
+    # ---- T2: restart, Login discovered on disk, locked, no prompter --------
+    print("==> T2: daemon restarted, Login locked, no prompter", flush=True)
+    daemon, _ = start_daemon("t2", with_helper=False)
+    check(locked() is True, "T2 Login came up locked")
+    alias = call(SECRETS, SECRETS_PATH, "org.freedesktop.Secret.Service", "ReadAlias",
+                 GLib.Variant("(s)", ("default",)), "(o)")[0]
+    check(alias == LOGIN, f"T2 `default` resolves to Login while locked (got {alias!r})")
+    t2, why = show("org.krytis.Test", retrieve("org.krytis.Test", timeout_ms=5000))
+    if t2 is None:
+        check(True, "T2 the call did not answer with a token")
+    elif t2 == a1:
+        check(False, "T2 the call answered with the T1 token while Login was locked")
+    else:
+        check(False, "T2 the call MINTED A NEW TOKEN (R1: the app's data is now undecryptable)")
+    after = collections()
+    check(after == before, f"T2 collection list unchanged ({after})")
+    stop(daemon)
+
+    # ---- T3: restart unlocked, the T1 token is still there -----------------
+    print("==> T3: daemon restarted, Login unlocked again", flush=True)
+    daemon, helper = start_daemon("t3", with_helper=True)
+    check(locked() is False, "T3 Login came up unlocked")
+    a3, _ = show("org.krytis.Test", retrieve("org.krytis.Test"))
+    check(a3 is not None and a3 == a1, "T3 org.krytis.Test gets its T1 token back")
+    check(len(token_items()) == 2, f"T3 Login still holds exactly two token items (found {len(token_items())})")
+finally:
+    for p in reversed(procs):
+        stop(p)
+
+sys.exit(1 if failures else 0)
+PYEOF
+
+export ARTIFACT SCRATCH HELPER_SOCKET
+export XDG_DATA_HOME="$SCRATCH/data"
+export OO7_PAM_SOCKET="$SCRATCH/run/oo7-pam.sock"
+mkdir -p "$XDG_DATA_HOME" "$SCRATCH/run"
+
+dbus-run-session --config-file="$SCRATCH/bus.conf" -- /usr/bin/python3 "$SCRATCH/driver.py"
+fail=$?
+
+if [ "$fail" -ne 0 ]; then
+    for log in portal daemon-t1 daemon-t2 daemon-t3 helper; do
+        [ -s "$SCRATCH/$log.log" ] || continue
+        echo "==> $log.log (tail):"
+        tail -15 "$SCRATCH/$log.log" | sed 's/^/    /'
+    done
+fi
+
+[ "$fail" -eq 0 ] && echo "==> oo7-portal-test passed."
+exit "$fail"

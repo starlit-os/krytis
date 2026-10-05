@@ -321,11 +321,22 @@ lands on, letting `pam_unix.so` run on homed success instead of being skipped.
 
 Result: on FIDO2 login, the oo7 Login collection stays locked all session.
 
-## oo7 `default` alias requires an unlocked collection
+## oo7 `default` alias on a locked collection
 
-oo7-daemon only loads keyring aliases (including `default`) when a collection is unlocked. If Login stays locked, `default` is never set on the D-Bus Secret Service. libsecret clients (e.g. Ghostty) that expect a `default` alias get an unexpected Prompt response and **crash at session start**.
+**A locked Login still answers `ReadAlias default`.** This section used to say the opposite
+(aliases only load for an unlocked collection), and blamed that for Ghostty crashing at
+session start on FIDO2 login. Measured at oo7 `bf367dca` by `mise run oo7-portal-test` T2
+(2026-10-02): a Login keyring **discovered on disk** and left locked (daemon started with no
+login secret) is set up as `Setting up collection 'login' (alias: default).`, and
+`ReadAlias default` returns `/org/freedesktop/secrets/collection/login` while `Locked` is
+`true`. The source agrees: `server/src/service/mod.rs::load_keyring` (linux-credentials/oo7)
+assigns `default` to the `login` keyring before it tries to unlock it. The created-locked case
+resolves the same way (data point under § oo7's collection path, below).
 
-This is the root cause of Ghostty instability on FIDO2 login with oo7.
+What a locked Login does hide is its **items**: `SearchItems` returns them in the locked list,
+which libsecret reads as "no such secret" (#585, `docs/design/secrets-service.md` § New
+blocker found while testing: a locked oo7 collection is invisible, not prompt-worthy). That,
+not a missing alias, is the better explanation for the Ghostty instability.
 
 ### Revalidated 2026-08-12 against upstream `main` + Fedora's F45 rollout — still open, not a regression
 
@@ -652,14 +663,11 @@ busctl --user get-property org.freedesktop.secrets "$C" \
 `Collections` on `org.freedesktop.Secret.Service` lists everything; expect the ephemeral
 `…/collection/session` (always `Locked=false`) alongside `…/collection/Login`.
 
-**Partial data point on the `default`-alias claim above.** On oo7 0.6.0, when the daemon
-*creates* the default keyring itself (`No default collection found, creating 'Login' keyring`
-→ `Created default 'Login' collection (locked)`), `ReadAlias default` **does** resolve to the
-Login path while it is still locked. That does not overturn § *oo7 `default` alias requires an
-unlocked collection*: the original report concerns a keyring discovered on disk, and that path
-could not be reached in testing because oo7 writes no keyring file until a secret is actually
-stored — a restart just re-runs the create branch. Re-test the discovered-from-disk case
-before relying on either statement.
+**Data point on the `default` alias.** On oo7 0.6.0, when the daemon *creates* the default
+keyring itself (`No default collection found, creating 'Login' keyring` → `Created default
+'Login' collection (locked)`), `ReadAlias default` **does** resolve to the Login path while it
+is still locked. The discovered-from-disk case resolves the same way on the current pin; see
+§ oo7 `default` alias on a locked collection.
 
 ## Re-locking a collection with oo7: `Lock` looks like a no-op, restart the daemon instead
 

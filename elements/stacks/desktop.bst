@@ -54,9 +54,13 @@ depends:
   # Umbriel's own Screencast/Screenshot portal backend -- upstream ships its
   # own umbriel-portals.conf routing (default=umbriel;gtk).
   - desktop/xdg-desktop-portal-umbriel.bst
+  # krytis's /etc/xdg deltas over niri's and umbriel's routing files
+  # (Secret → oo7-portal, #1028).
+  - config/xdg-desktop-portal-routing.bst
 
   # ── Credentials ────────────────────────────────────────────────────────
-  # oo7: memory-safe Secret Service daemon (org.freedesktop.secrets) + pam_oo7.so.
+  # oo7: memory-safe Secret Service daemon (org.freedesktop.secrets) + pam_oo7.so
+  # + oo7-portal, the org.freedesktop.impl.portal.Secret backend (#1028).
   # Replaces gnome-keyring. D-Bus session activation via a systemd symlink.
   # pam_oo7.so is wired into greetd's PAM stack in config/greetd-config.bst.
   #

@@ -343,9 +343,10 @@ noctalia's side. Both are `noctalia-dev/` repos — Upstream Gate applies, nothi
 has been filed.
 
 
-**No krytis-side routing file needed for umbriel** — `xdg-desktop-portal-umbriel`
-ships its own valid `umbriel-portals.conf` (`default=umbriel;gtk`) automatically
-via its own `meson.build`.
+**Umbriel's routing comes from upstream, plus a krytis delta** — `xdg-desktop-portal-umbriel`
+ships its own valid `umbriel-portals.conf` (`default=umbriel;gtk`) via its own
+`meson.build`; krytis adds only `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf`
+(Secret → oo7-portal, #1028). See § xdg-desktop-portal routing.
 
 **Tracking caveat**: as of #774/#775, neither `noctalia-dev/umbriel` nor
 `noctalia-dev/xdg-desktop-portal-umbriel` has tags/releases (checked
@@ -1338,12 +1339,24 @@ coming from the lower file. Two traps:
 
 | File | Element |
 |---|---|
-| `niri-portals.conf` | `desktop/niri.bst` (niri upstream) |
-| `umbriel-portals.conf` | `desktop/xdg-desktop-portal-umbriel.bst` (umbriel upstream) |
+| `/usr/share/…/niri-portals.conf` | `desktop/niri.bst` (niri upstream) |
+| `/usr/share/…/umbriel-portals.conf` | `desktop/xdg-desktop-portal-umbriel.bst` (umbriel upstream) |
+| `/etc/xdg/xdg-desktop-portal/{niri,umbriel}-portals.conf` | `config/xdg-desktop-portal-routing.bst` (krytis, from `files/xdg-desktop-portal/`) |
 | `portals/gnome.portal`, `portals/gtk.portal` | gnome-build-meta core-deps (xdg-desktop-portal-gnome / -gtk) |
 | `portals/umbriel.portal` | `desktop/xdg-desktop-portal-umbriel.bst` |
+| `portals/oo7-portal.portal` | `desktop/oo7.bst` (oo7's `portal/` sub-project) |
 
-krytis ships no routing file of its own.
+**krytis's routing files are deltas.** Each `/etc/xdg` file holds only the keys krytis
+changes and no `default=`, so every other interface falls through to the upstream file.
+Today both hold one key, `org.freedesktop.impl.portal.Secret=oo7-portal;` (#1028): niri
+v26.04's file routes Secret to `gnome-keyring`, which krytis does not ship, and umbriel's
+`default=umbriel;gtk` has no Secret backend. The routing value is the `.portal` file's
+basename (`oo7-portal`), not its `DBusName`. Delete the niri key once `desktop/niri.bst`
+pins a release containing niri `02fdd8e758` ("portals: add oo7 as secret portal",
+`Secret=oo7-portal;gnome-keyring;`); `portal-routing-check` fails with `REDUNDANT` when
+that lands. Measured on a probe image: with the delta files removed, Secret resolves to
+none in both sessions even though `oo7-portal.portal` says `UseIn=gnome` — xdp only
+consults `UseIn` when no portals.conf is loaded.
 
 **Resolving routing headlessly** — no session, GPU, seat or root needed:
 
@@ -1361,9 +1374,10 @@ with no backend logs `Found '<x>' in configuration for …` but no `Using` line.
 **`mise run portal-routing-check`** runs that resolution for `niri` and `Umbriel` in one
 container and compares every interface against the EXPECTED tables in
 `mise/tasks/portal-routing-check`. It fails on a backend change, an interface no row
-classifies, any `Error loading …` warning, or a desktop with no routing file loaded. It
-runs at the end of `mise run build`. A deliberate routing change edits the EXPECTED rows
-in the same commit.
+classifies, any `Error loading …` warning, a desktop with no routing file loaded, or a
+key in an `/etc/xdg` delta that the upstream `/usr/share` file now resolves the same way
+on its own (`REDUNDANT`: upstream caught up, delete the key). It runs at the end of
+`mise run build`. A deliberate routing change edits the EXPECTED rows in the same commit.
 
 **What niri itself implements.** niri v26.04 (niri-wm/niri, `src/dbus/` at tag `v26.04`)
 serves `org.gnome.Shell.Screenshot`, `org.gnome.Shell.Introspect`, and Mutter's
