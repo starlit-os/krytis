@@ -1,73 +1,108 @@
 #!/usr/bin/env bash
-#MISE description="Fail if any freedesktop-sdk toolchain artifact (bootstrap/*, llvm, rust) is in neither the local cache nor a remote"
+#MISE description="Fail if any freedesktop-sdk toolchain artifact (bootstrap/*, llvm, rust) could not be pulled: not in the local cache and not fully in bow's storage"
 #MISE depends=["generate-image-version"]
-#USAGE flag "--push" help="Check krytis's bow Buildbarn cache with push+pull credentials"
-#USAGE flag "--pull" help="Check krytis's bow Buildbarn cache with pull-only credentials"
+#USAGE flag "--push" help="Check bow with the push token (BUILDBARN_PUSH_TOKEN env var or fnox)"
+#USAGE flag "--pull" help="Check bow with the pull token (BUILDBARN_PULL_TOKEN env var or fnox)"
 
 # The Toolchain Gate (AGENTS.md § Human Decision Points) as a check: before a
 # build that cannot stop to ask, refuse to start one that would compile
 # freedesktop-sdk's toolchain. The toolchain is every element of
 # oci/krytis/image.bst's build closure under freedesktop-sdk.bst:bootstrap/,
 # plus components/llvm.bst and components/rust.bst. krytis never changes those,
-# and since #1077 cache-warm builds and pushes them to bow. One missing from
-# every cache means cache-warm has not run since a junction bump, or bow lost
-# it. The fix is to run cache-warm, not a multi-hour rebuild on a runner that
-# keeps nothing (publish run 36552776326 did exactly that on 2026-09-29).
+# and since #1077 cache-warm builds and pushes them to bow. One that cannot be
+# pulled means cache-warm has not run since a junction bump, or bow lost it.
+# The fix is to run cache-warm, not a multi-hour rebuild on a runner that keeps
+# nothing (publish run 36552776326 did exactly that on 2026-09-29).
 #
-# `bst artifact show` reports cached (local), available (on a remote), failed
-# or not cached. Only the last two fail the check. A failed artifact would be
-# rebuilt under --retry-failed, so it counts as missing.
+# An element passes if the local cache has it (`bst show` state `cached`) or,
+# with --pull/--push, if bow can actually serve it: scripts/bow-artifact-check.py
+# asks bow's index for the artifact, then checks storage for the Artifact
+# proto, every Directory and file of its `files` tree, its metadata and logs —
+# what a pull fetches — without downloading file data. `bst artifact show`
+# is not enough: it only asks the index, and bow's index outlived evicted llvm
+# and rust data on 2026-10-03 (#1094).
 #
-# Limit: "available" means a remote's *index* has the artifact; bst never asks
-# the storage remote. bow's index can outlive evicted data (llvm and rust on
-# 2026-10-03), so this catches "never built or pushed" but can pass falsely
-# after eviction. A storage-aware check is #1094.
-#
-# Without --pull/--push only the local cache and project-declared remotes
-# (cache.freedesktop-sdk.io) are consulted, never bow.
+# Without --pull/--push only the local cache counts; project-declared remotes
+# (cache.freedesktop-sdk.io) can never hold krytis's x86_64_v3 keys.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-REMOTE=""
-[ "${usage_pull:-false}" = "true" ] && REMOTE=--pull
-[ "${usage_push:-false}" = "true" ] && REMOTE=--push
+ROLE=""
+[ "${usage_pull:-false}" = "true" ] && ROLE=pull
+[ "${usage_push:-false}" = "true" ] && ROLE=push
 
-mapfile -t TOOLCHAIN < <(
-    ./mise/tasks/bst show --deps all --format '%{name}' oci/krytis/image.bst 2>/dev/null \
+# "<state>|<full key>|<name>" for every toolchain element of the build closure.
+mapfile -t ROWS < <(
+    ./mise/tasks/bst show --deps all --format '%{state}|%{full-key}|%{name}' oci/krytis/image.bst 2>/dev/null \
         | sed 's/\x1b\[[0-9;]*m//g' \
-        | grep -E '^freedesktop-sdk\.bst:(bootstrap/|components/(llvm|rust)\.bst$)'
+        | grep -E '^[a-z ]+\|[0-9a-f]{64}\|freedesktop-sdk\.bst:(bootstrap/|components/(llvm|rust)\.bst$)'
 )
-if [ "${#TOOLCHAIN[@]}" -eq 0 ]; then
+if [ "${#ROWS[@]}" -eq 0 ]; then
     echo "==> FAILED: found no toolchain elements in oci/krytis/image.bst's build closure; bst show failed?"
     exit 1
 fi
-echo "==> Checking ${#TOOLCHAIN[@]} toolchain artifacts${REMOTE:+ (bow via ${REMOTE})}"
 
-# Keep only "<state> <element>" lines for the elements asked about; state may be
-# two words ("not cached"), the element name is always the last field.
-SHOWN="$(./mise/tasks/bst ${REMOTE:-} artifact show "${TOOLCHAIN[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-declare -A STATE=()
-while read -r line; do
-    name="${line##* }"
-    STATE["$name"]="${line% *}"
-done < <(printf '%s\n' "$SHOWN" | grep -E '^\s*(cached|available|failed|not cached) freedesktop-sdk\.bst:' | sed 's/^\s*//')
-
-missing=()
-for el in "${TOOLCHAIN[@]}"; do
-    case "${STATE[$el]:-unreported}" in
-        cached|available) ;;
-        *) missing+=("${STATE[$el]:-unreported}  $el") ;;
-    esac
+local_hits=0
+REMOTE_INPUT=""
+for row in "${ROWS[@]}"; do
+    state="${row%%|*}"; rest="${row#*|}"; key="${rest%%|*}"; name="${rest#*|}"
+    if [ "$state" = "cached" ]; then
+        local_hits=$((local_hits + 1))
+    else
+        REMOTE_INPUT+="${name}"$'\t'"${key}"$'\n'
+    fi
 done
+remote_count=$(( ${#ROWS[@]} - local_hits ))
+echo "==> ${#ROWS[@]} toolchain artifacts: ${local_hits} in the local cache, ${remote_count} to check${ROLE:+ in bow (index + storage)}"
 
-if [ "${#missing[@]}" -eq 0 ]; then
-    echo "==> toolchain-cache-check passed: all ${#TOOLCHAIN[@]} toolchain artifacts are cached or available."
+if [ "$remote_count" -eq 0 ]; then
+    echo "==> toolchain-cache-check passed: all ${#ROWS[@]} are in the local cache."
     exit 0
 fi
 
-echo "==> FAILED: ${#missing[@]} toolchain artifact(s) are in no cache, so a build would compile them:"
-printf '    %s\n' "${missing[@]}"
+if [ -z "$ROLE" ]; then
+    echo "==> FAILED: ${remote_count} toolchain artifact(s) are not in the local cache, and no remote was checked:"
+    printf '%s' "$REMOTE_INPUT" | cut -f1 | sed 's/^/    /'
+    echo "    Re-run with --pull to check bow, or run cache-warm first (gh workflow run cache-warm.yml)."
+    exit 1
+fi
+
+# Token resolution matches mise/tasks/bst: env var first, then fnox.
+TOKEN_VAR=$([ "$ROLE" = push ] && echo BUILDBARN_PUSH_TOKEN || echo BUILDBARN_PULL_TOKEN)
+TOKEN="${!TOKEN_VAR:-}"
+if [ -z "$TOKEN" ]; then
+    if command -v fnox >/dev/null 2>&1 && [ -f fnox.toml ]; then
+        TOKEN=$(fnox get "$TOKEN_VAR") || {
+            echo "ERROR: fnox get ${TOKEN_VAR} failed. Set ${TOKEN_VAR} directly or fix fnox/pass-cli auth." >&2
+            exit 1
+        }
+    else
+        echo "ERROR: ${TOKEN_VAR} not set and fnox is not configured. Export ${TOKEN_VAR} or set up fnox.toml." >&2
+        exit 1
+    fi
+fi
+
+set +e
+RESULT="$(printf '%s' "$REMOTE_INPUT" | BOW_TOKEN="$TOKEN" uv run --quiet python3 scripts/bow-artifact-check.py \
+    bst-cache.ririi.dev:7981 bst-cache.ririi.dev:7982 quadlet/buildbarn/certs/bow-server.crt)"
+rc=$?
+set -e
+
+bad="$(printf '%s\n' "$RESULT" | grep -vE '^ok'$'\t' || true)"
+if [ "$rc" -eq 0 ] && [ -z "$bad" ]; then
+    echo "==> toolchain-cache-check passed: ${local_hits} local, ${remote_count} pullable from bow (index and storage)."
+    exit 0
+fi
+
+if [ "$rc" -eq 2 ] || printf '%s\n' "$bad" | grep -q '^error'; then
+    echo "==> FAILED: could not query bow; this is not proof the toolchain is missing:"
+    printf '%s\n' "$bad" | awk -F'\t' 'NF {print "    " $1 "  " $2 "  " $3}'
+    exit 1
+fi
+
+echo "==> FAILED: $(printf '%s\n' "$bad" | grep -c .) toolchain artifact(s) cannot be pulled from bow, so a build would compile them:"
+printf '%s\n' "$bad" | awk -F'\t' 'NF {print "    " $2 "  (" $3 ")"}'
 echo "    Run cache-warm first (gh workflow run cache-warm.yml, or mise run warm-cache --push)."
 echo "    See docs/skills/mise.md § Standard build workflow (stop and ask before rebuilding the toolchain)."
 exit 1

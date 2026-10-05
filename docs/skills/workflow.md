@@ -838,3 +838,15 @@ the tree is identical, so `BLOCKED` immediately afterward means "queued", not "f
 re-check with `gh pr view <n> --json mergeStateStatus,statusCheckRollup`.
 
 Applied on PR #902 (`2dcefe9` unsigned → `75a6267` `verified: true, reason: "valid"`).
+
+**GitHub's "Update branch → Update with rebase" produces the same unsigned state, on any
+PR, not just stacks.** The button rewrites the PR's commits server-side without a
+signature. On #1101 it turned signed `b040dc1` into unsigned `055f002`, and the PR then sat
+on "Checking for the ability to merge automatically" (`mergeable: null`) with green
+checks. Don't use it. Rebase locally, or re-sign what it produced with the recipe above
+(`055f002` → `ce532ab`, identical tree `d546019`).
+
+**Don't close and reopen to un-stick mergeability.** GitHub refuses to reopen a PR whose
+branch was force-pushed after it was closed ("state cannot be changed. The … branch was
+force-pushed or recreated"), and re-signing *is* a force-push. #1101 ended up replaced by
+#1102. Re-sign and push first; mergeability recomputes on the push.

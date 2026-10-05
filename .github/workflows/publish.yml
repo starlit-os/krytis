@@ -164,6 +164,8 @@ jobs:
         # rebuilt, nothing kept). cache-warm builds and pushes the toolchain
         # since #1077, so this only fires when cache-warm has not run since a
         # junction bump or bow lost the artifacts; the error names the fix.
+        # It checks bow's storage, not just its index (#1094): bow's index
+        # outlived evicted llvm/rust data once, and an index-only check passed.
         env:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
         run: mise run toolchain-cache-check --pull
