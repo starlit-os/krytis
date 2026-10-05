@@ -1440,13 +1440,23 @@ gone (#1094 tracks a storage-aware check). A resize that wipes only the CAS
 creates the same state for everything at once. materia's plan for #137 wipes the
 CAS, AC, FSAC and bb-asset's index together for that reason.
 
-**Is the key-location map big enough?** Buildbarn's docs give the check:
-`buildbarn_lossymap_hash_map_put_too_many_iterations_total` and
-`buildbarn_lossymap_hash_map_put_iterations_count{outcome="TooManyAttempts"}` on
-bb-storage's `:9981` must stay 0. Nonzero means entries are being displaced early.
-The counters reset on restart, so read them after a full cache-warm. `:9981` is not
-tunneled; read it from bow, e.g. [INFERENCE]
-`podman run --rm --network newt-net docker.io/curlimages/curl -s http://bb-storage:9981/metrics`.
+**Is the key-location map big enough?** Read bb-storage's Prometheus endpoint on
+`:9981` from bow (it is not tunneled):
+
+```shell
+sudo podman run --rm --network newt-net docker.io/curlimages/curl -s http://bb-storage:9981/metrics \
+  | grep -E '^buildbarn_blobstore_hashing_key_location_map_(put_too_many_iterations_total|get_too_many_attempts_total|put_iterations_count)'
+```
+
+Every `…_too_many_…_total` series and every `put_iterations_count{outcome="TooManyAttempts"}`
+series must be 0; nonzero means entries are being displaced early. The counters reset
+on restart, so read them after a full cache-warm. **The metric name depends on the
+bb-storage version.** bow's pinned image exports `buildbarn_blobstore_hashing_key_location_map_*`.
+Upstream renamed it to `buildbarn_lossymap_hash_map_*` on 2026-09-29 (bb-storage
+`677f49d418`), and Buildbarn's current docs use the new name, so a grep for that finds
+nothing on bow and looks like a pass. Measured 2026-10-05 after the 916-artifact repopulate:
+CAS `Inserted` 532,658, `TooManyAttempts` 0, all `too_many` totals 0. [INFERENCE] At
+about 60–70 bytes per record, the 1600 MiB map is about 2% full.
 
 ### Local push/pull verification against the deployed bow remote (#340)
 
