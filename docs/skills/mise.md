@@ -123,12 +123,14 @@ Likely causes, in order, and what to check:
 How to spot it:
 
 - **Before starting**, run `mise run toolchain-cache-check --pull`. It asks the local
-  cache and bow about every toolchain element in the build closure (67 on 2026-10-03)
-  and fails, listing them, if any is `not cached` or `failed`. `bst artifact show` reports
-  `available` for an artifact a remote has, which the plan's state column cannot show.
-  `publish.yml` runs it as its first build-related step (#1077). The plan the build prints
-  only reflects the local cache: `waiting`/`fetch needed` toolchain lines are a reason to
-  run the check, not proof.
+  cache and bow's **index** about every toolchain element in the build closure (67 on
+  2026-10-03), and fails, listing them, if any is `not cached` or `failed`. `bst artifact
+  show` reports `available` when a remote's index has an entry, which the plan's state
+  column cannot show. **It cannot see bow's storage:** an index entry can outlive its
+  evicted data, and llvm and rust were exactly that on 2026-10-03, so a pass is not
+  proof (#1094 tracks a storage-aware check). `publish.yml` runs it as its first
+  build-related step (#1077). The plan the build prints only reflects the local cache:
+  `waiting`/`fetch needed` toolchain lines are a reason to run the check, not proof.
 - **While it runs**, a line like
   `[build:freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst] START` in the build log
   means the remote did not have it either. That is the point to stop and ask.

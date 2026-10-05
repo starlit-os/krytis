@@ -18,6 +18,11 @@
 # or not cached. Only the last two fail the check. A failed artifact would be
 # rebuilt under --retry-failed, so it counts as missing.
 #
+# Limit: "available" means a remote's *index* has the artifact; bst never asks
+# the storage remote. bow's index can outlive evicted data (llvm and rust on
+# 2026-10-03), so this catches "never built or pushed" but can pass falsely
+# after eviction. A storage-aware check is #1094.
+#
 # Without --pull/--push only the local cache and project-declared remotes
 # (cache.freedesktop-sdk.io) are consulted, never bow.
 
