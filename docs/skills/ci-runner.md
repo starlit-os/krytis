@@ -1435,10 +1435,15 @@ gone from storage while bb-asset's index still listed them, and cache-warm run
 **Index and storage can disagree, and BuildStream only asks the index.**
 `bst artifact show` reports `available` from the index remote
 (`_artifactcache.py` `check_remotes_for_element`); only an actual pull touches
-storage. So `mise run toolchain-cache-check` can pass for an artifact whose data is
-gone (#1094 tracks a storage-aware check). A resize that wipes only the CAS
-creates the same state for everything at once. materia's plan for #137 wipes the
-CAS, AC, FSAC and bb-asset's index together for that reason.
+storage. That is why `mise run toolchain-cache-check` doesn't use it.
+`scripts/bow-artifact-check.py` checks the index and then storage itself (#1094). Two
+bb-storage specifics it has to work around: `GetTree` answers `UNIMPLEMENTED`
+("does not support downloading directory trees"), so it walks Directory protos with
+`BatchReadBlobs`; and the artifact name's project part is each project's
+`project.conf` `name:`, not the junction's name (gnome-build-meta's elements are
+`gnome/…`). A resize that wipes only the CAS creates an index-without-storage state for
+everything at once. materia's plan for #137 wipes the CAS, AC, FSAC and bb-asset's
+index together for that reason.
 
 **Is the key-location map big enough?** Buildbarn's docs give the check:
 `buildbarn_lossymap_hash_map_put_too_many_iterations_total` and
