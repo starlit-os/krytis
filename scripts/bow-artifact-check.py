@@ -19,16 +19,24 @@ downloading any file data:
 Run with the project venv's Python (`uv run python3`), which has grpc and
 BuildStream's generated protos.
 
-Usage: bow-artifact-check.py <index host:port> <storage host:port> <server cert>
+Usage: bow-artifact-check.py [--probe] <index host:port> <storage host:port> <server cert>
   stdin:  one "<element>\\t<full cache key>" per line, as `bst show --format
-          '%{name}\\t%{full-key}'` prints them
+          '%{name}\\t%{full-key}'` prints them (not read with --probe)
   env:    BOW_TOKEN (bearer token)
   stdout: one "ok|missing|error\\t<element>\\t<detail>" per input line
 Exit: 0 all ok, 1 any missing, 2 usage or connection error.
+
+--probe only asks whether bow is reachable and accepts the token: one Remote Asset
+FetchBlob on the index (NOT_FOUND is a healthy answer) and one empty FindMissingBlobs
+on storage. Transient UNAVAILABLE/DEADLINE_EXCEEDED are retried; anything else, such
+as UNAUTHENTICATED, fails at once. mise/tasks/bst runs it before every --pull/--push
+build (#1113), because BuildStream only *warns* when it cannot reach a remote and then
+builds everything from source, the toolchain included.
 """
 import os
 import string
 import sys
+import time
 
 import grpc
 from buildstream._protos.build.bazel.remote.asset.v1 import remote_asset_pb2, remote_asset_pb2_grpc
@@ -43,6 +51,10 @@ URN = "urn:fdc:buildstream.build:2020:artifact:{}"  # _artifactcache.REMOTE_ASSE
 CHUNK = 10000  # digests per FindMissingBlobs
 DIR_BATCH = 500  # Directory protos per BatchReadBlobs; each is small
 TIMEOUT = 120
+PROBE_TIMEOUT = 20
+PROBE_ATTEMPTS = 4
+PROBE_WAIT = 15  # seconds between attempts: ~1 minute of patience in total
+RETRYABLE = {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED}
 
 # Project name per junction, from each project's project.conf `name:`. It is not
 # derivable from the junction element's name (gnome-build-meta.bst -> gnome), and
@@ -141,14 +153,58 @@ def check(fetch, cas, name):
     return "ok", f"{total} blobs in storage"
 
 
+def probe_once(index, storage, cert, token):
+    """One reachability check. Raises grpc.RpcError tagged with the endpoint."""
+    # Fresh channels per attempt: a gRPC channel that failed to connect sits in
+    # its own reconnect backoff, which would outlast a short retry loop.
+    fetch = remote_asset_pb2_grpc.FetchStub(channel(index, cert, token))
+    cas = re_grpc.ContentAddressableStorageStub(channel(storage, cert, token))
+    try:
+        fetch.FetchBlob(remote_asset_pb2.FetchBlobRequest(
+            uris=[URN.format("krytis/bow-probe/0")]), timeout=PROBE_TIMEOUT)
+    except grpc.RpcError as e:
+        if e.code() != grpc.StatusCode.NOT_FOUND:  # a healthy "no such artifact"
+            e.endpoint = index
+            raise
+    try:
+        cas.FindMissingBlobs(re_pb2.FindMissingBlobsRequest(), timeout=PROBE_TIMEOUT)
+    except grpc.RpcError as e:
+        e.endpoint = storage
+        raise
+
+
+def probe(index, storage, cert, token):
+    """Return (0, detail) if both endpoints answer with this token, else (2, reason)."""
+    for attempt in range(1, PROBE_ATTEMPTS + 1):
+        try:
+            probe_once(index, storage, cert, token)
+            return 0, f"bow reachable: index {index}, storage {storage}"
+        except grpc.RpcError as e:
+            reason = f"{getattr(e, 'endpoint', '?')}: {e.code().name}: {e.details()}"
+            if e.code() not in RETRYABLE or attempt == PROBE_ATTEMPTS:
+                return 2, reason
+        print(f"bow probe {attempt}/{PROBE_ATTEMPTS} failed ({reason}); retrying in {PROBE_WAIT}s",
+              file=sys.stderr, flush=True)
+        time.sleep(PROBE_WAIT)
+    raise AssertionError("unreachable")
+
+
 def main():
-    if len(sys.argv) != 4 or not os.environ.get("BOW_TOKEN"):
+    args = sys.argv[1:]
+    probe_only = args[:1] == ["--probe"]
+    if probe_only:
+        args = args[1:]
+    if len(args) != 3 or not os.environ.get("BOW_TOKEN"):
         print("Usage:" + __doc__.split("Usage:", 1)[1], file=sys.stderr)
         return 2
-    index, storage, cert_path = sys.argv[1:]
+    index, storage, cert_path = args
     with open(cert_path, "rb") as f:
         cert = f.read()
     token = os.environ["BOW_TOKEN"]
+    if probe_only:
+        rc, detail = probe(index, storage, cert, token)
+        print(detail, file=sys.stderr if rc else sys.stdout, flush=True)
+        return rc
     fetch = remote_asset_pb2_grpc.FetchStub(channel(index, cert, token))
     cas = re_grpc.ContentAddressableStorageStub(channel(storage, cert, token))
 

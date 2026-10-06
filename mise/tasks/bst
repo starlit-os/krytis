@@ -124,6 +124,31 @@ source-caches:
       server-cert: __CERT_PATH__
       access-token: __TOKEN_PATH__
 EOF
+
+    # Fail now if bow is not reachable (#1113). BuildStream only WARNS when it
+    # cannot initialise a remote ("Failed to initialize remote …: UNAVAILABLE")
+    # and then carries on without it, so every artifact missing locally is built
+    # from source — freedesktop-sdk's toolchain included, hours of work the
+    # Toolchain Gate (AGENTS.md) exists to stop. On 2026-10-06 a `build --pull`
+    # started while bow was briefly down and was compiling gcc-stage2 before
+    # anyone noticed. The probe retries transient UNAVAILABLE for about a minute
+    # and fails at once on an auth error. It runs where bst will run: the
+    # project venv natively, or the bst2 image under --container (same grpc and
+    # BuildStream protos either way). It cannot see bow dropping in the seconds
+    # between this check and bst's own remote initialisation.
+    PROBE=(scripts/bow-artifact-check.py --probe bst-cache.ririi.dev:7981 bst-cache.ririi.dev:7982)
+    if [ "$CONTAINER" = "true" ]; then
+        PROBE_CMD=(podman run --rm --network=host -e BOW_TOKEN -v "$(pwd):/src:ro" -w /src
+            "${BST2_IMAGE}" python3 "${PROBE[@]}" /src/quadlet/buildbarn/certs/bow-server.crt)
+    else
+        PROBE_CMD=(uv run --quiet python3 "${PROBE[@]}" quadlet/buildbarn/certs/bow-server.crt)
+    fi
+    if ! BOW_TOKEN="$TOKEN" "${PROBE_CMD[@]}" >/dev/null; then
+        echo "ERROR: --${ROLE} was requested but bow (bst-cache.ririi.dev) cannot be used (reason above)." >&2
+        echo "       Not starting bst: without bow it would build everything missing locally from source." >&2
+        echo "       Retry once bow is back, or drop --${ROLE} to build deliberately without it." >&2
+        exit 1
+    fi
 fi
 
 if [ "$CONTAINER" = "true" ]; then
