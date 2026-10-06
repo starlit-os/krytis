@@ -1023,16 +1023,20 @@ perfectly well.
 
 With a VGA device present — and `-display none` still creates one — the kernel's
 default console is `tty0`. A sealed UKI's cmdline is signed and cannot be edited, so
-`console=ttyS0` is not in it, and the serial log therefore ends at:
+`console=ttyS0` is not in it, and the serial log therefore ends at the firmware's own
+last line:
 
 ```
-systemd-boot@0x101300000 260.2
-systemd-stub@0x14df91000 260.2
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
 ```
 
-which is a *healthy* boot, not a hang. The prompt was written to a framebuffer nobody
-was reading. **Absence of expected output on serial is not evidence of absence** — the
-same trap `iso-install-test` documents for its verdict, met again one layer down.
+which is a *healthy* boot, not a hang. It used to end two lines later, at
+`systemd-boot@…` and `systemd-stub@…` — those were EFI_DEBUG output and are gone
+from the shipped image; see
+[`docs/skills/secure-boot.md`](secure-boot.md) § The systemd-boot@ serial banner is
+a debug artefact. The prompt was written to a framebuffer nobody was reading.
+**Absence of expected output on serial is not evidence of absence** — the same trap
+`iso-install-test` documents for its verdict, met again one layer down.
 
 **Fix: inject `console=ttyS0` through systemd-stub's SMBIOS cmdline-extra.** The stub
 accepts additions when Secure Boot is *not* enforcing, and refuses them when it is —

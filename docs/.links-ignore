@@ -69,6 +69,7 @@ files/bootc-config/40-no-firstboot.toml   # deleted by #487; docs/design/first-b
 files/sysext/make-layer.py                # exists only in PR #522's head commit e2e871cd (closed unmerged); docs/design/gaming-variant.md
 mise/tasks/build-sysext-gaming            # same commit, same line; docs/design/gaming-variant.md
 elements/core/container-sigpolicy.bst     # unimplemented proposal tracked in #418; docs/design/cosign-keyless-signing.md
+elements/overrides/systemd-base.bst       # deleted in e629ce7 for gnome-build-meta's core-deps/systemd-base.bst; secure-boot.md cites it as the record of the EFI_DEBUG banner disappearing
 task:cosign-sign                          # never built; superseded by mise/tasks/sign; docs/design/cosign-keyless-signing.md
 task:cosign-verify                        # never built; verification is inline in publish.yml; docs/design/cosign-keyless-signing.md
 task:cosign-generate-keys                 # never built; unnecessary without a static key; docs/design/cosign-keyless-signing.md

@@ -140,17 +140,21 @@ A pass looks like this, and every line of it is load-bearing:
 
 ```
 BdsDxe: starting Boot0002 …                     <- setup mode, nothing enforced yet
-systemd-boot@0x101300000 260.2
 Enrolling secure boot keys from directory: \loader\keys\auto
 Custom Secure Boot keys successfully enrolled, rebooting the system now!
 BdsDxe: starting Boot0002 …                     <- enforcing now, and it still starts
-systemd-boot@0x101300000 260.2
-systemd-stub@0x14df91000 260.2                  <- UKI signature verified too
 state: running
 sb: Secure Boot: enabled (user)
 image: ghcr.io/starlit-os/krytis:sealed
 failed-units:
 ```
+
+The `systemd-boot@…` and `systemd-stub@…` lines that used to sit under each of those
+`BdsDxe: starting` lines were EFI_DEBUG output, not part of a release build, and are
+gone from the shipped image — see
+[`docs/skills/secure-boot.md`](../skills/secure-boot.md) § The systemd-boot@ serial
+banner is a debug artefact. The firmware's line is what carries "loaded and entered",
+and the probe's own output carries the rest.
 
 The task distinguishes four failure modes rather than reporting one "it broke":
 never enrolled, enrolled-then-refused (#438's shape), enrolled and enforcing but not
@@ -265,10 +269,10 @@ Each of these cost real debugging time. They are ranked by how convincingly they
 
 - **T-1 · A sealed system cannot be judged from the serial console.** `console=ttyS0`
   is a kernel argument and a UKI freezes those, so a sealed guest prints nothing after
-  `systemd-stub@`. A serial grep for `Reached target Graphical Interface` reports a
-  timeout for a perfectly healthy boot. Use SMBIOS type-11 systemd credentials, which
-  need no cmdline. *"Nothing after `systemd-stub@`" means the harness went blind, not
-  that the boot failed.*
+  the firmware's own `BdsDxe: starting` line. A serial grep for `Reached target
+  Graphical Interface` reports a timeout for a perfectly healthy boot. Use SMBIOS
+  type-11 systemd credentials, which need no cmdline. *"Nothing after `BdsDxe:
+  starting`" means the harness went blind, not that the boot failed.*
 - **T-2 · `boot-test --secure` says nothing about the image's own keys.** It boots a
   varstore `virt-fw-vars` pre-enrolled, bypassing `loader/keys/auto` entirely. Pair it
   with `enroll-test`, always.

@@ -186,7 +186,9 @@ done
 sleep 1
 
 echo "==> [3/3] Verdict"
-grep -E 'BdsDxe: (starting|failed to load)|systemd-boot@|systemd-stub@' "${WORKDIR}/serial.log" | head -6 | sed 's/^/    /'
+# Firmware lines only: the `systemd-boot@`/`systemd-stub@` banners are compiled in
+# only under EFI_DEBUG and no longer appear — see mise/tasks/enroll-test.
+grep -E 'BdsDxe: (loading|starting|failed to load)' "${WORKDIR}/serial.log" | head -8 | sed 's/^/    /'
 sed -n '/===KRYTIS-UPGRADE phase=pre===/,$p' "${WORKDIR}/serial.log" | tr -d '\r' | sed 's/^/    /' | head -30
 
 if grep -q 'NOUPDATE' "${WORKDIR}/serial.log"; then
