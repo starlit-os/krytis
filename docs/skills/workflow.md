@@ -839,6 +839,24 @@ re-check with `gh pr view <n> --json mergeStateStatus,statusCheckRollup`.
 
 Applied on PR #902 (`2dcefe9` unsigned → `75a6267` `verified: true, reason: "valid"`).
 
+**The unsigned commit is not always the tip, and not always yours from this machine.** A
+commit made in a remote agent session (claude.ai/code — it leaves a `Claude-Session:`
+trailer) is pushed with no access to the FIDO2 key, so it lands unsigned even though its
+author is you. If others were then stacked on top of it, `--amend` cannot reach it; replay
+everything from its parent instead, signing each commit (one touch per commit):
+
+```bash
+git rebase --force-rebase --gpg-sign <parent-of-first-unsigned>
+git rev-parse <old-tip>^{tree} <new-tip>^{tree}   # MUST print the same tree twice
+git push --force-with-lease=<branch>:<old-tip>
+```
+
+`--force-rebase` is load-bearing: without it, a rebase onto the commit's own parent is a
+no-op ("up to date") and nothing is re-signed. Commits *below* that parent keep their SHAs
+and signatures. Applied on PR #1109: `54378f1` (unsigned, from a remote session) and the
+signed `9c05a06` above it → `9aca936`, `f612cea`, all three `verified: true`; trees
+identical at both rewritten commits.
+
 **GitHub's "Update branch → Update with rebase" produces the same unsigned state, on any
 PR, not just stacks.** The button rewrites the PR's commits server-side without a
 signature. On #1101 it turned signed `b040dc1` into unsigned `055f002`, and the PR then sat
