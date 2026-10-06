@@ -49,9 +49,10 @@ cache below), so every element the local CAS is missing gets rebuilt from source
 though bow already has it — which is the normal state in a fresh worktree, since a
 worktree shares `~/.cache/buildstream` but any element whose cache key moved since the
 last local build is a miss. Credentials resolve automatically when `fnox` is configured
-(or `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN` is exported); when they don't, the
-task fails fast rather than silently building uncached, so there is no downside to
-trying the flag first. Observed 2026-09-28 (#869): a flagless
+(or `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN` is exported). When they don't, or when
+bow can't be reached (#1113, § `--push`/`--pull` below), the task fails fast rather than
+silently building uncached, so there is no downside to trying the flag first. Observed
+2026-09-28 (#869): a flagless
 `mise run bst -- build desktop/xwayland-satellite.bst` in a new worktree spent 9 min
 pulling freedesktop-sdk bootstrap artifacts alone before reaching the element. If the flag
 fails with fnox's `Proton Pass: … This operation requires an authenticated client`, the
@@ -108,8 +109,9 @@ Likely causes, in order, and what to check:
    cache this machine usually builds against isn't in place. Where that cache lives is
    machine-specific, so ask the user rather than guessing.
 2. **No remote cache.** The build was started without `--pull`/`--push`, or the token did
-   not resolve, or bow (`bst-cache.ririi.dev`) is unreachable. Check the build's
-   `Initializing remote caches` line and the `artifacts:` block of the generated
+   not resolve, or bow (`bst-cache.ririi.dev`) is unreachable. With `--pull`/`--push` the
+   last two now stop the task before bst starts (#1113). Without either flag, check the
+   build's `Initializing remote caches` line and the `artifacts:` block of the generated
    `--config` file.
 3. **The toolchain was never warmed.** Before #1077, `cache-warm.yml` and `mise run
    warm-cache` built `oci/krytis/image.bst` with bst's default dynamic plan. That plan
@@ -774,6 +776,24 @@ never touching `~/.config/buildstream.conf`/`~/.config/buildstream/user.conf` on
 host, and never mounting a persistent secret into the ephemeral `--container` build.
 `--push` also serves reads (a push-capable connection satisfies pulls too), so prefer
 it when you have push access; `--pull` is the read-only fallback.
+
+**An unreachable bow fails the task; BuildStream alone would only warn (#1113).** When a
+remote can't be initialised, bst logs `WARNING Failed to initialize remote
+https://bst-cache.ririi.dev:7982: UNAVAILABLE …` and carries on without it. Every artifact
+missing locally is then built from source, toolchain included. That happened on
+2026-10-06: bow was briefly down when a `build --pull` started, and nothing failed until
+someone saw `bootstrap/build/gcc-stage2.bst` compiling. So with either flag, the task
+first runs `scripts/bow-artifact-check.py --probe` with the resolved token:
+
+- one Remote Asset `FetchBlob` on the index (`NOT_FOUND` is a healthy answer) and one
+  empty `FindMissingBlobs` on storage, about a second when bow is up;
+- `UNAVAILABLE`/`DEADLINE_EXCEEDED` retried 4 times, 15 s apart; any other error, such as
+  `UNAUTHENTICATED` for a bad token, fails at once;
+- the probe runs where bst will run: `uv run` natively, the bst2 image under
+  `--container`.
+
+If it fails, the task exits before bst starts and says to retry or drop the flag. It can't
+see bow dropping in the seconds between the probe and bst's own remote initialisation.
 
 ```bash
 mise bst --container --pull show --deps all stacks/base-system.bst
