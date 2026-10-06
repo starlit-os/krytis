@@ -592,11 +592,14 @@ __attribute__((noinline)) void notify_debugger(const char *identity, volatile bo
         printf("%s@%p %s\n", identity, __executable_start, GIT_VERSION);
 ```
 
-`src/boot/meson.build` defines `EFI_DEBUG` only when systemd's `mode` option is
-`developer` (its default) *and* meson's built-in `debug` option is on — and meson
-derives `debug` from the build type: `debugoptimized` → true, `plain` → false. So
-whether that line exists is a property of **the build configuration of the element
-that compiles systemd**, not of the image's boot chain. The same `#ifdef` also
+`src/boot/meson.build:190` (v261.3) defines it as
+`if get_option('mode') == 'developer' and get_option('debug')`: systemd's `mode`
+option defaults to `developer`, and meson derives its built-in `debug` option from
+the build type — `debugoptimized` → true, `plain` → false. So whether that line
+exists is a property of **the build configuration of the element that compiles
+systemd**, not of the image's boot chain. The current build log confirms it: meson's
+summary prints `build mode : developer` and `buildtype : plain`, and none of the 57
+`src/boot/` compile lines carries `-DEFI_DEBUG` (#1108). The same `#ifdef` also
 switches the EFI allocator's `assert_se` on and off, so this is not only a logging
 question.
 
@@ -635,11 +638,16 @@ Two things to carry forward:
 - **Never gate on a line a debug build prints.** One grep in the source settles it;
   this one was `#ifdef EFI_DEBUG`. A line that appears in every log you have ever
   looked at can still be conditional on a build option nobody re-reads.
-- **A meson element's flags come from the project that owns it.** Retargeting an
-  override or swapping a junction re-points `meson-global`, and with it
-  `--buildtype`, `-O`, `-g`, `EFI_DEBUG` and every other option the build type feeds,
-  without touching a line of the element. When a build changes owner, diff the two
-  `project.conf`s as well as the two elements.
+- **A meson element's `meson-global` comes from the project that owns it.**
+  Retargeting an override or swapping a junction re-points it — `--buildtype`,
+  `b_ndebug`, and every project option that reads `get_option('debug')` — without
+  touching a line of the element. Here that moved exactly two things, `EFI_DEBUG`
+  and `NDEBUG`. Not `-O` and not `-g`: those come from fdsdk's `CFLAGS`, which all
+  three projects include and which meson places after its own build-type flags (see
+  [bst.md](bst.md) § freedesktop-sdk's `include/_private/` config is not inherited
+  across the junction). When a build changes owner, diff the two `project.conf`s'
+  `elements:` blocks *and* the `environment:` they include, as well as the two
+  elements.
 
 ## Every shipped `.auth` enrolled an empty allow-list — `cert-to-efi-sig-list` wants PEM
 
