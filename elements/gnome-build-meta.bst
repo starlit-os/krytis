@@ -46,3 +46,9 @@ config:
     # path, this entry silently matches nothing; `mise run gtk3-audit` catches that (the
     # element reappears in its graph half).
     core-deps/xdg-user-dirs-gtk.bst: freedesktop-sdk.bst:components/xdg-user-dirs.bst
+    # GTK3-free builds of two gnome-build-meta libraries (#1074, #641 step 4). Mirrors,
+    # not redirects: each drops sdk/gtk+-3.bst and turns its GTK3 variant off
+    # (libportal-gtk3, libgnome-desktop-3), which nothing in the image links. Drift
+    # and exit condition: `mise run gtk3-mirror-check`.
+    sdk/libportal.bst: overrides/libportal.bst
+    core/gnome-desktop.bst: overrides/gnome-desktop.bst

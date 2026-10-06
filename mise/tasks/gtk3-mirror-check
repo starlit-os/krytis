@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+#MISE description="Verify the GTK3-strip mirrors (elements/overrides/) still match their junction elements apart from the GTK3 delta"
+"""Drift and exit-condition check for every GTK3-strip mirror of #641.
+
+docs/plans/2026-09-30-gtk3-realistic-floor.md steps 4-5 replace a few junction
+elements with local copies that differ in exactly two ways: one GTK3 dependency
+line removed, and one meson option added to turn the GTK3 variant off. A copy
+like that rots silently: a junction bump moves upstream's source, deps or
+config while the mirror keeps building the old recipe. One table-driven check
+covers all of them, instead of one near-identical task per mirror.
+
+For each row, the upstream element is fetched at the junction ref pinned in
+elements/<junction>.bst and compared against the mirror:
+
+  1. sources   every source's url/ref/directory, in order;
+  2. deps      build-depends / depends / runtime-depends, each as a set, after
+               re-namespacing the mirror's entries, dropping each junction's
+               build plumbing, and removing the row's GTK3 dependency;
+  3. options   upstream meson-local/conf-local tokens + the row's added tokens
+               == the mirror's tokens;
+  4. the rest  kind, config and public must be identical.
+
+Exit condition, checked first: if upstream already lacks the GTK3 dependency or
+already sets the option, the mirror has no reason to exist. The task fails
+with "delete this mirror".
+
+Not checked: the project-scope variables each mirror pins (meson-global,
+project_licensedir, fdsdk's LTOJOBS). They come from the junction's
+project.conf, not the element file, and once the override is wired the upstream
+element name resolves to the mirror, so `bst show` can no longer show
+upstream's values. After a junction bump that changes either project's meson
+configuration, re-diff by temporarily removing the override entry.
+
+Written in Python, not grep/awk, on purpose: the three shell lessons in
+docs/skills/bst.md § A junction app can encode a feature you cannot run (a
+pattern starting with `-` needs `-e`, sed ranges restart, `grep -vxF` on a
+short line drops every occurrence) all come from line matching. Parsing the
+YAML sidesteps them.
+"""
+
+import pathlib
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+import yaml
+
+# mirror | junction | upstream path | removed dep lines | added option tokens
+MIRRORS = [
+    ("elements/overrides/libportal.bst", "gnome-build-meta",
+     "elements/sdk/libportal.bst", ["sdk/gtk+-3.bst"], ["-Dbackend-gtk3=disabled"]),
+    ("elements/overrides/gnome-desktop.bst", "gnome-build-meta",
+     "elements/core/gnome-desktop.bst", ["sdk/gtk+-3.bst"], ["-Dlegacy_library=false"]),
+    ("elements/overrides/libdecor.bst", "freedesktop-sdk",
+     "elements/components/libdecor.bst", ["components/gtk3.bst"], ["-Dgtk=disabled"]),
+]
+
+JUNCTIONS = {
+    "gnome-build-meta": {
+        "raw": "https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/{sha}/{path}",
+        # How the mirror names upstream's own elements.
+        "prefix": "gnome-build-meta.bst:",
+        # gnome-build-meta's remote-execution and meson plumbing, which mirrors
+        # replace with fdsdk's buildsystem-meson stack (as desktop/
+        # gnome-disk-utility.bst does).
+        "upstream_plumbing": {"(@): include/gcc-for-recc.yml", "buildsystems/meson.bst"},
+        "mirror_plumbing": {"freedesktop-sdk.bst:public-stacks/buildsystem-meson.bst"},
+    },
+    "freedesktop-sdk": {
+        "raw": "https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/{sha}/{path}",
+        "prefix": "freedesktop-sdk.bst:",
+        "upstream_plumbing": set(),
+        "mirror_plumbing": set(),
+    },
+}
+
+DEP_KEYS = ("build-depends", "depends", "runtime-depends")
+OPTION_VARS = ("meson-local", "conf-local")
+SOURCE_KEYS = ("kind", "url", "ref", "directory")
+SAME_KEYS = ("kind", "config", "public")
+
+ROOT = pathlib.Path(
+    subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True,
+                   capture_output=True, text=True).stdout.strip())
+
+
+def junction_sha(junction):
+    text = (ROOT / "elements" / f"{junction}.bst").read_text()
+    m = re.search(r"^\s*ref:\s*\S*-g([0-9a-f]{40})\s*$", text, re.M)
+    if not m:
+        sys.exit(f"gtk3-mirror-check: no git-describe ref in elements/{junction}.bst")
+    return m.group(1)
+
+
+def fetch(url):
+    # Retry transient failures the way mise/lib/zig_zon.py does (#1023): one
+    # blip should not fail a check whose answer did not change.
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                return r.read().decode()
+        except urllib.error.HTTPError as e:
+            if e.code not in (408, 429, 500, 502, 503, 504) or attempt == 3:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 3:
+                raise
+        time.sleep(10)
+    raise AssertionError("unreachable")
+
+
+def dep_name(entry):
+    """A dependency entry as one comparable string."""
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        if "filename" in entry:
+            return entry["filename"]
+        # An include line such as `- (@): include/gcc-for-recc.yml`.
+        return "; ".join(f"{k}: {v}" for k, v in entry.items())
+    return repr(entry)
+
+
+def deps(element, key, *, prefix="", drop=()):
+    out = set()
+    for entry in element.get(key) or []:
+        name = dep_name(entry)
+        if name in drop:
+            continue
+        if prefix and name.startswith(prefix):
+            name = name[len(prefix):]
+        out.add(name)
+    return out
+
+
+def tokens(element):
+    variables = element.get("variables") or {}
+    return [t for var in OPTION_VARS for t in str(variables.get(var) or "").split()]
+
+
+def sources(element):
+    return [{k: s.get(k) for k in SOURCE_KEYS if k in s} for s in element.get("sources") or []]
+
+
+def check(mirror_path, junction, upstream_path, removed, added, sha):
+    j = JUNCTIONS[junction]
+    url = j["raw"].format(sha=sha, path=upstream_path)
+    upstream = yaml.safe_load(fetch(url))
+    mirror = yaml.safe_load((ROOT / mirror_path).read_text())
+    problems = []
+
+    # Exit condition first: a mirror whose reason is gone is the most useful
+    # thing this task can report.
+    upstream_deps = set().union(*(deps(upstream, k) for k in DEP_KEYS))
+    if not any(r in upstream_deps for r in removed) or any(t in tokens(upstream) for t in added):
+        return [f"upstream {junction}:{upstream_path} no longer depends on "
+                f"{', '.join(removed)} or already sets {' '.join(added)}: "
+                f"delete this mirror and its overrides entry"], True
+
+    if sources(upstream) != sources(mirror):
+        problems.append(f"source drift:\n      upstream {sources(upstream)}\n"
+                        f"      mirror   {sources(mirror)}")
+
+    for key in DEP_KEYS:
+        want = deps(upstream, key, drop=set(removed) | j["upstream_plumbing"])
+        have = deps(mirror, key, prefix=j["prefix"], drop=j["mirror_plumbing"])
+        if want != have:
+            problems.append(
+                f"{key} drift: upstream-only {sorted(want - have) or '-'}, "
+                f"mirror-only {sorted(have - want) or '-'}")
+        leaked = [r for r in removed if r in deps(mirror, key, prefix=j["prefix"])]
+        if leaked:
+            problems.append(f"{key} still lists {', '.join(leaked)}, the dependency this mirror exists to drop")
+
+    want_tokens = sorted(tokens(upstream) + added)
+    if sorted(tokens(mirror)) != want_tokens:
+        problems.append(f"option drift: upstream+delta {want_tokens}, mirror {sorted(tokens(mirror))}")
+
+    for key in SAME_KEYS:
+        if upstream.get(key) != mirror.get(key):
+            problems.append(f"{key} differs from upstream:\n      upstream {upstream.get(key)!r}\n"
+                            f"      mirror   {mirror.get(key)!r}")
+
+    return problems, False
+
+
+def main():
+    shas = {j: junction_sha(j) for j in JUNCTIONS}
+    failed = False
+    for mirror_path, junction, upstream_path, removed, added in MIRRORS:
+        if not (ROOT / mirror_path).exists():
+            print(f"==> {mirror_path}: missing from the tree but still in MIRRORS")
+            failed = True
+            continue
+        problems, retire = check(mirror_path, junction, upstream_path, removed, added, shas[junction])
+        label = f"{mirror_path} vs {junction}@{shas[junction][:12]}:{upstream_path}"
+        if not problems:
+            print(f"==> ok    {label}")
+            continue
+        failed = True
+        print(f"==> {'RETIRE' if retire else 'DRIFT '} {label}")
+        for p in problems:
+            print(f"    {p}")
+    if failed:
+        print("==> gtk3-mirror-check FAILED")
+        return 1
+    print(f"==> gtk3-mirror-check passed: {len(MIRRORS)} mirror(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
