@@ -84,7 +84,7 @@ VM_CPUS = { default = "4" }
 RUNNER_IMAGE = { default = "localhost/krytis-runner:latest" }
 # Kept in lockstep with Containerfile.runner's ARG default by the custom.regex
 # manager in .github/renovate.json5 — edit both if you bump it by hand.
-RUNNER_VERSION = { default = "2.337.0" }
+RUNNER_VERSION = { default = "2.338.0" }
 RUNNER_NAME = { default = "krytis-local" }
 RUNNER_LABELS = { default = "self-hosted,linux,x64" }
 # Always-on Debian CI VPS runner (issue #794) — mise/tasks/runner-vps/*.
