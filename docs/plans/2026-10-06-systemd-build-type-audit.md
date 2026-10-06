@@ -3,121 +3,161 @@
 **Issue:** #1108 · **Branch:** `1108-audit-systemd-build-type` (this plan) · **Status: ready, not started.**
 
 `e629ce7` moved the systemd build from a krytis-owned mirror to gnome-build-meta's
-`core-deps/systemd-base.bst`. The element body did not change — only the `project.conf` that
-owns it, and with it `meson-global`. One consequence is already measured: `EFI_DEBUG` went
-off, the EFI binaries lost their serial banners, and `mise run enroll-test` failed every
-publish from 2026-10-02 until #1106 rewrote the gate. The expensive one is not measured:
-whether `--buildtype=plain` leaves the shipped systemd without `-O2`/`-g` and with `NDEBUG`
-undefined.
+`core-deps/systemd-base.bst`. The element body did not change. What changed is the
+`project.conf` that owns it, and with it `meson-global`. Reading the sources at the pinned
+refs (below) settles most of what this plan originally set out to measure: the switch did
+**not** cost `-O2` or `-g`. It changed exactly two things, `NDEBUG` and `EFI_DEBUG`. The
+second is already accepted (#1106). The first is the only open decision.
 
-Step 1 settles that with measurements. Step 2 is a Design Gate — the answer decides whether
-steps 3–5 happen at all, and in which direction. #1108 carries the evidence gathered so far.
+Step 1 confirms the source reading against a real build log, cheaply. Step 2 is the Design
+Gate on `b_ndebug`. Step 3 exists only if the gate picks the mirror. Step 4 fixes the
+documentation that the reading proved wrong, and runs whichever way the gate goes.
 
-## Baseline (measured 2026-10-06, `main` @ `5ac840c`)
+## What the sources say
 
-| | |
+Read at fdsdk `freedesktop-sdk-26.08.2-0-g32c5fea7`, gnome-build-meta `51.0-9-g0b400781`
+(the pin on `main` since `fc455d9`, 2026-10-05), systemd `v261.3`, meson 1.7.0.
+
+**Where `-O2 -g` come from.** fdsdk `include/flags.yml` sets `common_flags: "-O2 -pipe"`
+(l.7) and `debug_flags: "-g"` (l.13), composes both into `target_flags` (l.79–83), and
+exports `environment: CFLAGS/CXXFLAGS: "%{target_flags}"` (l.170–172). fdsdk
+`include/runtime.yml` includes `flags.yml`. **Both** owning projects include `runtime.yml`
+at the top of their `project.conf`: gnome-build-meta l.33, krytis l.10.
+`core-deps/systemd-base.bst` does not override `local_flags` or `debug_flags`.
+
+**Meson puts `CFLAGS` after its own build-type flags.** Measured with meson 1.7.0 and
+`CFLAGS="-O2 -pipe -g"` on a one-file project (`compile_commands.json`):
+
+| `--buildtype` | compile line (flags only) |
 |---|---|
-| krytis `project.conf`, `elements: meson: variables: meson-global` | `--buildtype=debugoptimized -Db_ndebug=true -Dwerror=false` |
-| gnome-build-meta `project.conf`, same key | `--buildtype=plain --auto-features=enabled --wrap-mode=nodownload` |
-| junctions | fdsdk `freedesktop-sdk-26.08.2-0-g32c5fea7`, gnome-build-meta `51.0-6-g5ec987b6` |
-| systemd | 261.3 (was 261.2 + our `update-utmp` patch before `e629ce7`) |
-| `.text` delta across the switch | `systemd` +8.0%, `systemd-journald` +13.5%, `systemd-bootx64.efi` +13.5% |
+| `debug` | `-O0 -g -O2 -pipe -g` |
+| `plain` | `-O2 -pipe -g` |
+| `debugoptimized` | `-O2 -g -O2 -pipe -g` |
 
-Meson maps the build type onto the flags (`mesonbuild/coredata.py`
-`_set_others_from_buildtype`, read at meson 1.7.0): `debugoptimized` → `optimization=2,
-debug=true`; `plain` → `optimization=plain` (no `-O` of its own), `debug=false`. Dropping
-`-Db_ndebug=true` additionally leaves `NDEBUG` undefined, so systemd's own `assert()` is
-compiled in rather than out. None of those three is visible in the element's diff.
+gcc takes the last `-O`, so all three compile at `-O2 -g` once `CFLAGS` is set.
 
-## Step 1 — Measure the current build's flags
+**The resulting table:**
 
-No decision in this step. The output is a table with a source for every value.
+| setting | before (krytis owns) | after (gnome-build-meta owns) | source |
+|---|---|---|---|
+| `-O` | `-O2` | `-O2` | fdsdk `CFLAGS`, plus the ordering above |
+| `-g` | on | on | fdsdk `CFLAGS` |
+| `NDEBUG` | defined (`-Db_ndebug=true`) | undefined | krytis `project.conf` `meson-global`; meson default `b_ndebug=false` |
+| `EFI_DEBUG` | on | off | systemd `src/boot/meson.build:190`: `mode == 'developer' and get_option('debug')`; `mode` defaults to `developer` |
 
-- [ ] 1.1 Confirm the BuildStream cache drive is mounted (`findmnt -T ~/.cache/buildstream`);
-      ask before proceeding if it is not. The artifact is not in the local cache *or* in bow
-      under the current graph key (`gnome/core-deps-systemd-base/86bc8fb7…` reports "not
-      cached"), so this step needs one build.
-- [ ] 1.2 `mise run warm-cache gnome-build-meta.bst:core-deps/systemd-base.bst`. Record the
-      wall time — it is the per-iteration cost of every option in step 2.
-- [ ] 1.3 `./mise/tasks/bst artifact log gnome-build-meta.bst:core-deps/systemd-base.bst`:
-      the `meson setup` summary (`User defined options`, build type) and the compiler
-      invocations, if the log keeps them. If it does not, 1.4 decides.
-- [ ] 1.4 Diff the freshly built `systemd` against the one shipped in the image. They should
-      be byte-identical, which also proves the shipped image is what this element produces —
-      nothing checks that today. Then point the override at a scratch mirror element
-      carrying krytis's `meson-global`, rebuild, and diff `.text` plus a couple of functions.
-      **That diff is the measurement**; meson's documentation is not.
-- [ ] 1.5 Find what supplies `-O2`/`-g`, if anything: grep fdsdk at the pinned ref for
-      `CFLAGS`/`-O2` (`project.conf`, `include/_private/*.yml`,
-      `elements/public-stacks/buildsystem-*.bst`, `components/gcc.bst`). Krytis's own
-      `project.conf` asserts that fdsdk sets those and krytis does not — that assertion is
-      itself unverified, and if it is wrong the comment is rot too.
-- [ ] 1.6 Put the result in #1108's body as a table: setting · value · where it came from.
-      No adjectives.
+**What `NDEBUG` means in systemd.** It does not remove asserts. systemd overrides
+`assert()` (`src/fundamental/assert-util.h:69–73`): with `NDEBUG` a failed check becomes
+`__builtin_unreachable()`, so the compiler is allowed to assume it holds, and a violated
+invariant is undefined behaviour. Without `NDEBUG` it logs and aborts. `assert_se()` is live
+either way. Most distributions build systemd with meson's `plain` build type and no
+`NDEBUG` (inferred, not checked against each one's packaging).
 
-**Acceptance:** `optimization`, `debug` and `b_ndebug` each have a value, and each value has
-the command or file:line that produced it.
+The `.text` growth across the switch (`systemd` +8.0%, `systemd-journald` +13.5%) fits live
+asserts plus 261.2 → 261.3. A drop to `-O0` would be far larger. That is an inference too,
+and step 1 is what confirms it.
 
-## Step 2 — Design Gate: pick the target
+## Step 1 — Confirm against a real build
 
-Stop and ask. The options and what each costs:
+No decision in this step. Every value in the table above gets a command behind it.
+
+- [ ] 1.1 `./mise/tasks/bst show --deps none --format '%{environment}'
+      gnome-build-meta.bst:core-deps/systemd-base.bst` shows `CFLAGS` containing `-O2` and
+      `-g`. This needs no build.
+- [ ] 1.2 Recompute the element's cache key against the current junction pin
+      (`51.0-9-g0b400781`). The "not cached" result recorded in #1108 (`86bc8fb7…`) was taken
+      at `51.0-6-g5ec987b6` and may be stale. If the artifact exists locally or in bow, skip
+      to 1.4.
+- [ ] 1.3 Otherwise confirm the cache drive is mounted (`findmnt -T ~/.cache/buildstream`),
+      ask before proceeding if it is not, and run
+      `mise run warm-cache gnome-build-meta.bst:core-deps/systemd-base.bst`. Stop at the
+      **Toolchain Gate** if it starts compiling `bootstrap/*`, `components/llvm.bst` or
+      `components/rust.bst`.
+- [ ] 1.4 gnome-build-meta runs `ninja -v` (`project.conf:145`), so the log keeps every
+      compile line:
+      `./mise/tasks/bst artifact log gnome-build-meta.bst:core-deps/systemd-base.bst | grep -m1 -E ' (cc|gcc) .*src/core/'`.
+      Record the last `-O`, whether `-g` is present, and whether `-DNDEBUG` is present.
+- [ ] 1.5 Put the confirmed table in #1108's body, each value with the command that produced
+      it.
+
+**Acceptance:** the four rows above each have a value from a build log or `bst show`, not
+from reading.
+
+No byte-for-byte comparison with the shipped image: if the current key is cached nowhere,
+`krytis:latest` was built from a different key and cannot match.
+
+## Step 2 — Design Gate: `b_ndebug`
+
+Stop and ask. `-O` and `-g` are not in question, so the choice is only this:
 
 | | what | cost |
 |---|---|---|
-| A | Accept gnome-build-meta's flags; record the decision in the skill file, close #1108 | none — ships whatever `plain` means |
-| B | Own the element again: an inlined mirror of `core-deps/systemd-base.bst` carrying krytis's `meson-global`, plus a drift-check mise task and an update path | the shape #483 removed, back; a mirror body to resync on every upstream change |
-| C | B, but only where it matters: keep gnome-build-meta's body and add `-Doptimization=2 -Ddebug=true` (or `--buildtype=debugoptimized`) while leaving `b_ndebug` at upstream's default | the same mirror cost as B, with a smaller and more explainable divergence |
+| **A** (recommended) | Keep gnome-build-meta's element. systemd ships with live asserts, the configuration upstream tests and most distributions ship. Record the decision in the skill files and close #1108. | none |
+| **B** | Own the element again as an inlined mirror of `core-deps/systemd-base.bst`, keeping `NDEBUG` defined. Its `meson-local` must add `-Ddebug=false`, because krytis's `meson-global` (`debugoptimized`) sets `debug=true` and that turns `EFI_DEBUG` back on. Prefer that over `-Dmode=release`, which also adds `-ftrivial-auto-var-init=zero`, drops `-fno-omit-frame-pointer` and changes assert-failure logging (`meson.build:496–511`). | the mirror shape #483 removed, a drift check, an update path, and a failed invariant in PID 1 becomes undefined behaviour instead of a logged abort |
+
+Option B's earlier variant (adding `-Doptimization=2 -Ddebug=true`) is gone: the
+optimisation already matches, and `debug=true` brings back the debug EFI build the non-goals
+rule out.
+
+If the gate leans to B, put a number on it first: build the scratch mirror with
+`-Db_ndebug=true -Ddebug=false` and record the `.text` delta of `systemd` and
+`systemd-journald` against the 1.4 build.
 
 Constraint, from `docs/skills/bst.md` § Mirroring a junction element to patch its source: an
 element used as a junction override target **cannot** use a cross-junction `(@):` include, so
-there is no thin wrapper to write — B and C both mean an inlined body.
+there is no thin wrapper. B means an inlined body.
 
-Decide `b_ndebug` explicitly, in either direction: krytis asked for `true` (asserts compiled
-out), gnome-build-meta leaves `false` (asserts live). That is a safety-versus-size question,
-not build hygiene, and it is the same knob that made `-Dwerror=false` necessary.
+## Step 3 — Implement (B only)
 
-## Step 3 — Implement
+- [ ] 3.1 Add the mirror element with the `meson-local` additions from step 2, and point
+      `elements/freedesktop-sdk.bst`'s `overrides:` at it in place of
+      `gnome-build-meta.bst:core-deps/systemd-base.bst`.
+- [ ] 3.2 Restore the drift check (`mise run systemd-base-check`, deleted in `e629ce7`;
+      recover it from `e629ce7^`) and its `track-mise` CI job, per AGENTS.md § Update path
+      gate. A mirror's ref cannot follow gnome-build-meta's pin by itself; the drift check is
+      what keeps it from standing still at an old version the way `v261.2-0-g4925d9f07` did.
+- [ ] 3.3 `./mise/tasks/bst show --deps none --format '%{vars}' <mirror>` shows `-Ddebug=false`
+      after krytis's `meson-global`, and the 1.4 grep on the new build shows `-DNDEBUG`.
+- [ ] 3.4 `mise run build`, then `mise run enroll-test --image localhost/krytis:sealed`. The
+      gate #1106 rewrote must still pass; it no longer depends on `EFI_DEBUG`.
 
-Only for B/C.
+## Step 4 — Docs (both options)
 
-- [ ] 3.1 Add the mirror element and point `elements/freedesktop-sdk.bst`'s `overrides:` at
-      it in place of `gnome-build-meta.bst:core-deps/systemd-base.bst`.
-- [ ] 3.2 Restore the drift check (`mise run systemd-base-check`, deleted in `e629ce7` —
-      recover it from `e629ce7^`) and its `track-mise` CI job, or add the element to the
-      `track` matrix, so the update path exists per AGENTS.md § Update path gate.
-- [ ] 3.3 Keep the source ref following gnome-build-meta's pin instead of pinning a version
-      of krytis's own: the old mirror's mistake was `ref: v261.2-0-g4925d9f07` standing still
-      while the junction moved to v261.3.
+The reading above contradicts four places. Edit the old text; do not append a corrected
+paragraph beside it.
 
-## Step 4 — Verify
-
-- [ ] 4.1 `./mise/tasks/bst show --format '%{vars}' <element>` shows krytis's `meson-global`
-      on the element that actually builds systemd.
-- [ ] 4.2 `mise run warm-cache gnome-build-meta.bst:core-deps/systemd-base.bst` rebuilds, and
-      the `.text` delta against the `plain` build is recorded in #1108 — the number that
-      justifies the mirror or does not.
-- [ ] 4.3 `mise run build`, then `mise run enroll-test --image localhost/krytis:sealed`: the
-      gate #1106 rewrote must pass either way, because it no longer depends on `EFI_DEBUG`.
-- [ ] 4.4 `mise run docs-links`.
-
-## Step 5 — Docs
-
-- [ ] 5.1 `docs/skills/secure-boot.md` § The `systemd-boot@` serial banner is a debug
-      artefact — replace "the flags come from the project that owns the element" with what
-      that actually costs, once it is measured.
-- [ ] 5.2 `docs/skills/bst.md` — the element-ownership lesson gains a worked example with
-      numbers.
-- [ ] 5.3 Update #1108's body, and archive this plan to `docs/plans/done/` in the PR that
-      closes it.
+- [ ] 4.1 krytis `project.conf`, the `meson-global` comment (l.132–156). "CFLAGS/CXXFLAGS,
+      which fdsdk sets and krytis does not" is false today: krytis gets them through its l.10
+      include. "Meson's default `debug` buildtype, i.e. -O0" is also false while `CFLAGS`
+      carries `-O2` (ordering table above). Keep the `b_ndebug` and `werror` reasoning, which
+      still holds.
+- [ ] 4.2 `docs/skills/bst.md` § freedesktop-sdk's `include/_private/` config is not inherited
+      (l.97–157). The same "krytis does not" claim is at l.113. The "1752 `-O0` lines" table
+      (l.144) counts lines containing `-O0`, which a later `-O2` from `CFLAGS` overrides.
+      First find out whether the `runtime.yml` include predates #604 (this checkout's history
+      is too shallow to say). If it does, the "unoptimised for a year" account is wrong and
+      only the `NDEBUG` half of #604 stands. Also correct "`assert()` expands to nothing"
+      (l.128): true of glibc's `assert()`, not of systemd's.
+- [ ] 4.3 `docs/skills/secure-boot.md` § The `systemd-boot@` serial banner is a debug
+      artefact (l.638). Drop `-O` and `-g` from the list of things that move with the
+      element's owner (they come from `CFLAGS` in all three projects), and cite
+      `src/boot/meson.build:190` as the exact `EFI_DEBUG` trigger.
+- [ ] 4.4 `docs/skills/bst.md`, the element-ownership lesson: add this case as the worked
+      example. Diff `meson-global` **and** the `environment:` both `project.conf`s include;
+      `plain` only means "no optimisation" when nothing sets `CFLAGS`.
+- [ ] 4.5 Grep open krytis issues for the stale claims
+      (`gh issue list --state open --search 'buildtype in:body'`) and correct any body that
+      repeats them.
+- [ ] 4.6 `mise run docs-links`. Update #1108's body with the outcome, and archive this plan
+      to `docs/plans/done/` in the PR that closes it.
 
 ## Non-goals
 
-- **Getting the `systemd-boot@` banner back.** #1106 removed its last consumer; re-enabling
-  `EFI_DEBUG` ships a debug EFI binary with live `assert_se` and a boot-time SHA256
-  self-test. This plan is about optimisation and assertions, not about the gate.
-- **Re-pinning the systemd version.** It must keep following gnome-build-meta's pin.
-- **Anything upstream.** gnome-build-meta's `--buildtype=plain` is their project-wide choice
-  and fdsdk's is theirs; proposing a change there is an Upstream Gate decision, not a step
-  here.
-- **The seal path.** `seal-uki`, the `.auth` files and the UKI are untouched by any option
-  above.
+- **Getting the `systemd-boot@` banner back.** #1106 removed its last consumer.
+  Re-enabling `EFI_DEBUG` ships a debug EFI binary with live `assert_se` and a boot-time
+  SHA256 self-test.
+- **Re-pinning the systemd version.** It keeps following gnome-build-meta's pin, or under
+  B, the drift check's.
+- **Anything upstream.** gnome-build-meta's `--buildtype=plain` and fdsdk's are their
+  project-wide choices; proposing a change there is an Upstream Gate decision.
+- **The seal path.** `seal-uki`, the `.auth` files and the UKI are untouched by either
+  option.
