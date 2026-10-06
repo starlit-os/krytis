@@ -74,7 +74,7 @@ they are ordered before. `first-boot-complete.target` is satisfied as usual.
 
 | Step | Command | Notes |
 |---|---|---|
-| keymap + timezone (optional) | `systemd-firstboot --prompt-keymap-auto --prompt-timezone --welcome=no --mute-console=yes` | No locale prompt, no root-password prompt. `--prompt-keymap-auto` self-skips when not invoked on a local VT, so a serial-only session is never blocked. Values already present in `/etc` are skipped (no `--force`), so `/etc/localtime` being pre-set to UTC means only keymap normally prompts. |
+| keymap + timezone (optional) | `systemd-firstboot --prompt-keymap-auto --prompt-timezone --welcome=no --mute-console=yes`, after removing `/etc/vconsole.conf` and `/etc/localtime` while they are still the boot defaults | No locale prompt, no root-password prompt. `--prompt-keymap-auto` prompts when stdout is a VT, which tty5 is. Values already present in `/etc` are skipped (no `--force`), which is why the defaults have to go first; see § Late first-boot prompts see files that early ones do not (#531). |
 | initial user (required) | `homectl firstboot --prompt-new-user --prompt-shell=no --prompt-groups=no --member-of=wheel --auto-resize-mode=off --rebalance-weight=off --disk-size=35% --mute-console=yes` | systemd-homed managed (encrypted home, FIDO2-login-ready, matching the PAM/FIDO2 investment already in the repo), auto-granted `wheel` (sudo, `%wheel ALL=(ALL) ALL` from fdsdk's `vm/config/sudo.bst`) rather than prompted — the first-boot user *is* the admin account. `--prompt-groups=no` is load-bearing for that: were the groups prompt left on, an interactive answer would overwrite `memberOf` wholesale (`homectl.c`, `create_interactively()`). The three resize flags are #996's decision. They replace an `--auto-resize-mode=shrink-and-grow` that was a **no-op** — on systemd 261 that is already homed's default for the LUKS2+btrfs home `homectl firstboot` creates, and this row used to claim it "overrides homed's own default (`off`)". `off` stops the logout shrink that blocks the next login. `35%` — of free space at creation, not of the disk — replaces homed's 85% default, and matters far more once nothing auto-resizes, because the image is allocated in full rather than sparsely. `--rebalance-weight=off` is redundant (`--disk-size=` already forces it) and kept explicit for exactly that reason. See `docs/skills/pam.md` § A logout shrink blocks the next login. Adjusting the size afterwards is admin-authenticated; a GUI control is #998. |
 
 Both steps run from one script (`/usr/libexec/krytis/firstboot-wizard.sh`)
@@ -118,6 +118,41 @@ Key properties of `krytis-firstboot.service`:
   makes re-running safe: `systemd-firstboot` skips already-set values, and
   `homectl firstboot` returns without prompting once a regular user exists
   (`homectl.c`, `has_regular_user()`).
+
+### Late first-boot prompts see files that early ones do not (#531)
+
+Until #531 the keymap and timezone prompts never appeared on a real install.
+`systemd-firstboot` asks only for a value whose file is missing (`should_configure()`
+in `firstboot.c` is a bare existence check), and moving the wizard late, which this
+design requires, means two files already exist by the time it runs:
+
+- **`/etc/vconsole.conf`**: systemd's own `tmpfiles.d/etc.conf` has
+  `C! /etc/vconsole.conf`, which copies the comment-only
+  `/usr/share/factory/etc/vconsole.conf` into `/etc` during
+  `systemd-tmpfiles-setup.service`. Upstream's `systemd-firstboot.service` is ordered
+  before that copy (`systemd-tmpfiles-setup.service` has
+  `After=systemd-firstboot.service`); krytis's unit runs after
+  `systemd-user-sessions.service`, long after it.
+- **`/etc/localtime`**: `components/tzdata.bst` ships it in the image as an absolute
+  symlink to `/usr/share/zoneinfo/UTC`.
+
+Both skips are silent. With the defaults in place, the only trace is a debug line:
+`Found /etc/vconsole.conf, assuming console has been configured.`
+
+The wizard therefore removes each file just before prompting, but only while it is
+still the default: `/etc/vconsole.conf` byte-identical to the factory copy, and
+`/etc/localtime` the absolute link to UTC. `systemd-firstboot` and `timedatectl` both
+write a relative link, so a real choice never matches. If a prompt is skipped, the
+wizard puts the default back, and the next boot asks again until a user exists. Not
+`--force`, which would also overwrite the baked locale.
+
+The tempting explanation in #531, that `--prompt-keymap-auto` sees tty5 as "not the
+local console", was wrong. It prompts whenever stdout resolves to a VT
+(`tty_is_vc_resolve()`), and tty5 is one.
+
+**Any new late first-boot step has the same exposure.** Before relying on "absent
+means unconfigured", check `systemd-tmpfiles --cat-config | grep ' /etc/'` for `C`/`C!`
+lines that populate `/etc` from `/usr/share/factory` at boot.
 
 `files/bootc-config/40-no-firstboot.toml` (the `systemd.firstboot=no` karg) was
 deleted as part of this change. That was required rather than merely tidy:
