@@ -998,6 +998,34 @@ from the element's `meson-local`. The same applies to a mirror: it resolves `mes
 in *krytis's* project scope. Compare `%{vars}` of the upstream element and the mirror
 before trusting that only your flag differs.
 
+**What the comparison turns up, and what to pin** (#1074/#1075, the libportal,
+gnome-desktop and libdecor mirrors). Diff both `%{vars}` and `%{env}`
+(`mise run bst -- show --deps none --format '%{vars}' <element>`, then `'%{env}'`) for the
+upstream name and the mirror, **before** adding the overrides entry: once it is wired, the
+upstream name resolves to the mirror and there is nothing left to compare against. Most of
+the diff is noise (build-root, debug paths, gnome-build-meta's GNOME OS branding vars,
+`RECC_*`). Three things are not:
+
+- **`meson-global`**: krytis's `--buildtype=debugoptimized -Db_ndebug=true -Dwerror=false`
+  vs gnome-build-meta's `--buildtype=plain --auto-features=enabled --wrap-mode=nodownload`,
+  or fdsdk's `--buildtype=plain -Dauto_features=enabled -Db_pie=true
+  -Ddefault_library=shared -Db_lto=true -Db_lto_threads=${LTOJOBS}`. Pin upstream's value.
+  Without it, krytis's value also turns `auto` features *off*, which changes more than the
+  one option you meant to flip.
+- **`project_licensedir`**: `%{licensedir}/gnome` or `%{licensedir}/freedesktop-sdk`, per
+  § Moving an element between projects moves its licence tree.
+- **fdsdk's `LTOJOBS`, an environment variable, not a variable.** fdsdk's
+  `include/_private/meson-conf.yml` defines it as `LTOJOBS: "%{max-jobs}"` in
+  `environment:` (and `environment-nocache:`), and its `meson-global` expands it as
+  `${LTOJOBS}` in the shell. A krytis element gets fdsdk's `meson-global` text only if you
+  copy it, and never gets the environment entry. Pinning only `meson-global` leaves
+  `-Db_lto_threads=` empty at `meson setup`. Copy both, with the same nocache entry so the
+  cache key does not depend on the machine's job count.
+
+After that, the only `%{vars}` difference should be your own `meson-local` flag.
+`mise run gtk3-mirror-check` covers the element-file half of this on every junction bump;
+the project-scope half has to be re-diffed by hand (its header says how).
+
 ### "What pulls library X into the image" needs the graph *and* an ELF scan
 
 *Source: `mise/tasks/gtk3-audit` (#1030, step 0 of

@@ -314,9 +314,11 @@ mirror.
   notes change from "stable arm" to "nightly arm".
 - `docs/skills/mise.md`: `gnome-disk-utility-check` row.
 
-## Step 4 — gnome-build-meta mirrors: libportal, gnome-desktop, libcanberra · #1034
+## Step 4 — gnome-build-meta mirrors: libportal, gnome-desktop, libcanberra · #1074, #1034
 
-Depends on step 3: 46.1 needs `libcanberra-gtk3` at `meson setup`.
+Only libcanberra depends on step 3: 46.1 needs `libcanberra-gtk3` at `meson setup`. The
+libportal and gnome-desktop mirrors don't, so they were split out as #1074 and shipped with
+`gtk3-mirror-check`. #1034 keeps libcanberra.
 
 All three are override-target mirrors in `elements/overrides/<name>.bst`, wired through
 `elements/gnome-build-meta.bst` `config.overrides:`. The body is copied verbatim from
@@ -356,10 +358,12 @@ mirrors in steps 4–5, not eight near-identical `*-check` tasks.
 - The image contains no `libportal-gtk3`, `libgnome-desktop-3` or `libcanberra-gtk3`.
 - `mise run gtk3-mirror-check` passes. Delete the allowlist rows.
 
-## Step 5a — freedesktop-sdk mirrors: libdecor, plymouth · #1035
+## Step 5a — freedesktop-sdk mirrors: libdecor, plymouth · #1075, #1035
 
-**Breakage Gate (AGENTS.md):** plymouth is a build-dep of `core/initramfs.bst` and draws the
-boot splash. Stop for human sign-off before merging.
+**Breakage Gate (AGENTS.md), plymouth only:** plymouth is a build-dep of
+`core/initramfs.bst` and draws the boot splash. Stop for human sign-off before merging.
+libdecor is not on the boot path, so it was split out as #1075 and shipped without the gate.
+#1035 keeps plymouth.
 
 Both mirrors go in `elements/overrides/`, wired through `elements/freedesktop-sdk.bst`
 `config.overrides:`:
@@ -514,7 +518,7 @@ All are parented to #641; nested worktrees go under `gh641/<n>-<slug>`.
 | 1 | #1031 Declare Proton Pass dependencies |
 | 2 | #1032 Drop xdg-user-dirs-gtk |
 | 3 | #1033 Bump Disks to 51 beta |
-| 4 | #1034 Strip GTK3 from GNOME mirrors (needs #1033) |
-| 5a | #1035 Strip GTK3 from libdecor, plymouth |
+| 4 | #1074 libportal + gnome-desktop (no dependency on #1033); #1034 libcanberra (needs #1033) |
+| 5a | #1075 libdecor (no gate); #1035 plymouth (Breakage Gate) |
 | 5b | #1036 Strip GTK3 from GStreamer plugins |
 | 6 | #181 Investigate dropping xdg-desktop-portal-gtk (body rewritten as the alternatives evaluation) |

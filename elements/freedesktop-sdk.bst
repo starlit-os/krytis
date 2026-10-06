@@ -54,6 +54,10 @@ config:
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
     components/rust-bindgen.bst: overrides/rust-bindgen.bst
+    # GTK3-free libdecor (#1075, #641 step 5a): drops components/gtk3.bst and the
+    # libdecor-gtk.so plugin; libdecor-cairo.so stays as the fallback. Drift and exit
+    # condition: `mise run gtk3-mirror-check`.
+    components/libdecor.bst: overrides/libdecor.bst
     # Held at 0.3.0: niri's vendored libdisplay-info-sys caps at < 0.4.0 and
     # has no v0_4 bindings. Only niri and wlroots consume it.
     components/libdisplay-info.bst: overrides/libdisplay-info.bst
