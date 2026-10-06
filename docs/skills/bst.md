@@ -99,36 +99,57 @@ elements:
 krytis gets fdsdk's *elements* through the junction, but none of its `_private` build
 configuration — that whole directory lives in freedesktop-sdk's tree, not in this repo.
 Concretely (#604): fdsdk sets `--buildtype=plain` for its own meson elements in its
-`include/_private/meson-conf.yml`, krytis inherited nothing, and krytis's 13 meson elements
-therefore used **meson's own default buildtype — `debug`** (`-O0`, and `b_ndebug=false`, so
-`NDEBUG` never defined). The image shipped unoptimised, assert-enabled binaries for a year
-without anyone noticing, because nothing warns about it.
+`include/_private/meson-conf.yml`, krytis inherited nothing, and krytis's meson elements
+therefore used **meson's own default buildtype — `debug`**, with `b_ndebug=false`, so `NDEBUG`
+was never defined. Asserts and anything else behind `#ifndef NDEBUG` shipped, and nothing
+warned about it.
+
+What krytis *does* inherit is the compiler environment. fdsdk's `include/flags.yml` exports
+`CFLAGS`/`CXXFLAGS="-O2 -pipe -g …"`, `include/runtime.yml` includes it, and krytis's
+`project.conf` includes `freedesktop-sdk.bst:include/runtime.yml` on its first lines — since
+the first commit (`767ec87`). So the `debug` build type never meant `-O0` here: meson puts
+`CFLAGS` *after* its own build-type flags and gcc takes the last `-O` (meson 1.7.0,
+`CFLAGS="-O2 -pipe -g"`, one-file project, `compile_commands.json`):
+
+| `--buildtype` | compile line (flags only) |
+|---|---|
+| `debug` | `-O0 -g -O2 -pipe -g` |
+| `plain` | `-O2 -pipe -g` |
+| `debugoptimized` | `-O2 -g -O2 -pipe -g` |
+
+Every one of them compiles at `-O2 -g`. #604 was an `NDEBUG` bug, not an optimisation bug.
+Check it with `bst show --deps none --format '%{env}' <element>`. The key is `%{env}`:
+`%{environment}` is not a format key and dies with a Python traceback ending in
+`KeyError: 'environment'` — not an empty result, so do not read it as "no `CFLAGS`".
 
 It surfaced only because noctalia compiles a red `DEBUG` pill into its bar under
 `#ifndef NDEBUG`. Generalise the detection, not the fix: `strings <binary> | grep -c` for a
 symbol that upstream guards behind `NDEBUG` is a cheap way to prove which build type actually
 reached the image.
 
-**Do not fix this by copying fdsdk's line.** `--buildtype=plain` tells meson to emit no
-`-O`/`-g` of its own and defer to `CFLAGS`/`CXXFLAGS` — which fdsdk sets for its own builds and
-krytis does not (`bst show --format '%{environment}'` has neither). Copying it removes
-optimisation *and* debug info. krytis uses `--buildtype=debugoptimized -Db_ndebug=true
--Dwerror=false`:
+krytis uses `--buildtype=debugoptimized -Db_ndebug=true -Dwerror=false`:
 
-- `debugoptimized` = `-O2 -g`. The `-g` keeps `%{strip-binaries}` splitting debug info into
-  `%{debugdir}` via `freedesktop-sdk-stripper`; `--buildtype=release` drops `-g` and quietly
-  empties that split. Scope it correctly, though: the **OCI image excludes the `debug` domain**
+- `b_ndebug=true` is the setting that does the work. Not `if-release`: that only fires for
+  `release`/`plain` buildtypes, so it would do nothing under `debugoptimized`.
+- `debugoptimized` is a no-op for `-O`/`-g` given `CFLAGS`, but it sets meson's `debug`
+  option to true, and some projects read `get_option('debug')` directly — systemd's
+  `src/boot/meson.build` turns on `EFI_DEBUG` from it (see
+  [secure-boot.md](secure-boot.md) § The `systemd-boot@` serial banner is a debug artefact).
+  `plain` would compile identically everywhere else, but switching re-keys every krytis meson
+  element, so it stays unless a project's use of the option argues otherwise. The `-g` that
+  `%{strip-binaries}` splits into `%{debugdir}` via `freedesktop-sdk-stripper` comes from
+  `CFLAGS` too; scope it correctly, though: the **OCI image excludes the `debug` domain**
   (`elements/oci/krytis/filesystem.bst` and `runtime.bst` both `exclude: - debug`), so the
   shipped image carries no `.debug` files either way — one glibc `ld-linux` file aside. The `-g`
   is for the *artifacts*, i.e. `bst artifact checkout` and any future debuginfo work, not for
   image size. Don't verify it against the image and conclude it broke.
-- `b_ndebug=true`, not `if-release`: `if-release` only fires for `release`/`plain` buildtypes,
-  so it would do nothing under `debugoptimized`.
 - `werror=false` is a consequence of `b_ndebug`, not an unrelated opinion: with `NDEBUG`
-  defined, `assert()` expands to nothing, so any local that exists only to be asserted on
-  becomes an unused variable and an upstream built with `-Werror` then fails. wlroots 0.20.1
+  defined, glibc's `assert()` expands to nothing, so any local that exists only to be asserted
+  on becomes an unused variable and an upstream built with `-Werror` then fails. wlroots 0.20.1
   does exactly that in `render/pass.c:22`. Warnings are still printed; they just stop being
-  fatal.
+  fatal. (Not every project's `assert()` is glibc's — systemd's turns into
+  `__builtin_unreachable()` under `NDEBUG`. That is one reason #1108 decided to ship systemd
+  *without* it, as gnome-build-meta builds it.)
 
 `b_ndebug=true` is not redundant with upstream's own defaults, and this is the subtle part.
 noctalia's `meson.build` declares `default_options: ['b_ndebug=if-release', …]` — which reads
@@ -137,24 +158,19 @@ buildtype, so asserts stayed on and its `#ifndef NDEBUG` bar pill kept shipping.
 `-Db_ndebug=true` beats `default_options`; matching upstream's *spelling* would have changed
 nothing.
 
-Measured on `overrides/systemd-base.bst`, krytis's systemd-base mirror at the time (since
-dropped, #483). Same element, same `ninja -v` verbosity, before and
-after (the meson plugin runs `ninja -v`, so compile lines are in the build log):
+#605 measured the change on `overrides/systemd-base.bst`, krytis's systemd-base mirror at the
+time (since dropped, #483): same element, same `ninja -v` log, `-O0` lines 1752 → 0 and
+`-DNDEBUG` lines 0 → 1752. The `-DNDEBUG` half is real. The `-O0` half counted lines that
+*contained* `-O0`, every one of which also carried a later `-O2` from `CFLAGS` — so it
+measured a flag that never took effect, and the "1752 translation units at `-O0`" reading that
+came with it was wrong. `desktop/mesa-all-codecs.bst` sets `-Db_ndebug=true` in its own
+`meson-local` (redundant with the global, but left in place: removing it would change the
+resolved command line and force a mesa rebuild for no behavioural gain).
 
-| | `-O0` lines | `-DNDEBUG` lines |
-|---|---|---|
-| before | 1752 | 0 |
-| after | 0 | 1752 |
-
-So systemd — PID 1, udev, journald, logind — was compiling 1752 translation units at `-O0`
-with asserts live. `desktop/mesa-all-codecs.bst` was already immune because it sets
-`-Db_ndebug=true` in its own `meson-local` (now redundant with the global, but left in place:
-removing it would change the resolved command line and force a mesa rebuild for no behavioural
-gain).
-
-Do not measure this from build logs alone across *different* elements — verbosity and vendored
-sub-builds make the counts incomparable. Compare one element against itself, or read the
-resolved command with `bst show --deps none --format '%{config}'`.
+Count the *last* `-O` per compile line, never the presence of one; and do not compare build
+logs across *different* elements — verbosity and vendored sub-builds make the counts
+incomparable. Compare one element against itself, or read the resolved command with
+`bst show --deps none --format '%{config}'`.
 
 ## Element Kinds
 
@@ -924,10 +940,11 @@ git -c advice.detachedHead=false clone -q --depth 1 --branch <pinned-tag> <upstr
 git -C /tmp/chk apply --check "$PWD/patches/<project>/<name>.patch"
 ```
 
-Delete the mirror, its patch and its check task as soon as the junction ships a release containing the fix — every one of these is a temporary hold on an upstream bug, not a permanent fork. Two things the systemd-base drop (#483) taught:
+Delete the mirror, its patch and its check task as soon as the junction ships a release containing the fix — every one of these is a temporary hold on an upstream bug, not a permanent fork. Three things the systemd-base drop (#483) taught:
 
 - **A mirror that replaced a cross-project redirect is dropped by restoring the redirect, not by deleting the overrides entry.** Before #425 the line was `…systemd-base.bst: gnome-build-meta.bst:core-deps/systemd-base.bst`. Deleting it outright leaves fdsdk's own `components/_private/systemd-base.bst` in the graph, and that is a different systemd build: at fdsdk 26.08.2 it is v261.2, without the fix. That silently reinstates #417 with no build error. `bst show` (above) tells the two apart in seconds.
 - **Exit conditions written as version numbers go stale.** The mirror's said "v261", which was wrong (#642), and then "v262", which a stable backport made wrong. While the comment waited for v262, the mirror held systemd at v261.2 although gnome-build-meta already shipped v261.3. Neither drift check nor header could see it, because `systemd-base-check` reported the junction's version and not whether the fix was in it. Make the exit test the fix itself (grep the pinned tag's source for the patched line), and re-run it on every junction bump, not only at the version the comment names.
+- **Dropping a mirror changes which `project.conf` builds the element, and the element diff cannot show it.** A mirror is a krytis element, so krytis's `elements: meson: variables: meson-global` (`--buildtype=debugoptimized -Db_ndebug=true -Dwerror=false`) applied to it. The redirect target is a gnome-build-meta element, so gnome-build-meta's applies (`--buildtype=plain --auto-features=enabled --wrap-mode=nodownload`). The two element bodies were byte-identical in `meson-local`, and still the build changed: `NDEBUG` went from defined to undefined, and systemd's `EFI_DEBUG` (`src/boot/meson.build:190`, keyed on meson's `debug` option) from on to off, which took the `systemd-boot@` serial banner with it and failed `enroll-test` on every publish until #1106. What did **not** change is `-O2 -g`: those come from fdsdk's `CFLAGS`, which both projects get through `include/runtime.yml` and which meson places after the build type's own flags (§ freedesktop-sdk's `include/_private/` config is not inherited across the junction). Confirmed from the artifact's `ninja -v` log in #1108 — the last `-O` is `-O2` on 1868 of 1869 compile lines, `-g` on all of them, `-DNDEBUG` and `-DEFI_DEBUG` on none. So before dropping a mirror, or retargeting any override across projects, diff both projects' `elements:` blocks **and** the `environment:` they include, and grep the upstream's `meson.build` for `get_option('debug')` and `NDEBUG` — those are the knobs that move. #1108 decided to keep gnome-build-meta's build as it is (systemd's `assert()` logs and aborts without `NDEBUG`, and becomes `__builtin_unreachable()` with it).
 
 **Second worked example, mirroring the junction's *own* namespace instead of a cross-project one:** `elements/overrides/rust-bindgen.bst` + `patches/rust-bindgen/` (#498) mirrors freedesktop-sdk's own `components/rust-bindgen.bst` (not a gnome-build-meta redirect) to drop bindgen's unused `bindgen-tests/tests/quickchecking` workspace member and regenerate its `cargo2` vendoring, eliminating a `rand` 0.8.5 CVE the same way greetd dropped `agreety` (see "Dropping an unused workspace member" below) — except the vulnerable crate lives in an upstream-owned build tool, not a krytis-owned element, so the fix has to go through the mirror-and-override mechanism instead of a direct patch. **Gotcha specific to same-namespace mirrors:** step 2 of the duplicate-with-one-change recipe (prefixing sibling `components/*.bst` refs with `freedesktop-sdk.bst:`) means a naive drift check diffs every `depends:`/`build-depends:` line as "changed" even when nothing actually drifted. A gnome-build-meta-sourced mirror escapes this for its fdsdk deps, which gnome-build-meta already writes with the full `freedesktop-sdk.bst:` prefix, but hits it for gnome-build-meta-local deps (`desktop/gnome-disk-utility.bst` prefixes those with `gnome-build-meta.bst:`). Both checks strip the prefix back off before comparing: `rust-bindgen-check` with `sed 's/^- freedesktop-sdk\.bst:/- /'`, `gnome-disk-utility-check` with `sed 's/^- gnome-build-meta\.bst:/- /'`. Copy that normalization step for any future mirror.
 
@@ -2580,6 +2597,8 @@ mise run bst artifact log "$REF" > /tmp/build.log
 ```
 
 The artifact-ref form is `<project-name>/<element-path-with-slashes-as-dashes>/<full-key>` — `gnome` for gnome-build-meta, `freedesktop-sdk` for fdsdk, `krytis` for our own. Passing the element name instead (`bst artifact log gnome-build-meta.bst:core-deps/libmediainfo.bst`) only works when the *current* checkout resolves to the same key; a junction bump or a stale `elements/freedesktop-sdk.bst` ref will silently compute a different key and report "is not cached".
+
+**"is not cached" from `artifact log` describes the local cache only.** `artifact log` never contacts a remote, and `mise run bst --pull artifact log …` does not change that — the `--pull` wires the remote into the config, but only `pull`/`build` use it. #1108 recorded `gnome/core-deps-systemd-base/86bc8fb7…` as "cached nowhere" on that basis; `bst --pull artifact pull --deps none <element>` then fetched the same key from bow in two seconds. Pull first, then read the log.
 
 ## Remote cache declarations in `project.conf` are project-scoped
 
