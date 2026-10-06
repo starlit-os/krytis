@@ -550,18 +550,20 @@ What a *successful* enforced sealed boot looks like on serial — all of it:
 ```
 BdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
 BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
-systemd-boot@0x101300000 260.2
-systemd-stub@0x14df91000 260.2
 ```
 
 Read it as evidence, not silence. `BdsDxe: starting` (rather than
-`failed to load … Access Denied`) means the firmware accepted the signed
-systemd-boot against the enrolled db; `systemd-stub@…` appearing after
-`systemd-boot@…` means systemd-boot chain-loaded the UKI and its Authenticode
-signature verified — a bad signature stops at
-`Error loading EFI binary …: Access denied` instead. Everything after that point
-goes to tty0 and is invisible. **"Nothing after `systemd-stub@`" means "we cannot
-see the boot", never "the boot failed."**
+`failed to load … Access Denied`) means the firmware loaded the signed
+systemd-boot against the enrolled db and entered it — `starting` is printed only
+after `LoadImage` succeeded, and a refused image gets
+`BdsDxe: failed to load …: Access Denied -- rejected probably by Secure Boot` in
+its place. That is now the *last* thing a sealed boot says on serial: the
+`systemd-boot@…` and `systemd-stub@…` banners that used to follow it were
+`#ifdef EFI_DEBUG` output and are gone from the shipped image (§ The
+`systemd-boot@` serial banner is a debug artefact), so there is no longer even a
+chain-load acknowledgement to look for. Everything the kernel prints goes to
+tty0. **"Nothing after `BdsDxe: starting`" means "we cannot see the boot", never
+"the boot failed."**
 
 The verdict has to come from a channel that needs no kernel argument.
 `mise run boot-test --reuse-disk <disk> --secure` is that channel and is why
@@ -576,6 +578,68 @@ INCONCLUSIVE for a merely silent disk.
 Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
 kargs for anything a test needs to inject. Kargs are a signing-time decision;
 credentials are a runtime one.
+
+## The `systemd-boot@` serial banner is a debug artefact
+
+Every harness here used to identify "the loader ran" by the line
+`systemd-boot@0x101300000 260.2`, and the UKI's chain-load by `systemd-stub@…`.
+Neither is a boot signal: both are `notify_debugger()` in systemd's
+`src/boot/util.c`, whose entire body sits inside `#ifdef EFI_DEBUG`:
+
+```c
+__attribute__((noinline)) void notify_debugger(const char *identity, volatile bool wait) {
+#ifdef EFI_DEBUG
+        printf("%s@%p %s\n", identity, __executable_start, GIT_VERSION);
+```
+
+`src/boot/meson.build` defines `EFI_DEBUG` only when systemd's `mode` option is
+`developer` (its default) *and* meson's built-in `debug` option is on — and meson
+derives `debug` from the build type: `debugoptimized` → true, `plain` → false. So
+whether that line exists is a property of **the build configuration of the element
+that compiles systemd**, not of the image's boot chain. The same `#ifdef` also
+switches the EFI allocator's `assert_se` on and off, so this is not only a logging
+question.
+
+Which `project.conf` supplies that configuration depends on who owns the element.
+krytis carried its own mirror at `elements/overrides/systemd-base.bst` — a krytis
+element, so krytis's `project.conf` applied, and its
+`elements: meson: variables: meson-global` is `--buildtype=debugoptimized`. On
+2026-10-01 that mirror was dropped for gnome-build-meta's
+`core-deps/systemd-base.bst` (systemd v261.2 + our patch → v261.3, `e629ce7`). That
+element is a junction element, so gnome-build-meta's `project.conf` took over —
+`meson-global: --buildtype=plain`. The two element bodies are byte-identical in
+`meson-local`; only the project that owns them changed. The banner vanished from the
+shipped image, and with it every grep keyed on it: `mise run enroll-test`'s
+second-boot assertion went red on the next published image and stayed red, reporting
+INCONCLUSIVE against an image that was enrolling and booting exactly as designed.
+
+**The release-stable channel is the firmware's own lines:**
+
+```
+BdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+Reboot Into Firmware Interface …        <- the loader's menu: it ran, not just started
+```
+
+`BdsDxe: starting` is printed only after `LoadImage` succeeded, i.e. after the
+Authenticode check: an image the firmware refuses gets `BdsDxe: failed to load …:
+Access Denied -- rejected probably by Secure Boot` in its place. That is measured,
+not inferred — A/B on one OVMF build, one ESP, one varstore, the only variable being
+whether the loader was signed — and it is why `mise run enroll-test` now gates on the
+firmware's line *plus* the loader's own menu instead of on a banner. systemd-boot
+draws that menu whenever it executes, and with no entries and no `loader.conf` on the
+ESP the only thing it can show is the built-in `Reboot Into Firmware Interface`.
+
+Two things to carry forward:
+
+- **Never gate on a line a debug build prints.** One grep in the source settles it;
+  this one was `#ifdef EFI_DEBUG`. A line that appears in every log you have ever
+  looked at can still be conditional on a build option nobody re-reads.
+- **A meson element's flags come from the project that owns it.** Retargeting an
+  override or swapping a junction re-points `meson-global`, and with it
+  `--buildtype`, `-O`, `-g`, `EFI_DEBUG` and every other option the build type feeds,
+  without touching a line of the element. When a build changes owner, diff the two
+  `project.conf`s as well as the two elements.
 
 ## Every shipped `.auth` enrolled an empty allow-list — `cert-to-efi-sig-list` wants PEM
 
@@ -798,11 +862,15 @@ qemu-system-x86_64 -enable-kvm -m 1024 -machine q35,smm=on \
 ```
 
 8 seconds later the verdict is in `serial.log`, and it is unambiguous: a second
-`BdsDxe: starting` + `systemd-boot@` after the enrollment reboot means the firmware
-now trusts the loader; `failed to load … Access Denied` means it does not; and one
-`systemd-boot@` with no rejection at all is INCONCLUSIVE — that first boot happened
-in setup mode and enforced nothing. Then dump what actually landed with
-`virt-fw-vars --input vars.fd --print` and check the db size against the table
+`BdsDxe: starting` after the enrollment reboot means the firmware loaded the signed
+loader again — now with Secure Boot enforcing — and entered it; `failed to load …
+Access Denied` means it refused it; and a single `BdsDxe: starting` with no
+rejection at all is INCONCLUSIVE, because that first boot happened in setup mode and
+enforced nothing. The loader's own menu, drawn immediately after the second one,
+is what shows it ran rather than merely started, and it is now the only thing the
+loader itself says — `mise run enroll-test` gates on exactly those two lines (§ The
+`systemd-boot@` serial banner is a debug artefact). Then dump what actually landed
+with `virt-fw-vars --input vars.fd --print` and check the db size against the table
 above. Vary one input at a time — this is how #438 was isolated to the `.auth`
 files rather than the disk, the installer, or the firmware configuration.
 
@@ -832,13 +900,15 @@ needed at all. Install from the sealed ISO, boot the disk against a pristine
 
 ```
 BdsDxe: starting Boot0002 …            <- setup mode, nothing enforced yet
-systemd-boot@0x101300000 260.2
 Enrolling secure boot keys from directory: \loader\keys\auto
 Custom Secure Boot keys successfully enrolled, rebooting the system now!
 BdsDxe: starting Boot0002 …            <- now enforcing, and it still starts
-systemd-boot@0x101300000 260.2
-systemd-stub@0x14df91000 260.2         <- UKI signature verified too
 ```
+
+The `systemd-boot@…` and `systemd-stub@…` lines that used to follow each of those
+are gone — they were EFI_DEBUG output, not part of a release build (§ The
+`systemd-boot@` serial banner is a debug artefact) — so what the boot chain did is
+read in-guest instead:
 
 In-guest afterwards: `is-system-running` → `running`, `bootctl status` →
 `Secure Boot: enabled (user)`, no failed units, `bootc status` booted image

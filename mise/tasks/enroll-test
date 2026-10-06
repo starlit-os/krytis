@@ -32,6 +32,12 @@ done
 IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:sealed}}"
 KEEP="${CLI_KEEP:-${usage_keep:-}}"
 
+# systemd-boot's built-in entry title. The loader draws its menu whenever it runs,
+# and this ESP carries no entries of its own, so that title is the loader's own
+# proof that it executed — the `systemd-boot@` banner is not, and cannot be: it is
+# compiled in only under `#ifdef EFI_DEBUG`. See the verdict for the whole story.
+LOADER_MENU='Reboot Into Firmware Interface'
+
 podman image exists "${IMAGE}" || {
     echo "ERROR: ${IMAGE} not found locally — run 'mise run seal-uki' first." >&2
     exit 1
@@ -88,18 +94,27 @@ qemu-system-x86_64 \
     -serial "file:${WORKDIR}/serial.log" \
     -daemonize -pidfile "${WORKDIR}/qemu.pid"
 
-# Enrollment reboots the guest once, so wait for the SECOND firmware pass.
+# Enrollment reboots the guest once, so wait for the SECOND firmware pass. Wait for
+# the loader's own menu as well, not just the firmware's lines: the verdict asserts
+# on both, and the single second between breaking out here and killing QEMU is not a
+# race worth leaving in. A rejected second boot prints its rejection instead and is
+# caught below.
 DEADLINE=$((SECONDS + 90))
 while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    grep -qE 'Access Denied|Security Violation' "${WORKDIR}/serial.log" 2>/dev/null && break
     grep -q 'successfully enrolled' "${WORKDIR}/serial.log" 2>/dev/null && \
-        [ "$(grep -c 'BdsDxe: \(starting\|failed to load\) Boot0002' "${WORKDIR}/serial.log")" -ge 2 ] && break
+        [ "$(grep -c 'BdsDxe: \(starting\|failed to load\) Boot0002' "${WORKDIR}/serial.log")" -ge 2 ] && \
+        grep -q "${LOADER_MENU}" "${WORKDIR}/serial.log" 2>/dev/null && break
     sleep 3
 done
 kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
 sleep 1
 
 echo "==> [4/4] Verdict"
-sed -n 's/^/    /p' <<<"$(grep -E 'systemd-boot@|Enrolling|successfully enrolled|BdsDxe: (starting|failed to load)' "${WORKDIR}/serial.log" | head -8)"
+# What the verdict keys on, in order. The `systemd-boot@`/`systemd-stub@` banners are
+# deliberately absent: they exist only in a build with EFI_DEBUG, which the image no
+# longer is — see the note above the second-boot assertion.
+sed -n 's/^/    /p' <<<"$(grep -E 'Enrolling|successfully enrolled|BdsDxe: (loading|starting|failed to load)|Reboot Into Firmware Interface' "${WORKDIR}/serial.log" | head -12)"
 
 echo "    --- enrolled variables ---"
 VARS_DUMP=$(virt-fw-vars --input "${WORKDIR}/vars.fd" --print 2>/dev/null)
@@ -178,14 +193,41 @@ if grep -q 'Access Denied\|Security Violation' "${WORKDIR}/serial.log"; then
 fi
 
 # The loader must come up a SECOND time, after the enrollment reboot, with Secure
-# Boot now enforcing. One `systemd-boot@` line only proves the pre-enrollment
-# boot, which happened in setup mode and enforced nothing.
-if [ "$(grep -c 'systemd-boot@' "${WORKDIR}/serial.log")" -lt 2 ]; then
-    echo "FAIL: the loader did not start again after the enrollment reboot, and the firmware" >&2
-    echo "      printed no rejection either — INCONCLUSIVE, a silent firmware proves nothing." >&2
+# Boot now enforcing. One first-boot line only proves the pre-enrollment boot, which
+# happened in setup mode and enforced nothing.
+#
+# The firmware's own lines carry that, and they are the only release-stable channel
+# there is. This check used to count `systemd-boot@<load address> <version>` lines,
+# which stopped existing in the published image on 2026-10-02 — every publish since
+# then failed this gate — because systemd prints that banner from `notify_debugger()`
+# only under `#ifdef EFI_DEBUG` (src/boot/util.c), set by src/boot/meson.build when
+# `get_option('debug')` is on — and the systemd this image ships is now built from
+# gnome-build-meta's element under gnome-build-meta's project.conf, whose
+# `meson-global: --buildtype=plain` turns that option off. See
+# docs/skills/secure-boot.md § The `systemd-boot@` serial banner is a debug artefact.
+#
+# `BdsDxe: starting` is printed only once LoadImage has succeeded, i.e. after the
+# signature check: an image the firmware refuses gets `BdsDxe: failed to load …:
+# Access Denied -- rejected probably by Secure Boot` in its place, which the check
+# above already fails on. Two of them therefore mean the firmware verified and
+# started the signed loader under enforcement.
+if [ "$(grep -c 'BdsDxe: starting Boot0002' "${WORKDIR}/serial.log")" -lt 2 ]; then
+    echo "FAIL: the firmware never started the loader a second time after the enrollment" >&2
+    echo "      reboot, and printed no rejection either — INCONCLUSIVE, a silent firmware" >&2
+    echo "      proves nothing." >&2
     echo "      Inspect with: mise run enroll-test --keep" >&2
     exit 1
 fi
 
-echo "==> PASS: keys enrolled from the image's own .auth files, and the firmware then"
-echo "    verified the signed systemd-boot under enforcement."
+# ...and it must have RUN, not merely been entered. The menu is drawn by the loader
+# itself; with no entries on this ESP its built-in one is always shown.
+if ! grep -q "${LOADER_MENU}" "${WORKDIR}/serial.log"; then
+    echo "FAIL: the firmware started the signed loader, but the loader printed nothing of" >&2
+    echo "      its own — no menu, so it did not get as far as running." >&2
+    echo "      Inspect with: mise run enroll-test --keep" >&2
+    exit 1
+fi
+
+echo "==> PASS: keys enrolled from the image's own .auth files, the firmware then"
+echo "    verified and started the signed systemd-boot under enforcement, and the"
+echo "    loader ran."

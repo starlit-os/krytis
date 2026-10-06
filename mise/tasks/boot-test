@@ -305,7 +305,8 @@ CRED_ARGS=(
 #   1. `console=ttyS0`, injected through systemd-stub's SMBIOS cmdline-extra. A
 #      sealed UKI's own cmdline is signed and cannot be edited, and with a VGA
 #      device present /dev/console is tty0 — so the prompt is written to a
-#      framebuffer nobody is reading and the serial log stops at `systemd-stub@`.
+#      framebuffer nobody is reading and the serial log stops at the firmware's
+#      `BdsDxe: starting` line.
 #      That is exactly what the first version of this gate mistook for "no prompt
 #      ever appeared". The stub REFUSES cmdline-extra under Secure Boot
 #      enforcement, which is why --secure is rejected with --luks-passphrase.

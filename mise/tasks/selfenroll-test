@@ -118,8 +118,10 @@ done
 sleep 1
 
 echo "==> [3/3] Verdict"
-grep -E 'Enrolling|successfully enrolled|BdsDxe: (starting|failed to load)|systemd-boot@|systemd-stub@' \
-    "${WORKDIR}/serial.log" | head -8 | sed 's/^/    /'
+# Firmware lines only: the `systemd-boot@`/`systemd-stub@` banners are compiled in
+# only under EFI_DEBUG and no longer appear — see mise/tasks/enroll-test.
+grep -E 'Enrolling|successfully enrolled|BdsDxe: (loading|starting|failed to load)' \
+    "${WORKDIR}/serial.log" | head -12 | sed 's/^/    /'
 sed -n '/===KRYTIS-SELFENROLL===/,/===KRYTIS-SELFENROLL-END===/p' "${WORKDIR}/serial.log" \
     | tr -d '\r' | sed 's/^/    /'
 
