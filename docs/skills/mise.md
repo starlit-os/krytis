@@ -96,17 +96,17 @@ other build.
 
 Seen 2026-10-02: a `mise run build --pull` started compiling
 `bootstrap/build/gcc-stage2.bst` from scratch, with 242 of 917 elements missing locally,
-including `components/rust.bst` and `components/llvm.bst`. The cause was the **external
-drive holding the local BuildStream cache was not mounted**, so `~/.cache/buildstream` was
-a near-empty directory on the home volume and everything looked like a miss. Nothing in the
-build output says "your cache is gone"; it just starts building gcc.
+including `components/rust.bst` and `components/llvm.bst`. The local BuildStream cache
+the build normally runs against was not available, so `~/.cache/buildstream` was nearly
+empty and everything looked like a miss. Nothing in the build output says "your cache is
+gone"; it just starts building gcc.
 
 Likely causes, in order, and what to check:
 
-1. **The local cache volume isn't mounted.**
-   `findmnt -T ~/.cache/buildstream`: if it reports the home volume rather than the cache
-   drive, the cache is missing. `du -sh ~/.cache/buildstream/cas` shows how much is
-   actually there.
+1. **The local cache is missing or empty.** `du -sh ~/.cache/buildstream/cas` shows how
+   much is actually there; a few hundred MB where there are normally tens of GB means the
+   cache this machine usually builds against isn't in place. Where that cache lives is
+   machine-specific, so ask the user rather than guessing.
 2. **No remote cache.** The build was started without `--pull`/`--push`, or the token did
    not resolve, or bow (`bst-cache.ririi.dev`) is unreachable. Check the build's
    `Initializing remote caches` line and the `artifacts:` block of the generated
