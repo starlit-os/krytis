@@ -336,16 +336,20 @@ Ctrl+Alt+F5
 
 In order, on that VT:
 
-1. `systemd-firstboot --prompt-keymap-auto --prompt-timezone` — keymap and timezone.
-   Locale is baked (`config/locale-data.bst`) and root stays locked
-   (`root:!unprovisioned`), so neither is asked.
+1. `systemd-firstboot --prompt-keymap-auto --prompt-timezone` — a **keymap** prompt, then
+   a **timezone** prompt. Before #531 neither appeared on a real install (the boot had
+   already pre-set both files; see `docs/design/first-boot-setup.md` § Late first-boot
+   prompts). Locale is baked (`config/locale-data.bst`) and root stays locked
+   (`root:!unprovisioned`), so neither is asked. Skipping either leaves the default (US
+   keymap, UTC) and asks again on the next boot until the account exists.
 2. `homectl firstboot --prompt-new-user` — the initial account, created as a
    **systemd-homed** user: encrypted home, FIDO2-login-ready, and `--member-of=wheel`
    so it is the admin account. `--prompt-shell=no --prompt-groups=no` are deliberate;
    answering a groups prompt would overwrite `memberOf` wholesale.
 
 - [ ] tty5 shows the wizard, not a bare `login:` prompt
-- [ ] Keymap/timezone accepted
+- [ ] Keymap and timezone were both **asked** and accepted: `/etc/vconsole.conf` has the
+      chosen `KEYMAP=`, and `timedatectl show -p Timezone` shows the chosen zone
 - [ ] The account is created, and `homectl list` shows it
 - [ ] Switching back to vt1 (Ctrl+Alt+F1) lets you log in as that user
 - [ ] `getent passwd <name>` resolves, and `id <name>` shows `wheel`

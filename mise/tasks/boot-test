@@ -701,6 +701,42 @@ if [ -n "${POLKIT_MISSING}" ]; then
     FAILED=1
 fi
 
+# The first-boot wizard must actually reach its prompts (#531). For months it
+# exited instantly, skipping keymap and timezone without a word, because both
+# files already existed: /etc/vconsole.conf copied from the factory by
+# tmpfiles.d/etc.conf's `C!`, /etc/localtime shipped by tzdata. Nothing failed;
+# only a human on real hardware noticed. No user exists in this VM, so the
+# wizard runs on every boot, and it must be sitting at its keymap prompt on tty5
+# (/dev/vcs5 is that VT's screen) with the image's /etc/localtime removed, i.e.
+# the timezone prompt comes next. Retried briefly: Type=exec means the unit is
+# "started" before the prompt is printed.
+WIZARD_SCREEN=""
+for _ in $(seq 1 20); do
+    WIZARD_SCREEN=$(SSH 'cat /dev/vcs5' 2>/dev/null | tr -s ' ' || true)
+    case "${WIZARD_SCREEN}" in *"new keymap name"*) break ;; esac
+    sleep 1
+done
+if [ "$(SSH 'test -e /etc/localtime || test -L /etc/localtime; echo $?' 2>/dev/null)" = 0 ]; then
+    LOCALTIME_STATE=present
+else
+    LOCALTIME_STATE=removed
+fi
+case "${WIZARD_SCREEN}" in
+    *"new keymap name"*)
+        if [ "${LOCALTIME_STATE}" = removed ]; then
+            echo "    first-boot wizard is at its keymap prompt on tty5; timezone prompt pending"
+        else
+            echo "    FAIL: wizard reached the keymap prompt but /etc/localtime is still present — the timezone prompt will be skipped (#531)" >&2
+            FAILED=1
+        fi
+        ;;
+    *)
+        echo "    FAIL: first-boot wizard is not at its keymap prompt on tty5 — systemd-firstboot skipped it (#531)" >&2
+        printf '      tty5 screen: %.300s\n' "${WIZARD_SCREEN:-<empty>}" >&2
+        FAILED=1
+        ;;
+esac
+
 echo "==> [5/5] Shutting down..."
 SSH systemctl poweroff &>/dev/null || true
 sleep 5

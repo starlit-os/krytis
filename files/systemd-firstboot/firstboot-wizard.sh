@@ -11,6 +11,9 @@
 # Safe to re-run on every boot until it completes, because both steps are
 # already idempotent:
 #   * systemd-firstboot skips any value already present in /etc (no --force).
+#     The two values a fresh boot pre-sets, /etc/vconsole.conf and /etc/localtime,
+#     are removed below only while they are still those defaults, so an answer
+#     from an earlier boot is never discarded.
 #   * homectl firstboot returns without prompting once a regular user exists
 #     (systemd src/home/homectl.c, has_regular_user()).
 #
@@ -47,9 +50,58 @@ note "starting first-boot wizard on $(tty 2>/dev/null || echo 'unknown tty')"
 #
 # No --prompt-locale (locale is baked by config/locale-data.bst) and no
 # --prompt-root-password (root stays locked as root:!unprovisioned).
+#
+# #531: before this, neither prompt ever appeared. systemd-firstboot never asks
+# for a value whose file already exists (should_configure() in firstboot.c is a
+# bare existence check), and on a fresh boot both files already exist by the
+# time this runs:
+#
+#   /etc/vconsole.conf  systemd's own tmpfiles.d/etc.conf has
+#                       `C! /etc/vconsole.conf`, which copies the comment-only
+#                       /usr/share/factory/etc/vconsole.conf into /etc during
+#                       systemd-tmpfiles-setup.service. Upstream's
+#                       systemd-firstboot.service is ordered before that copy;
+#                       this unit runs after systemd-user-sessions.service, long
+#                       after it.
+#   /etc/localtime      components/tzdata.bst ships it in the image as an
+#                       absolute symlink to /usr/share/zoneinfo/UTC.
+#
+# So remove each one just before prompting, but only while it is still that
+# default. A file identical to the factory copy configures nothing. An absolute
+# link to UTC is the image's: systemd-firstboot and timedatectl both write a
+# RELATIVE link (../usr/share/zoneinfo/<zone>), so a real choice never matches.
+# Not --force, which would also overwrite the deliberately baked locale.
+#
+# --prompt-keymap-auto is fine as it is: it prompts when stdout is a VT, and
+# this unit's stdout is /dev/tty5. The "not on the local console" theory in
+# #531 was not the cause.
+FACTORY_VCONSOLE=/usr/share/factory/etc/vconsole.conf
+IMAGE_LOCALTIME=/usr/share/zoneinfo/UTC
+removed_vconsole=false
+removed_localtime=false
+if [ -f /etc/vconsole.conf ] && cmp -s /etc/vconsole.conf "${FACTORY_VCONSOLE}"; then
+    rm -f /etc/vconsole.conf && removed_vconsole=true
+fi
+if [ "$(readlink /etc/localtime 2>/dev/null)" = "${IMAGE_LOCALTIME}" ]; then
+    rm -f /etc/localtime && removed_localtime=true
+fi
+
 if ! systemd-firstboot --prompt-keymap-auto --prompt-timezone \
         --welcome=no --mute-console=yes; then
     log "keymap/timezone step failed, continuing"
+fi
+
+# A skipped prompt writes nothing. Put the defaults back rather than leave the
+# files missing: timedatectl and anything that reads the link would otherwise
+# see an unset zone. The next boot removes them again and re-asks, until a user
+# exists.
+if [ "${removed_vconsole}" = true ] && [ ! -e /etc/vconsole.conf ]; then
+    cp "${FACTORY_VCONSOLE}" /etc/vconsole.conf \
+        || log "could not restore /etc/vconsole.conf from ${FACTORY_VCONSOLE}"
+fi
+if [ "${removed_localtime}" = true ] && [ ! -e /etc/localtime ] && [ ! -L /etc/localtime ]; then
+    ln -s "${IMAGE_LOCALTIME}" /etc/localtime \
+        || log "could not restore /etc/localtime -> ${IMAGE_LOCALTIME}"
 fi
 
 # --member-of=wheel grants sudo (%wheel ALL=(ALL) ALL, from freedesktop-sdk's
