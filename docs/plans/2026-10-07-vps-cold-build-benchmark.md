@@ -1,11 +1,12 @@
-# Benchmark cold-cache builds: krytis-vps vs one.com M and L
+# Benchmark cold-cache builds: krytis-vps vs one.com L
 
 **Issue:** none · **Branch:** `docs/vps-cold-cache-benchmark-plan` · **Worktree:**
 `krytis.worktrees/docs/vps-cold-cache-benchmark-plan` · **Status: ready.** The Security Gate
-(§ Decisions, D5) was approved on 2026-10-07: registering two third-party hosts as repo
-runners, inside the window. Next is step 1.
+(§ Decisions, D5) was approved on 2026-10-07: registering a third-party host as a repo runner,
+inside the window. Next is step 1. Cloud server M was dropped the same day, leaving one one.com
+box.
 
-Measures how long a cold-cache build takes on today's runner and on two one.com tiers. Here
+Measures how long a cold-cache build takes on today's runner and on one.com Cloud server L. Here
 "cold" means an empty local cache and no artifact remote. This is the build a junction bump
 forces on cache-warm. The result is input for a human decision on whether to replace
 krytis-vps. This plan does not make that decision.
@@ -15,7 +16,6 @@ krytis-vps. This plan does not make that decision.
 | Name | Provider / plan | vCPU | RAM | Disk | Slots under today's formula |
 |---|---|---|---|---|---|
 | `krytis-vps` | Contabo Cloud VPS 6 | 6 | 12 GB (11 GiB `MemTotal`) | 200 GB | 5 → builders 2 × max-jobs 3 = 6 |
-| `bench-onecom-m` | one.com Cloud server M | 4 | 8 GB | 200 GB NVMe | ~3 (if `MemTotal` floors to 7 GiB) → 2 × 2 = 4 |
 | `bench-onecom-l` | one.com Cloud server L | 8 | 16 GB | 400 GB NVMe | ~7 (15 GiB) → 2 × 4 = 8 |
 
 one.com specs come from <https://www.one.com/en-gb/vps/>, checked 2026-10-07. The page
@@ -44,7 +44,7 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
   `Pulled from a remote = 0` assertion proves it for each run.
 - **The sizing formula overshoots its own budget.** `MAX_JOBS = ceil(SLOTS / BUILDERS)` with
   `BUILDERS=2` gives `2 × ceil(SLOTS/2)`, which is one compiler more than `SLOTS` whenever
-  `SLOTS` is odd. krytis-vps (5 slots) runs 6 today, and M (about 3) would run 4. The benchmark
+  `SLOTS` is odd. krytis-vps (5 slots) runs 6 today; L (about 7) would run 8. The benchmark
   measures the formula as it is, because that is what production would run. Recorded in
   docs/skills/ci-runner.md § Build concurrency is `builders` x `max-jobs`, not fixed here.
 - **`publish.yml`'s `force_self_hosted` matches any runner with default labels.** It targets
@@ -54,11 +54,11 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
   workspace. Hence D4.
 - **A pull request can target any runner label, whatever is disabled on `main`.** krytis is
   public. A `pull_request` run uses the workflow file from the PR, so a PR can add a job with
-  `runs-on: [bench-onecom-m]`. The only check is the fork-PR approval policy, which is
+  `runs-on: [bench-onecom-l]`. The only check is the fork-PR approval policy, which is
   `first_time_contributors` (`gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`,
   2026-10-07). Under that policy, anyone with one previously approved contribution runs
-  without approval. krytis-vps has the same exposure today; the bench boxes add two hosts to
-  it while they are registered. Hence D5. This is also GitHub's default for public repos, not
+  without approval. krytis-vps has the same exposure today; the bench box adds a second host to
+  it while it is registered. Hence D5. This is also GitHub's default for public repos, not
   a setting anyone loosened: nothing in the repo or its issues records a change, and Renovate
   and the tracking bot push same-repo branches, which the policy never gates.
 - **`mise runner-vps:install`/`register` already work against another host.**
@@ -71,12 +71,12 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
 | # | Decision | Why |
 |---|---|---|
 | D1 | **No bow at all** on bench runs: no artifact remote and no source cache. Sources come from upstream. | No token on a third-party box, so nothing to mint or rotate. Pulls are impossible, so the runs are cold by construction. Per-element **build** times, the primary metric, do not depend on where sources came from. Cost: upstream mirror variance lands in the fetch time, which is reported separately. |
-| D2 | **Phase 1: toolchain closure** on all three boxes in parallel. Targets: `freedesktop-sdk.bst:components/llvm.bst freedesktop-sdk.bst:components/rust.bst`, `--deps all`, `-o x86_64_v3 true`. | The toolchain dominates a junction-bump rebuild and is the set the Toolchain Gate guards. It takes hours, not days. Builds on separate boxes share nothing, so running them in parallel costs no fairness. |
-| D3 | **Phase 2: continue to the full closure** (`oci/krytis/image.bst --deps all`, no wipe) on krytis-vps and on the **cheapest one.com tier that beat krytis-vps in phase 1**. If neither beat it, skip phase 2 on one.com. | phase 1 + phase 2 adds up to a cold full build. Running phase 2 on krytis-vps also refills its production CAS by building it, so the wipe costs no bow pull afterwards. |
-| D4 | **Keep bench boxes out of `publish.yml`'s reach two ways:** register them with `--no-default-labels`, one label each (`bench-onecom-m`, `bench-onecom-l`), **and** disable `publish.yml` for the window. | Either alone closes the `force_self_hosted` route. The label survives an early re-enable; the disable survives a registration done without the flag. Both cost nothing. |
-| D5 | **Security Gate, a bounded window, and a permanent approval policy.** A human approves registering two one.com hosts as `starlit-os/krytis` runners. They are registered only once the window opens, just before phase 1, and deregistered as soon as their last bench run ends, not at write-up. The fork-PR approval policy becomes `all_external_contributors` when the window opens and **stays that way afterwards** (decided 2026-10-07). | They run repo code as root. The bench workflow is `workflow_dispatch`-only, `permissions: read-all`, and references no secrets, but any registered runner is reachable by a PR (§ Checked while writing). A shorter registration bounds the bench boxes' exposure. The permanent policy also closes the same route to krytis-vps (and to `build-changed.yml` if #1122 merges). It does not slow Renovate or the tracking bot, whose PRs come from same-repo branches. |
+| D2 | **Phase 1: toolchain closure** on both boxes in parallel. Targets: `freedesktop-sdk.bst:components/llvm.bst freedesktop-sdk.bst:components/rust.bst`, `--deps all`, `-o x86_64_v3 true`. | The toolchain dominates a junction-bump rebuild and is the set the Toolchain Gate guards. It takes hours, not days. Builds on separate boxes share nothing, so running them in parallel costs no fairness. |
+| D3 | **Phase 2: continue to the full closure** (`oci/krytis/image.bst --deps all`, no wipe) on krytis-vps, and on L **if L beat krytis-vps in phase 1**. If it did not, skip phase 2 on L. | phase 1 + phase 2 adds up to a cold full build. Running phase 2 on krytis-vps also refills its production CAS by building it, so the wipe costs no bow pull afterwards. |
+| D4 | **Keep the bench box out of `publish.yml`'s reach two ways:** register it with `--no-default-labels` and the single label `bench-onecom-l`, **and** disable `publish.yml` for the window. | Either alone closes the `force_self_hosted` route. The label survives an early re-enable; the disable survives a registration done without the flag. Both cost nothing. |
+| D5 | **Security Gate, a bounded window, and a permanent approval policy.** A human approves registering the one.com L host as a `starlit-os/krytis` runner (approved 2026-10-07). It is registered only once the window opens, just before phase 1, and deregistered as soon as its last bench run ends, not at write-up. The fork-PR approval policy becomes `all_external_contributors` when the window opens and **stays that way afterwards** (decided 2026-10-07). | It runs repo code as root. The bench workflow is `workflow_dispatch`-only, `permissions: read-all`, and references no secrets, but any registered runner is reachable by a PR (§ Checked while writing). A shorter registration bounds the bench box's exposure. The permanent policy also closes the same route to krytis-vps (and to `build-changed.yml` if #1122 merges). It does not slow Renovate or the tracking bot, whose PRs come from same-repo branches. |
 | D6 | **krytis-vps is made cold by wiping `/root/.cache/buildstream`** (chosen 2026-10-07), inside the bench workflow, after the stale-FUSE cleanup. | Simple and representative. bow holds 917/917 (37515434814), so production loses nothing it cannot pull back. |
-| D7 | **One run per box per phase.** Repeat phase 1 on any pair whose wall times are within 15% of each other. | VPS neighbours add noise. CPU steal is recorded so a noisy run is visible as noisy rather than being taken as slow. |
+| D7 | **One run per box per phase.** Repeat phase 1 on both boxes if their wall times are within 15% of each other. | VPS neighbours add noise. CPU steal is recorded so a noisy run is visible as noisy rather than being taken as slow. |
 | D8 | **Keep the bench workflow and compare task after the benchmark**, dispatch-only. | Runner evaluations recur: Contabo VPS 4 (2026-09-10), Hetzner on-demand (2026-09-08), Blacksmith 4vcpu (2026-10-07). The cold number is the one each of them lacked. |
 
 ## Steps
@@ -87,11 +87,11 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
       `--no-default-labels` to `config.sh`. Confirm the flag exists in the pinned
       `RUNNER_VERSION`'s `./config.sh --help` before relying on it.
 - [ ] `.github/workflows/bench-cold-build.yml`, `workflow_dispatch` only:
-  - inputs: `runner` (choice: `krytis-vps`, `bench-onecom-m`, `bench-onecom-l`), `phase`
+  - inputs: `runner` (choice: `krytis-vps`, `bench-onecom-l`), `phase`
     (choice: `toolchain`, `full`) and `resume` (boolean, default `false`; see § Risks, fetch
     failure);
-  - `runs-on`: `krytis-vps` → `["self-hosted","linux","x64","krytis-vps"]`, each bench label →
-    `["<label>"]`;
+  - `runs-on`: `krytis-vps` → `["self-hosted","linux","x64","krytis-vps"]`, `bench-onecom-l` →
+    `["bench-onecom-l"]`;
   - `timeout-minutes: 4320` (self-hosted allows 5 days);
   - steps reuse cache-warm.yml's: checkout, stale-FUSE cleanup, mise pinned to the same
     version, `mise bootstrap --yes --update`, `uv sync`, `generate-image-version`, userns
@@ -138,11 +138,11 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
       with the code, per AGENTS.md.
 - [ ] `mise run docs-links`.
 
-### 2. Provision the one.com boxes (needs D5)
+### 2. Provision the one.com box (needs D5)
 
-- [ ] Order Cloud server M and L, Debian 13 if it is offered (record the version otherwise),
-      with the `KrytisBuild` FIDO2 public key. Record the renewal prices in § Machines.
-- [ ] For each box, **install only, do not register yet** (D5):
+- [ ] Order Cloud server L, Debian 13 if it is offered (record the version otherwise),
+      with the `KrytisBuild` FIDO2 public key. Record the renewal price in § Machines.
+- [ ] **Install only, do not register yet** (D5):
       ```shell
       RUNNER_VPS_HOST=root@<ip> mise run runner-vps:install
       ```
@@ -162,38 +162,38 @@ exactly that until cache-warm has run.
       bench workflow must already be on `main`, because `workflow_dispatch` only sees workflows
       on the default branch.
 - [ ] `mise run bench-window open`.
-- [ ] Register each box:
+- [ ] Register the box:
       ```shell
-      RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_NAME=bench-onecom-m \
-        RUNNER_VPS_LABELS=bench-onecom-m RUNNER_VPS_NO_DEFAULT_LABELS=true \
+      RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_NAME=bench-onecom-l \
+        RUNNER_VPS_LABELS=bench-onecom-l RUNNER_VPS_NO_DEFAULT_LABELS=true \
         mise run runner-vps:register
       ```
 - [ ] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \([.labels[].name])"'`
-      shows each bench runner with **only** its own label.
-- [ ] Smoke: dispatch `runner=bench-onecom-m phase=toolchain`. Within the first 15 minutes,
+      shows `bench-onecom-l` with **only** its own label.
+- [ ] Smoke: dispatch `runner=bench-onecom-l phase=toolchain`. Within the first 15 minutes,
       check that `host.txt` looks right, the config print shows no remotes and the expected
       builders × max-jobs, and fetches are under way. If anything is wrong, cancel the run,
-      land a fix PR, move `bench/2026-10` to the fixed SHA, and smoke again. M is the right
-      smoke target: it holds nothing worth keeping. A clean smoke run can stay as M's phase 1
-      run.
+      land a fix PR, move `bench/2026-10` to the fixed SHA, and smoke again. L is the right
+      smoke target: a fresh box holds nothing worth keeping, while a bad smoke on krytis-vps
+      would wipe its CAS for nothing. A clean smoke run can stay as L's phase 1 run.
 
 ### 4. Phase 1: toolchain closure
 
-- [ ] Dispatch `phase=toolchain` on krytis-vps and L (and M, if the smoke run was cancelled),
-      within minutes of each other.
+- [ ] Dispatch `phase=toolchain` on krytis-vps (and on L again, if the smoke run was
+      cancelled).
 - [ ] Each run: toolchain 67/67 cached, `Pulled from a remote` 0, no OOM. A run that died on
       a fetch: re-dispatch the same box with `resume=true` and pass both IDs to
       `bench-compare` as `<id>+<id>`.
-- [ ] `mise run bench-compare <id-vps> <id-m> <id-l>`. Paste the table under § Results.
-- [ ] Apply D7 (repeat within 15%) and D3 (pick the phase 2 tier).
-- [ ] **Deregister every one.com box that phase 2 will not use**, now:
-      `RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_NAME=<name> mise run runner-vps:deregister`.
+- [ ] `mise run bench-compare <id-vps> <id-l>`. Paste the table under § Results.
+- [ ] Apply D7 (repeat within 15%) and D3 (phase 2 on L or not).
+- [ ] **If phase 2 skips L, deregister it now:**
+      `RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_NAME=bench-onecom-l mise run runner-vps:deregister`.
 
 ### 5. Phase 2: full closure (straight after phase 1)
 
-- [ ] Dispatch `phase=full` on krytis-vps and on the chosen tier.
+- [ ] Dispatch `phase=full` on krytis-vps, and on L if D3 kept it.
 - [ ] Each run: 917/917 cached, 0 pulled, no OOM. Cold full time = phase 1 wall + phase 2 wall.
-- [ ] **Deregister the remaining bench box** as soon as its run ends, then confirm the runners
+- [ ] **Deregister L** as soon as its run ends, if it is still registered, then confirm the runners
       list shows only krytis-vps (and the local runner, if it happens to be online).
 - [ ] `mise run bench-window close`. If phase 2 was skipped on krytis-vps, dispatch cache-warm
       now. It pulls the closure from bow; confirm it reports 917/917.
@@ -214,7 +214,7 @@ exactly that until cache-warm has run.
       update it (`gh pr list --state open --search 'first_time_contributors in:body'`, and the
       same for issues). #1122's description and its § PR build gate in ci-runner.md say "Not
       changed here" today.
-- [ ] Cancel the one.com subscriptions unless the decision keeps a box. A kept box gets
+- [ ] Cancel the one.com subscription unless the decision keeps the box. A kept box gets
       registered again as a production runner, through that decision, not this plan.
 - [ ] Delete branch `bench/2026-10`. `git mv` this plan to `docs/plans/done/`.
 
@@ -224,20 +224,17 @@ exactly that until cache-warm has run.
   the run. The local cache keeps everything built so far, and a `resume=true` dispatch
   continues from it without wiping. The box's time is the sum of its attempts. That
   includes some re-fetching, which shows up in fetch seconds, not build seconds.
-- **M may OOM on llvm.** It gets 4 compilers on about 7 GiB plus 8G swap. An OOM is a
-  result, not a harness bug: record it, re-run once, and report M's numbers with the OOM
-  noted.
 - **n = 1.** D7 covers close calls only. Sustained steal above about 10% in `vmstat.log`
   marks a run as noisy in § Results.
-- **The window stays open on a failure.** A long OOM/re-run loop on M keeps registrations in
-  place and publish disabled. Past two failed attempts on a box, deregister it and report it
+- **The window stays open on a failure.** A long OOM/re-run loop keeps the bench box
+  registered and publish disabled. Past two failed attempts on a box, deregister it and report it
   as failed rather than hold the window open.
 - **Network to bow is not measured.** A production one.com runner would push to bow
   (`bst-cache.ririi.dev`) over a different path than Contabo's. D1 trades that measurement
   away. One `mise run warm-cache --pull` of a large element from each box would cover it, if
   the decision ends up hinging on it.
 - **builders = 2 caps scaling.** L's 8 cores run 2 × 4, the production formula. If L barely
-  beats M, check the per-element table before blaming the CPU. Single-element compiles
+  beats krytis-vps, check the per-element table before blaming the CPU. Single-element compiles
   (llvm) use only `max-jobs`.
 
 ## Results
