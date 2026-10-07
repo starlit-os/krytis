@@ -50,9 +50,6 @@ jobs:
           # base as HEAD^1, so the diff is exactly what this PR changes.
           fetch-depth: 2
 
-      - name: Clear stale FUSE mounts
-        run: scripts/clear-stale-fuse-mounts.sh
-
       # `version:` is required on this persistent box: without it mise-action
       # keeps whatever mise is already installed. See docs/skills/ci-runner.md
       # § Pin the mise version, not just the action.
@@ -62,6 +59,11 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.3
           experimental: true
+          # The tools already live in /root/.local/share/mise on this box. The
+          # actions/cache restore downloaded 621 MB for 1m44s, then `mise
+          # install --locked` reported all 11 "already installed" (run
+          # 37588594526).
+          cache: false
 
       # No `mise bootstrap`: provision.sh installed the host packages and
       # cache-warm re-runs bootstrap on this box every weekday.
