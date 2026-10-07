@@ -179,9 +179,9 @@ all binding on this plan:
 - Worktree: `.worktrees/feat/gh245-add-bazaar-curated-recommends`, branch
   `245-add-bazaar-curated-recommends` (top-level issue — `gh issue view 245 --json parent`
   returns `"parent": null`).
-- **No PR gate builds BST elements.** `.github/workflows/checks.yml` is static-only
-  (`mise-lock --check`, `mise-pin-check`, `docs-links`, `bash -n`, `py_compile`). Build the
-  touched element locally before opening the PR.
+- **The PR gate builds only the changed elements.** `.github/workflows/build-changed.yml`
+  builds `config/bazaar-config.bst` and `stacks/desktop.bst` on the PR, but not the image.
+  Run `mise run build-changed` locally before opening the PR.
 - Note `bash -n` in CI globs `mise/tasks/*`, `mise/tasks/*/*` and `scripts/*.sh` only — a
   script under `files/bazaar/` is **not** syntax-checked by CI. Run `bash -n` on it by hand.
 
@@ -569,9 +569,9 @@ mise run bst -- artifact checkout --tar /tmp/bazaar.tar config/bazaar-config.bst
 tar tf /tmp/bazaar.tar | grep -E 'bazaar|krytis'
 ```
 
-Expect exactly the six paths under **Produces** above and nothing else. This is the only
-build-time proof available — no PR gate compiles elements
-(`.github/workflows/checks.yml` is static-only; `cache-warm.yml` runs on cron).
+Expect exactly the six paths under **Produces** above and nothing else. The PR gate
+(`build-changed.yml`) proves the element builds; only this checkout proves what it
+installs.
 
 ---
 

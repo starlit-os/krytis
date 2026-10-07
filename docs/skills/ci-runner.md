@@ -305,6 +305,11 @@ workflow that builds. Found while investigating #824 option B, which was then
 declined for unrelated reasons — see
 `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md` § Findings that outlive this decision.
 
+`mise run build-changed`, the one `--pull` caller that runs on this box, sidesteps it by
+passing `--builders`/`--max-jobs` as bst global options, which take precedence over the
+config file. That is a workaround for one caller, not the fix this section asks for (§ PR
+build gate: `build-changed.yml` (#743)).
+
 ### An OOM must not decommission the runner
 
 `svc.sh install`'s generated unit carries **no `Restart=` at all** and
@@ -363,11 +368,11 @@ That is enough to fail a step outright — run 34696760836 died in
 build, with four such mounts left by the previous OOM kill. On an ephemeral
 runner this is invisible; on this box it persists until something unmounts
 it, and now that `OOMPolicy=continue` keeps the runner alive across a kill,
-the residue is *guaranteed* to reach the next job. `cache-warm.yml` has a
-self-hosted-only `Clear stale FUSE mounts` step that probes each buildstream
-FUSE mountpoint with `stat -f` and `umount -l`s (falling back to
-`fusermount -u`) the dead ones — both halves of that ordering are corrections
-to the step's first version, below.
+the residue is *guaranteed* to reach the next job. `scripts/clear-stale-fuse-mounts.sh`,
+run first by every job that builds on this box (`cache-warm.yml`, `build-changed.yml`),
+probes each buildstream FUSE mountpoint with `stat -f` and `umount -l`s (falling back to
+`fusermount -u`) the dead ones. Both halves of that ordering are corrections to the
+sweep's first version, below.
 
 **But cleaning up at job start is not sufficient, and that was the more
 useful finding.** Run 34723320921 cleared one stale mount at 22:39:16 and
@@ -515,6 +520,19 @@ runner back. It now skips `config.sh` when the box is already configured and
 skips `svc.sh install` when the unit exists, so re-running it just
 re-asserts the service and the drop-in. Re-key by running
 `mise runner-vps:deregister` first.
+
+### Jobs here run with no `HOME`
+
+Jobs on this box get no `HOME` in their environment. The likely cause, not yet checked on
+the box, is that the runner's system service sets no `User=`, so systemd sets no `HOME`.
+Most of the stack doesn't notice:
+bash's `~` and Python's `os.path.expanduser` (which BuildStream uses for
+`~/.cache/buildstream` and `~/.config`) fall back to the passwd entry, `/root`. That is why
+cache-warm, which writes `~/.config/buildstream.conf` and runs `uv run bst`, always worked.
+A bash task that reads `${HOME}` under `set -u` dies instead. The first `build-changed.yml`
+run on this box failed with `./mise/tasks/bst: line 184: HOME: unbound variable` (run
+37589150439). `mise/tasks/bst` now resolves `HOME` from `getent passwd` when it is unset.
+Any new bash task that reads `${HOME}` and can run here needs the same fallback.
 
 ## `build-iso.yml` — ISO Build CI Job (issue #844)
 
@@ -668,6 +686,102 @@ object listing, so a cancelled run or a dead runner strands ~4.5 GB
 indefinitely while the bucket still shows exactly two objects. The rule
 (abort incomplete multipart uploads after 1 day) is the only thing keeping
 a repeatedly-failing publish from quietly eating the 10 GB-month free tier.
+
+## PR build gate: `build-changed.yml` (#743)
+
+`Checks` never compiles anything, so an element that stops building used to pass every PR
+gate: #735 broke `core/sudo-rs.bst` with every check green, and `publish` found it about
+two hours after merge. `build-changed.yml` runs `mise run build-changed --base HEAD^1` on
+every same-repo PR, on `krytis-vps`. The task builds the elements the PR changes and pulls
+everything else, so a human gets the same answer locally with `mise run build-changed`.
+
+**What it builds.** The diff between the merge base and the working tree, plus untracked
+files:
+
+| Change | Result |
+|---|---|
+| `elements/**/*.bst` | built |
+| `files/**`, `patches/**` | the elements whose `kind: local`/`kind: patch` source `path:` contains the file are built; an unreferenced file (e.g. `files/runner-vps/`) is ignored |
+| `elements/oci/**` | not built: image assembly is `publish`'s job |
+| `project.conf`, `include/**`, a `kind: junction` element, a non-`.bst` file under `elements/` | **whole build skipped**, with a `::notice::` naming the file |
+| anything else | not a BuildStream input, ignored |
+
+Before building, it runs `toolchain-cache-check --pull`. If the toolchain can't be pulled
+(cache-warm hasn't run since a junction bump), the job fails instead of spending hours on
+the only VPS runner. Builds use `--retry-failed`, because this box keeps failed artifacts in
+its local cache and would otherwise re-report a flaky failure instantly.
+
+**A green run does not mean the image builds.** The deliberate blind spots:
+
+1. **Reverse dependencies are not built.** That is the 420-minute `publish` job. The gate
+   targets an element's own build: install-commands, refs, missing dependencies.
+   Compose and file-overlap regressions still surface only in `publish`.
+2. **Graph-wide changes are skipped.** A change to `project.conf`, `include/` or a junction
+   can change every cache key, so building the changed elements could compile most of the
+   graph. `mise run validate` still resolves it.
+3. **Fork PRs are skipped.** They get no secrets, so no bow token. That is why the gate is
+   not a required check.
+
+Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` and
+`reopened` trigger the gate (see below).
+
+**Why the workflow is shaped this way:**
+
+- **Its own workflow, not a `checks.yml` job.** `checks.yml` also runs on `edited`
+  (`docs/skills/workflow.md` § Retargeted PRs Skip CI Without `edited` in the Workflow
+  Trigger), and its run-level `cancel-in-progress` would kill a build here on every
+  PR-description edit.
+- **`cancel-in-progress: false`.** A killed build on this persistent box leaves dead FUSE
+  mounts and leaked `cas/tmp` behind (§ A killed build leaves FUSE mounts that break every
+  later `df`; § A killed casd leaks `cas/tmp`, and it is the box's disk ratchet (#938)). A
+  newer push waits for the running build instead, and GitHub keeps only the newest pending
+  run.
+- **`krytis-vps`, not a hosted runner.** cache-warm builds `--deps all` there, so the local
+  CAS already holds the closure and most dependencies are local hits. There is only one
+  such runner, so a PR build queues behind a running cache-warm, which can take hours after
+  a junction bump. `timeout-minutes: 45` stops a runaway build from holding the box.
+- **`BST_CACHE_QUOTA: 100G`.** `mise/tasks/bst --pull` writes its own config with
+  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaces cache-warm's 100G. BuildStream passes the
+  quota to casd as `--quota-high`, so a 50G quota on a CAS that holds more would expire the
+  warm artifacts every later job relies on.
+- **`--builders`/`--max-jobs` on the command line.** The same `--config` replacement drops
+  cache-warm's concurrency sizing (§ …but that sizing only reaches callers that use the
+  *default* user config). The task computes the same formula (2 GiB per compiler, at most
+  one per core, two builders) and passes it as bst global options, which override the
+  config file. On a 12-core, 30 GiB laptop that gives 2 builders × 6 jobs.
+- **Checkout at depth 2, `--base HEAD^1`.** The default `pull_request` ref is the PR merged
+  into its base, so `HEAD^1` is the base and the diff is exactly the PR.
+- **`cache: false` on `jdx/mise-action`.** On this persistent box the tools already live in
+  `/root/.local/share/mise`, but the action's default `actions/cache` restore still
+  downloaded a 621 MB tarball (1m44s of a 1m45s step, run 37588594526). `mise install
+  --locked` then reported all 11 tools "already installed". cache-warm's `Setup mise` pays
+  the same restore: 5m19s in run 37515434814.
+
+**Security.** The job runs PR-authored code (the task, the workflow, every element's
+commands) as root on a persistent host. That is acceptable only because it is limited to
+same-repo branches, whose authors already have write access, and it only gets the
+**pull** token, so a PR can't write to bow. The `if:` guard protects this job only. A fork
+PR can edit any workflow to target `krytis-vps`, as it could before this gate existed. What
+stops that is the repository's fork-PR approval policy. It was `first_time_contributors`,
+which lets a returning outside contributor's fork PR run with no approval. With this gate,
+it was changed on 2026-10-07 to `all_external_contributors`, so every outside contributor's
+fork PR waits for a maintainer to approve the run. Check it with `gh api
+repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`. **Approving a
+fork PR's run approves whatever workflow that PR contains**, so read its `.github/` diff
+before clicking.
+
+Verified 2026-10-07 against current `main`, re-applying #735's `-Dm440` to
+`core/sudo-rs.bst`, then #740's form forced to rebuild, each together with a
+`files/xdg-terminals/` edit:
+
+| Where | #735 break | #740 form |
+|---|---|---|
+| laptop, `mise run build-changed` | fails with `/buildstream-install/etc/sudoers: Permission denied`, 77 s (toolchain check ~40 s) | both elements built, 47 s |
+| `krytis-vps`, throwaway PR #1123 | same failure, whole job 2m17s (run 37601402591) | passes, whole job 2m03s (run 37601748225) |
+
+On the VPS all 67 toolchain artifacts were local hits, and checkout plus setup took under
+10 s once `cache: false` was in. A PR touching no BuildStream input finishes in seconds
+(run 37588594526). The first two VPS runs queued for 1h45m behind a dispatched cache-warm.
 
 ## Scheduled Workflow Cron Delay
 
@@ -1763,6 +1877,7 @@ autonomously.
 | `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
 | `publish.yml` | `blacksmith-4vcpu-ubuntu-2404` (default; `8vcpu` until 2026-10-07, see § Sizing the `publish.yml` runner); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
+| `build-changed.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Same-repo PRs only. The VPS's local CAS already holds the closure cache-warm built, so the whole job for a rebuilt `core/sudo-rs.bst` takes about 2 minutes; a hosted runner would pull the closure from bow first. See § PR build gate: `build-changed.yml` (#743) |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
 

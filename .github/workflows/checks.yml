@@ -3,7 +3,8 @@ name: Checks
 # Cheap gates that run on every PR. Deliberately excludes anything needing the
 # BST build: `mise run lint` builds the Containerfile FROM localhost/krytis-input,
 # which only exists after `mise run build` — that is publish.yml's 420-minute job,
-# not a PR gate.
+# not a PR gate. Building the elements a PR changes is build-changed.yml's job
+# (#743), on the VPS runner.
 #
 # The secure-boot testing plan (PR #443) tracks what else could move here and
 # what each candidate costs. Referenced by PR rather than by path: docs-links

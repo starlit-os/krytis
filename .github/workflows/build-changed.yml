@@ -1,0 +1,81 @@
+name: Build changed elements
+
+# PR gate for the "element stopped building" class (#743): build the elements
+# a PR changes, pull everything else from bow. #735 broke core/sudo-rs.bst with
+# every Checks job green, and the first failure was publish, ~2h after merge.
+# `mise run build-changed` decides what to build and why; see its header and
+# docs/skills/ci-runner.md § PR build gate: `build-changed.yml` (#743) for the
+# blind spots. Not a required check: it skips fork PRs, and green does not mean
+# the image builds.
+#
+# Its own workflow, not a job in checks.yml: that workflow also runs on
+# `edited`, and its run-level concurrency would cancel a build here whenever
+# someone edits the PR description.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: read-all
+
+concurrency:
+  group: build-changed-${{ github.event.pull_request.number }}
+  # Not cancelled: a killed build on the persistent VPS leaves dead FUSE mounts
+  # and leaked cas/tmp behind (docs/skills/ci-runner.md § A killed casd leaks
+  # `cas/tmp`, and it is the box's disk ratchet (#938)). A newer push waits for
+  # the running build, and GitHub keeps only the newest pending run.
+  cancel-in-progress: false
+
+jobs:
+  build-changed:
+    name: Build changed elements
+    # Fork PRs get no secrets, so no bow token, and a build without bow takes
+    # hours. Skip them rather than hang.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    # The always-on VPS keeps a warm local CAS between jobs (cache-warm builds
+    # there with --deps all), so most dependencies are local hits and the rest
+    # come from bow. The krytis-vps label keeps the local container runner,
+    # which registers the same [self-hosted, linux, x64], out of the routing.
+    # One runner: a PR build queues behind a running cache-warm.
+    runs-on: [self-hosted, linux, x64, krytis-vps]
+    # Rebuilding core/sudo-rs.bst took about 2 minutes for the whole job (run
+    # 37601748225). Anything near this limit is compiling far more than the PR
+    # changed; fail rather than hold the only VPS runner.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The default ref is the PR merged into its base. Depth 2 brings the
+          # base as HEAD^1, so the diff is exactly what this PR changes.
+          fetch-depth: 2
+
+      # `version:` is required on this persistent box: without it mise-action
+      # keeps whatever mise is already installed. See docs/skills/ci-runner.md
+      # § Pin the mise version, not just the action.
+      - name: Setup mise
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.10.3
+          experimental: true
+          # The tools already live in /root/.local/share/mise on this box. The
+          # actions/cache restore downloaded 621 MB for 1m44s, then `mise
+          # install --locked` reported all 11 "already installed" (run
+          # 37588594526).
+          cache: false
+
+      # No `mise bootstrap`: provision.sh installed the host packages and
+      # cache-warm re-runs bootstrap on this box every weekday.
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Build changed elements
+        env:
+          # Pull-only: a PR build must never write to bow.
+          BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+          # Match cache-warm's casd quota on this box. mise/tasks/bst defaults to
+          # 50G, and a lower quota than the cache already holds makes casd evict
+          # the warm artifacts every later job here relies on.
+          BST_CACHE_QUOTA: 100G
+        run: mise run build-changed --base HEAD^1

@@ -550,21 +550,25 @@ has `/etc/sudoers` at 0644 today, and always has. A genuinely stricter mode has 
 from `public.initial-script`, the same mechanism the setuid bit needs (§ Junction
 override: sudo-rs).
 
-**No PR gate catches an element that stops building.** `Checks` is static-only — no `bst
-build` on PRs, as `checks.yml`'s own header comment states. The only scheduled job that
-compiles elements is `cache-warm.yml` (`cron: '41 1 * * 1-5'`, i.e. 01:41 UTC Mon–Fri —
-deliberately off the hour), and until #741 its build step ended
-in `set +e` … `exit 0` with a `::warning::`, so run 33872185343 reported **success** nine
-minutes after the #735 break landed, then pushed the failed artifact to the shared cache
-for `publish` to pull and discard. That swallow is gone: a cache-warm build failure now
-fails the run. Warmth is not lost by failing — artifacts push to bow as they build, and
-the two reporting steps carry `if: always()`.
+**Until #743, no PR gate caught an element that stops building.** `Checks` is static-only,
+as `checks.yml`'s own header comment states. The only scheduled job that compiles
+elements is `cache-warm.yml` (`cron: '41 1 * * 1-5'`, i.e. 01:41 UTC Mon–Fri,
+deliberately off the hour). Until #741 its build step ended in `set +e` … `exit 0` with a
+`::warning::`, so run 33872185343 reported **success** nine minutes after the #735 break
+landed, then pushed the failed artifact to the shared cache for `publish` to pull and
+discard. That swallow is gone: a cache-warm build failure now fails the run. Warmth is not
+lost by failing, because artifacts push to bow as they build and the two reporting steps
+carry `if: always()`. A red cache-warm is therefore the earliest signal that `main` does
+not build; treat it as such rather than as flake.
 
-A red cache-warm is therefore the earliest signal that `main` does not build; treat it as
-such rather than as flake. On a PR it is still on you: when a PR touches
-`install-commands`, build the touched element locally first: `mise run bst -- build
-core/<element>.bst` (~30s for a leaf element with warm deps), then `mise run bst --
-artifact checkout <element> --directory /tmp/co` to inspect what actually landed.
+On a PR, `build-changed.yml` now builds the elements the PR touches on `krytis-vps`; the
+whole job takes about 2 minutes for a rebuilt `core/sudo-rs.bst`. The same check runs
+locally as `mise run build-changed`. Re-applying
+#735's `-Dm440` to `core/sudo-rs.bst` fails it with the same `Permission denied`. It does
+not build reverse dependencies, skips PRs that change `project.conf`, `include/` or a
+junction, and skips fork PRs (`docs/skills/ci-runner.md` § PR build gate:
+`build-changed.yml` (#743)). To see what actually landed, use `mise run bst -- artifact
+checkout <element> --directory /tmp/co`.
 
 ## Multi-line YAML Plain Scalars Do Not Shell-Continue
 

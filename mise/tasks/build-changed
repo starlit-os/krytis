@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+#MISE description="Build only the elements a branch changes, pulling everything else from bow (the PR build gate, #743)"
+#MISE depends=["generate-image-version"]
+#USAGE flag "--base <ref>" default="origin/main" help="Compare against the merge base of HEAD and this ref"
+#USAGE flag "--container" help="Use the pinned bst2 podman container instead of native BST"
+#USAGE flag "--dry-run" help="Print what would be built, build nothing"
+"""Build the elements a branch touches, and nothing else.
+
+This catches the "element stopped building" class before merge: a bad
+install-command, ref or dependency. #735 rewrote 46 install sites with every
+check green, broke core/sudo-rs.bst, and nothing failed until publish, ~2h after
+merge. Reproducing it locally took 24 seconds.
+
+What counts as a change: `git diff` between the merge base and the working tree,
+plus untracked files, so a human gets the same answer before committing.
+
+- elements/**/*.bst: built, by element name.
+- files/** and patches/**: mapped to the elements whose `kind: local` or
+  `kind: patch` source `path:` contains them.
+- project.conf, include/**, a junction element, or anything else under
+  elements/: these can change every cache key in the graph, and building the
+  changed elements would then compile most of it. The build is skipped, with
+  the reason printed. `mise run validate` still resolves the graph.
+- elements/oci/**: not built. That is image assembly, publish.yml's job.
+- Everything else (docs, mise tasks, workflows, scripts) is not a BuildStream
+  input.
+
+Reverse dependencies are deliberately not built: that is the 420-minute publish
+job. Before building, `toolchain-cache-check --pull` refuses a run that would
+compile freedesktop-sdk's toolchain (the Toolchain Gate in AGENTS.md).
+
+See docs/skills/ci-runner.md § PR build gate: `build-changed.yml` (#743).
+"""
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+GRAPH_WIDE_FILES = {"project.conf"}
+GRAPH_WIDE_DIRS = ("include/",)
+# `path:` of a kind: local / kind: patch source. Every one in elements/ points
+# under files/ or patches/ (37 sources as of 2026-10-07).
+SOURCE_PATH = re.compile(r"^\s*(?:-\s*)?path:\s*((?:files|patches)/\S+?)/?\s*$")
+JUNCTION = re.compile(r"^kind:\s*junction\s*$", re.MULTILINE)
+
+
+def git(*args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def changed_paths(merge_base: str) -> list[tuple[str, str]]:
+    """(status, path) for every change between the merge base and the working tree."""
+    rows = []
+    for line in git("diff", "--name-status", "--no-renames", merge_base).splitlines():
+        status, path = line.split("\t", 1)
+        rows.append((status[0], path))
+    for path in git("ls-files", "--others", "--exclude-standard").splitlines():
+        rows.append(("A", path))
+    return rows
+
+
+def is_junction(path: str, status: str, merge_base: str) -> bool:
+    text = Path(path).read_text() if status != "D" else git("show", f"{merge_base}:{path}")
+    return bool(JUNCTION.search(text))
+
+
+def source_owners() -> list[tuple[str, str]]:
+    """(source path, element name) for every local/patch source in elements/."""
+    owners = []
+    for bst in sorted(Path("elements").rglob("*.bst")):
+        name = bst.relative_to("elements").as_posix()
+        for line in bst.read_text().splitlines():
+            m = SOURCE_PATH.match(line)
+            if m:
+                owners.append((m.group(1), name))
+    return owners
+
+
+def plan(merge_base: str):
+    build: set[str] = set()
+    graph_wide: list[str] = []
+    not_built: list[str] = []
+    ignored: list[str] = []
+    owners = source_owners()
+
+    for status, path in changed_paths(merge_base):
+        if path in GRAPH_WIDE_FILES or path.startswith(GRAPH_WIDE_DIRS):
+            graph_wide.append(f"{path} (project-wide BuildStream input)")
+        elif path.startswith("elements/"):
+            name = path.removeprefix("elements/")
+            if not path.endswith(".bst"):
+                graph_wide.append(f"{path} (not an element, but under elements/)")
+            elif is_junction(path, status, merge_base):
+                graph_wide.append(f"{path} (junction)")
+            elif status == "D":
+                not_built.append(f"{name} (deleted)")
+            elif name.startswith("oci/"):
+                not_built.append(f"{name} (image assembly, built by publish)")
+            else:
+                build.add(name)
+        elif path.startswith(("files/", "patches/")):
+            hits = {e for src, e in owners if path == src or path.startswith(src + "/")}
+            if hits:
+                build |= hits
+            else:
+                ignored.append(path)
+        else:
+            ignored.append(path)
+
+    return sorted(build), graph_wide, not_built, ignored
+
+
+def concurrency() -> tuple[int, int]:
+    """builders and max-jobs sized to this host, with cache-warm.yml's formula.
+
+    mise/tasks/bst --pull writes its own config (max-jobs 4, BuildStream's
+    default builders 4: up to 16 compilers), which is more than krytis-vps can
+    hold. Budget 2 GiB per compiler and at most one per core. See
+    docs/skills/ci-runner.md § Build concurrency is `builders` x `max-jobs`.
+    """
+    cores = len(os.sched_getaffinity(0))
+    with open("/proc/meminfo") as f:
+        mem_kib = next(int(line.split()[1]) for line in f if line.startswith("MemTotal:"))
+    slots = max(1, min(cores, mem_kib // 1024 // 1024 // 2))
+    builders = min(2, slots)
+    return builders, -(-slots // builders)
+
+
+def notice(msg: str) -> None:
+    print(f"::notice title=build-changed::{msg}" if os.environ.get("GITHUB_ACTIONS") == "true" else f"==> {msg}")
+
+
+def main() -> int:
+    # Child tasks write straight to the same pipe; without this, CI logs print
+    # the plan after the children's output.
+    sys.stdout.reconfigure(line_buffering=True)
+    os.chdir(git("rev-parse", "--show-toplevel").strip())
+    base = os.environ.get("usage_base") or "origin/main"
+    container = os.environ.get("usage_container") == "true"
+    dry_run = os.environ.get("usage_dry_run") == "true"
+
+    merge_base = git("merge-base", base, "HEAD").strip()
+    build, graph_wide, not_built, ignored = plan(merge_base)
+
+    print(f"==> Changes since {merge_base[:12]} (merge base with {base}):")
+    for label, rows in (
+        ("build", build),
+        ("graph-wide", graph_wide),
+        ("not built", not_built),
+        ("not a BuildStream input", ignored),
+    ):
+        for row in rows:
+            print(f"    {label:<24} {row}")
+
+    if graph_wide:
+        notice(
+            "Skipped: this change touches "
+            + ", ".join(graph_wide)
+            + ". That can change every cache key, so building the changed elements"
+            " could compile most of the graph. Only publish builds this change."
+        )
+        return 0
+    if not build:
+        notice("Nothing to build: no element or element source changed.")
+        return 0
+    if dry_run:
+        notice(f"--dry-run: would build {len(build)} element(s).")
+        return 0
+
+    env = dict(os.environ)
+    print("==> Checking the toolchain is cached before building")
+    check = subprocess.run(["./mise/tasks/toolchain-cache-check"], env={**env, "usage_pull": "true"})
+    if check.returncode != 0:
+        print(
+            "ERROR: toolchain-cache-check failed (reason above), so not building. If the"
+            " toolchain is missing, wait for cache-warm to run on this base (Toolchain Gate).",
+            file=sys.stderr,
+        )
+        return check.returncode
+
+    builders, max_jobs = concurrency()
+    env["BST_FLAGS"] = f"{env.get('BST_FLAGS', '')} --builders {builders} --max-jobs {max_jobs}".strip()
+    cmd = ["./mise/tasks/bst", "--pull", *(["--container"] if container else [])]
+    cmd += ["build", "--retry-failed", *build]
+    print(f"==> builders={builders} max-jobs={max_jobs}: {' '.join(cmd)}", flush=True)
+    return subprocess.run(cmd, env=env).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
