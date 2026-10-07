@@ -68,6 +68,12 @@ ssh-keygen -Y find-principals -f ~/.ssh/allowed_signers -s <sigfile>
 
 `ssh-keygen -O resident` prompts for the token PIN, and on krytis that prompt cannot be delegated: nothing points `SSH_ASKPASS` at anything usable. The image does contain one askpass binary — `/usr/libexec/gcr4-ssh-askpass`, pulled in with gcr-4 by `desktop/noctalia.bst` — but it is not on `PATH`, nothing in the tree exports `SSH_ASKPASS`, and `ssh-keygen` will not find it on its own. There is no GUI dialog to pop, so an agent driving the command over a PTY just holds the prompt open until it times out. Enrollment is a human-at-the-terminal step — script around it, not through it. This is the same constraint that makes `mise fido2:enroll` and `fido2:enroll-luks` interactive by design.
 
+**The human can type it into the agent's PTY, though.** When the harness forwards console
+input to a command the agent runs with a PTY, the agent can run `ssh-keygen -O resident`
+itself and the human types the PIN and touches the key in that console. That is how
+`ssh:BenchOnecomL` was generated on 2026-10-07 (#1126). Without a PTY, or without forwarded
+input, it is back to the human running the command at their own terminal.
+
 ### Point `user.signingkey` at the handle file, not the `.pub` — gcr's agent cannot sign
 
 The desktop session's agent is gcr's — `/usr/libexec/gcr-ssh-agent` with its own `gcr-ssh-agent.socket`, from gcr-4 (`sdk/gcr.bst`, reaching the image transitively via `desktop/noctalia.bst`), listening on `/run/user/1000/gcr/ssh`. It is **not** gnome-keyring's; this entry said so when first written (#677, 2026-09-01) and was already wrong then — gnome-keyring left the image with #594's oo7 swap two weeks earlier, and the `gcr/ssh` path names its real owner. The behaviour below is gcr's and is unaffected. It auto-loads new `~/.ssh` sk keys with no `ssh-add` — a freshly generated `ssh:Signing` shows up in `ssh-add -l` straight away. **Do not trust that listing.** gcr advertises `sk-ssh-ed25519` keys it cannot actually use: signing through it succeeds sometimes and then fails, instantly and without touching the token, with

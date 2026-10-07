@@ -114,11 +114,19 @@ Landed as described in docs/skills/ci-runner.md § Cold-build benchmark: `bench-
 
 ### 2. Provision the one.com box (needs D5)
 
+- [x] Dedicated SSH credential, per docs/skills/fido2.md's one-per-host convention:
+      `ssh:BenchOnecomL`, resident on the YubiKey, touch-only, handle
+      `~/.ssh/id_ed25519_sk_rk_BenchOnecomL` (generated 2026-10-07, fingerprint
+      `SHA256:2gaVEluCzEjGSYRqMfAgoroGWX1VydAi+XRWHhcELos`). Not `ssh:KrytisBuild`: a separate
+      credential can be deleted from the key when L goes, without touching krytis-vps.
+      Every `runner-vps:*` call for L below passes `RUNNER_VPS_SSH_KEY` to use it.
 - [ ] Order Cloud server L, Debian 13 if it is offered (record the version otherwise),
-      with the `KrytisBuild` FIDO2 public key. Record the renewal price in § Machines.
+      with `~/.ssh/id_ed25519_sk_rk_BenchOnecomL.pub` as its SSH key. Record the renewal price
+      in § Machines.
 - [ ] **Install only, do not register yet** (D5):
       ```shell
-      RUNNER_VPS_HOST=root@<ip> mise run runner-vps:install
+      RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
+        mise run runner-vps:install
       ```
       `install` copies packages, swap and the runner binary. GitHub knows nothing about the
       box until `register`.
@@ -138,9 +146,9 @@ exactly that until cache-warm has run.
 - [ ] `mise run bench-window open`.
 - [ ] Register the box:
       ```shell
-      RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_NAME=bench-onecom-l \
-        RUNNER_VPS_LABELS=bench-onecom-l RUNNER_VPS_NO_DEFAULT_LABELS=true \
-        mise run runner-vps:register
+      RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
+        RUNNER_VPS_NAME=bench-onecom-l RUNNER_VPS_LABELS=bench-onecom-l \
+        RUNNER_VPS_NO_DEFAULT_LABELS=true mise run runner-vps:register
       ```
 - [ ] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \([.labels[].name])"'`
       shows `bench-onecom-l` with **only** its own label.
@@ -161,7 +169,7 @@ exactly that until cache-warm has run.
 - [ ] `mise run bench-compare <id-vps> <id-l>`. Paste the table under § Results.
 - [ ] Apply D7 (repeat within 15%) and D3 (phase 2 on L or not).
 - [ ] **If phase 2 skips L, deregister it now:**
-      `RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_NAME=bench-onecom-l mise run runner-vps:deregister`.
+      `RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL RUNNER_VPS_NAME=bench-onecom-l mise run runner-vps:deregister`.
 
 ### 5. Phase 2: full closure (straight after phase 1)
 
@@ -182,7 +190,11 @@ exactly that until cache-warm has run.
       steal, add that too. The sizing-formula overshoot and the `force_self_hosted` label reach
       were recorded there with this plan.
 - [ ] Cancel the one.com subscription unless the decision keeps the box. A kept box gets
-      registered again as a production runner, through that decision, not this plan.
+      registered again as a production runner, through that decision, not this plan. If it
+      is cancelled, delete the `ssh:BenchOnecomL` credential from the key too: find its ID
+      with `fido2-token -L -k ssh:BenchOnecomL <device>`, remove it with
+      `fido2-token -D -i <id> <device>` (both ask for the PIN), then delete the handle and
+      `.pub` files.
 - [ ] Delete branch `bench/2026-10`. `git mv` this plan to `docs/plans/done/`.
 
 ## Risks
