@@ -1783,6 +1783,16 @@ workspace. That includes krytis-vps, the local container runner, and any box reg
 for a trial. A runner that must never see a publish has to be registered with
 `--no-default-labels` and its own label only.
 
+**Fork PRs can name any self-hosted label, so the fork-PR approval policy is
+`all_external_contributors`.** A `pull_request` run uses the workflow file from the PR, so a
+fork PR can add a job with `runs-on: [krytis-vps]` (or any other runner's label), whatever is
+disabled on `main`. GitHub's public-repo default, `first_time_contributors`, lets anyone with one
+previously approved contribution run without approval. The policy was changed to
+`all_external_contributors` on 2026-10-07, so every outside PR now waits for a maintainer.
+**Do not loosen it back:** it is the only check between a fork PR and root on a self-hosted
+runner. It does not slow Renovate or the tracking bot, which push same-repo branches. Check it
+with `gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`.
+
 ### Sizing the `publish.yml` runner — the label is not the size
 
 `publish.yml` moved from `blacksmith-8vcpu-ubuntu-2404` to `blacksmith-4vcpu-ubuntu-2404` on

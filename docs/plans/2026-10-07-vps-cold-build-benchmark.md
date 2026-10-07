@@ -54,13 +54,14 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
   workspace. Hence D4.
 - **A pull request can target any runner label, whatever is disabled on `main`.** krytis is
   public. A `pull_request` run uses the workflow file from the PR, so a PR can add a job with
-  `runs-on: [bench-onecom-l]`. The only check is the fork-PR approval policy, which is
-  `first_time_contributors` (`gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`,
-  2026-10-07). Under that policy, anyone with one previously approved contribution runs
-  without approval. krytis-vps has the same exposure today; the bench box adds a second host to
-  it while it is registered. Hence D5. This is also GitHub's default for public repos, not
-  a setting anyone loosened: nothing in the repo or its issues records a change, and Renovate
-  and the tracking bot push same-repo branches, which the policy never gates.
+  `runs-on: [bench-onecom-l]`. The only check is the fork-PR approval policy
+  (`gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`). Until
+  2026-10-07 it was GitHub's public-repo default, `first_time_contributors`, under which anyone
+  with one previously approved contribution runs without approval. On 2026-10-07 it was
+  changed to `all_external_contributors`, outside this plan, so every outside PR now waits for
+  approval. krytis-vps had the same exposure; the bench box only adds a second host to it while
+  it is registered. Renovate and the tracking bot push same-repo branches, which the policy
+  never gates.
 - **`mise runner-vps:install`/`register` already work against another host.**
   `scripts/runner-vps-host.sh` prefers `RUNNER_VPS_HOST` from the environment over the vault.
   `RUNNER_VPS_NAME`, `RUNNER_VPS_LABELS` and `RUNNER_VPS_SSH_KEY` are env-overridable
@@ -74,7 +75,7 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
 | D2 | **Phase 1: toolchain closure** on both boxes in parallel. Targets: `freedesktop-sdk.bst:components/llvm.bst freedesktop-sdk.bst:components/rust.bst`, `--deps all`, `-o x86_64_v3 true`. | The toolchain dominates a junction-bump rebuild and is the set the Toolchain Gate guards. It takes hours, not days. Builds on separate boxes share nothing, so running them in parallel costs no fairness. |
 | D3 | **Phase 2: continue to the full closure** (`oci/krytis/image.bst --deps all`, no wipe) on krytis-vps, and on L **if L beat krytis-vps in phase 1**. If it did not, skip phase 2 on L. | phase 1 + phase 2 adds up to a cold full build. Running phase 2 on krytis-vps also refills its production CAS by building it, so the wipe costs no bow pull afterwards. |
 | D4 | **Keep the bench box out of `publish.yml`'s reach two ways:** register it with `--no-default-labels` and the single label `bench-onecom-l`, **and** disable `publish.yml` for the window. | Either alone closes the `force_self_hosted` route. The label survives an early re-enable; the disable survives a registration done without the flag. Both cost nothing. |
-| D5 | **Security Gate, a bounded window, and a permanent approval policy.** A human approves registering the one.com L host as a `starlit-os/krytis` runner (approved 2026-10-07). It is registered only once the window opens, just before phase 1, and deregistered as soon as its last bench run ends, not at write-up. The fork-PR approval policy becomes `all_external_contributors` when the window opens and **stays that way afterwards** (decided 2026-10-07). | It runs repo code as root. The bench workflow is `workflow_dispatch`-only, `permissions: read-all`, and references no secrets, but any registered runner is reachable by a PR (§ Checked while writing). A shorter registration bounds the bench box's exposure. The permanent policy also closes the same route to krytis-vps (and to `build-changed.yml` if #1122 merges). It does not slow Renovate or the tracking bot, whose PRs come from same-repo branches. |
+| D5 | **Security Gate and a bounded window.** A human approves registering the one.com L host as a `starlit-os/krytis` runner (approved 2026-10-07). It is registered only once the window opens, just before phase 1, and deregistered as soon as its last bench run ends, not at write-up. | It runs repo code as root. The bench workflow is `workflow_dispatch`-only, `permissions: read-all`, and references no secrets, but any registered runner is reachable by a PR (§ Checked while writing). The fork-PR approval policy, `all_external_contributors` since 2026-10-07, puts every outside PR behind approval. A shorter registration bounds the rest of the exposure. |
 | D6 | **krytis-vps is made cold by wiping `/root/.cache/buildstream`** (chosen 2026-10-07), inside the bench workflow, after the stale-FUSE cleanup. | Simple and representative. bow holds 917/917 (37515434814), so production loses nothing it cannot pull back. |
 | D7 | **One run per box per phase.** Repeat phase 1 on both boxes if their wall times are within 15% of each other. | VPS neighbours add noise. CPU steal is recorded so a noisy run is visible as noisy rather than being taken as slow. |
 | D8 | **Keep the bench workflow and compare task after the benchmark**, dispatch-only. | Runner evaluations recur: Contabo VPS 4 (2026-09-10), Hetzner on-demand (2026-09-08), Blacksmith 4vcpu (2026-10-07). The cold number is the one each of them lacked. |
@@ -128,11 +129,10 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
       derives that list from `.github/workflows/` when it runs, not from a fixed list: today that
       is `cache-warm.yml`, `runner-vps-gc.yml` and `build-iso.yml`, and open PR #1122 adds
       `build-changed.yml`. It also excludes the bench workflow itself.
-      It sets the fork-PR approval policy to `all_external_contributors` (idempotent, so it is a
-      no-op after the first window):
-      `gh api -X PUT repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`.
-      `close`: re-enables exactly the workflows `open` disabled. It **leaves the policy alone**
-      (D5). Both end by printing the workflow states and the policy.
+      It refuses to open unless the fork-PR approval policy is still `all_external_contributors`,
+      so a loosened policy stops the benchmark before a third-party host is registered.
+      `close`: re-enables exactly the workflows `open` disabled. Both end by printing the
+      workflow states.
 - [ ] `docs/skills/ci-runner.md`: a section for the bench workflow (what "cold" means here,
       D1/D4, how to read the comparison) and a row in § Workflow Runner Choices. Commit them
       with the code, per AGENTS.md.
@@ -207,13 +207,6 @@ exactly that until cache-warm has run.
 - [ ] `docs/skills/ci-runner.md`: measured cold times per box. If a box hit an OOM or heavy
       steal, add that too. The sizing-formula overshoot and the `force_self_hosted` label reach
       were recorded there with this plan.
-- [ ] `docs/skills/ci-runner.md`: record that the fork-PR approval policy is
-      `all_external_contributors` (since this window, dated) and why: a fork PR can name any
-      self-hosted runner label. That way a later agent does not read it as an accident and
-      loosen it. Where a doc or an **open** issue/PR body still says `first_time_contributors`,
-      update it (`gh pr list --state open --search 'first_time_contributors in:body'`, and the
-      same for issues). #1122's description and its § PR build gate in ci-runner.md say "Not
-      changed here" today.
 - [ ] Cancel the one.com subscription unless the decision keeps the box. A kept box gets
       registered again as a production runner, through that decision, not this plan.
 - [ ] Delete branch `bench/2026-10`. `git mv` this plan to `docs/plans/done/`.
