@@ -266,8 +266,15 @@ RAM, and nothing was bounding it. `cache-warm.yml` now derives both from the
 runner it lands on: one slot per core, one slot per 2 GiB of RAM (cc1plus
 peaked at 1.5G RSS in the kill log), whichever is lower; `builders` fixed at
 2 so the scheduler can still overlap a slow element with a fast one; and
-`max-jobs` = slots / builders. That yields **2 x 3 = 6** on the VPS (was 24)
+`max-jobs` = slots / builders, **rounded up**. That yields **2 x 3 = 6** on the VPS (was 24)
 and **2 x 4 = 8** on the Blacksmith fallback (was 32).
+
+The rounding means the product overshoots the slot budget by one whenever the slot count
+is odd. `MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))` with `BUILDERS=2` gives
+`2 x ceil(SLOTS/2)`. The VPS has 11 GiB `MemTotal`, so 5 slots, yet it runs 6 compilers. A
+4-vCPU/8 GB box (about 7 GiB, 3 slots) would run 4. Found while planning
+`docs/plans/2026-10-07-vps-cold-build-benchmark.md`. Left as is: the 8G swap is the backstop,
+and the cold benchmark measures the formula as production runs it.
 
 No cache-key cost, then or now: `max-jobs`'s runtime env vars are excluded
 from the cache key (see § `max-jobs` does NOT affect cache keys), which is
@@ -1882,6 +1889,24 @@ autonomously.
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
 
 Each self-hosted/Blacksmith override only takes effect on a manual `workflow_dispatch` run. `cache-warm.yml` guards its ternary on `github.event_name == 'workflow_dispatch'` because it also has a `schedule` trigger, so **scheduled runs always land on the VPS**; `publish.yml` needs no guard because its override defaults to Blacksmith, so the null input on its cron run already picks the wanted host. `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
+
+**`force_self_hosted` reaches every runner that carries GitHub's default labels.** It targets
+`["self-hosted","linux","x64"]`, and `config.sh` adds exactly those three labels to every
+runner unless it is given `--no-default-labels`. So any self-hosted runner registered to this
+repo is eligible for a sealed publish, which writes the six UEFI private keys into the
+workspace. That includes krytis-vps, the local container runner, and any box registered later
+for a trial. A runner that must never see a publish has to be registered with
+`--no-default-labels` and its own label only.
+
+**Fork PRs can name any self-hosted label, so the fork-PR approval policy is
+`all_external_contributors`.** A `pull_request` run uses the workflow file from the PR, so a
+fork PR can add a job with `runs-on: [krytis-vps]` (or any other runner's label), whatever is
+disabled on `main`. GitHub's public-repo default, `first_time_contributors`, lets anyone with one
+previously approved contribution run without approval. The policy was changed to
+`all_external_contributors` on 2026-10-07, so every outside PR now waits for a maintainer.
+**Do not loosen it back:** it is the only check between a fork PR and root on a self-hosted
+runner. It does not slow Renovate or the tracking bot, which push same-repo branches. Check it
+with `gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`.
 
 ### Sizing the `publish.yml` runner — the label is not the size
 
