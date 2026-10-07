@@ -35,7 +35,7 @@ config:
   # A stricter mode has to be applied from `initial-script`, like the setuid
   # bit above. sudo-rs only requires sudoers not be group/world writable.
   - |
-    install -Dm644 /dev/null \
+    install -Dm440 /dev/null \
       "%{install-root}/etc/sudoers"
     cat > "%{install-root}/etc/sudoers" <<'EOF'
     #includedir /etc/sudoers.d

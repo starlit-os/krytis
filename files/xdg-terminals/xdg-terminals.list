@@ -10,3 +10,4 @@
 # Per-user override: ~/.config/xdg-terminals.list takes precedence.
 com.mitchellh.ghostty.desktop
 -com.seance.app.desktop
+# build-changed smoke (throwaway, do not merge)
