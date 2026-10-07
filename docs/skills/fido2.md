@@ -68,6 +68,12 @@ ssh-keygen -Y find-principals -f ~/.ssh/allowed_signers -s <sigfile>
 
 `ssh-keygen -O resident` prompts for the token PIN, and on krytis that prompt cannot be delegated: nothing points `SSH_ASKPASS` at anything usable. The image does contain one askpass binary — `/usr/libexec/gcr4-ssh-askpass`, pulled in with gcr-4 by `desktop/noctalia.bst` — but it is not on `PATH`, nothing in the tree exports `SSH_ASKPASS`, and `ssh-keygen` will not find it on its own. There is no GUI dialog to pop, so an agent driving the command over a PTY just holds the prompt open until it times out. Enrollment is a human-at-the-terminal step — script around it, not through it. This is the same constraint that makes `mise fido2:enroll` and `fido2:enroll-luks` interactive by design.
 
+**The human can type it into the agent's PTY, though.** When the harness forwards console
+input to a command the agent runs with a PTY, the agent can run `ssh-keygen -O resident`
+itself and the human types the PIN and touches the key in that console. That is how
+`ssh:BenchOnecomL` was generated on 2026-10-07 (#1126). Without a PTY, or without forwarded
+input, it is back to the human running the command at their own terminal.
+
 ### Point `user.signingkey` at the handle file, not the `.pub` — gcr's agent cannot sign
 
 The desktop session's agent is gcr's — `/usr/libexec/gcr-ssh-agent` with its own `gcr-ssh-agent.socket`, from gcr-4 (`sdk/gcr.bst`, reaching the image transitively via `desktop/noctalia.bst`), listening on `/run/user/1000/gcr/ssh`. It is **not** gnome-keyring's; this entry said so when first written (#677, 2026-09-01) and was already wrong then — gnome-keyring left the image with #594's oo7 swap two weeks earlier, and the `gcr/ssh` path names its real owner. The behaviour below is gcr's and is unaffected. It auto-loads new `~/.ssh` sk keys with no `ssh-add` — a freshly generated `ssh:Signing` shows up in `ssh-add -l` straight away. **Do not trust that listing.** gcr advertises `sk-ssh-ed25519` keys it cannot actually use: signing through it succeeds sometimes and then fails, instantly and without touching the token, with
@@ -95,6 +101,43 @@ the same command, naming the credential after the host instead of `Signing`
 then append the `.pub` to the remote's `~/.ssh/authorized_keys` over the box's existing
 access (password, or another key) before touching auth config. No git wiring — this
 credential authenticates `ssh`/`sshd`, it never signs anything.
+
+### Provider order forms reject `sk-ssh-ed25519` keys — bootstrap over the provider's own login
+
+one.com's VPS order form refused the `ssh:BenchOnecomL` public key with "invalid SSH
+format" (2026-10-07, #1126). The key itself is fine: OpenSSH made it, and `cryptography`
+50.0.2's `load_ssh_public_key` parses it. But a validator that only knows the classic types
+rejects `sk-ssh-ed25519@openssh.com`. paramiko 5.0.0, for one, raises `UnknownKeyType`.
+Expect any provider form or API to do the same.
+
+Get in with whatever the provider does accept, add the sk key over that, then close the
+bootstrap route. one.com's Debian 13 image gave a non-root user, `administrator`, with a
+password and `NOPASSWD: ALL` sudo. Root SSH was key-only (`PermitRootLogin
+without-password`), so a correct root password was refused. What worked, in order:
+
+1. **Password login as `administrator`, without typing the password.** Use
+   `SSH_ASKPASS=<script> SSH_ASKPASS_REQUIRE=force setsid -w ssh -o
+   PubkeyAuthentication=no -o PreferredAuthentications=password …`, where the script runs
+   `pass-cli item view … --field Password`. The script must inherit the caller's
+   environment; see the warning below.
+2. **`sudo` appends the sk `.pub` to `/root/.ssh/authorized_keys`.** The `runner-vps:*`
+   tasks log in as root. Pass the key as an argument, since it is public.
+3. **A root login with the sk key in a PTY**, touching the key.
+4. **Password SSH off.** Fix the cloud-init drop-in (§ Disabling root password SSH on a
+   cloud-init VPS), and add `ssh_pwauth: false` in `/etc/cloud/cloud.cfg.d/` so cloud-init
+   does not turn it back on. Then check that a password attempt gets
+   `Permission denied (publickey)` and a fresh sk login still works. The password stays in
+   the vault for the provider's web console.
+
+If the provider takes only a key and sets no password, give it a temporary plain
+`ed25519` key instead, and delete it from `authorized_keys` once the sk login works.
+
+**Never run `pass-cli` with a scrubbed environment**: no `env -i`, and no askpass helper
+launched with a cleared env. Without `PROTON_PASS_LINUX_KEYRING=dbus` it falls back to the
+kernel keyring, finds no local key, and **force-logs-out the live session**. That happened
+here on 2026-10-07: one `env -i` test of the askpass script cost a `pass-cli login`
+(docs/skills/mise.md § On a dev host: the local key dies at reboot unless you ask for D-Bus).
+Test a helper by running it as is and printing only the output's length.
 
 ### An agent driving plain `ssh` over a non-PTY shell gets a misleading error, not a touch prompt
 

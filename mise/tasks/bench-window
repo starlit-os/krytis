@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+#MISE description="Open or close the cold-build benchmark window: disable/re-enable publish.yml and every krytis-vps workflow"
+#USAGE arg "<action>" help="open | close | status"
+#USAGE flag "--dry-run" help="Print the gh calls that would change anything, and make none"
+
+# The benchmark window of #1126 (docs/plans/2026-10-07-vps-cold-build-benchmark.md,
+# D4/D5). While it is open nothing can queue behind a multi-day bench run on
+# krytis-vps or land between its phases, and no workflow on main can route a
+# job to the third-party bench box.
+#
+#   open    refuses unless the fork-PR approval policy is all_external_contributors
+#           (a fork PR can name any runner label, whatever is disabled on main),
+#           then disables publish.yml plus every workflow on origin/main whose
+#           runs-on names krytis-vps, except bench-cold-build.yml itself. The list
+#           is derived each time, so a workflow added later is covered.
+#   close   re-enables exactly the workflows open disabled.
+#   status  shows the window, the policy and each workflow's state.
+#
+# What open disabled is stored in the repository variable BENCH_WINDOW_DISABLED,
+# not in a local file: the window is repo state, and close has to work from any
+# machine or worktree. A workflow that was already disabled before open is left
+# out of it, so close never turns on something a human turned off.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+REPO="starlit-os/krytis"
+VAR="BENCH_WINDOW_DISABLED"
+POLICY_WANT="all_external_contributors"
+ACTION="${usage_action:?open, close or status}"
+DRY_RUN="${usage_dry_run:-false}"
+
+command -v gh >/dev/null 2>&1 || { echo "ERROR: gh is required" >&2; exit 1; }
+
+run() {
+    if [ "${DRY_RUN}" = "true" ]; then
+        echo "    [dry-run] $*"
+    else
+        "$@"
+    fi
+}
+
+policy() {
+    gh api "repos/${REPO}/actions/permissions/fork-pr-contributor-approval" --jq .approval_policy
+}
+
+window() {
+    # Unset (404) means the window is closed.
+    gh variable get "${VAR}" --repo "${REPO}" 2>/dev/null || true
+}
+
+wf_state() {
+    gh api "repos/${REPO}/actions/workflows/$1" --jq .state 2>/dev/null || echo "missing"
+}
+
+targets() {
+    git fetch -q origin main
+    {
+        echo publish.yml
+        git grep -l -E 'runs-on:.*krytis-vps' origin/main -- .github/workflows/ \
+            | sed 's#^origin/main:.github/workflows/##'
+    } | grep -vx 'bench-cold-build.yml' | sort -u
+}
+
+status() {
+    local open
+    open=$(window)
+    echo "==> Window: ${open:+OPEN (${VAR}=${open})}${open:-closed}"
+    echo "==> Fork-PR approval policy: $(policy)"
+    for wf in $( { targets; tr ',' '\n' <<< "${open}"; } | grep -v '^$' | sort -u); do
+        printf '    %-24s %s\n' "${wf}" "$(wf_state "${wf}")"
+    done
+}
+
+case "${ACTION}" in
+open)
+    if [ -n "$(window)" ]; then
+        echo "ERROR: the window is already open (${VAR}=$(window)). Close it first." >&2
+        exit 1
+    fi
+    have=$(policy)
+    if [ "${have}" != "${POLICY_WANT}" ]; then
+        echo "ERROR: fork-PR approval policy is '${have}', not '${POLICY_WANT}'." >&2
+        echo "  Any fork PR could then target the bench runner. See docs/skills/ci-runner.md" >&2
+        echo "  § Workflow Runner Choices; restore the policy before opening the window." >&2
+        exit 1
+    fi
+    disable=()
+    for wf in $(targets); do
+        state=$(wf_state "${wf}")
+        if [ "${state}" = "active" ]; then
+            disable+=("${wf}")
+        else
+            echo "==> ${wf} is ${state}; leaving it out of the window."
+        fi
+    done
+    list=$(IFS=,; echo "${disable[*]}")
+    # Recorded first, so a failure part-way still leaves close a full list
+    # (enabling a workflow that is already enabled is a no-op).
+    echo "==> Recording ${VAR}=${list}"
+    run gh variable set "${VAR}" --repo "${REPO}" --body "${list}"
+    for wf in "${disable[@]}"; do
+        echo "==> Disabling ${wf}"
+        run gh workflow disable "${wf}" --repo "${REPO}"
+        # Disabling does not stop a run already queued or in progress.
+        for st in queued in_progress; do
+            gh run list --repo "${REPO}" --workflow "${wf}" --status "${st}" \
+                --json databaseId,url --jq '.[] | "    WARNING: still \(.url)"' 2>/dev/null \
+                | sed "s/still/still ${st}:/" || true
+        done
+    done
+    ;;
+close)
+    open=$(window)
+    if [ -z "${open}" ]; then
+        echo "==> The window is not open; nothing to re-enable."
+    else
+        IFS=',' read -r -a enable <<< "${open}"
+        for wf in "${enable[@]}"; do
+            echo "==> Enabling ${wf}"
+            run gh workflow enable "${wf}" --repo "${REPO}"
+        done
+        echo "==> Deleting ${VAR}"
+        run gh variable delete "${VAR}" --repo "${REPO}"
+    fi
+    ;;
+status) ;;
+*)
+    echo "ERROR: action must be open, close or status, not '${ACTION}'" >&2
+    exit 1
+    ;;
+esac
+
+status

@@ -790,6 +790,57 @@ On the VPS all 67 toolchain artifacts were local hits, and checkout plus setup t
 10 s once `cache: false` was in. A PR touching no BuildStream input finishes in seconds
 (run 37588594526). The first two VPS runs queued for 1h45m behind a dispatched cache-warm.
 
+## Cold-build benchmark: `bench-cold-build.yml` (#1126)
+
+Times a **cold** build on one runner: an empty local cache and no artifact remote at all,
+the build a junction bump forces on cache-warm. Dispatch-only, and kept after #1126 for the
+next runner evaluation (plan D8). The plan, decisions and results live in
+`docs/plans/2026-10-07-vps-cold-build-benchmark.md`.
+
+- **Two phases per runner.** `phase=toolchain` wipes `~/.cache/buildstream` and builds
+  `components/llvm.bst`, `components/rust.bst` and `bootstrap/go.bst` with `--deps all`:
+  159 elements, all freedesktop-sdk, 67 of them the Toolchain Gate's set. `llvm` and
+  `rust` alone cover only 66 of the 67; `bootstrap/go.bst` is in `oci/krytis/image.bst`'s
+  closure but not theirs (`bst show --deps all`, 2026-10-07). `phase=full` never wipes,
+  refuses to start unless that whole closure is cached locally, and builds the image
+  closure. Cold full time is the sum of the two walls.
+- **Cold by construction, checked anyway.** The workflow writes a `buildstream.conf` with
+  no `artifacts:`/`source-caches:`, so no bow token reaches a bench box. The "Cold check"
+  step (`scripts/bench-compare.py check`) fails the run if any element was pulled.
+- **Same sizing as cache-warm.** The `builders`/`max-jobs` formula is copied unchanged,
+  overshoot included (§ Build concurrency is `builders` x `max-jobs`), so a result says
+  what production would get on that box. Quota is 100G on every runner.
+- **What it records.** `bench.env` (runner, phase, commit, CPU, RAM, sizing), `timing.txt`
+  (epoch START/END of the build step and its exit status), `host.txt`, `vmstat.log`
+  (`vmstat -n -t 30`, started and killed inside the build step so it cannot outlive it),
+  `oom.txt` (kernel log since START), `states.tsv` and `bst-build.log`, uploaded as
+  `bench-<runner>-<phase>-<run>-<attempt>`. `vmstat` comes from `procps`, which
+  `provision.sh` installs because Debian does not count it as `required`.
+- **No `concurrency:` group.** Each runner takes one job at a time already. A group would
+  keep one pending run and drop a second dispatch silently (§ `concurrency:` without
+  `queue: max` silently drops queued runs, not just cancels in-progress ones).
+- **`resume=true`** keeps the cache on a toolchain run, to continue one that died on an
+  upstream fetch. Without bow's source cache, every source comes from upstream.
+
+Compare runs with `mise run bench-compare <run> <run>`, one argument per column, `+` to join
+a resumed run's attempts (`111+222`). It prints wall time, the sums of per-element build and
+fetch times, CPU steal and iowait (mean and p95), peak swap, OOM kills, and per-element times
+for the 67 toolchain elements plus the 20 slowest others.
+
+**The window.** `mise run bench-window open` disables `publish.yml` and every workflow on
+`origin/main` whose `runs-on` names `krytis-vps`, deriving the list each time (on 2026-10-07:
+`build-changed.yml`, `build-iso.yml`, `cache-warm.yml`, `runner-vps-gc.yml`). It refuses to
+open unless the fork-PR approval policy is `all_external_contributors`. What it disabled is
+stored in the repository variable `BENCH_WINDOW_DISABLED`, so `close` works from any machine
+and re-enables exactly that list, never a workflow a human had already turned off.
+`bench-window status` shows all of it; `--dry-run` prints the `gh` calls instead.
+
+**A bench box registers with `RUNNER_VPS_NO_DEFAULT_LABELS=true`.** `runner-vps:register`
+then passes `--no-default-labels` (present in actions/runner 2.338.0's `config.sh`, which
+requires `--labels` alongside it), and checks the labels GitHub reports before starting the
+service. It fails if they are not exactly `RUNNER_VPS_LABELS`. The check is there because a
+box that already has a `.runner` file reuses its old registration and never sees the flag.
+
 ## Scheduled Workflow Cron Delay
 
 `cache-warm.yml` and `track-bst-sources.yml` were both `cron: '0 6 * * ...'`
@@ -917,7 +968,9 @@ the teed `bst-build.log`. The summary shows:
   closing `[HH:MM:SS][key][op:element] SUCCESS <element log>` line bst writes per
   element. The key resolves the name, because the element column is truncated on a narrow
   terminal. Elements built but **not pushed** are listed explicitly, since the runner's
-  cache will evict them;
+  cache will evict them. A pull the remote cannot serve ends `SKIPPED Pull`, not
+  `SUCCESS`, so it is not counted as pulled. `fetch:` operations are parsed too (#1126), so
+  a failed source fetch is counted under failed;
 - the built elements, slowest first. Against run 37003574522's first attempt, the slowest
   was `components/grpc.bst` at 1h21m, ahead of `bootstrap/gcc` at 70m;
 - every uncached element with its state and key, toolchain first.
@@ -1885,6 +1938,7 @@ autonomously.
 | `publish.yml` | `blacksmith-4vcpu-ubuntu-2404` (default; `8vcpu` until 2026-10-07, see § Sizing the `publish.yml` runner); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
 | `build-changed.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Same-repo PRs only. The VPS's local CAS already holds the closure cache-warm built, so the whole job for a rebuilt `core/sudo-rs.bst` takes about 2 minutes; a hosted runner would pull the closure from bow first. See § PR build gate: `build-changed.yml` (#743) |
+| `bench-cold-build.yml` | `workflow_dispatch` input `runner`: `[self-hosted, linux, x64, krytis-vps]`, or a bench box's own single label (`bench-onecom-l`) | Benchmarks the runner itself, so the input is the subject, not an override. A bench box carries no default labels, so nothing aimed at `[self-hosted, linux, x64]` reaches it. See § Cold-build benchmark: `bench-cold-build.yml` (#1126) |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
 
