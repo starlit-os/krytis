@@ -12,6 +12,10 @@ set -euo pipefail
 
 DEFAULT_FLAGS="-o x86_64_v3 true --no-interactive"
 BST_CACHE_QUOTA="${BST_CACHE_QUOTA:-50G}"
+# The krytis-vps runner is a systemd service with no HOME in its environment.
+# Bash's `~` and BuildStream (Python's expanduser) both fall back to the passwd
+# entry there, so resolve it the same way rather than die under `set -u`.
+HOME="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
 
 if [ -n "${BST_FLAGS_OVERRIDE:-}" ]; then
     FLAGS="${BST_FLAGS_OVERRIDE}"
