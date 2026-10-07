@@ -35,14 +35,14 @@ signer = "sigstore-oidc:https://github.com/jdx/fnox/.github/workflows/release.ym
 repository_ids = { repository = "1078762196" }
 
 [[tools.grype]]
-version = "0.120.0"
+version = "0.120.1"
 backend = "aqua:anchore/grype"
-specifiers = ["0.120.0"]
+specifiers = ["0.120.1"]
 
 [tools.grype."platforms.linux-x64"]
-checksum = "sha256:a5a1218dce63acdac152a6b3b5bb366e7267e36f4069848cf455543b3fa5700e"
-url = "https://github.com/anchore/grype/releases/download/v0.120.0/grype_0.120.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/anchore/grype/releases/assets/605770160"
+checksum = "sha256:0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
+url = "https://github.com/anchore/grype/releases/download/v0.120.1/grype_0.120.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/616618032"
 
 [[tools.gum]]
 version = "2.0.2"
