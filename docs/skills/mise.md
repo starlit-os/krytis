@@ -1096,7 +1096,7 @@ fi
 groups them by purpose, because a hand-maintained copy of the tree rots: the list
 that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**26 of the 108 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**26 of the 112 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. Count from the
 **tree**, not the CLI: `find mise/tasks -type f | wc -l` and
 `grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
@@ -1114,7 +1114,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
-| Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794) |
+| Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
 | Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list) |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
@@ -1147,6 +1147,12 @@ check once it does; running the *task* right after `write` is no longer a
 false negative, but running some *other* stale tool/script that shells out to
 plain `git grep` on your own would be. See #867/#868's PR thread for the full
 trace of the false-positive-then-CI-failure.
+
+The task-name check had the same gap the other way round until #1126: it listed tasks
+with plain `git ls-files`, so a new, untracked task cited by a new doc failed locally
+("unknown mise task") while CI passed it. It now lists untracked files as well
+(`git ls-files --cached --others --exclude-standard`). Any new list a check builds from
+the tree needs the same treatment as its scans.
 
 **`large-blob-check` scans the tree, not the diff — the diff-scoped version of this
 gate would not have caught what motivated it.** A 46 MiB Proton Pass CLI binary sat

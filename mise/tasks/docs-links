@@ -110,10 +110,13 @@ done < <(git grep --untracked -I -noE '\]\([^)]+\)' -- '*.md' ':(exclude)docs/pl
 # mise only directory-scans project configs. `mise tasks --json` is *not* used
 # — it hides the hidden <name>-update tasks and includes whatever the running
 # user has in ~/.config/mise, so it both false-positives and false-negatives.
+# The task list includes untracked files for the same reason the reference scans
+# use `git grep --untracked`: a brand-new task cited by a brand-new doc used to
+# fail here until it was `git add`ed (#1126), while CI passed it.
 declare -A TASKS=()
 while IFS= read -r t; do
     TASKS["${t#mise/tasks/}"]=1
-done < <(git ls-files 'mise/tasks/*' | sed 's|/|:|3')
+done < <(git ls-files --cached --others --exclude-standard 'mise/tasks/*' | sed 's|/|:|3')
 while IFS= read -r t; do
     TASKS["$t"]=1
 done < <(git grep --untracked -hoP '^\[tasks\.\K[^\]]+' -- '*.toml' | tr -d '"')

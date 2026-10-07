@@ -59,6 +59,9 @@ apt-get update -qq
 # images once `verify-composefs-digest` checks the digest directly — the
 # version-pinning premise issue #794 cites (#524) was itself reverted by
 # #527. Whatever Debian trixie's apt carries is fine.
+# procps: `vmstat`, which bench-cold-build.yml samples CPU steal, iowait and
+# swap with. Debian marks it `important`, not `required`, so a minimal cloud
+# image need not carry it.
 apt-get install -y -qq --no-install-recommends \
     bubblewrap \
     bzip2 \
@@ -76,7 +79,8 @@ apt-get install -y -qq --no-install-recommends \
     squashfs-tools \
     mtools \
     dosfstools \
-    rclone
+    rclone \
+    procps
 
 # Swap: Contabo's Debian image ships none at all, which turns any RAM spike
 # into an immediate kernel OOM kill rather than a slowdown. That is not

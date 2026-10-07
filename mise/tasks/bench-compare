@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#MISE description="Compare bench-cold-build.yml runs side by side: wall time, per-element build times, steal, swap, OOMs"
+#USAGE arg "<runs>" var=#true help="One argument per column: a run ID, or several joined with + for a resumed run (e.g. 111+222)"
+
+# Downloads each run's `bench-*` artifact with `gh run download` and hands the
+# directories to scripts/bench-compare.py, which prints one Markdown table per
+# comparison (#1126, docs/plans/2026-10-07-vps-cold-build-benchmark.md).
+#
+#   mise run bench-compare 111 222          # krytis-vps vs bench-onecom-l
+#   mise run bench-compare 111+333 222      # first column: a resumed run
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+command -v gh >/dev/null 2>&1 || { echo "ERROR: gh is required" >&2; exit 1; }
+
+# Raw args, one per column (mise leaves them in $@ alongside the parsed spec).
+[ "$#" -gt 0 ] || { echo "ERROR: give at least one run ID" >&2; exit 1; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "${WORK}"' EXIT
+
+# Not GROUPS: bash reserves that name and silently ignores assignments to it.
+COLUMNS_SPEC=()
+for spec in "$@"; do
+    dirs=()
+    IFS='+' read -r -a ids <<< "${spec}"
+    for id in "${ids[@]}"; do
+        [[ "${id}" =~ ^[0-9]+$ ]] || { echo "ERROR: '${id}' is not a run ID" >&2; exit 1; }
+        if [ ! -d "${WORK}/${id}" ]; then
+            gh run download "${id}" --repo starlit-os/krytis --pattern 'bench-*' --dir "${WORK}/${id}" >/dev/null
+        fi
+        # One artifact per attempt (…-<run_id>-<attempt>); the last attempt counts.
+        dir=$(find "${WORK}/${id}" -mindepth 1 -maxdepth 1 -type d -name 'bench-*' | sort -V | tail -n 1)
+        [ -n "${dir}" ] || { echo "ERROR: run ${id} has no bench-* artifact" >&2; exit 1; }
+        dirs+=("${dir}")
+    done
+    COLUMNS_SPEC+=("$(IFS=+; echo "${dirs[*]}")")
+done
+
+uv run python3 scripts/bench-compare.py report "${COLUMNS_SPEC[@]}"

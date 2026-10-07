@@ -9,9 +9,11 @@ Inputs:
                element of the build closure after the build.
   build.log    optional: the `bst build` output of this run. Lines of the shape
                `[HH:MM:SS][key][   build:element] SUCCESS <element log path>`
-               mark a finished build/pull/push; `[...] FAILURE ...` a failure.
+               mark a finished build/pull/push/fetch; `[...] FAILURE ...` a
+               failure.
 
-Environment (optional): RUNNER_NAME, CACHE_WARM_QUOTA, CACHE_WARM_CAS_SIZE.
+Environment (optional): RUNNER_NAME, CACHE_WARM_QUOTA, CACHE_WARM_CAS_SIZE, and
+CACHE_REPORT_TARGETS (the build targets, default `oci/krytis/image.bst`).
 
 Usage: cache-summary.py <states.tsv> [<build.log>]
 
@@ -26,7 +28,7 @@ from collections import Counter, defaultdict
 TOOLCHAIN = re.compile(r"^freedesktop-sdk\.bst:(bootstrap/|components/(llvm|rust)\.bst$)")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 EVENT = re.compile(
-    r"^\[(?P<time>\d\d:\d\d:\d\d)\]\[(?P<key>[0-9a-f]{8})\]\[\s*(?P<op>build|pull|push):(?P<name>[^\]]+)\]"
+    r"^\[(?P<time>\d\d:\d\d:\d\d)\]\[(?P<key>[0-9a-f]{8})\]\[\s*(?P<op>build|pull|push|fetch):(?P<name>[^\]]+)\]"
     r" (?P<status>SUCCESS|FAILURE) (?P<rest>.*)$"
 )
 
@@ -91,7 +93,8 @@ def main() -> int:
         context.append(f"casd quota {os.environ['CACHE_WARM_QUOTA']}")
     if os.environ.get("CACHE_WARM_CAS_SIZE"):
         context.append(f"local cache {os.environ['CACHE_WARM_CAS_SIZE']}")
-    print("Build closure of `oci/krytis/image.bst`" + (f" ({', '.join(context)})" if context else "") + ".\n")
+    targets = ", ".join(f"`{t}`" for t in os.environ.get("CACHE_REPORT_TARGETS", "oci/krytis/image.bst").split())
+    print(f"Build closure of {targets}" + (f" ({', '.join(context)})" if context else "") + ".\n")
 
     if total == 0:
         print("**No element states were recorded** — `bst show` failed or never ran.\n")

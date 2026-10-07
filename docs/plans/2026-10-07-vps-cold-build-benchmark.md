@@ -1,10 +1,10 @@
 # Benchmark cold-cache builds: krytis-vps vs one.com L
 
-**Issue:** none · **Branch:** `docs/vps-cold-cache-benchmark-plan` · **Worktree:**
-`krytis.worktrees/docs/vps-cold-cache-benchmark-plan` · **Status: ready.** The Security Gate
-(§ Decisions, D5) was approved on 2026-10-07: registering a third-party host as a repo runner,
-inside the window. Next is step 1. Cloud server M was dropped the same day, leaving one one.com
-box.
+**Issue:** #1126 · **Branch:** `1126-benchmark-cold-build-on-one-com` (step 1) · **Worktree:**
+`krytis.worktrees/feat/gh1126-benchmark-cold-build-on-one-com` · **Status: step 1 done, next is
+step 2.** The Security Gate (§ Decisions, D5) was approved on 2026-10-07: registering a
+third-party host as a repo runner, inside the window. Cloud server M was dropped the same day,
+leaving one one.com box.
 
 Measures how long a cold-cache build takes on today's runner and on one.com Cloud server L. Here
 "cold" means an empty local cache and no artifact remote. This is the build a junction bump
@@ -72,7 +72,7 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
 | # | Decision | Why |
 |---|---|---|
 | D1 | **No bow at all** on bench runs: no artifact remote and no source cache. Sources come from upstream. | No token on a third-party box, so nothing to mint or rotate. Pulls are impossible, so the runs are cold by construction. Per-element **build** times, the primary metric, do not depend on where sources came from. Cost: upstream mirror variance lands in the fetch time, which is reported separately. |
-| D2 | **Phase 1: toolchain closure** on both boxes in parallel. Targets: `freedesktop-sdk.bst:components/llvm.bst freedesktop-sdk.bst:components/rust.bst`, `--deps all`, `-o x86_64_v3 true`. | The toolchain dominates a junction-bump rebuild and is the set the Toolchain Gate guards. It takes hours, not days. Builds on separate boxes share nothing, so running them in parallel costs no fairness. |
+| D2 | **Phase 1: toolchain closure** on both boxes in parallel. Targets: `freedesktop-sdk.bst:components/llvm.bst freedesktop-sdk.bst:components/rust.bst freedesktop-sdk.bst:bootstrap/go.bst`, `--deps all`, `-o x86_64_v3 true`: 159 elements, 67 of them the Toolchain Gate's set. | The toolchain dominates a junction-bump rebuild and is the set the Toolchain Gate guards. It takes hours, not days. Builds on separate boxes share nothing, so running them in parallel costs no fairness. `bootstrap/go.bst` was added in step 1: `llvm` and `rust` alone cover 66 of the 67 (`bst show --deps all`, 2026-10-07). |
 | D3 | **Phase 2: continue to the full closure** (`oci/krytis/image.bst --deps all`, no wipe) on krytis-vps, and on L **if L beat krytis-vps in phase 1**. If it did not, skip phase 2 on L. | phase 1 + phase 2 adds up to a cold full build. Running phase 2 on krytis-vps also refills its production CAS by building it, so the wipe costs no bow pull afterwards. |
 | D4 | **Keep the bench box out of `publish.yml`'s reach two ways:** register it with `--no-default-labels` and the single label `bench-onecom-l`, **and** disable `publish.yml` for the window. | Either alone closes the `force_self_hosted` route. The label survives an early re-enable; the disable survives a registration done without the flag. Both cost nothing. |
 | D5 | **Security Gate and a bounded window.** A human approves registering the one.com L host as a `starlit-os/krytis` runner (approved 2026-10-07). It is registered only once the window opens, just before phase 1, and deregistered as soon as its last bench run ends, not at write-up. | It runs repo code as root. The bench workflow is `workflow_dispatch`-only, `permissions: read-all`, and references no secrets, but any registered runner is reachable by a PR (§ Checked while writing). The fork-PR approval policy, `all_external_contributors` since 2026-10-07, puts every outside PR behind approval. A shorter registration bounds the rest of the exposure. |
@@ -84,59 +84,33 @@ The one.com slot counts are estimates until step 3 records the real `MemTotal`.
 
 ### 1. Benchmark tooling (one PR)
 
-- [ ] `mise/tasks/runner-vps/register`: when `RUNNER_VPS_NO_DEFAULT_LABELS=true`, pass
-      `--no-default-labels` to `config.sh`. Confirm the flag exists in the pinned
-      `RUNNER_VERSION`'s `./config.sh --help` before relying on it.
-- [ ] `.github/workflows/bench-cold-build.yml`, `workflow_dispatch` only:
-  - inputs: `runner` (choice: `krytis-vps`, `bench-onecom-l`), `phase`
-    (choice: `toolchain`, `full`) and `resume` (boolean, default `false`; see § Risks, fetch
-    failure);
-  - `runs-on`: `krytis-vps` → `["self-hosted","linux","x64","krytis-vps"]`, `bench-onecom-l` →
-    `["bench-onecom-l"]`;
-  - `timeout-minutes: 4320` (self-hosted allows 5 days);
-  - steps reuse cache-warm.yml's: checkout, stale-FUSE cleanup, mise pinned to the same
-    version, `mise bootstrap --yes --update`, `uv sync`, `generate-image-version`, userns
-    sysctl;
-  - `phase: toolchain` without `resume`: `rm -rf /root/.cache/buildstream`, then assert it is
-    gone. With `resume`: skip the wipe and keep whatever the failed attempt built.
-    `phase: full`: never wipe; assert all 67 toolchain elements are `cached` locally, and fail
-    otherwise;
-  - **Record host**: `lscpu`, `nproc`, `/proc/meminfo`, `swapon --show`, `df -h -x fuse`,
-    `/etc/os-release`, `uname -r`, into `host.txt`;
-  - **Configure BuildStream**: the same `SLOTS`/`BUILDERS`/`MAX_JOBS` formula as cache-warm.yml,
-    with a comment pointing back to it. Same scheduler block. `quota: 100G` on every box. **No
-    `artifacts:`/`source-caches:` entries** (D1);
-  - start `vmstat -t 30 > vmstat.log &` before the build and stop it after (`if: always()`);
-  - build: `uv run bst -o x86_64_v3 true --no-interactive build --deps all <targets>`, teed
-    under `set -o pipefail`. Record the step's start and end epoch in `timing.txt`;
-  - report (`if: always()`): `bst show --deps all` states and `scripts/cache-summary.py`, as in
-    cache-warm. **Fail if the run pulled anything** (cold check).
-    `journalctl -k --since <start> | grep -i oom` goes to `oom.txt`;
-  - upload `bench-<runner>-<phase>-<run_id>`: `host.txt`, `timing.txt`, `vmstat.log`,
-    `oom.txt`, `states.tsv`, `bst-build.log`, the summary. Retention 90 days.
-- [ ] `scripts/bench-compare.py` plus a `mise run bench-compare <runs>...` task, where each
-      argument is one box's run, or several resumed attempts joined with `+`
-      (`<id>+<id>`; their wall times and element times add up). It downloads the artifacts with
-      `gh run download` and prints one table:
-  - host: CPU model, `nproc`, `MemTotal`, builders × max-jobs;
-  - wall time of the build step, the sum of per-element build seconds, and fetch seconds
-    (`fetch:` events; cache-summary.py's `EVENT` regex only matches build/pull/push);
-  - per-element build times for the 67 toolchain elements, slowest first, one column per run;
-  - from vmstat: mean and p95 of `st` (steal) and `wa` (iowait), peak swap used;
-  - OOM kills.
-- [ ] `mise run bench-window open|close`, so the window is one reproducible command each way.
-      `open`: disables `publish.yml` plus every workflow whose `runs-on` names `krytis-vps`. It
-      derives that list from `.github/workflows/` when it runs, not from a fixed list: today that
-      is `cache-warm.yml`, `runner-vps-gc.yml` and `build-iso.yml`, and open PR #1122 adds
-      `build-changed.yml`. It also excludes the bench workflow itself.
-      It refuses to open unless the fork-PR approval policy is still `all_external_contributors`,
-      so a loosened policy stops the benchmark before a third-party host is registered.
-      `close`: re-enables exactly the workflows `open` disabled. Both end by printing the
-      workflow states.
-- [ ] `docs/skills/ci-runner.md`: a section for the bench workflow (what "cold" means here,
-      D1/D4, how to read the comparison) and a row in § Workflow Runner Choices. Commit them
-      with the code, per AGENTS.md.
-- [ ] `mise run docs-links`.
+Landed as described in docs/skills/ci-runner.md § Cold-build benchmark: `bench-cold-build.yml`
+(#1126). Where it differs from what this step first specified:
+
+- [x] `mise/tasks/runner-vps/register`: `RUNNER_VPS_NO_DEFAULT_LABELS=true` passes
+      `--no-default-labels` (present in actions/runner 2.338.0). It also checks the labels
+      GitHub reports and fails before starting the service unless they are exactly
+      `RUNNER_VPS_LABELS`, because an already-configured box reuses its registration.
+- [x] `.github/workflows/bench-cold-build.yml`. Changes from the first spec:
+  - phase 1 also targets `bootstrap/go.bst` (D2);
+  - the full-phase precondition is the whole toolchain closure cached locally, not a
+    count of 67;
+  - no `concurrency:` group: the runner already serializes, and a group would drop a
+    second queued dispatch;
+  - `vmstat` starts and stops inside the build step;
+  - extra artifact files: `bench.env` (runner, phase, commit, CPU, RAM, sizing) and
+    `summary.md`;
+  - `provision.sh` installs `procps` for `vmstat`.
+- [x] `scripts/bench-compare.py` (`check` and `report`) and `mise run bench-compare`.
+      `cache-summary.py` now parses `fetch:` events too, and takes `CACHE_REPORT_TARGETS`
+      for its header. Per-element table: the toolchain elements plus the 20 slowest others.
+- [x] `mise run bench-window open|close|status [--dry-run]`. What `open` disabled is kept in
+      the repository variable `BENCH_WINDOW_DISABLED`, so `close` works from any machine. On
+      2026-10-07 the derived list was `build-changed.yml`, `build-iso.yml`, `cache-warm.yml`,
+      `publish.yml` and `runner-vps-gc.yml`.
+- [x] `docs/skills/ci-runner.md`: the section and the § Workflow Runner Choices row.
+      `docs/skills/mise.md` lists the two tasks.
+- [x] `mise run docs-links`.
 
 ### 2. Provision the one.com box (needs D5)
 
@@ -181,7 +155,7 @@ exactly that until cache-warm has run.
 
 - [ ] Dispatch `phase=toolchain` on krytis-vps (and on L again, if the smoke run was
       cancelled).
-- [ ] Each run: toolchain 67/67 cached, `Pulled from a remote` 0, no OOM. A run that died on
+- [ ] Each run: all 159 elements cached (67 toolchain), `Pulled from a remote` 0, no OOM. A run that died on
       a fetch: re-dispatch the same box with `resume=true` and pass both IDs to
       `bench-compare` as `<id>+<id>`.
 - [ ] `mise run bench-compare <id-vps> <id-l>`. Paste the table under § Results.
@@ -231,9 +205,9 @@ exactly that until cache-warm has run.
 
 ## Deferred
 
-- **Where the bottleneck is for bow traffic, in both directions: the VPS or bow.** This covers
-  pulls (reads) and pushes (writes). It is out of scope here, because D1 keeps bow out of every
-  bench run, but it is still open and needs answering separately. It decides whether a faster
+- **Where the bottleneck is for bow traffic, in both directions: the VPS or bow (#1128).** This
+  covers pulls (reads) and pushes (writes). It is out of scope here, because D1 keeps bow out of
+  every bench run, but it is still open and tracked in #1128. It decides whether a faster
   runner would speed up the paths that mostly move cache data:
   - **Reads:** publish's build step swings between 540s and 1388s with bow's cache state
     (docs/skills/ci-runner.md § Sizing the `publish.yml` runner). Refilling a wiped or new

@@ -1,0 +1,286 @@
+name: Benchmark cold build
+
+# Times a cold-cache build on one runner (#1126,
+# docs/plans/2026-10-07-vps-cold-build-benchmark.md). "Cold" means an empty
+# local cache and no artifact remote: the build a junction bump forces on
+# cache-warm. Compare runs with `mise run bench-compare <run-id>...`.
+#
+# Two phases, dispatched separately on the same runner:
+#   toolchain  wipes ~/.cache/buildstream, then builds the Toolchain Gate's set
+#              (llvm, rust, bootstrap/go and their closure: 159 elements, 67 of
+#              them bootstrap/*, llvm or rust).
+#   full       never wipes; requires the toolchain closure cached locally (a
+#              finished toolchain phase), then builds oci/krytis/image.bst's
+#              whole closure. Cold full time = toolchain wall + full wall.
+# `resume` keeps the cache on a toolchain run, to continue one that died on an
+# upstream fetch; compare such a box as `<id>+<id>`.
+#
+# No bow at all (plan D1): no token reaches a third-party box, and nothing can
+# be pulled, because every freedesktop-sdk and gnome-build-meta key diverges
+# under x86_64_v3 (docs/skills/ci-runner.md § Why every freedesktop-sdk artifact
+# pull missed). The "Cold check" step fails the run if anything was pulled
+# anyway.
+#
+# Run it inside `mise run bench-window open`: that disables publish.yml and
+# every workflow that targets krytis-vps, so nothing queues behind a multi-day
+# run, and refuses to open unless the fork-PR approval policy is
+# all_external_contributors.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner to benchmark'
+        type: choice
+        options:
+          - krytis-vps
+          - bench-onecom-l
+      phase:
+        description: 'toolchain: wipe the cache and build the toolchain closure; full: continue to oci/krytis/image.bst'
+        type: choice
+        options:
+          - toolchain
+          - full
+      resume:
+        description: 'toolchain phase only: keep the cache to continue a run that failed'
+        type: boolean
+        default: false
+
+permissions: read-all
+
+# No concurrency: group. Each runner takes one job at a time already, and a
+# group would keep only one pending run, silently dropping a second dispatch
+# queued behind a running one (docs/skills/ci-runner.md § `concurrency:`
+# without `queue: max` silently drops queued runs, not just cancels
+# in-progress ones).
+
+jobs:
+  bench:
+    name: Cold build (${{ inputs.runner }}, ${{ inputs.phase }})
+    # krytis-vps by its full label set, as cache-warm.yml does. A bench box is
+    # registered with --no-default-labels (RUNNER_VPS_NO_DEFAULT_LABELS) and
+    # carries only its own label, so the bare label is the whole target.
+    runs-on: ${{ inputs.runner == 'krytis-vps' && fromJSON('["self-hosted","linux","x64","krytis-vps"]') || inputs.runner }}
+    # A cold full closure probably exceeds cache-warm's 24h on krytis-vps
+    # (llvm alone took 4h12m in run 37108048862). Self-hosted jobs may run 5 days.
+    timeout-minutes: 4320
+    env:
+      PHASE: ${{ inputs.phase }}
+      RESUME: ${{ inputs.resume }}
+      BENCH_RUNNER: ${{ inputs.runner }}
+      TOOLCHAIN_TARGETS: >-
+        freedesktop-sdk.bst:components/llvm.bst
+        freedesktop-sdk.bst:components/rust.bst
+        freedesktop-sdk.bst:bootstrap/go.bst
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Same cleanup as cache-warm.yml's step of this name; see the comments
+      # there. Needed before the wipe below: `rm -rf` fails on a dead FUSE
+      # mountpoint under the cache.
+      - name: Clear stale FUSE mounts
+        run: |
+          STALE=0
+          for m in $(awk '$2 ~ /buildstream/ && $3 ~ /fuse/ {print $2}' /proc/self/mounts); do
+            if ! timeout 5 stat -f "${m}" >/dev/null 2>&1; then
+              echo "Unmounting stale FUSE mount: ${m}"
+              umount -l "${m}" 2>/dev/null || fusermount -u "${m}" 2>/dev/null || true
+              STALE=$((STALE + 1))
+            fi
+          done
+          echo "==> Cleared ${STALE} stale FUSE mount(s)."
+
+      # Pinned for the reason cache-warm.yml gives: without `version:` the
+      # action skips setup on a box that already has any mise binary.
+      - name: Setup mise
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.10.3
+          experimental: true
+
+      - name: Install system dependencies
+        run: mise bootstrap --yes --update
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Generate image version
+        run: mise run generate-image-version
+
+      - name: Enable unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Select targets
+        run: |
+          BENCH_DIR="${RUNNER_TEMP}/bench"
+          rm -rf "${BENCH_DIR}"
+          mkdir -p "${BENCH_DIR}"
+          case "${PHASE}" in
+            toolchain) TARGETS="${TOOLCHAIN_TARGETS}" ;;
+            full) TARGETS="oci/krytis/image.bst" ;;
+            *) echo "::error::unknown phase ${PHASE}"; exit 1 ;;
+          esac
+          echo "BENCH_DIR=${BENCH_DIR}" >> "${GITHUB_ENV}"
+          echo "TARGETS=${TARGETS}" >> "${GITHUB_ENV}"
+          echo "==> ${BENCH_RUNNER} / ${PHASE}: ${TARGETS}"
+
+      - name: Record host
+        run: |
+          command -v vmstat >/dev/null || {
+            echo "::error::vmstat is missing. Re-run 'mise runner-vps:install' against this box (provision.sh installs procps)."
+            exit 1
+          }
+          {
+            echo "== lscpu"; lscpu
+            echo "== nproc"; nproc
+            echo "== /proc/meminfo"; cat /proc/meminfo
+            echo "== swapon"; swapon --show
+            echo "== df"; df -h -x fuse || true
+            echo "== /etc/os-release"; cat /etc/os-release
+            echo "== uname"; uname -a
+          } > "${BENCH_DIR}/host.txt"
+          cat "${BENCH_DIR}/host.txt"
+
+      - name: Configure BuildStream
+        run: |
+          mkdir -p ~/.config
+          # cache-warm.yml's sizing, unchanged, so the benchmark measures what
+          # production would run on this box (plan § Checked while writing):
+          # one slot per core and per 2 GiB, builders 2, max-jobs rounded up.
+          # See the comments in cache-warm.yml's step of this name.
+          CORES=$(nproc)
+          MEM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+          SLOTS=$(( MEM_GB / 2 ))
+          [ "${SLOTS}" -gt "${CORES}" ] && SLOTS=${CORES}
+          [ "${SLOTS}" -lt 1 ] && SLOTS=1
+          BUILDERS=2
+          [ "${BUILDERS}" -gt "${SLOTS}" ] && BUILDERS=${SLOTS}
+          MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))
+          QUOTA=100G
+          echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS}, casd quota ${QUOTA}"
+
+          # Overwrites cache-warm's config on krytis-vps, bow entries and all:
+          # no artifacts:/source-caches: here (plan D1). cache-warm rewrites
+          # the file on its next run.
+          cat > ~/.config/buildstream.conf <<EOF
+          scheduler:
+            fetchers: 10
+            builders: ${BUILDERS}
+            pushers: 5
+            network-retries: 3
+          logging:
+            key-length: 8
+            verbose: False
+          cache:
+            quota: ${QUOTA}
+          build:
+            max-jobs: ${MAX_JOBS}
+          EOF
+          cat ~/.config/buildstream.conf
+
+          {
+            echo "RUNNER=${BENCH_RUNNER}"
+            echo "RUNNER_NAME=${RUNNER_NAME}"
+            echo "PHASE=${PHASE}"
+            echo "RESUME=${RESUME}"
+            echo "TARGETS=${TARGETS}"
+            echo "RUN_ID=${GITHUB_RUN_ID}"
+            echo "SHA=${GITHUB_SHA}"
+            echo "CPU_MODEL=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            echo "NPROC=${CORES}"
+            echo "MEM_TOTAL_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+            echo "BUILDERS=${BUILDERS}"
+            echo "MAX_JOBS=${MAX_JOBS}"
+            echo "QUOTA=${QUOTA}"
+          } > "${BENCH_DIR}/bench.env"
+
+      - name: Prepare local cache
+        run: |
+          noansi() { sed 's/\x1b\[[0-9;]*m//g'; }
+          if [ "${PHASE}" = "toolchain" ] && [ "${RESUME}" != "true" ]; then
+            # Plan D6: cold by wiping. bow holds the full closure, so
+            # krytis-vps's next cache-warm can pull back anything this loses.
+            rm -rf ~/.cache/buildstream
+            if [ -e ~/.cache/buildstream ]; then
+              echo "::error::~/.cache/buildstream survived rm -rf"
+              exit 1
+            fi
+            echo "==> Wiped ~/.cache/buildstream: cold start."
+          elif [ "${PHASE}" = "full" ]; then
+            # The full phase continues a finished toolchain phase. Anything
+            # short of the whole toolchain closure would fold toolchain build
+            # time into this phase's number.
+            # shellcheck disable=SC2086 # TOOLCHAIN_TARGETS is a word list
+            uv run bst -o x86_64_v3 true show --deps all --format '%{state}|%{name}' ${TOOLCHAIN_TARGETS} 2>/dev/null \
+              | noansi | grep -E '^[a-z ]+\|' > "${RUNNER_TEMP}/toolchain-states" || true
+            TOTAL=$(wc -l < "${RUNNER_TEMP}/toolchain-states")
+            MISSING=$(grep -vc '^cached|' "${RUNNER_TEMP}/toolchain-states" || true)
+            if [ "${TOTAL}" -eq 0 ] || [ "${MISSING}" -ne 0 ]; then
+              echo "::error::Toolchain closure not cached locally (${MISSING} of ${TOTAL} missing). Run phase=toolchain on this runner first."
+              exit 1
+            fi
+            echo "==> Toolchain closure cached locally: ${TOTAL} of ${TOTAL}."
+          else
+            echo "==> resume=true: keeping the local cache from the failed attempt."
+          fi
+          df -h -x fuse || true
+
+      - name: Build
+        run: |
+          set -o pipefail
+          # vmstat runs inside this step, not as a background service across
+          # steps, so it lives and dies with the build it samples.
+          vmstat -n -t 30 > "${BENCH_DIR}/vmstat.log" &
+          VMSTAT_PID=$!
+          echo "START=$(date +%s)" > "${BENCH_DIR}/timing.txt"
+          finish() {
+            rc=$?
+            echo "END=$(date +%s)" >> "${BENCH_DIR}/timing.txt"
+            echo "EXIT=${rc}" >> "${BENCH_DIR}/timing.txt"
+            kill "${VMSTAT_PID}" 2>/dev/null || true
+          }
+          trap finish EXIT
+          # --retry-failed as in cache-warm.yml: a cached failure from an
+          # earlier attempt would otherwise be re-reported in 0s.
+          # shellcheck disable=SC2086 # TARGETS is a word list
+          uv run bst -o x86_64_v3 true --no-interactive build --deps all --retry-failed ${TARGETS} 2>&1 \
+            | tee "${BENCH_DIR}/bst-build.log"
+
+      - name: Write report
+        if: always()
+        run: |
+          # A cancelled or timed-out build step may not have run its trap.
+          if [ -f "${BENCH_DIR}/timing.txt" ] && ! grep -q '^END=' "${BENCH_DIR}/timing.txt"; then
+            echo "END=$(date +%s)" >> "${BENCH_DIR}/timing.txt"
+            echo "EXIT=cancelled" >> "${BENCH_DIR}/timing.txt"
+          fi
+          START=$(sed -n 's/^START=//p' "${BENCH_DIR}/timing.txt" 2>/dev/null || true)
+          if [ -n "${START}" ]; then
+            journalctl -k --no-pager --since "@${START}" 2>/dev/null \
+              | grep -iE 'out of memory|oom-kill|killed process' > "${BENCH_DIR}/oom.txt" || true
+          fi
+          df -h -x fuse || true
+          du -sh ~/.cache/buildstream 2>/dev/null || true
+          # shellcheck disable=SC2086 # TARGETS is a word list
+          uv run bst -o x86_64_v3 true show --deps all --format '%{state}|%{full-key}|%{name}' ${TARGETS} 2>/dev/null \
+            | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z ]+\|' > "${BENCH_DIR}/states.tsv" || true
+          {
+            uv run python3 scripts/bench-compare.py report "${BENCH_DIR}"
+            CACHE_REPORT_TARGETS="${TARGETS}" uv run python3 scripts/cache-summary.py \
+              "${BENCH_DIR}/states.tsv" "${BENCH_DIR}/bst-build.log"
+          } | tee "${BENCH_DIR}/summary.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Cold check
+        if: always()
+        run: uv run python3 scripts/bench-compare.py check "${BENCH_DIR}"
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-${{ inputs.runner }}-${{ inputs.phase }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bench/
+          retention-days: 90
+          if-no-files-found: warn
