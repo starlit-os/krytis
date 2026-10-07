@@ -561,8 +561,9 @@ lost by failing, because artifacts push to bow as they build and the two reporti
 carry `if: always()`. A red cache-warm is therefore the earliest signal that `main` does
 not build; treat it as such rather than as flake.
 
-On a PR, `build-changed.yml` now builds the elements the PR touches on `krytis-vps`. The
-same check runs locally as `mise run build-changed` (~1 min for a leaf element). Re-applying
+On a PR, `build-changed.yml` now builds the elements the PR touches on `krytis-vps`; the
+whole job takes about 2 minutes for a rebuilt `core/sudo-rs.bst`. The same check runs
+locally as `mise run build-changed`. Re-applying
 #735's `-Dm440` to `core/sudo-rs.bst` fails it with the same `Permission denied`. It does
 not build reverse dependencies, skips PRs that change `project.conf`, `include/` or a
 junction, and skips fork PRs (`docs/skills/ci-runner.md` § PR build gate:

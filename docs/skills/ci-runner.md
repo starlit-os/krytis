@@ -521,6 +521,19 @@ skips `svc.sh install` when the unit exists, so re-running it just
 re-asserts the service and the drop-in. Re-key by running
 `mise runner-vps:deregister` first.
 
+### Jobs here run with no `HOME`
+
+Jobs on this box get no `HOME` in their environment. The likely cause, not yet checked on
+the box, is that the runner's system service sets no `User=`, so systemd sets no `HOME`.
+Most of the stack doesn't notice:
+bash's `~` and Python's `os.path.expanduser` (which BuildStream uses for
+`~/.cache/buildstream` and `~/.config`) fall back to the passwd entry, `/root`. That is why
+cache-warm, which writes `~/.config/buildstream.conf` and runs `uv run bst`, always worked.
+A bash task that reads `${HOME}` under `set -u` dies instead. The first `build-changed.yml`
+run on this box failed with `./mise/tasks/bst: line 184: HOME: unbound variable` (run
+37589150439). `mise/tasks/bst` now resolves `HOME` from `getent passwd` when it is unset.
+Any new bash task that reads `${HOME}` and can run here needs the same fallback.
+
 ## `build-iso.yml` — ISO Build CI Job (issue #844)
 
 Manual trigger only (`workflow_dispatch`, no push/schedule) as of #844. Runs
@@ -738,22 +751,37 @@ Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` a
   config file. On a 12-core, 30 GiB laptop that gives 2 builders × 6 jobs.
 - **Checkout at depth 2, `--base HEAD^1`.** The default `pull_request` ref is the PR merged
   into its base, so `HEAD^1` is the base and the diff is exactly the PR.
+- **`cache: false` on `jdx/mise-action`.** On this persistent box the tools already live in
+  `/root/.local/share/mise`, but the action's default `actions/cache` restore still
+  downloaded a 621 MB tarball (1m44s of a 1m45s step, run 37588594526). `mise install
+  --locked` then reported all 11 tools "already installed". cache-warm's `Setup mise` pays
+  the same restore: 5m19s in run 37515434814.
 
 **Security.** The job runs PR-authored code (the task, the workflow, every element's
 commands) as root on a persistent host. That is acceptable only because it is limited to
 same-repo branches, whose authors already have write access, and it only gets the
 **pull** token, so a PR can't write to bow. The `if:` guard protects this job only. A fork
 PR can edit any workflow to target `krytis-vps`, as it could before this gate existed. What
-stops that is the repository's fork-PR approval policy, which is `first_time_contributors`
-as of 2026-10-07 (`gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`).
+stops that is the repository's fork-PR approval policy. It was `first_time_contributors`,
+which lets a returning outside contributor's fork PR run with no approval. With this gate,
+it was changed on 2026-10-07 to `all_external_contributors`, so every outside contributor's
+fork PR waits for a maintainer to approve the run. Check it with `gh api
+repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-approval`. **Approving a
+fork PR's run approves whatever workflow that PR contains**, so read its `.github/` diff
+before clicking.
 
-Verified 2026-10-07 on a laptop against current `main`, with the timings below:
+Verified 2026-10-07 against current `main`, re-applying #735's `-Dm440` to
+`core/sudo-rs.bst`, then #740's form forced to rebuild, each together with a
+`files/xdg-terminals/` edit:
 
-- Re-applying #735's `-Dm440` to `core/sudo-rs.bst` failed with
-  `/buildstream-install/etc/sudoers: Permission denied` in 77 s (the toolchain check took
-  about 40 s of that).
-- #740's form, forced to rebuild, plus a `files/xdg-terminals/` edit built both elements
-  in 47 s.
+| Where | #735 break | #740 form |
+|---|---|---|
+| laptop, `mise run build-changed` | fails with `/buildstream-install/etc/sudoers: Permission denied`, 77 s (toolchain check ~40 s) | both elements built, 47 s |
+| `krytis-vps`, throwaway PR #1123 | same failure, whole job 2m17s (run 37601402591) | passes, whole job 2m03s (run 37601748225) |
+
+On the VPS all 67 toolchain artifacts were local hits, and checkout plus setup took under
+10 s once `cache: false` was in. A PR touching no BuildStream input finishes in seconds
+(run 37588594526). The first two VPS runs queued for 1h45m behind a dispatched cache-warm.
 
 ## Scheduled Workflow Cron Delay
 
@@ -1849,7 +1877,7 @@ autonomously.
 | `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
 | `publish.yml` | `blacksmith-4vcpu-ubuntu-2404` (default; `8vcpu` until 2026-10-07, see § Sizing the `publish.yml` runner); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
-| `build-changed.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Same-repo PRs only. The VPS's local CAS already holds the closure cache-warm built, so a leaf element builds in about a minute; a hosted runner would pull the closure from bow first. See § PR build gate: `build-changed.yml` (#743) |
+| `build-changed.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Same-repo PRs only. The VPS's local CAS already holds the closure cache-warm built, so the whole job for a rebuilt `core/sudo-rs.bst` takes about 2 minutes; a hosted runner would pull the closure from bow first. See § PR build gate: `build-changed.yml` (#743) |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans and the QEMU enrollment gate — none of them run a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain |
 

@@ -38,9 +38,9 @@ jobs:
     # which registers the same [self-hosted, linux, x64], out of the routing.
     # One runner: a PR build queues behind a running cache-warm.
     runs-on: [self-hosted, linux, x64, krytis-vps]
-    # A leaf element takes about a minute. Anything near this limit is
-    # compiling far more than the PR changed; fail rather than hold the only
-    # VPS runner.
+    # Rebuilding core/sudo-rs.bst took about 2 minutes for the whole job (run
+    # 37601748225). Anything near this limit is compiling far more than the PR
+    # changed; fail rather than hold the only VPS runner.
     timeout-minutes: 45
     steps:
       - name: Checkout repository
@@ -49,9 +49,6 @@ jobs:
           # The default ref is the PR merged into its base. Depth 2 brings the
           # base as HEAD^1, so the diff is exactly what this PR changes.
           fetch-depth: 2
-
-      - name: Clear stale FUSE mounts
-        run: scripts/clear-stale-fuse-mounts.sh
 
       # `version:` is required on this persistent box: without it mise-action
       # keeps whatever mise is already installed. See docs/skills/ci-runner.md
@@ -62,6 +59,11 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.3
           experimental: true
+          # The tools already live in /root/.local/share/mise on this box. The
+          # actions/cache restore downloaded 621 MB for 1m44s, then `mise
+          # install --locked` reported all 11 "already installed" (run
+          # 37588594526).
+          cache: false
 
       # No `mise bootstrap`: provision.sh installed the host packages and
       # cache-warm re-runs bootstrap on this box every weekday.
