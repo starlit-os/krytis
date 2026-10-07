@@ -65,7 +65,11 @@ targets() {
 status() {
     local open
     open=$(window)
-    echo "==> Window: ${open:+OPEN (${VAR}=${open})}${open:-closed}"
+    if [ -n "${open}" ]; then
+        echo "==> Window: OPEN (${VAR}=${open})"
+    else
+        echo "==> Window: closed"
+    fi
     echo "==> Fork-PR approval policy: $(policy)"
     for wf in $( { targets; tr ',' '\n' <<< "${open}"; } | grep -v '^$' | sort -u); do
         printf '    %-24s %s\n' "${wf}" "$(wf_state "${wf}")"

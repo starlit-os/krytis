@@ -15,11 +15,12 @@ name: Benchmark cold build
 # `resume` keeps the cache on a toolchain run, to continue one that died on an
 # upstream fetch; compare such a box as `<id>+<id>`.
 #
-# No bow at all (plan D1): no token reaches a third-party box, and nothing can
-# be pulled, because every freedesktop-sdk and gnome-build-meta key diverges
-# under x86_64_v3 (docs/skills/ci-runner.md § Why every freedesktop-sdk artifact
-# pull missed). The "Cold check" step fails the run if anything was pulled
-# anyway.
+# No remote cache at all (plan D1): not bow, so no token reaches a third-party
+# box, and not the junctions' own caches either. Leaving out bow is NOT enough:
+# freedesktop-sdk's project.conf recommends cache.freedesktop-sdk.io, and it
+# served 31 artifacts to the first smoke run (37661631325) despite x86_64_v3.
+# `override-project-caches: true` below drops every project's recommended
+# remotes. The "Cold check" step still fails the run if anything was pulled.
 #
 # Run it inside `mise run bench-window open`: that disables publish.yml and
 # every workflow that targets krytis-vps, so nothing queues behind a multi-day
@@ -161,9 +162,13 @@ jobs:
           QUOTA=100G
           echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS}, casd quota ${QUOTA}"
 
-          # Overwrites cache-warm's config on krytis-vps, bow entries and all:
-          # no artifacts:/source-caches: here (plan D1). cache-warm rewrites
-          # the file on its next run.
+          # Overwrites cache-warm's config on krytis-vps, bow entries and all;
+          # cache-warm rewrites the file on its next run. No servers, and
+          # override-project-caches drops the remotes each project.conf
+          # recommends, junctions included (_resolve_specs_for_project in
+          # buildstream/_context.py). Without it, cache.freedesktop-sdk.io
+          # served 31 artifacts to smoke run 37661631325. Verified locally:
+          # `bst artifact pull` then fails with "No artifact caches available".
           cat > ~/.config/buildstream.conf <<EOF
           scheduler:
             fetchers: 10
@@ -177,6 +182,10 @@ jobs:
             quota: ${QUOTA}
           build:
             max-jobs: ${MAX_JOBS}
+          artifacts:
+            override-project-caches: true
+          source-caches:
+            override-project-caches: true
           EOF
           cat ~/.config/buildstream.conf
 

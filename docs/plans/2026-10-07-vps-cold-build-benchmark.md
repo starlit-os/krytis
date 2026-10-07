@@ -38,11 +38,14 @@ address lives only in the vault (Krytis Bench VPS), like krytis-vps's.
   not fit in 6 hours). So a cold full closure probably takes more than 24h there
   `[INFERENCE]`, longer than cache-warm's `timeout-minutes: 1440`.
 - **The closure is 917 elements, 67 of them toolchain** (cache report of 37515434814).
-- **Without bow, nothing can be pulled.** Every fdsdk key and every gbm key diverges under
-  `x86_64_v3`. The declared remotes (`cache.freedesktop-sdk.io`, and gbm's own) can never hold
-  them (project.conf header; docs/skills/ci-runner.md § Why every freedesktop-sdk artifact
-  pull missed). A build with no bow config is therefore cold by construction. Step 1's
-  `Pulled from a remote = 0` assertion proves it for each run.
+- **~~Without bow, nothing can be pulled.~~ Wrong; found by the first smoke run.** This
+  bullet said every fdsdk and gbm key diverges under `x86_64_v3`, so a build with no bow
+  config would be cold by construction. Smoke run 37661631325 pulled 33 of the toolchain
+  phase's 159 elements from `cache.freedesktop-sdk.io`: the bootstrap's host-side stages,
+  which the option does not touch. gcc, glibc, llvm and rust were not served. The workflow
+  now sets `override-project-caches: true` (docs/skills/ci-runner.md § Why every
+  freedesktop-sdk artifact pull missed, the correction at its end). The cold check is what
+  caught it.
 - **The sizing formula overshoots its own budget.** `MAX_JOBS = ceil(SLOTS / BUILDERS)` with
   `BUILDERS=2` gives `2 × ceil(SLOTS/2)`, which is one compiler more than `SLOTS` whenever
   `SLOTS` is odd. krytis-vps (5 slots) runs 6 today; L (about 7) would run 8. The benchmark
@@ -72,7 +75,7 @@ address lives only in the vault (Krytis Bench VPS), like krytis-vps's.
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | **No bow at all** on bench runs: no artifact remote and no source cache. Sources come from upstream. | No token on a third-party box, so nothing to mint or rotate. Pulls are impossible, so the runs are cold by construction. Per-element **build** times, the primary metric, do not depend on where sources came from. Cost: upstream mirror variance lands in the fetch time, which is reported separately. |
+| D1 | **No remote cache at all** on bench runs: no bow, and `override-project-caches: true` so no junction's recommended cache either (artifacts or sources). Sources come from upstream. | No token on a third-party box, so nothing to mint or rotate. With no remote at all, every element is built, so the run is truly cold. Per-element **build** times, the primary metric, do not depend on where sources came from. Cost: upstream mirror variance lands in the fetch time, which is reported separately. |
 | D2 | **Phase 1: toolchain closure** on both boxes in parallel. Targets: `freedesktop-sdk.bst:components/llvm.bst freedesktop-sdk.bst:components/rust.bst freedesktop-sdk.bst:bootstrap/go.bst`, `--deps all`, `-o x86_64_v3 true`: 159 elements, 67 of them the Toolchain Gate's set. | The toolchain dominates a junction-bump rebuild and is the set the Toolchain Gate guards. It takes hours, not days. Builds on separate boxes share nothing, so running them in parallel costs no fairness. `bootstrap/go.bst` was added in step 1: `llvm` and `rust` alone cover 66 of the 67 (`bst show --deps all`, 2026-10-07). |
 | D3 | **Phase 2: continue to the full closure** (`oci/krytis/image.bst --deps all`, no wipe) on krytis-vps, and on L **if L beat krytis-vps in phase 1**. If it did not, skip phase 2 on L. | phase 1 + phase 2 adds up to a cold full build. Running phase 2 on krytis-vps also refills its production CAS by building it, so the wipe costs no bow pull afterwards. |
 | D4 | **Keep the bench box out of `publish.yml`'s reach two ways:** register it with `--no-default-labels` and the single label `bench-onecom-l`, **and** disable `publish.yml` for the window. | Either alone closes the `force_self_hosted` route. The label survives an early re-enable; the disable survives a registration done without the flag. Both cost nothing. |
@@ -140,13 +143,15 @@ Landed as described in docs/skills/ci-runner.md § Cold-build benchmark: `bench-
       (`ssh_pwauth: false`). `sshd -T` reports `passwordauthentication no`, a password
       attempt gets `Permission denied (publickey)`, and a fresh root key login after the
       restart works. The password stays in the vault for one.com's web console.
-- [ ] **Install only, do not register yet** (D5):
+- [x] **Install only, do not register yet** (D5):
       ```shell
       RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
         mise run runner-vps:install
       ```
       `install` copies packages, swap and the runner binary. GitHub knows nothing about the
-      box until `register`.
+      box until `register`. Done 2026-10-07 (runner 2.338.0). Afterwards `vmstat`, `bwrap`,
+      `podman`, `nft`, `mksquashfs`, `git` and `jq` are on the box, `/swapfile` is 8G with
+      swappiness 10, and there is no `.runner` file and no `actions.runner.*` unit.
 
 ### 3. Open the window and smoke (just before phase 1)
 
@@ -155,26 +160,31 @@ queue behind a bench run or land between phases. If a tracking PR bumps a juncti
 publish would have refused it anyway at the Toolchain Gate. Its next run after `close` does
 exactly that until cache-warm has run.
 
-- [ ] Confirm the latest cache-warm reports 917/917, so bow can refill krytis-vps.
-- [ ] Push branch `bench/2026-10` at `main`'s current SHA. Every dispatch below uses
+- [x] Confirm the latest cache-warm reports 917/917, so bow can refill krytis-vps
+      (37588957778, 2026-10-07).
+- [x] Push branch `bench/2026-10` at `main`'s current SHA. Every dispatch below uses
       `--ref bench/2026-10`, so all runs build identical cache keys while `main` moves. The
       bench workflow must already be on `main`, because `workflow_dispatch` only sees workflows
-      on the default branch.
-- [ ] `mise run bench-window open`.
-- [ ] Register the box:
+      on the default branch. First pushed at `5d32c42`; moved after the smoke fix below.
+- [x] `mise run bench-window open` (2026-10-07): disabled `build-changed.yml`,
+      `build-iso.yml`, `cache-warm.yml`, `publish.yml`, `runner-vps-gc.yml`.
+- [x] Register the box (2026-10-07):
       ```shell
       RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
         RUNNER_VPS_NAME=bench-onecom-l RUNNER_VPS_LABELS=bench-onecom-l \
         RUNNER_VPS_NO_DEFAULT_LABELS=true mise run runner-vps:register
       ```
-- [ ] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \([.labels[].name])"'`
-      shows `bench-onecom-l` with **only** its own label.
+- [x] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \([.labels[].name])"'`
+      shows `bench-onecom-l` with **only** its own label (`register` checked it too).
 - [ ] Smoke: dispatch `runner=bench-onecom-l phase=toolchain`. Within the first 15 minutes,
       check that `host.txt` looks right, the config print shows no remotes and the expected
       builders × max-jobs, and fetches are under way. If anything is wrong, cancel the run,
       land a fix PR, move `bench/2026-10` to the fixed SHA, and smoke again. L is the right
       smoke target: a fresh box holds nothing worth keeping, while a bad smoke on krytis-vps
       would wipe its CAS for nothing. A clean smoke run can stay as L's phase 1 run.
+      - Smoke 1, 37661631325: host, sizing (2 × 4) and fetches were right, but the run
+        pulled 33 artifacts from `cache.freedesktop-sdk.io`. Cancelled; the cold check
+        failed as designed. Fix: `override-project-caches` (§ Checked while writing).
 
 ### 4. Phase 1: toolchain closure
 
