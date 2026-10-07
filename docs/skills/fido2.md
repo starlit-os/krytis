@@ -102,19 +102,42 @@ then append the `.pub` to the remote's `~/.ssh/authorized_keys` over the box's e
 access (password, or another key) before touching auth config. No git wiring — this
 credential authenticates `ssh`/`sshd`, it never signs anything.
 
-### Provider order forms reject `sk-ssh-ed25519` keys — bootstrap with a temporary key
+### Provider order forms reject `sk-ssh-ed25519` keys — bootstrap over the provider's own login
 
 one.com's VPS order form refused the `ssh:BenchOnecomL` public key with "invalid SSH
 format" (2026-10-07, #1126). The key itself is fine: OpenSSH made it, and `cryptography`
 50.0.2's `load_ssh_public_key` parses it. But a validator that only knows the classic types
 rejects `sk-ssh-ed25519@openssh.com`. paramiko 5.0.0, for one, raises `UnknownKeyType`.
-Expect any provider form or API to do the same. Give the form a **temporary plain
-`ed25519` key** instead (`ssh-keygen -t ed25519 -N "" -C <name>-bootstrap-temporary`). Then,
-over that access, append the sk `.pub` to `/root/.ssh/authorized_keys` and confirm an sk
-login works (PTY, touch). Only after that, delete the temporary line from
-`authorized_keys` and the key files. A root password works as the bootstrap too, if the
-provider sets one; turn password login off afterwards (§ Disabling root password SSH on a
-cloud-init VPS).
+Expect any provider form or API to do the same.
+
+Get in with whatever the provider does accept, add the sk key over that, then close the
+bootstrap route. one.com's Debian 13 image gave a non-root user, `administrator`, with a
+password and `NOPASSWD: ALL` sudo. Root SSH was key-only (`PermitRootLogin
+without-password`), so a correct root password was refused. What worked, in order:
+
+1. **Password login as `administrator`, without typing the password.** Use
+   `SSH_ASKPASS=<script> SSH_ASKPASS_REQUIRE=force setsid -w ssh -o
+   PubkeyAuthentication=no -o PreferredAuthentications=password …`, where the script runs
+   `pass-cli item view … --field Password`. The script must inherit the caller's
+   environment; see the warning below.
+2. **`sudo` appends the sk `.pub` to `/root/.ssh/authorized_keys`.** The `runner-vps:*`
+   tasks log in as root. Pass the key as an argument, since it is public.
+3. **A root login with the sk key in a PTY**, touching the key.
+4. **Password SSH off.** Fix the cloud-init drop-in (§ Disabling root password SSH on a
+   cloud-init VPS), and add `ssh_pwauth: false` in `/etc/cloud/cloud.cfg.d/` so cloud-init
+   does not turn it back on. Then check that a password attempt gets
+   `Permission denied (publickey)` and a fresh sk login still works. The password stays in
+   the vault for the provider's web console.
+
+If the provider takes only a key and sets no password, give it a temporary plain
+`ed25519` key instead, and delete it from `authorized_keys` once the sk login works.
+
+**Never run `pass-cli` with a scrubbed environment**: no `env -i`, and no askpass helper
+launched with a cleared env. Without `PROTON_PASS_LINUX_KEYRING=dbus` it falls back to the
+kernel keyring, finds no local key, and **force-logs-out the live session**. That happened
+here on 2026-10-07: one `env -i` test of the askpass script cost a `pass-cli login`
+(docs/skills/mise.md § On a dev host: the local key dies at reboot unless you ask for D-Bus).
+Test a helper by running it as is and printing only the output's length.
 
 ### An agent driving plain `ssh` over a non-PTY shell gets a misleading error, not a touch prompt
 

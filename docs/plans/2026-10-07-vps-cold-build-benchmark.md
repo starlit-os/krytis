@@ -13,17 +13,18 @@ krytis-vps. This plan does not make that decision.
 
 ## Machines
 
-| Name | Provider / plan | vCPU | RAM | Disk | Slots under today's formula |
-|---|---|---|---|---|---|
-| `krytis-vps` | Contabo Cloud VPS 6 | 6 | 12 GB (11 GiB `MemTotal`) | 200 GB | 5 → builders 2 × max-jobs 3 = 6 |
-| `bench-onecom-l` | one.com Cloud server L | 8 | 16 GB | 400 GB NVMe | ~7 (15 GiB) → 2 × 4 = 8 |
+| Name | Provider / plan | vCPU | RAM | Disk | Slots under today's formula | Price / month |
+|---|---|---|---|---|---|---|
+| `krytis-vps` | Contabo Cloud VPS 6 | 6 | 12 GB (11 GiB `MemTotal`) | 200 GB | 5 → builders 2 × max-jobs 3 = 6 | not recorded here |
+| `bench-onecom-l` | one.com Cloud server L | 8 | 16 GB (15.6 GiB `MemTotal`, 16382184 kB) | 394G root | 7 → 2 × 4 = 8 | renewal 169 SEK + 25% VAT = 211.25 SEK |
 
 one.com specs come from <https://www.one.com/en-gb/vps/>, checked 2026-10-07. The page
 names AMD EPYC CPUs and OpenStack, and lists Debian among the OS images without a version.
-Prices are rendered client-side and the search snippets disagree with each other, so fill
-in the **renewal** price, not the intro price, from the order page in step 2.
+The renewal price was read from the order on 2026-10-07; the page itself renders prices
+client-side.
 
-The one.com slot counts are estimates until step 3 records the real `MemTotal`.
+The one.com row was measured on the box on 2026-10-07: Debian GNU/Linux 13 (trixie). Its
+address lives only in the vault (Krytis Bench VPS), like krytis-vps's.
 
 ## Checked while writing
 
@@ -120,33 +121,25 @@ Landed as described in docs/skills/ci-runner.md § Cold-build benchmark: `bench-
       `SHA256:2gaVEluCzEjGSYRqMfAgoroGWX1VydAi+XRWHhcELos`). Not `ssh:KrytisBuild`: a separate
       credential can be deleted from the key when L goes, without touching krytis-vps.
       Every `runner-vps:*` call for L below passes `RUNNER_VPS_SSH_KEY` to use it.
-- [x] Krytis vault item **Krytis Bench VPS** (custom item, section "Access"): `SSH Public Key`,
-      `SSH Credential`, `SSH Fingerprint`, `Username` (`root`), and an empty `IP Address`.
-      Created with `pass-cli item create custom --from-template`, which puts fields in a
-      section. That is a different shape from Krytis Build VPS, whose fields are top-level
-      extra fields that `fnox.toml` reads; no `fnox.toml` entry reads the bench item.
-- [x] Temporary bootstrap key `~/.ssh/id_ed25519_onecom_bootstrap` (plain `ed25519`,
-      comment `onecom-bootstrap-temporary`). one.com's order form rejects the sk key with
-      "invalid SSH format" (docs/skills/fido2.md § Provider order forms reject
-      `sk-ssh-ed25519` keys — bootstrap with a temporary key).
-- [ ] Order Cloud server L, Debian 13 if it is offered (record the version otherwise),
-      with `~/.ssh/id_ed25519_onecom_bootstrap.pub` as its SSH key. Record the renewal price
-      in § Machines, and the address in the vault:
-      `pass-cli item update --vault-name Krytis --item-title "Krytis Bench VPS" --field "IP Address=<ip>"`.
-- [ ] Swap the bootstrap key for `ssh:BenchOnecomL`:
-      ```shell
-      ssh -i ~/.ssh/id_ed25519_onecom_bootstrap -o IdentitiesOnly=yes root@<ip> \
-        'cat >> /root/.ssh/authorized_keys' < ~/.ssh/id_ed25519_sk_rk_BenchOnecomL.pub
-      # in a PTY, touch when it blinks:
-      env -u SSH_AUTH_SOCK ssh -i ~/.ssh/id_ed25519_sk_rk_BenchOnecomL -o IdentitiesOnly=yes \
-        -o IdentityAgent=none root@<ip> true
-      # only once that worked, over the sk key:
-      env -u SSH_AUTH_SOCK ssh -i ~/.ssh/id_ed25519_sk_rk_BenchOnecomL -o IdentitiesOnly=yes \
-        -o IdentityAgent=none root@<ip> "sed -i '/onecom-bootstrap-temporary/d' /root/.ssh/authorized_keys"
-      rm ~/.ssh/id_ed25519_onecom_bootstrap ~/.ssh/id_ed25519_onecom_bootstrap.pub
-      ```
-      If one.com set a root password, or cloud-init left password login on, turn it off
-      (docs/skills/fido2.md § Disabling root password SSH on a cloud-init VPS).
+- [x] Krytis vault item **Krytis Bench VPS** (custom item, section "Access"): `IP Address`,
+      `Username` (`administrator`), `Password`, `SSH Public Key`,
+      `SSH Credential`, `SSH Fingerprint`. Created with `pass-cli item create custom
+      --from-template`, which puts fields in a section. That is a different shape from Krytis
+      Build VPS, whose fields are top-level extra fields that `fnox.toml` reads; no
+      `fnox.toml` entry reads the bench item.
+- [x] Ordered Cloud server L (2026-10-07). The order form rejected the sk public key
+      ("invalid SSH format"; docs/skills/fido2.md § Provider order forms reject
+      `sk-ssh-ed25519` keys — bootstrap over the provider's own login), so the box came up with
+      one.com's own login: user `administrator`, a password, passwordless sudo. Root SSH
+      is key-only (`PermitRootLogin without-password`). Renewal: 169 SEK + 25% VAT a month
+      (§ Machines).
+- [x] `ssh:BenchOnecomL` installed for **root** over the password login:
+      `sudo` appended the `.pub` to `/root/.ssh/authorized_keys`, and a root login with
+      the key worked. Then SSH password login was turned off: `50-cloud-init.conf` set to
+      `PasswordAuthentication no`, plus `/etc/cloud/cloud.cfg.d/99-krytis-no-ssh-pwauth.cfg`
+      (`ssh_pwauth: false`). `sshd -T` reports `passwordauthentication no`, a password
+      attempt gets `Permission denied (publickey)`, and a fresh root key login after the
+      restart works. The password stays in the vault for one.com's web console.
 - [ ] **Install only, do not register yet** (D5):
       ```shell
       RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
@@ -208,7 +201,8 @@ exactly that until cache-warm has run.
 ### 6. Write up and tear down
 
 - [ ] § Results: wall times, cold full time vs the 1440-minute cache-warm timeout, steal, OOMs,
-      price per month, and hours per cold rebuild per € of monthly price. The replacement
+      price per month incl. VAT in one currency (krytis-vps's Contabo price is not recorded
+      yet; one.com bills in SEK), and hours per cold rebuild against it. The replacement
       decision is a human's (Design Gate). This plan reports, it does not recommend.
 - [ ] `docs/skills/ci-runner.md`: measured cold times per box. If a box hit an OOM or heavy
       steal, add that too. The sizing-formula overshoot and the `force_self_hosted` label reach
