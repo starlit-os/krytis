@@ -229,13 +229,35 @@ exactly that until cache-warm has run.
 - **The window stays open on a failure.** A long OOM/re-run loop keeps the bench box
   registered and publish disabled. Past two failed attempts on a box, deregister it and report it
   as failed rather than hold the window open.
-- **Network to bow is not measured.** A production one.com runner would push to bow
-  (`bst-cache.ririi.dev`) over a different path than Contabo's. D1 trades that measurement
-  away. One `mise run warm-cache --pull` of a large element from each box would cover it, if
-  the decision ends up hinging on it.
+- **Network to bow is not measured.** A production one.com runner would push to and pull from
+  bow (`bst-cache.ririi.dev`) over a different path than Contabo's. D1 trades that measurement
+  away. See § Deferred.
 - **builders = 2 caps scaling.** L's 8 cores run 2 × 4, the production formula. If L barely
   beats krytis-vps, check the per-element table before blaming the CPU. Single-element compiles
   (llvm) use only `max-jobs`.
+
+## Deferred
+
+- **Where the bottleneck is for bow traffic, in both directions: the VPS or bow.** This covers
+  pulls (reads) and pushes (writes). It is out of scope here, because D1 keeps bow out of every
+  bench run, but it is still open and needs answering separately. It decides whether a faster
+  runner would speed up the paths that mostly move cache data:
+  - **Reads:** publish's build step swings between 540s and 1388s with bow's cache state
+    (docs/skills/ci-runner.md § Sizing the `publish.yml` runner). Refilling a wiped or new
+    runner pulls the whole closure.
+  - **Writes:** cache-warm run 37296270943 built 21 elements and pushed 916 in a 5h36m run
+    (its cache report; the slowest build was 21m), so pushing probably took most of it
+    `[INFERENCE]`.
+
+  The candidate limits are on the client side (network path and its upload rate, disk, casd,
+  the `fetchers`/`pushers` counts) or on bow (uplink and downlink, the SATA SSD under
+  bb-storage, bb-storage itself). A cheap first split is to measure the same transfer from more
+  than one client: krytis-vps, the Blacksmith publish runner, a workstation, and L while it
+  exists. If every client sees the same rate, the limit is on bow's side; if the rates differ,
+  it is on the client side. Measure reads and writes separately, because a client's upload can
+  be the limit when its download is not. A write test must push content bow does not already
+  hold: BuildStream skips blobs the remote reports as present, so re-pushing a cached artifact
+  measures almost nothing.
 
 ## Results
 
