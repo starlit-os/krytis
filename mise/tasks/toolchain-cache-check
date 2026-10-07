@@ -33,13 +33,18 @@ ROLE=""
 [ "${usage_push:-false}" = "true" ] && ROLE=push
 
 # "<state>|<full key>|<name>" for every toolchain element of the build closure.
+# bst's stderr is kept aside rather than discarded: when `bst show` itself fails
+# (bow probe refused, project load error), it is the only explanation there is.
+BST_ERR=$(mktemp)
+trap 'rm -f "$BST_ERR"' EXIT
 mapfile -t ROWS < <(
-    ./mise/tasks/bst show --deps all --format '%{state}|%{full-key}|%{name}' oci/krytis/image.bst 2>/dev/null \
+    ./mise/tasks/bst show --deps all --format '%{state}|%{full-key}|%{name}' oci/krytis/image.bst 2>"$BST_ERR" \
         | sed 's/\x1b\[[0-9;]*m//g' \
         | grep -E '^[a-z ]+\|[0-9a-f]{64}\|freedesktop-sdk\.bst:(bootstrap/|components/(llvm|rust)\.bst$)'
 )
 if [ "${#ROWS[@]}" -eq 0 ]; then
-    echo "==> FAILED: found no toolchain elements in oci/krytis/image.bst's build closure; bst show failed?"
+    echo "==> FAILED: found no toolchain elements in oci/krytis/image.bst's build closure; bst show failed. Its stderr:"
+    sed 's/\x1b\[[0-9;]*m//g; s/^/    /' "$BST_ERR" | tail -n 30
     exit 1
 fi
 

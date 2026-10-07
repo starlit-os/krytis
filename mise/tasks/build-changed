@@ -133,6 +133,9 @@ def notice(msg: str) -> None:
 
 
 def main() -> int:
+    # Child tasks write straight to the same pipe; without this, CI logs print
+    # the plan after the children's output.
+    sys.stdout.reconfigure(line_buffering=True)
     os.chdir(git("rev-parse", "--show-toplevel").strip())
     base = os.environ.get("usage_base") or "origin/main"
     container = os.environ.get("usage_container") == "true"
@@ -171,8 +174,8 @@ def main() -> int:
     check = subprocess.run(["./mise/tasks/toolchain-cache-check"], env={**env, "usage_pull": "true"})
     if check.returncode != 0:
         print(
-            "ERROR: building these elements would compile freedesktop-sdk's toolchain"
-            " (Toolchain Gate). Wait for cache-warm to run on this base, then retry.",
+            "ERROR: toolchain-cache-check failed (reason above), so not building. If the"
+            " toolchain is missing, wait for cache-warm to run on this base (Toolchain Gate).",
             file=sys.stderr,
         )
         return check.returncode
