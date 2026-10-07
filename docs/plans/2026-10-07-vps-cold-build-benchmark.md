@@ -15,7 +15,7 @@ krytis-vps. This plan does not make that decision.
 
 | Name | Provider / plan | vCPU | RAM | Disk | Slots under today's formula | Price / month |
 |---|---|---|---|---|---|---|
-| `krytis-vps` | Contabo Cloud VPS 6 | 6 | 12 GB (11 GiB `MemTotal`) | 200 GB | 5 → builders 2 × max-jobs 3 = 6 | not recorded here |
+| `krytis-vps` | Contabo Cloud VPS 6 | 6 | 12 GB (11 GiB `MemTotal`) | 200 GB | 5 → builders 2 × max-jobs 3 = 6 | €9.38 incl. VAT (given 2026-10-07) |
 | `bench-onecom-l` | one.com Cloud server L | 8 | 16 GB (15.6 GiB `MemTotal`, 16382184 kB) | 394G root | 7 → 2 × 4 = 8 | renewal 169 SEK + 25% VAT = 211.25 SEK |
 
 one.com specs come from <https://www.one.com/en-gb/vps/>, checked 2026-10-07. The page
@@ -201,8 +201,9 @@ exactly that until cache-warm has run.
 ### 6. Write up and tear down
 
 - [ ] § Results: wall times, cold full time vs the 1440-minute cache-warm timeout, steal, OOMs,
-      price per month incl. VAT in one currency (krytis-vps's Contabo price is not recorded
-      yet; one.com bills in SEK), and hours per cold rebuild against it. The replacement
+      price per month incl. VAT in one currency (krytis-vps €9.38, one.com 211.25 SEK;
+      convert at the write-up date's rate), and hours per cold rebuild against it. The
+      replacement
       decision is a human's (Design Gate). This plan reports, it does not recommend.
 - [ ] `docs/skills/ci-runner.md`: measured cold times per box. If a box hit an OOM or heavy
       steal, add that too. The sizing-formula overshoot and the `force_self_hosted` label reach
