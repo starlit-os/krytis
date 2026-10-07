@@ -120,9 +120,15 @@ Landed as described in docs/skills/ci-runner.md § Cold-build benchmark: `bench-
       `SHA256:2gaVEluCzEjGSYRqMfAgoroGWX1VydAi+XRWHhcELos`). Not `ssh:KrytisBuild`: a separate
       credential can be deleted from the key when L goes, without touching krytis-vps.
       Every `runner-vps:*` call for L below passes `RUNNER_VPS_SSH_KEY` to use it.
+- [x] Krytis vault item **Krytis Bench VPS** (custom item, section "Access"): `SSH Public Key`,
+      `SSH Credential`, `SSH Fingerprint`, `Username` (`root`), and an empty `IP Address`.
+      Created with `pass-cli item create custom --from-template`, which puts fields in a
+      section. That is a different shape from Krytis Build VPS, whose fields are top-level
+      extra fields that `fnox.toml` reads; no `fnox.toml` entry reads the bench item.
 - [ ] Order Cloud server L, Debian 13 if it is offered (record the version otherwise),
       with `~/.ssh/id_ed25519_sk_rk_BenchOnecomL.pub` as its SSH key. Record the renewal price
-      in § Machines.
+      in § Machines, and the address in the vault:
+      `pass-cli item update --vault-name Krytis --item-title "Krytis Bench VPS" --field "IP Address=<ip>"`.
 - [ ] **Install only, do not register yet** (D5):
       ```shell
       RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
