@@ -102,6 +102,20 @@ then append the `.pub` to the remote's `~/.ssh/authorized_keys` over the box's e
 access (password, or another key) before touching auth config. No git wiring — this
 credential authenticates `ssh`/`sshd`, it never signs anything.
 
+### Provider order forms reject `sk-ssh-ed25519` keys — bootstrap with a temporary key
+
+one.com's VPS order form refused the `ssh:BenchOnecomL` public key with "invalid SSH
+format" (2026-10-07, #1126). The key itself is fine: OpenSSH made it, and `cryptography`
+50.0.2's `load_ssh_public_key` parses it. But a validator that only knows the classic types
+rejects `sk-ssh-ed25519@openssh.com`. paramiko 5.0.0, for one, raises `UnknownKeyType`.
+Expect any provider form or API to do the same. Give the form a **temporary plain
+`ed25519` key** instead (`ssh-keygen -t ed25519 -N "" -C <name>-bootstrap-temporary`). Then,
+over that access, append the sk `.pub` to `/root/.ssh/authorized_keys` and confirm an sk
+login works (PTY, touch). Only after that, delete the temporary line from
+`authorized_keys` and the key files. A root password works as the bootstrap too, if the
+provider sets one; turn password login off afterwards (§ Disabling root password SSH on a
+cloud-init VPS).
+
 ### An agent driving plain `ssh` over a non-PTY shell gets a misleading error, not a touch prompt
 
 The enrollment-time constraint above ("an agent cannot type the PIN") applies to every

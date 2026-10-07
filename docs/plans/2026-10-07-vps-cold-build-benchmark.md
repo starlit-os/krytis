@@ -125,10 +125,28 @@ Landed as described in docs/skills/ci-runner.md § Cold-build benchmark: `bench-
       Created with `pass-cli item create custom --from-template`, which puts fields in a
       section. That is a different shape from Krytis Build VPS, whose fields are top-level
       extra fields that `fnox.toml` reads; no `fnox.toml` entry reads the bench item.
+- [x] Temporary bootstrap key `~/.ssh/id_ed25519_onecom_bootstrap` (plain `ed25519`,
+      comment `onecom-bootstrap-temporary`). one.com's order form rejects the sk key with
+      "invalid SSH format" (docs/skills/fido2.md § Provider order forms reject
+      `sk-ssh-ed25519` keys — bootstrap with a temporary key).
 - [ ] Order Cloud server L, Debian 13 if it is offered (record the version otherwise),
-      with `~/.ssh/id_ed25519_sk_rk_BenchOnecomL.pub` as its SSH key. Record the renewal price
+      with `~/.ssh/id_ed25519_onecom_bootstrap.pub` as its SSH key. Record the renewal price
       in § Machines, and the address in the vault:
       `pass-cli item update --vault-name Krytis --item-title "Krytis Bench VPS" --field "IP Address=<ip>"`.
+- [ ] Swap the bootstrap key for `ssh:BenchOnecomL`:
+      ```shell
+      ssh -i ~/.ssh/id_ed25519_onecom_bootstrap -o IdentitiesOnly=yes root@<ip> \
+        'cat >> /root/.ssh/authorized_keys' < ~/.ssh/id_ed25519_sk_rk_BenchOnecomL.pub
+      # in a PTY, touch when it blinks:
+      env -u SSH_AUTH_SOCK ssh -i ~/.ssh/id_ed25519_sk_rk_BenchOnecomL -o IdentitiesOnly=yes \
+        -o IdentityAgent=none root@<ip> true
+      # only once that worked, over the sk key:
+      env -u SSH_AUTH_SOCK ssh -i ~/.ssh/id_ed25519_sk_rk_BenchOnecomL -o IdentitiesOnly=yes \
+        -o IdentityAgent=none root@<ip> "sed -i '/onecom-bootstrap-temporary/d' /root/.ssh/authorized_keys"
+      rm ~/.ssh/id_ed25519_onecom_bootstrap ~/.ssh/id_ed25519_onecom_bootstrap.pub
+      ```
+      If one.com set a root password, or cloud-init left password login on, turn it off
+      (docs/skills/fido2.md § Disabling root password SSH on a cloud-init VPS).
 - [ ] **Install only, do not register yet** (D5):
       ```shell
       RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL \
