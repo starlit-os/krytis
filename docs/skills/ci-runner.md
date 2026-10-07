@@ -804,9 +804,13 @@ next runner evaluation (plan D8). The plan, decisions and results live in
   closure but not theirs (`bst show --deps all`, 2026-10-07). `phase=full` never wipes,
   refuses to start unless that whole closure is cached locally, and builds the image
   closure. Cold full time is the sum of the two walls.
-- **Cold by construction, checked anyway.** The workflow writes a `buildstream.conf` with
-  no `artifacts:`/`source-caches:`, so no bow token reaches a bench box. The "Cold check"
-  step (`scripts/bench-compare.py check`) fails the run if any element was pulled.
+- **No remote cache, then checked.** The workflow's `buildstream.conf` lists no servers, so
+  no bow token reaches a bench box. It also sets `override-project-caches: true` for
+  artifacts and sources. Without that, freedesktop-sdk's `project.conf` still points the
+  build at `cache.freedesktop-sdk.io`, which served 33 of the toolchain phase's 159
+  elements to the first smoke run (§ Why every freedesktop-sdk artifact pull missed, the
+  correction at its end). The "Cold check" step (`scripts/bench-compare.py check`) fails
+  the run if any element was pulled. It did fail that smoke run, as designed.
 - **Same sizing as cache-warm.** The `builders`/`max-jobs` formula is copied unchanged,
   overshoot included (§ Build concurrency is `builders` x `max-jobs`), so a result says
   what production would get on that box. Quota is 100G on every runner.
@@ -1707,6 +1711,26 @@ Buildbarn cache (populated by krytis's own `x86_64_v3` builds via
 `cache-warm.yml`) is the *only* cache that will ever have matching keys.
 This isn't a bug to fix; it's the reason the Buildbarn cache work (#234)
 exists in the first place.
+
+**Correction (2026-10-07, #1126): not every compiled element diverges.** The first cold-build
+smoke run (37661631325) had no bow configured, and still pulled 33 artifacts from
+`cache.freedesktop-sdk.io` with `x86_64_v3=true` before it was cancelled, 32 of them
+toolchain. They were the bootstrap's host-side stages: `bootstrap/base-sdk/*` (m4, autoconf,
+perl, bison, …), the `bootstrap/build/*` stage1 tools, `gnu-config`, `linux-headers` and
+`bootstrap/go.bst`. Their keys do not depend on the option, so freedesktop-sdk's own cache
+holds them. The target-side toolchain (`bootstrap/gcc`, `llvm`, `rust`) and everything above
+it still diverge. The #348 test missed this because it requested `core/gum.bst`, whose
+needed artifacts were all target-side. Consequences:
+
+- A build with no bow is **not** cold. It still pulls those artifacts through
+  freedesktop-sdk's `project.conf`. To measure a truly cold build, set
+  `override-project-caches: true` under both `artifacts:` and `source-caches:` in the user
+  config. That drops every project's recommended remotes, junctions included
+  (`_resolve_specs_for_project` in `buildstream/_context.py`). `bench-cold-build.yml` does
+  this. With it, `bst artifact pull freedesktop-sdk.bst:bootstrap/gnu-config.bst` fails with
+  "No artifact caches available for pulling artifacts"; without it, the same pull succeeds.
+- The rest of this section's conclusion still holds for everything that costs real build
+  time. bow is the only cache with krytis's keys for gcc, llvm, rust and up.
 
 **"with only that remote configured" means a user-config override, and that
 distinction matters.** Both tests here pointed at `gbm.gnome.org:11003` through

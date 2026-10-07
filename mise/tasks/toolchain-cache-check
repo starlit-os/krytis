@@ -22,8 +22,9 @@
 # is not enough: it only asks the index, and bow's index outlived evicted llvm
 # and rust data on 2026-10-03 (#1094).
 #
-# Without --pull/--push only the local cache counts; project-declared remotes
-# (cache.freedesktop-sdk.io) can never hold krytis's x86_64_v3 keys.
+# Without --pull/--push only the local cache counts. cache.freedesktop-sdk.io
+# does hold some x86_64_v3 toolchain keys (the bootstrap's host-side stages,
+# #1126), but never gcc, llvm or rust, so only bow decides this gate.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
