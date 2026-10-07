@@ -64,7 +64,15 @@ jobs:
     # sealed runs to the self-hosted runner on a false premise; that runner's
     # container image (ubuntu:24.04, Containerfile.runner) ships no podman at
     # all, so it is the worse host for this job, not the better one.
-    runs-on: ${{ inputs.force_self_hosted && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-8vcpu-ubuntu-2404' }}
+    #
+    # 4 vCPU / 16 GB / 80 GB (documented) since 2026-10-07, down from 8vcpu, to
+    # measure what the halved core count costs in build time. The parallelism
+    # is unchanged — mise/tasks/bst pins max-jobs 4 with BuildStream's default
+    # builders, so the same 16 compile slots now share 16 GB instead of 32.
+    # Blacksmith may silently bump a 4vcpu job to 8vcpu when it has spare
+    # capacity, so compare runs by the "Record runner size" output, not by
+    # the label. See docs/skills/ci-runner.md § Sizing the `publish.yml` runner.
+    runs-on: ${{ inputs.force_self_hosted && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 420
     env:
       # Every `inputs.*` is null on a `schedule` event, so a bare
@@ -120,6 +128,14 @@ jobs:
         # including the deliberate v0.1.1 (not newest v0.1.2) pin — see that
         # workflow's comment for why.
         uses: hastd/free-disk-space@68572aeaadb7f76bd408246328e95926323402b5 # v0.1.2
+
+      - name: Record runner size
+        # Diagnostic only, so it must never fail the job. The runner label is
+        # not proof of size: Blacksmith's "free upgrades" can run a 4vcpu job
+        # on an 8vcpu VM, and build-time comparisons need the real numbers.
+        run: |
+          echo "==> $(nproc) vCPU, $(awk '/MemTotal/ {printf "%.1f", $2/1024/1024}' /proc/meminfo) GiB RAM"
+          df -h / || true
 
       - name: Setup mise
         uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
@@ -378,6 +394,13 @@ jobs:
           shred -u files/boot-keys/*.key files/boot-keys/*.crt 2>/dev/null || true
           rm -rf files/boot-keys
           pass-cli logout 2>/dev/null || true
+
+      - name: Record disk usage after build
+        # Diagnostic only. The BuildStream CAS and podman storage both persist
+        # to the end of the job, so this is close to peak usage: the headroom
+        # number that decides whether the 80 GB 4vcpu runner disk is enough.
+        if: always()
+        run: df -h / || true
 
       - name: Report severity gate outcome
         if: always()
