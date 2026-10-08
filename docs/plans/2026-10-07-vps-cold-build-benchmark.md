@@ -176,7 +176,7 @@ exactly that until cache-warm has run.
       ```
 - [x] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \([.labels[].name])"'`
       shows `bench-onecom-l` with **only** its own label (`register` checked it too).
-- [ ] Smoke: dispatch `runner=bench-onecom-l phase=toolchain`. Within the first 15 minutes,
+- [x] Smoke: dispatch `runner=bench-onecom-l phase=toolchain`. Within the first 15 minutes,
       check that `host.txt` looks right, the config print shows no remotes and the expected
       builders × max-jobs, and fetches are under way. If anything is wrong, cancel the run,
       land a fix PR, move `bench/2026-10` to the fixed SHA, and smoke again. L is the right
@@ -185,22 +185,45 @@ exactly that until cache-warm has run.
       - Smoke 1, 37661631325: host, sizing (2 × 4) and fetches were right, but the run
         pulled 33 artifacts from `cache.freedesktop-sdk.io`. Cancelled; the cold check
         failed as designed. Fix: `override-project-caches` (§ Checked while writing).
+      - Smoke 2, **37663762864** (after #1133, `bench/2026-10` moved to `41a54a8`, the
+        merge): the config carries `override-project-caches` for both cache kinds, and the
+        log has no `pull:` operations at all. At about 7 minutes: 121 fetches done, the first
+        builds running, CPU 77% user. Clean, so it stays as L's phase 1 run.
 
 ### 4. Phase 1: toolchain closure
 
-- [ ] Dispatch `phase=toolchain` on krytis-vps (and on L again, if the smoke run was
-      cancelled).
+- [x] Dispatch `phase=toolchain` on krytis-vps: **37664669187**, 2026-10-07 18:09 UTC, about
+      7 minutes after L's 37663762864. Its "Prepare local cache" step passed, so the wipe
+      happened.
 - [ ] Each run: all 159 elements cached (67 toolchain), `Pulled from a remote` 0, no OOM. A run that died on
       a fetch: re-dispatch the same box with `resume=true` and pass both IDs to
       `bench-compare` as `<id>+<id>`.
+      - L, 37663762864: **5h50m** build step, 159/159 built, 0 pulled, 0 failed, 0 OOM, steal
+        0%, iowait 1.7% mean, peak swap 1270 MiB. `llvm` 2h03m, `rust` 31m, `bootstrap/gcc`
+        28m.
+      - krytis-vps, 37664669187: still running at 12h14m (2026-10-08 06:25 UTC), with
+        157/159 built and `llvm` (started 01:48 UTC) in its install phase, `rust` still to
+        go. 0 pulled, 0 OOM, steal 0%, iowait 2.2% mean, peak swap 877 MiB. One `FAILURE`
+        line was a single mirror URL during `bison`'s fetch, which then succeeded.
+        `cache-summary.py` used to count that line as a failed operation; it no longer does.
 - [ ] `mise run bench-compare <id-vps> <id-l>`. Paste the table under § Results.
-- [ ] Apply D7 (repeat within 15%) and D3 (phase 2 on L or not).
+- [x] Apply D7 (repeat within 15%) and D3 (phase 2 on L or not). Decided early, at
+      2026-10-08 06:27 UTC: krytis-vps had already run more than twice L's total, so D7
+      cannot apply and L gets phase 2.
 - [ ] **If phase 2 skips L, deregister it now:**
       `RUNNER_VPS_HOST=root@<ip> RUNNER_VPS_SSH_KEY=~/.ssh/id_ed25519_sk_rk_BenchOnecomL RUNNER_VPS_NAME=bench-onecom-l mise run runner-vps:deregister`.
 
 ### 5. Phase 2: full closure (straight after phase 1)
 
 - [ ] Dispatch `phase=full` on krytis-vps, and on L if D3 kept it.
+      - L attempt 1, **37737682742** (2026-10-08 06:27 UTC): aborted after 10m17s of
+        build step, 24 elements built. `core-deps/libdvdcss.bst`'s fetch hit Anubis on
+        `code.videolan.org`, which the dulwich-based `git_repo` reports as a `BUG` and
+        does not fall back from (docs/skills/bst.md § `git_repo` (dulwich) fetches can be
+        blocked by Anubis, and abort the whole build). Fix: the "Pre-fetch Anubis-blocked
+        sources" step. L's phase 2 time is attempt 1 plus the re-dispatch (`<id>+<id>`); a
+        full-phase re-dispatch never wipes.
+      - krytis-vps: once its phase 1 ends, with the fix in place.
 - [ ] Each run: 917/917 cached, 0 pulled, no OOM. Cold full time = phase 1 wall + phase 2 wall.
 - [ ] **Deregister L** as soon as its run ends, if it is still registered, then confirm the runners
       list shows only krytis-vps (and the local runner, if it happens to be online).

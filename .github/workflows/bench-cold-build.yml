@@ -236,6 +236,41 @@ jobs:
           fi
           df -h -x fuse || true
 
+      # code.videolan.org sits behind Anubis, which answers dulwich's git
+      # requests with a "Making sure you're not a bot!" HTML page while
+      # letting real git through. The git_repo plugin fetches with dulwich and
+      # ignores git config (so no http.useragent), and the HTML makes it raise
+      # ValueError, a BUG that aborts the whole build instead of a fetch
+      # failure it could fall back from. That killed L's first phase-2 run
+      # (37737682742) 10 minutes in, on core-deps/libdvdcss.bst. Normal builds
+      # never meet it: these sources sit in bow's source cache.
+      # Workaround, bench only: clone the videolan repos with real git, serve
+      # them on git://127.0.0.1 (dulwich's local file:// client fails against
+      # the plugin with "determine_wants() did not return a list"), and fetch
+      # the three elements through a one-off config that points gnome-build-
+      # meta's `videolan` alias there. The build step keeps the normal config.
+      # It finds the sources already fetched, and its fetch timings skip them.
+      - name: Pre-fetch Anubis-blocked sources
+        if: inputs.phase == 'full'
+        run: |
+          M="${RUNNER_TEMP}/git-mirrors"
+          rm -rf "${M}"
+          mkdir -p "${M}/videolan"
+          for repo in libdvdcss libdvdread libbluray libudfread; do
+            git clone --quiet --mirror "https://code.videolan.org/videolan/${repo}.git" "${M}/videolan/${repo}.git"
+          done
+          git daemon --export-all --base-path="${M}" --reuseaddr --listen=127.0.0.1 --port=19418 \
+            --detach --pid-file="${M}/daemon.pid"
+          trap 'kill "$(cat "${M}/daemon.pid")" 2>/dev/null || true' EXIT
+          {
+            cat ~/.config/buildstream.conf
+            printf 'projects:\n  gnome:\n    mirrors:\n    - name: bench-local\n      aliases:\n        videolan:\n        - git://127.0.0.1:19418/videolan/\n'
+          } > "${M}/prefetch.conf"
+          uv run bst --config "${M}/prefetch.conf" -o x86_64_v3 true --no-interactive source fetch \
+            gnome-build-meta.bst:core-deps/libdvdcss.bst \
+            gnome-build-meta.bst:core-deps/libdvdread.bst \
+            gnome-build-meta.bst:core-deps/libbluray.bst
+
       - name: Build
         run: |
           set -o pipefail
