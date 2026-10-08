@@ -825,6 +825,11 @@ next runner evaluation (plan D8). The plan, decisions and results live in
   `queue: max` silently drops queued runs, not just cancels in-progress ones).
 - **`resume=true`** keeps the cache on a toolchain run, to continue one that died on an
   upstream fetch. Without bow's source cache, every source comes from upstream.
+- **`phase=full` pre-fetches the `videolan:` sources** with real git through a local
+  `git daemon`, because Anubis on `code.videolan.org` crashes the dulwich-based `git_repo`
+  fetch with a `BUG` that aborts the build (docs/skills/bst.md § `git_repo` (dulwich)
+  fetches can be blocked by Anubis, and abort the whole build). Those three sources are
+  missing from the bench's fetch timings.
 
 Compare runs with `mise run bench-compare <run> <run>`, one argument per column, `+` to join
 a resumed run's attempts (`111+222`). It prints wall time, the sums of per-element build and
@@ -974,7 +979,10 @@ the teed `bst-build.log`. The summary shows:
   terminal. Elements built but **not pushed** are listed explicitly, since the runner's
   cache will evict them. A pull the remote cannot serve ends `SKIPPED Pull`, not
   `SUCCESS`, so it is not counted as pulled. `fetch:` operations are parsed too (#1126), so
-  a failed source fetch is counted under failed;
+  a failed source fetch is counted under failed. Only operations that **never** reached
+  their closing `SUCCESS` count, though. bst also logs a `FAILURE` line for one attempt
+  inside an operation, for example one mirror URL during a fetch that then succeeds from
+  another (bench run 37664669187, `components/bison.bst`);
 - the built elements, slowest first. Against run 37003574522's first attempt, the slowest
   was `components/grpc.bst` at 1h21m, ahead of `bootstrap/gcc` at 70m;
 - every uncached element with its state and key, toolchain first.

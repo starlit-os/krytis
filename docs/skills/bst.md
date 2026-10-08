@@ -1254,6 +1254,34 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps) and `falcond-update` are the standing examples |
 
+### `git_repo` (dulwich) fetches can be blocked by Anubis, and abort the whole build
+
+`buildstream-plugins-community`'s `git_repo` fetches over dulwich, not the `git` binary, and
+`_git_utils.py` hands dulwich no config (its `Repo` overrides `get_config_stack()` to an
+empty stack), so `http.useragent` cannot be set. Forges behind Anubis serve dulwich the
+"Making sure you're not a bot!" HTML page while real git gets through. Checked 2026-10-08
+against `https://code.videolan.org/videolan/libdvdcss.git/info/refs?service=git-upload-pack`:
+a `git/2.47.0` User-Agent got `application/x-git-upload-pack-advertisement`, while
+`dulwich/…` and `git/dulwich/1.2.17` got `text/html`.
+
+dulwich then raises `ValueError: Invalid info/refs format`. BuildStream reports that as a
+`BUG`, not a fetch `FAILURE`, so it **does not try the next mirror or the alias URL**. The
+whole session stops ("Fetch Queue: … failed 1"). This hit `gnome-build-meta.bst:core-deps/
+libdvdcss.bst` on cold-build bench run 37737682742 (#1126). The other `videolan:` elements
+are `libdvdread` and `libbluray` (with `libudfread`). Production does not see it, because
+these sources are in bow's source cache. A build without bow's source cache does: a fresh
+box, or bow losing the blobs.
+
+What does **not** work: `file://` as a mirror. dulwich's local client fails against the
+plugin with `TypeError: determine_wants() did not return a list`. What works: `git clone
+--mirror` with real git, `git daemon --export-all --base-path=<dir> --listen=127.0.0.1`,
+and a one-off `--config` with `projects: gnome: mirrors: [{name: …, aliases: {videolan:
+[git://127.0.0.1:<port>/videolan/]}}]`. gnome-build-meta's project name is `gnome`, not
+`gnome-build-meta`. A user-config `mirrors:` list *replaces* the project's mirrors for that
+project, and a `source fetch` through it leaves the source fetched for later runs on the
+normal config. `bench-cold-build.yml`'s "Pre-fetch Anubis-blocked sources" step does exactly
+this.
+
 ### `git_repo` tracking: excluding a bad tag, and patching ahead of a vendored ref
 
 **A `ref:` downgrade alone doesn't stick — add the bad tag to `exclude:` too.** *Source:

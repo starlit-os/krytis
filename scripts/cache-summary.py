@@ -69,7 +69,11 @@ def read_events(path: str, names_by_key: dict[str, str]):
                 # Only the element's closing line names its own log file;
                 # sub-activity SUCCESS lines ("Running commands", …) do not.
                 done[m["op"]][name] = seconds(m["time"])
-    return done, failed
+    # A FAILURE line can be one attempt inside an operation that still succeeds:
+    # bench run 37664669187 logged `fetch:…bison.bst FAILURE Fetching from <one
+    # mirror>`, then fetched it from another. Count only operations that never
+    # reached their closing SUCCESS line.
+    return done, {(op, name) for op, name in failed if name not in done[op]}
 
 
 def fmt_duration(s: int) -> str:
