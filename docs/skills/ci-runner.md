@@ -525,8 +525,15 @@ GitHub's side, not local state), and `svc.sh install` fails once the unit
 file exists. That is the wrong shape for the task you reach for to bring a
 runner back. It now skips `config.sh` when the box is already configured and
 skips `svc.sh install` when the unit exists, so re-running it just
-re-asserts the service and the drop-in. Re-key by running
-`mise runner-vps:deregister` first.
+re-asserts the service and the drop-in.
+
+**`deregister` does not clear that local state, so "deregister, then register" does not
+re-key** (found 2026-10-08, #1145). `deregister` deletes the GitHub registration and runs
+`svc.sh stop`/`uninstall`, but leaves `/opt/actions-runner/.runner` and `.credentials*`
+in place. The next `register` sees `.runner`, skips `config.sh`, and starts a service on a
+registration GitHub no longer has. On the one.com bench box that would also bring back its
+old name and labels. Until `deregister` removes those files (#1145 step 2), delete them by
+hand before registering a box under a new name or label set.
 
 ### Jobs here run with no `HOME`
 
