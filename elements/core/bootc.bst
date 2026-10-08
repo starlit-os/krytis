@@ -4,7 +4,7 @@ sources:
 - kind: git_repo
   url: github:bootc-dev/bootc.git
   track: v*
-  ref: v1.17.0-0-g4d783ed6789de216e950b1b70e7433714e8afe56
+  ref: v1.17.1-0-gd01e723ae9480fa53aa9db09a7eff0439548e9f6
 - kind: cargo2
   url: crates:crates
   git-mirrors:
