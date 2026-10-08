@@ -825,11 +825,12 @@ next runner evaluation (plan D8). The plan, decisions and results live in
   `queue: max` silently drops queued runs, not just cancels in-progress ones).
 - **`resume=true`** keeps the cache on a toolchain run, to continue one that died on an
   upstream fetch. Without bow's source cache, every source comes from upstream.
-- **`phase=full` pre-fetches the `videolan:` sources** with real git through a local
-  `git daemon`, because Anubis on `code.videolan.org` crashes the dulwich-based `git_repo`
-  fetch with a `BUG` that aborts the build (docs/skills/bst.md § `git_repo` (dulwich)
-  fetches can be blocked by Anubis, and abort the whole build). Those three sources are
-  missing from the bench's fetch timings.
+- **`phase=full` pre-fetches the seven VideoLAN-hosted sources** (fdsdk's `dav1d`, `x264`,
+  `nv-codec-headers`; gnome's `libdvdcss`, `libdvdread`, `libbluray`) with real git through
+  a local `git daemon`. Anubis on VideoLAN's forges intermittently crashes the dulwich-based
+  `git_repo` fetch with a `BUG` that aborts the build (docs/skills/bst.md § `git_repo`
+  (dulwich) fetches can be blocked by Anubis, and abort the whole build). Those sources
+  are missing from the bench's fetch timings.
 
 Compare runs with `mise run bench-compare <run> <run>`, one argument per column, `+` to join
 a resumed run's attempts (`111+222`). It prints wall time, the sums of per-element build and

@@ -1258,29 +1258,39 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 
 `buildstream-plugins-community`'s `git_repo` fetches over dulwich, not the `git` binary, and
 `_git_utils.py` hands dulwich no config (its `Repo` overrides `get_config_stack()` to an
-empty stack), so `http.useragent` cannot be set. Forges behind Anubis serve dulwich the
-"Making sure you're not a bot!" HTML page while real git gets through. Checked 2026-10-08
-against `https://code.videolan.org/videolan/libdvdcss.git/info/refs?service=git-upload-pack`:
-a `git/2.47.0` User-Agent got `application/x-git-upload-pack-advertisement`, while
-`dulwich/…` and `git/dulwich/1.2.17` got `text/html`.
+empty stack), so `http.useragent` cannot be set. VideoLAN's forges, `code.videolan.org` and
+`git.videolan.org`, sit behind Anubis, which **intermittently** answers git requests with
+the "Making sure you're not a bot!" HTML page. At 08:40 on 2026-10-08, `info/refs` for
+`libdvdcss.git` returned `text/html` to `dulwich/…` and `git/dulwich/1.2.17` User-Agents,
+and the real advertisement to `git/2.47.0`. Two hours later the same dulwich User-Agent got
+the real advertisement for `libdvdcss`, `dav1d` and `nv-codec-headers`. So a check that
+passes now proves nothing about the next fetch.
 
 dulwich then raises `ValueError: Invalid info/refs format`. BuildStream reports that as a
 `BUG`, not a fetch `FAILURE`, so it **does not try the next mirror or the alias URL**. The
-whole session stops ("Fetch Queue: … failed 1"). This hit `gnome-build-meta.bst:core-deps/
-libdvdcss.bst` on cold-build bench run 37737682742 (#1126). The other `videolan:` elements
-are `libdvdread` and `libbluray` (with `libudfread`). Production does not see it, because
-these sources are in bow's source cache. A build without bow's source cache does: a fresh
-box, or bow losing the blobs.
+whole session stops ("Fetch Queue: … failed 1"). On the cold-build bench (#1126) this hit
+gnome's `core-deps/libdvdcss.bst` (run 37737682742). It also hit fdsdk's
+`components/dav1d.bst` (run 37746632670), after fdsdk's gitlab.com mirror of `dav1d` had
+failed first. The image closure has seven VideoLAN-hosted sources (`grep -rE 'url:
+(git_)?videolan:'` in both junctions, 2026-10-08):
+
+- fdsdk: `components/dav1d.bst` and `extensions/codecs-extra/libx264.bst` (`videolan:`),
+  and `components/nv-codec-headers.bst` (`git_videolan:`);
+- gnome: `core-deps/libdvdcss.bst`, `libdvdread.bst`, and `libbluray.bst` (with
+  `libudfread`).
+
+Production does not see it, because these sources are in bow's source cache. A build
+without bow's source cache does: a fresh box, or bow losing the blobs.
 
 What does **not** work: `file://` as a mirror. dulwich's local client fails against the
 plugin with `TypeError: determine_wants() did not return a list`. What works: `git clone
 --mirror` with real git, `git daemon --export-all --base-path=<dir> --listen=127.0.0.1`,
-and a one-off `--config` with `projects: gnome: mirrors: [{name: …, aliases: {videolan:
-[git://127.0.0.1:<port>/videolan/]}}]`. gnome-build-meta's project name is `gnome`, not
+and a one-off `--config` whose `projects: <name>: mirrors:` points each alias at
+`git://127.0.0.1:<port>/<alias>/`. Project names are `freedesktop-sdk` and `gnome`, not
 `gnome-build-meta`. A user-config `mirrors:` list *replaces* the project's mirrors for that
 project, and a `source fetch` through it leaves the source fetched for later runs on the
 normal config. `bench-cold-build.yml`'s "Pre-fetch Anubis-blocked sources" step does exactly
-this.
+this for all seven.
 
 ### `git_repo` tracking: excluding a bad tag, and patching ahead of a vendored ref
 

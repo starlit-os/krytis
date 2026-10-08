@@ -195,18 +195,18 @@ exactly that until cache-warm has run.
 - [x] Dispatch `phase=toolchain` on krytis-vps: **37664669187**, 2026-10-07 18:09 UTC, about
       7 minutes after L's 37663762864. Its "Prepare local cache" step passed, so the wipe
       happened.
-- [ ] Each run: all 159 elements cached (67 toolchain), `Pulled from a remote` 0, no OOM. A run that died on
+- [x] Each run: all 159 elements cached (67 toolchain), `Pulled from a remote` 0, no OOM. A run that died on
       a fetch: re-dispatch the same box with `resume=true` and pass both IDs to
       `bench-compare` as `<id>+<id>`.
       - L, 37663762864: **5h50m** build step, 159/159 built, 0 pulled, 0 failed, 0 OOM, steal
         0%, iowait 1.7% mean, peak swap 1270 MiB. `llvm` 2h03m, `rust` 31m, `bootstrap/gcc`
         28m.
-      - krytis-vps, 37664669187: still running at 12h14m (2026-10-08 06:25 UTC), with
-        157/159 built and `llvm` (started 01:48 UTC) in its install phase, `rust` still to
-        go. 0 pulled, 0 OOM, steal 0%, iowait 2.2% mean, peak swap 877 MiB. One `FAILURE`
-        line was a single mirror URL during `bison`'s fetch, which then succeeded.
+      - krytis-vps, 37664669187: **13h43m** build step (finished 2026-10-08 07:56 UTC),
+        159/159 built, 0 pulled, 0 failed, 0 OOM, steal 0%, iowait 2.2% mean, peak swap
+        2622 MiB. `llvm` 4h52m, `rust` 1h14m, `bootstrap/gcc` 1h02m. Its one `FAILURE` line
+        was a single mirror URL during `bison`'s fetch, which then succeeded.
         `cache-summary.py` used to count that line as a failed operation; it no longer does.
-- [ ] `mise run bench-compare <id-vps> <id-l>`. Paste the table under § Results.
+- [x] `mise run bench-compare <id-vps> <id-l>`. Paste the table under § Results.
 - [x] Apply D7 (repeat within 15%) and D3 (phase 2 on L or not). Decided early, at
       2026-10-08 06:27 UTC: krytis-vps had already run more than twice L's total, so D7
       cannot apply and L gets phase 2.
@@ -223,7 +223,13 @@ exactly that until cache-warm has run.
         blocked by Anubis, and abort the whole build). Fix: the "Pre-fetch Anubis-blocked
         sources" step. L's phase 2 time is attempt 1 plus the re-dispatch (`<id>+<id>`); a
         full-phase re-dispatch never wipes.
-      - krytis-vps: once its phase 1 ends, with the fix in place.
+      - L attempt 2, **37739757304** (2026-10-08 06:49 UTC, at `3bc6251`): pre-fetch step
+        passed (`git daemon` is in Debian's `git` package), build continuing.
+      - krytis-vps attempt 1, **37746632670** (2026-10-08 07:57 UTC, at `3bc6251`, same build
+        inputs as phase 1's `41a54a8`): aborted after 16 minutes, 16 elements built, on fdsdk's
+        `components/dav1d.bst`. Same Anubis `BUG`, from a VideoLAN source the first
+        pre-fetch did not cover. Fix: pre-fetch all seven VideoLAN-hosted sources in the
+        closure, for both projects. krytis-vps's phase 2 is attempt 1 plus the re-dispatch.
 - [ ] Each run: 917/917 cached, 0 pulled, no OOM. Cold full time = phase 1 wall + phase 2 wall.
 - [ ] **Deregister L** as soon as its run ends, if it is still registered, then confirm the runners
       list shows only krytis-vps (and the local runner, if it happens to be online).
@@ -292,4 +298,39 @@ exactly that until cache-warm has run.
 
 ## Results
 
-Not run yet.
+### Phase 1: toolchain closure (159 elements), 2026-10-07/08
+
+`mise run bench-compare 37664669187 37663762864`, excerpt. L took **2.35×** less wall time
+than krytis-vps.
+
+| | krytis-vps | one.com L |
+|---|---|---|
+| Run | 37664669187 | 37663762864 |
+| CPU | AMD EPYC Processor (with IBPB), 6 vCPU | AMD EPYC-Rome, 8 vCPU |
+| MemTotal | 11.7 GiB | 15.6 GiB |
+| builders × max-jobs | 2 × 3 | 2 × 4 |
+| **Wall time (build step)** | **13h43m** | **5h50m** |
+| Build time, sum over elements | 17h18m | 6h56m |
+| Fetch time, sum over elements | 6h11m | 6h55m |
+| Pulled / failed / OOM kills | 0 / 0 / 0 | 0 / 0 / 0 |
+| CPU steal, mean / p95 | 0.0% / 0% | 0.0% / 0% |
+| iowait, mean / p95 | 2.2% / 9% | 1.7% / 5% |
+| Peak swap used | 2622 MiB | 1270 MiB |
+
+| Element | krytis-vps | one.com L | Ratio |
+|---|---|---|---|
+| `components/llvm.bst` | 4h52m | 2h03m | 2.4× |
+| `components/rust.bst` | 1h14m | 31m03s | 2.4× |
+| `bootstrap/build/gcc-stage2.bst` | 1h09m | 24m40s | 2.8× |
+| `bootstrap/gcc.bst` | 1h02m | 28m02s | 2.2× |
+| `bootstrap/build/gcc-stage1.bst` | 58m24s | 20m31s | 2.8× |
+| `bootstrap/base-sdk/gettext.bst` | 31m24s | 9m48s | 3.2× |
+| `bootstrap/glibc.bst` | 20m19s | 6m24s | 3.2× |
+
+The per-element ratios exceed the 8:6 core ratio (1.33×) and the 4:3 max-jobs ratio. Single
+compiles such as `gettext` and `glibc` run 3× slower on krytis-vps. Per-core speed, not core
+count, is most of the gap [INFERENCE]: neither box showed steal or meaningful iowait.
+
+### Phase 2: full closure
+
+Running: krytis-vps 37746632670, L 37737682742+37739757304.
