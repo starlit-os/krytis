@@ -370,7 +370,9 @@ or `track-mise` CI job is needed. A matrix entry in the `track` job in
 
 `desktop/noctalia.bst` also uses `git_repo`, but **not** `track: v*` today: it carries a
 fork pin, `github:kitten-lily/noctalia.git` `track: feat/system-prompter`, for the native
-`org.gnome.keyring.SystemPrompter` provider oo7 needs. The element's `ref:` states which
+`org.gnome.keyring.SystemPrompter` provider oo7 needs and, since 2026-10-08, the
+lock-before-suspend fix in § The last frame before sleep is what resume shows. The
+element's `ref:` states which
 commit; do not restate it here. The revert target (`noctalia-dev/noctalia` + `track: v*`)
 is written out in the element's `FORK PIN` comment as prose — there is no commented-out
 `sources:` block to uncomment.
@@ -611,7 +613,8 @@ explicit instruction naming that action.
 
 ## Lid close locks then suspends — noctalia holds the logind delay inhibit
 
-*Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7).*
+*Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7); the
+inhibit-release path re-read on the v5.2.1 fork pin for the resume-flash fix below.*
 
 **The locker authenticates through PAM service `login`, not `greetd`** — hardcoded in
 noctalia's `src/shell/lockscreen/lock_screen.cpp`, reaching krytis's `system-auth` from
@@ -627,8 +630,9 @@ second locker would race it. The full chain:
 lid close
   -> logind HandleLidSwitch=suspend        (config/logind-lid.bst pins this)
        -> PrepareForSleep(true) on the system bus
-            -> noctalia locks, holding Inhibit("sleep", …, "delay")
-                 -> inhibit released once the lock surface engages
+            -> noctalia locks (no entry transition), holding Inhibit("sleep", …, "delay")
+                 -> inhibit released once the session is locked AND every lock surface
+                    has presented a frame without the pre-lock desktop capture
                       -> suspend proceeds
 ```
 
@@ -637,26 +641,78 @@ Where each half lives:
 | Half | Owner | Evidence |
 |---|---|---|
 | lid event -> suspend request | logind | `elements/config/logind-lid.bst` -> `/usr/lib/systemd/logind.conf.d/20-krytis-lid.conf` |
-| suspend request -> locked screen | noctalia | `LogindService::acquireSleepDelayInhibit()` = `Inhibit("sleep", "noctalia", "Lock before sleep", "delay")` (`src/dbus/logind/logind_service.cpp:181-196`); `PrepareForSleep` handler `src/app/application_services.cpp:947-991` |
+| suspend request -> locked screen | noctalia | `LogindService::acquireSleepDelayInhibit()` = `Inhibit("sleep", "noctalia", "Lock before sleep", "delay")` (`src/dbus/logind/logind_service.cpp`); the `setPrepareForSleepCallback` lambda in `Application::initSystemBusServices()` (`src/app/application_services.cpp`) releases it through `LockScreen::runWhenDesktopConcealed()` |
 
-The inhibit is acquired from `setSessionLockIntegrationEnabled()`, gated on
-`isLockScreenEnabled()` — i.e. `[lockscreen] enabled`, which defaults to `true`
-(`src/config/config_types.h:496`) and is not overridden by `files/noctalia-skel/settings.toml`.
+The inhibit is acquired in `LogindService::setLockBeforeSuspendEnabled()`, gated on
+`shouldLockBeforeSuspend()`, i.e. `[lockscreen] enabled` **and** `lock_before_suspend`. Both
+default to `true` (`LockscreenConfig` in `src/config/config_types.h`), and
+`files/noctalia-skel/settings.toml` overrides neither.
 **Setting `[lockscreen] enabled = false` therefore also disables lock-on-suspend**, not just the
 manual lock: the handler releases the inhibit immediately and lets the machine suspend unlocked.
 
 Other ways into the same lock:
 
 - `loginctl lock-session` — noctalia subscribes to the logind Session `Lock`/`Unlock` signals
-  (`src/dbus/logind/logind_service.cpp:79-86`), so this locks the real session from any script
-  or unit. It also reports lock state back with `syncSessionLocked()`, so `loginctl show-session`
+  (`LogindService::ensureSessionLockMonitor()` in `src/dbus/logind/logind_service.cpp`), so this locks the real session from any script
+  or unit. It also reports lock state back with `setSessionLockedHint()`, so `loginctl show-session`
   stays truthful.
 - `noctalia msg session lock-and-suspend` — IPC action; `lockThenSuspendDetached()` suspends from
-  a `runAfterSessionLocked` callback (`src/shell/session/session_action_runner.cpp:321`). IPC
+  a `LockScreen::runAfterSessionLocked()` callback (`src/shell/session/session_action_runner.cpp`). IPC
   names use hyphens, config keys underscores (`lock_and_suspend`).
 - `[idle.behavior.<name>]` with `action = "lock_and_suspend"`, or `action = "suspend"` plus
   `lock_before_suspend` (defaults `true`; `action="suspend"` + `lockBeforeSuspend` normalises to
   `lock_and_suspend` in `normalizeIdleBehaviorAction()`). Time-based, not lid-based.
+
+### The last frame before sleep is what resume shows
+
+**Symptom (2026-10-08, laptop panel only, undocked):** close the lid and open it again, and
+the *unlocked* desktop shows for under a second before the lock screen replaces it. It
+arrived with the v5.2.0 pin. Lock transitions are new in that release (`LockscreenTransition`
+is absent from v5.1.0's `src/config/config_types.h`), and v5.1.0 took a desktop capture only
+for the opt-in `blurred_desktop` background.
+
+**`locked` is not the same as safe to suspend.** On s2idle the outputs keep the last frame
+they presented, and they show it again on resume until the client draws a new one. Before
+the fork fix, noctalia let suspend go ahead in two places, and both fired on a frame that was
+a picture of the desktop:
+
+- The lock entry transition (`[lockscreen] transition`, default: all six effects, 1500 ms)
+  starts from a screencopy taken just before the lock. Its first lock-surface frame is that
+  capture, unaltered (`LockSurface` phase `Cover`), and the animation only starts after
+  `ext_session_lock_v1.locked`.
+- Lock-before-suspend released logind's delay inhibit in the `locked` hook. Lock-and-suspend
+  waited for the first frame callback (`allSurfacesReady()`). Either way, suspend began while
+  the cover was still on screen.
+
+The journal of one lid close shows how wide the gap is. niri logged `locking session` at
+42.932 and `sleep.target` was reached at 43.034, about 100 ms into a 1500 ms animation.
+**niri was not at fault.** At v26.04 it confirms `locked` only after submitting a locked frame
+on every active output, and while locked it draws only the lock surface over solid colour
+(`Niri::redraw` and the `is_locked()` branch of output rendering, both in `src/niri.rs`). The leak is the lock *client* drawing session
+content in its own lock surface.
+
+**The fix is change 2 of the fork pin** (`elements/desktop/noctalia.bst` § FORK PIN):
+
+- Locks taken for sleep pass `LockScreen::lock(/*animateEntry=*/false)`. The capture is still
+  taken, for the unlock transition.
+- `LockSurface::skipEnterTransition()` cuts short any entry transition already running, e.g.
+  a manual lock followed by a lid close within 1.5 s.
+- Suspend waits for `LockSurface::desktopConcealed()` on every surface. A `render()` override
+  marks the first commit made after the cover was hidden, and the frame callback for that
+  commit confirms it. A callback still pending from an older commit cannot satisfy the wait.
+
+The general rule applies to any locker whose first frames reproduce session content
+(screenshot fade-ins, blurred-screenshot backgrounds): **gate suspend on a presented frame
+that is safe to freeze, not on the lock protocol's confirmation.**
+
+**Workaround without the fix:** `[lockscreen] transition = []` in
+`~/.local/state/noctalia/settings.toml`. With no transition, no capture is taken and the first
+lock frame is the real lock screen, at the cost of the lock and unlock animations. The key is
+**singular**. `transitions = []` (the C++ field name, `LockscreenConfig::transitions`) logs
+`lockscreen.transitions: unknown setting` to `~/.cache/noctalia/noctalia.log` and changes
+nothing. `[lockscreen] monitors = [...]` does not help either: when none of the listed
+connectors is present (e.g. undocked), `LockScreen::isInteractiveOutput()` falls back to
+treating every output as interactive, so the built-in panel gets the full animated lock.
 
 ### Two of the three pinned keys are literal defaults — the third is not
 
