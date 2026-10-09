@@ -2,9 +2,8 @@
 
 **Issue:** #1145 · **Branch:** `1145-move-build-runner-to-one-com` · **Worktree:**
 `krytis.worktrees/chore/gh1145-move-build-runner-to-one-com` · **Status: draft, waiting on
-§ Decisions.** **Blocked by #1126**: krytis-vps's phase 2, `bench-window close` and the
-write-up come first. Until the window is closed, the box being replaced is busy with the
-benchmark.
+§ Decisions.** #1126 is done: the benchmark window closed on 2026-10-09, and krytis-vps is
+back on cache-warm duty.
 
 Moves the always-on runner `krytis-vps` from the Contabo Cloud VPS 6 to the one.com Cloud
 server L that was set up for the cold-build benchmark. The name, labels and workflows stay
@@ -12,15 +11,15 @@ as they are: the box behind them changes.
 
 ## Why
 
-From `docs/plans/2026-10-07-vps-cold-build-benchmark.md` § Results:
+From `docs/plans/done/2026-10-07-vps-cold-build-benchmark.md` § Results:
 
 | | Contabo (krytis-vps today) | one.com L |
 |---|---|---|
 | vCPU / RAM / disk | 6 / 11.7 GiB / 197G | 8 / 15.6 GiB / 394G |
 | builders × max-jobs (cache-warm's formula) | 2 × 3 | 2 × 4 |
 | Cold toolchain closure (159 elements) | 13h43m | 5h50m |
-| Cold full build (917 elements) | about 29–31h, projected [INFERENCE] (phase 2 still running at writing) | 12h19m |
-| Per-element build time | 2.2–3.2× L's | 1× |
+| Cold full build (917 elements) | 31h29m (excluding a 4h44m hung-download stall) | 12h19m |
+| Per-element build time | 2.54× L's (141 shared elements ≥1 min) | 1× |
 | Price / month incl. VAT | €9.38 | 211.25 SEK |
 
 The cold full build on krytis-vps exceeds cache-warm's `timeout-minutes: 1440`. On L it
