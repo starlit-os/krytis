@@ -140,6 +140,11 @@ How to spot it:
   took about 2m20s from an empty local cache. `publish.yml` runs it as its first
   build-related step (#1077). The plan the build prints only reflects the local cache:
   `waiting`/`fetch needed` toolchain lines are a reason to run the check, not proof.
+  **A passing check does not carry over to the next command.** It shows the missing
+  artifacts *could* be pulled, and only a build run with `--pull`/`--push` actually pulls
+  them. On 2026-10-08 the check passed (61 local, 6 pullable), and the flagless
+  `mise run bst build desktop/noctalia.bst` that followed spent 50 min compiling
+  `bootstrap-build-gcc-stage2` and `bootstrap-gcc` before it was stopped.
 - **While it runs**, a line like
   `[build:freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst] START` in the build log
   means the remote did not have it either. That is the point to stop and ask.

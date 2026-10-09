@@ -58,9 +58,14 @@ depends:
 #
 # FORK PIN: kitten-lily/noctalia branch feat/system-prompter, not yet
 # upstreamed (no PR opened against noctalia-dev/noctalia -- that needs an
-# explicit instruction per AGENTS.md's Upstream Gate). It adds the native
-# org.gnome.keyring.SystemPrompter provider that oo7 depends on for every
-# unlock prompt, per the note above.
+# explicit instruction per AGENTS.md's Upstream Gate). It carries two changes:
+#   1. the native org.gnome.keyring.SystemPrompter provider that oo7 depends on
+#      for every unlock prompt, per the note above;
+#   2. fix(lockscreen) 1047f8fd8: lid-close / lock-and-suspend locks skip the
+#      entry transition and hold suspend until every lock surface has presented
+#      a frame without the pre-lock desktop capture. Without it the panel keeps a
+#      screenshot of the unlocked desktop through sleep and shows it on resume.
+#      See docs/skills/desktop.md § The last frame before sleep is what resume shows.
 #
 # Rebase history of the carried commit. 2026-08-17: onto upstream main
 # 87b203c68 (v5.0.0-beta.8-135) -- the 1722-line feature commit applied across
@@ -72,6 +77,13 @@ depends:
 # dropped it as redundant. v5.0.1 -> v5.1.0 changed no `dependency()` call in
 # noctalia's meson.build (39 entries either side, verified by diffing the two
 # tags), so this element's build-depends/depends lists are unchanged.
+# 2026-10-08: onto the v5.2.1 tag (69 commits). Two one-line conflicts, both
+# adjacent additions beside upstream's new secret_collection_probe (meson.build
+# source list, application_services.cpp include); all 17 carried files have
+# byte-identical hunks (docs/skills/workflow.md § Rebasing a carried fork
+# branch). v5.2.0 -> v5.2.1 adds one `dependency()`, wayland-server, inside
+# meson.build's `if build_tests` block, so -Dtests=disabled below keeps the
+# dependency lists unchanged. The lockscreen fix then went on top as its own commit.
 #
 # Rebase the branch onto the new tag and re-track when upstream cuts a
 # release: `track: <branch>` cannot see tags, so no auto-track PR will ever
@@ -80,7 +92,7 @@ depends:
 # Revert to
 #   url: github:noctalia-dev/noctalia.git
 #   track: v*
-# once the feature lands upstream (or is dropped). Tracking a branch instead
+# once both changes land upstream (or are dropped). Tracking a branch instead
 # of the v* tag glob means `bst source track` follows the branch head, not
 # releases -- expect more frequent auto-track PRs than usual until then, and
 # note that an unrelated commit on that branch changes what krytis ships.
@@ -88,7 +100,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.2.0-2-g91c8c028164dd0ee399a69428818c17e9afe94ce
+  ref: v5.2.1-3-g1047f8fd88f99c5e0fa01907b41db331c31af497
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test
