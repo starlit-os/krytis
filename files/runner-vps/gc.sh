@@ -26,9 +26,9 @@
 # docs/skills/ci-runner.md § Clearing the CAS records that BuildStream has
 # no native `artifact gc`, so there is no safe incremental command either —
 # the only supported operation is removing the whole cache, a recovery
-# procedure rather than a weekly job. It also does not need one: 47G sits
-# under the `cache: quota: 50G` that cache-warm.yml writes, so casd is
-# enforcing its cap correctly.
+# procedure rather than a weekly job. It also does not need one: casd keeps
+# objects/ under the `cache: quota` that cache-warm.yml writes (47G against
+# 50G when this was measured; 200G on the one.com box since #1155).
 #
 # tmp/ is casd's per-session scratch, and 24G of it is orphaned. casd unlinks
 # these on clean shutdown; a killed casd never does, and nothing else ever
@@ -160,6 +160,52 @@ run journalctl --vacuum-size=200M
 # 276M of .debs already installed by provision.sh; apt never needs them again.
 echo "==> apt cache: $(du -sh /var/cache/apt 2>/dev/null | cut -f1 || echo unknown)"
 run apt-get clean
+
+# --- Unused mise tool versions (#1127) --------------------------------------
+# This box keeps every tool version any job ever installed. With mise-action's
+# cache off on the VPS, nothing else ever drops them: run 37515434814's
+# `mise ls` showed five fnox, three grype, three pass-cli and two python
+# versions. `mise prune --tools` deletes versions that no tracked config
+# (~/.local/state/mise/tracked-configs) still names. The one that matters is
+# the runner's checkout of mise.toml, and it is tracked but NOT trusted
+# outside a job. mise skips untrusted configs, so a bare prune counted every
+# installed tool as unused. The first dry run on the box (2026-10-09) would
+# have deleted all eleven, current grype included. MISE_TRUSTED_CONFIG_PATHS
+# trusts the checkout for this process only. The prune then dropped exactly
+# grype@0.120.0, which `main` had moved past. A version only an open PR's
+# mise.toml uses is reinstalled by that PR's next job.
+#
+# Guard: prune only when the checkout's config resolves (`mise ls --current`
+# lists tools). With no checkout, or one mise cannot read, everything would
+# look unused again.
+#
+# Neither path guarantees mise on PATH: the weekly job runs no mise-action,
+# and an SSH session may not have it. Jobs here also run with no HOME
+# (docs/skills/ci-runner.md § Jobs here run with no HOME), and mise finds its
+# data and state through it, so resolve it from passwd as mise/tasks/bst does.
+HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+export HOME
+MISE_CHECKOUT="/opt/actions-runner/_work/krytis/krytis"
+MISE_BIN="$(command -v mise 2>/dev/null || true)"
+if [ -z "${MISE_BIN}" ] && [ -x "${HOME}/.local/share/mise/bin/mise" ]; then
+    MISE_BIN="${HOME}/.local/share/mise/bin/mise"
+fi
+echo "==> mise tool versions: $(du -sh "${HOME}/.local/share/mise/installs" 2>/dev/null | cut -f1 || echo unknown)"
+if [ -z "${MISE_BIN}" ]; then
+    echo "    SKIPPED: mise not found"
+elif ! CURRENT=$(MISE_TRUSTED_CONFIG_PATHS="${MISE_CHECKOUT}" "${MISE_BIN}" ls --current -C "${MISE_CHECKOUT}" 2>/dev/null) \
+    || [ -z "${CURRENT}" ]; then
+    echo "    SKIPPED: ${MISE_CHECKOUT}/mise.toml does not resolve, so every version would look unused"
+else
+    echo "    in use per ${MISE_CHECKOUT} @ $(git -C "${MISE_CHECKOUT}" rev-parse --short HEAD 2>/dev/null || echo unknown): $(printf '%s\n' "${CURRENT}" | wc -l) tools"
+    if [ "${DRY_RUN}" = "1" ]; then
+        PRUNE=(--dry-run)
+    else
+        PRUNE=(--yes)
+    fi
+    MISE_TRUSTED_CONFIG_PATHS="${MISE_CHECKOUT}" "${MISE_BIN}" prune --tools "${PRUNE[@]}" 2>&1 \
+        | grep -E 'is prunable|remove ' | sed 's/^/    /' || echo "    nothing to prune"
+fi
 
 # --- Report -----------------------------------------------------------------
 AFTER_KB=$(df -Pk / | awk 'NR==2 {print $3}')
