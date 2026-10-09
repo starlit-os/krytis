@@ -1113,23 +1113,35 @@ Don't rely on `[deps.uv]` auto-run for correctness in CI.
 
 ### Org allowlist
 
-The `starlit-os` org has an allowlist of permitted external actions. Any `uses: <owner>/<repo>` not already on the list will be blocked at runtime with a permissions error — the workflow job simply won't start.
+krytis restricts which external actions may run (`allowed_actions: selected`, with
+`sha_pinning_required: true`). Any `uses:` that matches no pattern on the list is blocked at
+runtime: the workflow fails with `startup_failure` and creates no jobs.
 
-When adding a new action to any workflow, check whether `<owner>/<repo>` is already allowlisted. If not, prompt the user to add it before the PR is merged. The allowlist is managed in the org's GitHub Actions settings.
+**The list is readable without org admin, at repo level** (verified 2026-10-09): `gh api
+repos/starlit-os/krytis/actions/permissions/selected-actions` returns `patterns_allowed`. The
+org-level endpoint below needs `admin:org`, but this one does not. A maintainer's token can
+also `PUT` it, which is a Security Gate change: ask first. Check a new `uses:` against it
+before opening the PR, not after the first run fails.
+
+**`*` in a pattern does not cross `/`, so `owner/repo@*` does not cover a sub-path action
+in that repo.** `actions/cache@*` was on the list, yet `actions/cache/restore@<sha>` and
+`actions/cache/save@<sha>` failed vuln-diff's first run on #1160 (2026-10-09). Their own
+patterns (`actions/cache/restore@*`, `actions/cache/save@*`) had to be added. Match the
+**full path** of every `uses:` against the list.
 
 **Easy to miss when adding a *new* action, not just re-pinning an existing one.**
 Hit for real in PR #689: two new workflows added `actions/checkout` and
 `jdx/mise-action` (both already used elsewhere in this repo, already
 allowlisted — fine) alongside `actions/upload-artifact` (genuinely new,
 zero prior uses anywhere in `.github/workflows/`) without flagging the
-latter for an allowlist check at all, until the user asked directly. An
-agent has no way to self-verify allowlist membership — `gh api
-orgs/<org>/actions/permissions/selected-actions` needs org-admin or the
-`admin:org` scope, which an agent's token will not have. **Checklist for
-any new `uses:` line:** grep the rest of `.github/workflows/` for the same
-`<owner>/<repo>` first; if it's not already there, call it out explicitly
-in the PR description and ask the user to confirm/add it — do not assume
-"it's a well-known action" is the same as "it's allowlisted."
+latter for an allowlist check at all, until the user asked directly. This
+section used to say an agent could not check membership at all, because the
+org endpoint (`orgs/<org>/actions/permissions/selected-actions`) needs
+`admin:org`. The repo endpoint above answers the same question. **Checklist
+for any new `uses:` line:** match its full `owner/repo[/path]` against
+`patterns_allowed`. If nothing matches, call it out in the PR description and
+ask the user before adding a pattern. Do not assume "it's a well-known action"
+is the same as "it's allowlisted".
 
 **Hit a second time in PR #793 (issue #656), post-merge this time — the checklist above was skipped, not just missed by oversight.** `actions/create-github-app-token` was genuinely new to `.github/workflows/track-bst-sources.yml` (0 prior uses in the repo), landed in a plan (#710) and PR (#793) that never called out the allowlist question, and merged clean — `Static gates` doesn't run `actionlint` or touch workflow policy at all (see § SHA pinning above), so nothing in CI catches this before merge. The break only surfaces on the next real dispatch, as `startup_failure` with **zero jobs created** — no job logs, no check-run for the workflow, `gh api .../actions/runs/<id>/logs` 404s. The only place the actual reason appears is the run's web UI **Annotations** panel, reachable by opening `https://github.com/<org>/<repo>/actions/runs/<id>` in a real browser (`gh run view`/`gh api` surface nothing beyond the generic `startup_failure` conclusion):
 
