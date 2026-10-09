@@ -56,8 +56,8 @@ jobs:
   publish:
     # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
     # runner (docs/skills/ci-runner.md) to debug on the real hardware or
-    # work around a Blacksmith outage/limit — same escape hatch as
-    # cache-warm.yml. Nothing else in this job is Blacksmith-specific.
+    # work around a Blacksmith outage/limit. Nothing else in this job is
+    # Blacksmith-specific.
     #
     # Blacksmith is where EVERY sealed image this project has published was
     # built, and those artifacts are hardware-validated. #524 briefly routed

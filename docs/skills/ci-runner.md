@@ -194,10 +194,10 @@ specifically. `RUNNER_VPS_LABELS` (`mise.toml`) adds a distinct `krytis-vps`
 label; `cache-warm.yml`'s `runs-on` targets
 `["self-hosted","linux","x64","krytis-vps"]` specifically, so it always
 lands on this box regardless of whether the local container runner also
-happens to be up. `force_blacksmith` (workflow_dispatch input) is the
-manual fallback for VPS maintenance or an outage — inverts the previous
-`force_self_hosted` direction, since self-hosted is now the *default*, not
-the opt-in.
+happens to be up. There is **no hosted fallback** since 2026-10-09 (#1127). The
+`force_blacksmith` input is gone: a cold full build (12h19m on this box, #1126) does not
+fit a hosted runner's 6h limit, and its mise-cache branch was the last `actions/cache`
+user here. If the VPS is down, cache-warm waits for it.
 
 ### podman is installed but deliberately not version-pinned
 
@@ -266,8 +266,8 @@ RAM, and nothing was bounding it. `cache-warm.yml` now derives both from the
 runner it lands on: one slot per core, one slot per 2 GiB of RAM (cc1plus
 peaked at 1.5G RSS in the kill log), whichever is lower; `builders` fixed at
 2 so the scheduler can still overlap a slow element with a fast one; and
-`max-jobs` = slots / builders, **rounded up**. That yields **2 x 3 = 6** on the VPS (was 24)
-and **2 x 4 = 8** on the Blacksmith fallback (was 32).
+`max-jobs` = slots / builders, **rounded up**. That yielded **2 x 3 = 6** on the Contabo VPS
+(was 24) and yields **2 x 4 = 8** on the one.com box since #1145.
 
 The rounding means the product overshoots the slot budget by one whenever the slot count
 is odd. `MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))` with `BUILDERS=2` gives
@@ -347,14 +347,13 @@ emergency headroom rather than a paging tier a long build lives in). This is
 a backstop for whatever the concurrency estimate above misses, not a
 substitute for it.
 
-**`free-disk-space` would have silently undone this.** The `Maximize build
-space` step (`hastd/free-disk-space`) runs `swapoff -a && rm -f
-/mnt/swapfile` — correct for a throwaway GitHub-hosted VM reclaiming its
-preallocated swap, catastrophic on a persistent box whose swap is deliberate
-OOM headroom: it would disable the backstop at the start of every single
-run. Its path deletions are equally pointless here (124G free of 197G). The
-step is now gated to the Blacksmith branch of the `runs-on` ternary, using
-the same expression so the two can't drift.
+**`free-disk-space` would have silently undone this.** `hastd/free-disk-space` runs
+`swapoff -a && rm -f /mnt/swapfile`. That is correct for a throwaway GitHub-hosted VM
+reclaiming its preallocated swap, and catastrophic on a persistent box whose swap is
+deliberate OOM headroom: it would disable the backstop at the start of every run. Its path
+deletions are equally pointless here. cache-warm ran it only on its Blacksmith branch, and
+that branch is gone since 2026-10-09 (#1127). `publish.yml`, which stays on Blacksmith,
+still uses it.
 
 **Generalisable:** any action whose job is "reclaim space on a disposable
 runner" needs a second look before it runs on a persistent one. It is
@@ -799,10 +798,9 @@ Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` a
   cache-warm's 5m19s `Setup mise`, run 37515434814). The `self-hosted` entries also grew
   503 → 621 MB in a week and pushed the repo's Actions cache past GitHub's 10 GB limit.
   `build-changed.yml`, `build-iso.yml` and `bench-cold-build.yml` set `cache: false`.
-  `cache-warm.yml` turns it off only on the VPS path, because its Blacksmith fallback is
-  ephemeral and benefits from the cache: `cache: ${{ github.event_name ==
-  'workflow_dispatch' && inputs.force_blacksmith }}`, the same condition as `runs-on`. Old
-  versions are pruned by the weekly GC instead (§ Weekly GC on the VPS runner (#938)).
+  `cache-warm.yml` set it only on the VPS path while it still had a Blacksmith fallback;
+  with the fallback removed (2026-10-09) it is a plain `cache: false` too. Old versions are
+  pruned by the weekly GC instead (§ Weekly GC on the VPS runner (#938)).
 
 **Security.** The job runs PR-authored code (the task, the workflow, every element's
 commands) as root on a persistent host. That is acceptable only because it is limited to
@@ -1009,8 +1007,8 @@ closure (toolchain included). It is the one.com Cloud server L since #1145, with
 disk; 83G was in use at cutover, 63G of it the CAS. 200G of CAS leaves about 110G for the
 OS, `cas/tmp` scratch space (§ A killed casd leaks `cas/tmp`, and it is the box's disk
 ratchet (#938)) and `build-iso`'s podman storage. On the old 197G Contabo box the quota was
-100G. `cache-warm.yml` picks the quota by `RUNNER_NAME`, and the Blacksmith fallback keeps
-50G. **`build-changed.yml` and `bench-cold-build.yml` set the same 200G** because they share
+100G. `cache-warm.yml` sets it directly, since the job only runs on `krytis-vps`.
+**`build-changed.yml` and `bench-cold-build.yml` set the same 200G** because they share
 this CAS. A job writing a lower quota makes casd evict down to it, throwing away the warm
 closure every later job relies on.
 
@@ -1022,8 +1020,8 @@ toolchain on the VPS. Run 37003574522's first attempt hit the old `timeout-minut
 `bootstrap/gcc` 70 min) without reaching `components/llvm.bst` or `components/rust.bst`.
 Nothing was lost: every artifact pushes to bow as it finishes, so a re-run resumes from
 there. But one rebuild needed several manual restarts. `cache-warm.yml` now sets 1440
-minutes on the VPS (self-hosted jobs may run up to 5 days) and keeps 360 on the
-Blacksmith fallback, using the same condition as `runs-on`.
+minutes (self-hosted jobs may run up to 5 days). A hosted runner's 6h limit is one reason
+its Blacksmith fallback was dropped (#1127).
 
 ### Reading a cache-warm run: the cache report
 
@@ -2041,7 +2039,7 @@ autonomously.
 
 | Workflow | Runner | Rationale |
 |---|---|---|
-| `cache-warm.yml` | `["self-hosted","linux","x64","krytis-vps"]` (default); `blacksmith-8vcpu-ubuntu-2404` via `workflow_dispatch` input `force_blacksmith` | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run — the one that actually recurs — was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The always-on VPS is now the default and Blacksmith the manual fallback for VPS maintenance or an outage; see § Always-on VPS Runner |
+| `cache-warm.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run, the one that actually recurs, was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The `force_blacksmith` fallback that #794 left was removed on 2026-10-09 (#1127): a cold full build is 12h19m on the VPS (#1126), over a hosted runner's 6h. See § Always-on VPS Runner |
 | `publish.yml` | `blacksmith-4vcpu-ubuntu-2404` (default; `8vcpu` until 2026-10-07, see § Sizing the `publish.yml` runner); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
 | `build-changed.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Same-repo PRs only. The VPS's local CAS already holds the closure cache-warm built, so the whole job for a rebuilt `core/sudo-rs.bst` takes about 2 minutes; a hosted runner would pull the closure from bow first. See § PR build gate: `build-changed.yml` (#743) |
@@ -2049,7 +2047,7 @@ autonomously.
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml`, `grype-db-cache.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans, the daily Grype database cache refresh and the QEMU enrollment gate. None of them runs a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain. Moving `vuln-diff.yml` to `krytis-vps` was considered on 2026-10-09 and declined. It would queue behind `build-changed`/cache-warm on the one runner slot, and it runs fork-PR code (after approval) as root on a persistent box. Its ~73s first-Grype-call cost was the database import, which the Actions cache now removes on hosted runners (#1156) |
 
-Each self-hosted/Blacksmith override only takes effect on a manual `workflow_dispatch` run. `cache-warm.yml` guards its ternary on `github.event_name == 'workflow_dispatch'` because it also has a `schedule` trigger, so **scheduled runs always land on the VPS**; `publish.yml` needs no guard because its override defaults to Blacksmith, so the null input on its cron run already picks the wanted host. `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
+The self-hosted override only takes effect on a manual `workflow_dispatch` run. `publish.yml` needs no guard, because its override defaults to Blacksmith, so the null input on its cron run already picks the wanted host. `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
 
 **`force_self_hosted` reaches every runner that carries GitHub's default labels.** It targets
 `["self-hosted","linux","x64"]`, and `config.sh` adds exactly those three labels to every

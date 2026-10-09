@@ -62,7 +62,8 @@ jobs:
     # Same distinct-label reasoning as cache-warm.yml: without krytis-vps,
     # `[self-hosted, linux, x64]` would also match the local container
     # runner (mise.toml RUNNER_LABELS) whenever both happen to be online.
-    # No Blacksmith fallback (unlike cache-warm/publish) — Blacksmith has
+    # No Blacksmith fallback (publish.yml has one; cache-warm.yml dropped its
+    # own in #1127). Blacksmith has
     # none of the host packages this job needs (mksquashfs, mtools,
     # dosfstools, rclone) and provisioning an ephemeral runner for those on every
     # run is wasted work the always-on VPS doesn't have to repeat.
