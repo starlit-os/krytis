@@ -87,14 +87,16 @@ Task 7), where it blocked a local `renovate-check --dry-run` verification.
 
 ## Always-on VPS Runner (issue #794)
 
-A second, distinct self-hosted runner: a dedicated, always-on Debian 13
-(trixie) Contabo Cloud VPS 6 (6 vCPU/12 GB/200 GB), registered under the
-name `krytis-vps`. It exists to take `cache-warm.yml`'s scheduled cron run
-off Blacksmith — a `schedule`-triggered workflow can never satisfy a
-`workflow_dispatch`-only opt-in condition, so that job was architecturally
-stuck paying Blacksmith overage no matter how much manually-dispatched work
-got routed to the local container runner by hand. See the issue for the
-full cost/sizing rationale.
+A second, distinct self-hosted runner, registered under the name `krytis-vps`. Since
+2026-10-09 (#1145) it is a **one.com Cloud server L**: Debian 13 (trixie), 8 vCPU,
+15.6 GiB RAM (`MemTotal` 15 GiB), 394 GB disk, host `cloud-server-10673574`. From #794
+until then it was a Contabo Cloud VPS 6 (6 vCPU/12 GB, 11 GiB `MemTotal`/200 GB,
+host `krytis-build`); a cold full build took 31h29m there against 12h19m on L (#1126).
+It exists to take `cache-warm.yml`'s scheduled cron run off Blacksmith: a
+`schedule`-triggered workflow can never satisfy a `workflow_dispatch`-only opt-in
+condition, so that job was architecturally stuck paying Blacksmith overage no matter
+how much manually-dispatched work got routed to the local container runner by hand.
+See #794 for the original cost/sizing rationale and #1145 for the move.
 
 ### Host-native, not a container — the local runner's design doesn't apply here
 
@@ -111,11 +113,14 @@ host service, closer in shape to the Buildbarn Quadlet precedent (always up,
 restarts with the box) than to the local runner's manually start/stop
 container.
 
-**It is not, however, a single-*workload* box, and an earlier version of this
+**It was not, however, a single-*workload* box, and an earlier version of this
 section said it was** ("no other tenant — the VM itself is the isolation
 boundary"), which `files/runner-vps/gc.sh`'s own header has contradicted since
-#938 ("Shared box: it also carries …"). Measured 2026-09-25, and the shape
-matters more than the count:
+#938 ("Shared box: it also carries …"). Measured on the Contabo box 2026-09-25; the
+shape matters more than the count. **The one.com box carries neither service yet**
+(2026-10-09: the runner unit is the only non-Debian service running, and
+`/etc/containers/systemd/` holds only the empty `users/`). Moving them is #1154,
+and once it lands the paragraphs below apply to L as written:
 
 - `beszel-agent` (`docker.io/henrygd/beszel-agent`, monitoring) runs as an
   always-on **root** quadlet beside the runner. `Privileged=false`, but it binds
@@ -129,8 +134,8 @@ matters more than the count:
   the host's trust boundary includes whatever that tag resolves to on any given
   day.
 
-Everything here — runner, quadlets, builds — is uid 0, and two third-party
-images hold root-equivalent access to the same kernel. That is inert for a build
+Everything here (runner, quadlets, builds) is uid 0, and two third-party
+images held root-equivalent access to the same kernel. That is inert for a build
 job, which has no secrets. It is decisive for anything that writes secret
 material to this disk, and it is why **#824 option B was declined**: sealed
 publishes put six UEFI private keys in the workspace for the duration of the
@@ -144,11 +149,21 @@ Managed via `mise runner-vps:{install,register,deregister,status}`
 both guarded); `register`/`deregister` call the GitHub API directly, same
 pattern as `runner:start`/`stop`.
 
+**`deregister` must remove the box's local registration, not just GitHub's.** Until #1145
+it deleted the runner through the API and uninstalled the service, but left
+`/opt/actions-runner/.runner`, `.credentials` and `.credentials_rsaparams`. `register`
+treats an existing `.runner` as "already configured" and reuses it, so a deregister
+followed by a register brought back a registration GitHub had already deleted: the
+service starts and the runner never comes online. It also left register's
+`actions.runner.*.service.d` OOM drop-in, which outlived the unit on the Contabo box
+(seen in its 2026-10-09 inventory). `deregister` now removes all three files and the
+drop-in directory, and each step tolerates being already done.
+
 ### Debian, not Ubuntu — sidesteps an AppArmor default that doesn't apply here
 
 `kernel.apparmor_restrict_unprivileged_userns` (the sysctl `runner/start`
 warns about, and `cache-warm.yml`'s "Enable unprivileged user namespaces"
-step unconditionally flips for the Blacksmith/Ubuntu fallback path) is an
+step still sets, a no-op here) is an
 **Ubuntu-specific** AppArmor default, not a general Linux one. Confirmed
 absent on this box: `/proc/sys/kernel/apparmor_restrict_unprivileged_userns`
 doesn't exist at all on Debian 13, and `kernel.unprivileged_userns_clone=1`
@@ -271,10 +286,14 @@ peaked at 1.5G RSS in the kill log), whichever is lower; `builders` fixed at
 
 The rounding means the product overshoots the slot budget by one whenever the slot count
 is odd. `MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))` with `BUILDERS=2` gives
-`2 x ceil(SLOTS/2)`. The VPS has 11 GiB `MemTotal`, so 5 slots, yet it runs 6 compilers. A
-4-vCPU/8 GB box (about 7 GiB, 3 slots) would run 4. Found while planning
-`docs/plans/done/2026-10-07-vps-cold-build-benchmark.md`. Left as is: the 8G swap is the backstop,
-and the cold benchmark measures the formula as production runs it.
+`2 x ceil(SLOTS/2)`. The Contabo box had 11 GiB `MemTotal`, so 5 slots, yet ran 6
+compilers; the one.com box has 15 GiB, so 7 slots, and runs 8 (its log line reads
+`builders=2 max-jobs=4 (<=7 concurrent compilers)`). Found while planning
+`docs/plans/done/2026-10-07-vps-cold-build-benchmark.md`. Left as is: the 8G swap is the
+backstop, and the cold benchmark measured the formula as production runs it. On
+2026-10-09, after two cache-warms that built 23 elements (noctalia, bootc, …), the
+runner unit reported a 12G memory peak and a 980M swap peak: the backstop is in use, not
+idle.
 
 No cache-key cost, then or now: `max-jobs`'s runtime env vars are excluded
 from the cache key (see § `max-jobs` does NOT affect cache keys), which is
@@ -340,8 +359,10 @@ them — no restart of a live runner needed.
 
 ### The box ships with no swap
 
-Contabo's Debian image has **zero swap**, which is what turned a RAM spike
-into an immediate kill rather than a slowdown. `provision.sh` now creates an
+Contabo's Debian image had **zero swap**, which is what turned a RAM spike
+into an immediate kill rather than a slowdown. Whether one.com's image ships swap was
+not recorded before `provision.sh` ran there; on 2026-10-09 the only swap on L is
+`provision.sh`'s `/swapfile`. `provision.sh` creates an
 idempotent 8G `/swapfile` (fstab entry + `vm.swappiness=10`, so it stays
 emergency headroom rather than a paging tier a long build lives in). This is
 a backstop for whatever the concurrency estimate above misses, not a
@@ -2034,6 +2055,38 @@ to avoid a trailing newline in the token). Both secrets have to be added by
 a human through the GitHub repo settings UI — provisioning a production
 secret is a Security Gate item per AGENTS.md, not something to wire or set
 autonomously.
+
+### Measuring bow throughput per client (#1128)
+
+BuildStream's logs do not separate transfer time from everything else, so measure bow's
+storage endpoint directly with ByteStream from each client. Write fresh `os.urandom`
+blobs to `uploads/<uuid>/blobs/<sha256>/<size>`; random bytes guarantee bow does not
+already hold them, because a push of known content is skipped and measures nothing. Then
+read the same blobs back from `blobs/<sha256>/<size>`. Use the project venv's Python
+(`buildstream._protos.google.bytestream`), the push token, port 7982 and
+`quadlet/buildbarn/certs/bow-server.crt`, as `scripts/bow-artifact-check.py` does. A
+remote box needs no checkout of its own: pipe the token and the script over one SSH
+session (`{ fnox get BUILDBARN_PUSH_TOKEN; echo; cat probe.py; } | ssh … 'read -r
+BOW_TOKEN; export BOW_TOKEN; <runner checkout>/.venv/bin/python3 - <cert>'`), which keeps
+the token out of argv. Keep the blobs small (the 2026-10-09 run wrote 264 MiB per
+client). They land in bow's size-bounded CAS and can evict real artifacts
+(§ bow's CAS size and layout live in materia, and its index can outlive its data).
+
+2026-10-09, single stream of 128 MiB and 4 parallel streams of 32 MiB, in Mbit/s:
+
+| Client | Write | Read |
+|---|---|---|
+| workstation | 199–202 | 291–315 |
+| one.com L (`krytis-vps`) | 158–176 | 458–465 |
+| Contabo (old `krytis-vps`) | 160–249 | **51–55** |
+
+Writes land between about 160 and 250 Mbit/s from all three clients, which points at bow's
+side (its downlink or bb-storage's write path) as the write limit. Reads differ by 9x
+between clients, so the read limit is the client's path. Contabo's ~53 Mbit/s reads made
+every pull on the old runner slow. Four parallel streams were no faster than one on any
+client, so neither direction is limited per connection. Caveat: the read-back blobs had just
+been written, so bow probably served them from page cache, and this does not measure
+bb-storage's SSD.
 
 ## Workflow Runner Choices
 

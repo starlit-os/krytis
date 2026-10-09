@@ -103,8 +103,8 @@ jobs:
           # Total concurrent compile processes = builders x max-jobs, and that
           # product — not max-jobs alone — is what has to fit in the runner's
           # RAM. Sizing max-jobs to $(nproc) (d5bf7f6) while leaving builders
-          # at 4 asked the 6-vCPU/11GiB VPS for up to 24 of them and OOM-killed
-          # the runner twice inside 24h (11.4G and 11.1G peaks against 11GiB
+          # at 4 asked the then 6-vCPU/11GiB Contabo VPS for up to 24 of them and
+          # OOM-killed the runner twice inside 24h (11.4G and 11.1G peaks against 11GiB
           # with no swap, 2026-09-11/12 — see docs/skills/ci-runner.md
           # § The VPS runner OOMs). cc1plus peaked at 1.5G RSS in the kill
           # log, so budget 2 GiB per slot and never exceed one slot per core:

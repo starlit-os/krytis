@@ -26,7 +26,8 @@ fi
 # the wrong shape for the thing you reach for to bring a runner back. Splitting
 # it makes the common case — box already configured, just needs its service
 # and drop-in re-asserted — a no-op rather than an error. Re-key by running
-# 'mise runner-vps:deregister' first.
+# 'mise runner-vps:deregister' first: it removes .runner and .credentials*
+# too, so the next register really configures a new registration (#1145).
 if ssh_vps "test -f ${RUNNER_HOME}/.runner"; then
     echo "==> Runner already configured on ${RUNNER_VPS_HOST} — reusing its registration."
 else

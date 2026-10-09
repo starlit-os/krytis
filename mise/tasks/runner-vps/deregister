@@ -19,6 +19,20 @@ else
     echo "==> Runner '${RUNNER_VPS_NAME}' not found in GitHub — may already be deregistered."
 fi
 
-echo "==> Stopping and uninstalling the systemd service on ${RUNNER_VPS_HOST}..."
-ssh_vps "cd ${RUNNER_HOME} && ./svc.sh stop && ./svc.sh uninstall"
-echo "==> Done. The box itself (packages, actions-runner binary) is untouched — re-run 'mise runner-vps:register' to bring it back."
+# The local registration goes too (#1145). The API delete above leaves
+# .runner and .credentials* on the box, and `register` takes an existing
+# .runner to mean "already configured" and reuses it, so a later register
+# brought back a registration GitHub had already deleted: the service starts
+# and the runner never comes online. svc.sh uninstall removes the unit but
+# not register's OOM drop-in directory, which is named after the unit and
+# would be orphaned by a re-register under another name. Each step tolerates
+# being already done, so a deregister that died half way can be re-run.
+echo "==> Stopping the service and removing local registration on ${RUNNER_VPS_HOST}..."
+ssh_vps "cd ${RUNNER_HOME} \
+    && if ls /etc/systemd/system/actions.runner.*.service >/dev/null 2>&1; then \
+           ./svc.sh stop && ./svc.sh uninstall; \
+       else echo '    (no service installed)'; fi \
+    && rm -rfv /etc/systemd/system/actions.runner.*.service.d \
+    && systemctl daemon-reload \
+    && rm -fv .runner .credentials .credentials_rsaparams"
+echo "==> Done. The box itself (packages, actions-runner binary, CAS) is untouched — re-run 'mise runner-vps:register' to bring it back."
