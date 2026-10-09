@@ -1,9 +1,9 @@
 # Move the build runner to one.com Cloud server L
 
 **Issue:** #1145 · **Branch:** `1145-move-build-runner-to-one-com` · **Worktree:**
-`krytis.worktrees/chore/gh1145-move-build-runner-to-one-com` · **Status: draft, waiting on
-§ Decisions.** #1126 is done: the benchmark window closed on 2026-10-09, and krytis-vps is
-back on cache-warm duty.
+`krytis.worktrees/chore/gh1145-move-build-runner-to-one-com` · **Status: cut over 2026-10-09
+07:17 UTC; verification (step 5) pending.** `krytis-vps` is now one.com L. The Contabo box is
+deregistered, with its runner service removed, and kept for rollback (M6).
 
 Moves the always-on runner `krytis-vps` from the Contabo Cloud VPS 6 to the one.com Cloud
 server L that was set up for the cold-build benchmark. The name, labels and workflows stay
@@ -85,7 +85,10 @@ Checked against `main` at writing:
 
 ### 1. Decisions
 
-- [ ] A human signs off M1–M7, or amends them here.
+- [x] The operator ordered the move on 2026-10-09 ("migrate to one.com runner"). Applied as
+      recommended: M1, M2, M3 (`ssh:BenchOnecomL` stays installed until step 7), M6, and M7
+      in part (below). **Not applied yet:** M4 (quota stays 100G; L's CAS was 63G at
+      cutover, so it fits) and M5 (beszel and materia are not on L).
 
 ### 2. Code (one PR, before the cutover)
 
@@ -99,18 +102,21 @@ Checked against `main` at writing:
 
 ### 3. Prepare L (no registration)
 
-- [ ] **Inventory the Contabo box** so nothing is left behind:
+- [ ] **Inventory the Contabo box** so nothing is left behind. **Skipped at cutover** to make
+      the 2026-10-09 cron window; still to do while the box exists (M6):
       `systemctl list-units --type=service --state=running`,
       `ls /etc/containers/systemd/`, `crontab -l`, `ls /etc/cron.d`,
       `ls /etc/apt/apt.conf.d` (unattended upgrades?), `sshd -T | grep -E
       'passwordauth|permitroot'`, `swapon --show`. Anything not explained by
       `provision.sh`, `register`, beszel or materia gets a line here before step 4.
-- [ ] Remove the stale bench registration files on L (the step 2 gap), and the bench-only
-      `/opt/actions-runner/_work/_temp/git-mirrors` if a run left it behind.
-- [ ] `ssh:KrytisBuild` into root's `authorized_keys` on L (M3), over the `ssh:BenchOnecomL`
-      login. Verify a KrytisBuild login with `RUNNER_VPS_HOST=root@<L>` set explicitly.
-- [ ] `RUNNER_VPS_HOST=root@<L> mise run runner-vps:install`. It is idempotent, and keeps
-      the package list at `main`.
+- [x] Remove the stale bench registration files on L (the step 2 gap), and the bench-only
+      `/opt/actions-runner/_work/_temp/git-mirrors` if a run left it behind. `.runner` and
+      `.credentials*` were already absent. The service drop-in directory and `git-mirrors`
+      were removed.
+- [x] `ssh:KrytisBuild` into root's `authorized_keys` on L (M3), over the `ssh:BenchOnecomL`
+      login. Verified a KrytisBuild login with `RUNNER_VPS_HOST=root@<L>` set explicitly.
+- [x] ~~`RUNNER_VPS_HOST=root@<L> mise run runner-vps:install`.~~ Not re-run. It ran on
+      2026-10-07 for #1126, and `provision.sh` has not changed since.
 - [ ] M5: materia + beszel on L (paired `kitten-lily/materia` PR), or recorded as dropped.
 
 ### 4. Cutover (minutes; pick a time with no job on `krytis-vps`)
@@ -118,19 +124,36 @@ Checked against `main` at writing:
 Do it right after a cache-warm finishes, not near the 01:41 UTC cron. Jobs dispatched during
 the gap queue (for up to 24h) rather than fail.
 
-- [ ] `gh api repos/starlit-os/krytis/actions/runners` shows `krytis-vps` online and not busy.
-- [ ] `mise run runner-vps:deregister` (the vault still points at Contabo).
-- [ ] M7: repoint the **Krytis Build VPS** vault item at L, keeping the old values in its note.
-- [ ] `mise run runner-vps:register` (defaults: name and labels `krytis-vps`, default labels
-      kept per M2).
-- [ ] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \(.status) [\([.labels[].name]|join(","))]"'`
+- [x] `gh api repos/starlit-os/krytis/actions/runners` shows `krytis-vps` online and not busy.
+      The dispatched cache-warm 37895827873 was cancelled first (06:52 run, cancelled at
+      07:08). GitHub refused the first delete with "currently running a job" (HTTP 422) until
+      the cancelled job's cleanup finished.
+- [x] `mise run runner-vps:deregister` (the vault still points at Contabo). The GitHub delete
+      succeeded. The SSH step timed out at the PIN prompt (`LoginGraceTime`), so the Contabo
+      service was stopped and uninstalled by hand afterwards, and its `.runner`/`.credentials*`
+      removed so a rollback `register` really re-registers.
+- [x] M7: repoint the **Krytis Build VPS** vault item at L (`IP Address`, `Hostname`,
+      `Operating System`; `Username` stays `root`). The Contabo host is kept in a new field,
+      "Previous host (Contabo, rollback until decommission)". `Password` is still Contabo's
+      root password. `fnox get` resolves to L. Merging and deleting the bench item: step 7.
+- [x] `mise run runner-vps:register` (defaults: name and labels `krytis-vps`, default labels
+      kept per M2). Service active 07:17:06 UTC.
+- [x] `gh api repos/starlit-os/krytis/actions/runners --jq '.runners[] | "\(.name) \(.status) [\([.labels[].name]|join(","))]"'`
       shows exactly one `krytis-vps`, online, `self-hosted,linux,x64,krytis-vps`.
 
 ### 5. Verify on L
 
-- [ ] Dispatch `cache-warm.yml`: 917/917 cached, casd quota as M4, 2 × 4 sizing in the
+- [x] Dispatch `cache-warm.yml`: 917/917 cached, casd quota as M4, 2 × 4 sizing in the
       log. Record the wall time. Pulls from bow are expected for anything the bench's local
-      CAS evicted.
+      CAS evicted. **37904110098** (2026-10-09 08:18 UTC, dispatched by hand). The
+      01:41 UTC cron fired while the benchmark window still had cache-warm disabled, so no
+      scheduled run came. Results:
+      - log: `8 cores, 15GiB RAM -> builders=2 max-jobs=4 (<=7 concurrent compilers)`,
+        `casd quota 100G` (M4 not applied);
+      - **917 of 917** cached, build step 47m32s;
+      - built 23 (elements changed on `main` since the benchmark: `noctalia` 26m46s,
+        `bootc` 26m08s, `oo7`, `image.bst` 5m07s, `umbriel` …), pulled 0, pushed 916 to
+        bow, failed 0.
 - [ ] Dispatch `runner-vps-gc.yml` with `dry_run: true`: it runs and reports.
 - [ ] Dispatch `build-iso.yml` (unsealed, `publish_r2: false`): an ISO is produced.
 - [ ] The next same-repo PR's `build-changed.yml` runs on L, or open a throwaway PR as #1123 did.
@@ -163,9 +186,11 @@ the gap queue (for up to 24h) rather than fail.
 ## Rollback (inside the M6 window)
 
 1. `mise run runner-vps:deregister` (the vault points at L).
-2. Restore the **Krytis Build VPS** item from its note.
-3. `mise run runner-vps:register` against Contabo. Its `/opt/actions-runner` is untouched by
-   the move.
+2. Restore the **Krytis Build VPS** item's `IP Address`, `Hostname` and `Operating System`
+   from its "Previous host (Contabo…)" field.
+3. `mise run runner-vps:register` against Contabo. Its `/opt/actions-runner` binary and `_work`
+   are untouched. Its `.runner`/`.credentials*` were removed at cutover, so `register`
+   configures it fresh.
 4. Dispatch cache-warm.
 
 ## Risks
