@@ -103,6 +103,6 @@ RUNNER_VPS_LABELS = { default = "self-hosted,linux,x64,krytis-vps" }
 # "true" registers with config.sh --no-default-labels: the runner carries only
 # RUNNER_VPS_LABELS, so nothing aimed at [self-hosted, linux, x64] (publish.yml's
 # force_self_hosted) can reach it. For a trial box such as the one.com bench
-# runner (docs/plans/2026-10-07-vps-cold-build-benchmark.md); krytis-vps itself
+# runner (docs/plans/done/2026-10-07-vps-cold-build-benchmark.md); krytis-vps itself
 # keeps the defaults.
 RUNNER_VPS_NO_DEFAULT_LABELS = { default = "false" }

@@ -1,7 +1,7 @@
 name: Benchmark cold build
 
 # Times a cold-cache build on one runner (#1126,
-# docs/plans/2026-10-07-vps-cold-build-benchmark.md). "Cold" means an empty
+# docs/plans/done/2026-10-07-vps-cold-build-benchmark.md). "Cold" means an empty
 # local cache and no artifact remote: the build a junction bump forces on
 # cache-warm. Compare runs with `mise run bench-compare <run-id>...`.
 #

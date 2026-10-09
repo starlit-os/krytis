@@ -273,7 +273,7 @@ The rounding means the product overshoots the slot budget by one whenever the sl
 is odd. `MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))` with `BUILDERS=2` gives
 `2 x ceil(SLOTS/2)`. The VPS has 11 GiB `MemTotal`, so 5 slots, yet it runs 6 compilers. A
 4-vCPU/8 GB box (about 7 GiB, 3 slots) would run 4. Found while planning
-`docs/plans/2026-10-07-vps-cold-build-benchmark.md`. Left as is: the 8G swap is the backstop,
+`docs/plans/done/2026-10-07-vps-cold-build-benchmark.md`. Left as is: the 8G swap is the backstop,
 and the cold benchmark measures the formula as production runs it.
 
 No cache-key cost, then or now: `max-jobs`'s runtime env vars are excluded
@@ -802,7 +802,20 @@ On the VPS all 67 toolchain artifacts were local hits, and checkout plus setup t
 Times a **cold** build on one runner: an empty local cache and no artifact remote at all,
 the build a junction bump forces on cache-warm. Dispatch-only, and kept after #1126 for the
 next runner evaluation (plan D8). The plan, decisions and results live in
-`docs/plans/2026-10-07-vps-cold-build-benchmark.md`.
+`docs/plans/done/2026-10-07-vps-cold-build-benchmark.md`.
+
+**Measured 2026-10-07/09 (#1126).** These are build-step wall times, and the full row
+excludes a 4h44m hung-download stall on krytis-vps:
+
+| | Toolchain (159) | Rest (758) | Cold full (917) |
+|---|---|---|---|
+| krytis-vps (Contabo, 6 vCPU, 2 × 3) | 13h43m | 17h46m | **31h29m** |
+| one.com Cloud server L (8 vCPU, 2 × 4) | 5h50m | 6h29m | **12h19m** |
+
+Per element, krytis-vps took 2.2–3.2× as long (2.54× over the 141 shared elements ≥1 min).
+That is far more than the core ratio (1.33×), and neither box showed steal or meaningful
+iowait. A cold full build on krytis-vps does not fit cache-warm's 24h `timeout-minutes`;
+on L it does. The move is #1145.
 
 - **Two phases per runner.** `phase=toolchain` wipes `~/.cache/buildstream` and builds
   `components/llvm.bst`, `components/rust.bst` and `bootstrap/go.bst` with `--deps all`:

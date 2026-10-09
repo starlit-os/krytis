@@ -172,6 +172,12 @@ with the toucher already poised consistently skipped the PIN prompt and went str
 to `Confirm user presence` → `User presence confirmed`. Don't feed a PIN into an
 unexpected prompt like this; cancel and retry with faster touch instead.
 
+A slow touch has a hard limit on the server side as well. sshd drops a login that has not
+finished within `LoginGraceTime` (120 s by default), and the client prints only `Connection
+closed by <host> port 22` after `User presence confirmed`. It happened twice on 2026-10-08
+(#1126), once with an agent-run command sitting at the PIN prompt for 180 s. Retry with the
+key at hand; nothing on the server needs changing.
+
 ### Disabling root password SSH on a cloud-init VPS: the `sshd_config.d` drop-in wins, silently
 
 Debian/Ubuntu cloud images ship `/etc/cloud/cloud.cfg.d/*-ssh.cfg` with `ssh_pwauth: 1`,

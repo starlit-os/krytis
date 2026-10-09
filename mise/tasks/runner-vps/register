@@ -11,7 +11,7 @@ RUNNER_HOME="/opt/actions-runner"
 # — above all publish.yml's force_self_hosted, which puts the UEFI signing keys
 # in the workspace — needs config.sh's --no-default-labels, or it gets those
 # three labels whatever RUNNER_VPS_LABELS says. Used for the one.com bench box
-# (docs/plans/2026-10-07-vps-cold-build-benchmark.md, D4). The flag exists in
+# (docs/plans/done/2026-10-07-vps-cold-build-benchmark.md, D4). The flag exists in
 # actions/runner 2.338.0's config.sh, and it requires --labels, which is always
 # passed here.
 NO_DEFAULT_LABELS=""
