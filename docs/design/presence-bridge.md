@@ -44,7 +44,7 @@ bridge skips the canonical `$XDG_RUNTIME_DIR/discord-ipc-N` by default.
 
 Planned shape, following `core/bootc.bst` and `config/xwayland-satellite.bst`:
 
-- `elements/desktop/presence-bridge.bst`, `kind: make`: a `git_repo` source on
+- A new `kind: make` element under `elements/desktop/`, with a `git_repo` source on
   `github:kitten-lily/presence-bridge.git` with a `track:` glob on release tags,
   followed by a `cargo2` block generated from the repo's `Cargo.lock`
   (`docs/skills/bst.md` § Rust / Cargo Projects). Listing the element in the
