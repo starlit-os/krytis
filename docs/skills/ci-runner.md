@@ -535,6 +535,12 @@ registration GitHub no longer has. On the one.com bench box that would also brin
 old name and labels. Until `deregister` removes those files (#1145 step 2), delete them by
 hand before registering a box under a new name or label set.
 
+**GitHub will not delete a runner that is still finishing a job**, even a cancelled one. The
+delete returns HTTP 422 "Runner … is currently running a job and cannot be deleted" until the
+cancelled job's `if: always()` cleanup steps have run. GitHub's run status may already say
+`completed cancelled` while `busy` is still `true`. Wait for `busy=false` in
+`gh api repos/starlit-os/krytis/actions/runners`, then deregister (#1145 cutover, 2026-10-09).
+
 ### Jobs here run with no `HOME`
 
 Jobs on this box get no `HOME` in their environment. The likely cause, not yet checked on
@@ -864,6 +870,12 @@ open unless the fork-PR approval policy is `all_external_contributors`. What it 
 stored in the repository variable `BENCH_WINDOW_DISABLED`, so `close` works from any machine
 and re-enables exactly that list, never a workflow a human had already turned off.
 `bench-window status` shows all of it; `--dry-run` prints the `gh` calls instead.
+
+**A scheduled run that falls inside the window is skipped, not deferred.** Disabling a
+workflow drops the cron events that fire while it is disabled. Re-enabling does not replay
+them. #1126's window closed at 06:52 UTC on 2026-10-09, and that day's 01:41 cache-warm
+never ran, not even late (GitHub usually delivers it around 07:40). After `bench-window
+close`, dispatch whatever scheduled job the window swallowed.
 
 **A bench box registers with `RUNNER_VPS_NO_DEFAULT_LABELS=true`.** `runner-vps:register`
 then passes `--no-default-labels` (present in actions/runner 2.338.0's `config.sh`, which
