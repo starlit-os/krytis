@@ -16,9 +16,11 @@
 # stale mise.lock on main. `checks.yml` runs this task with --check on every
 # PR as the general-purpose guard for all of those cases, not just Renovate.
 #
-# --check therefore compares against **git**, not against a pre-run copy: mise
+# --check therefore compares against **HEAD**, not against a pre-run copy: mise
 # may already have synced the working tree before this script got a chance to
-# look at it, and `git diff` still reports the committed file as behind.
+# look at it, and `git diff HEAD` still reports the committed file as behind.
+# Not against the index either: plain `git diff -- mise.lock` passed once the
+# refreshed lock was merely `git add`ed, with the committed copy still stale.
 
 set -euo pipefail
 
@@ -31,9 +33,9 @@ echo "==> Locking tools for ${PLATFORM}..."
 mise lock --platform "$PLATFORM"
 
 if [[ "$CHECK" -eq 1 ]]; then
-    if ! git diff --quiet -- mise.lock; then
+    if ! git cat-file -e HEAD:mise.lock 2>/dev/null || ! git diff --quiet HEAD -- mise.lock; then
         echo "==> The committed mise.lock does not match mise.toml:" >&2
-        git --no-pager diff -- mise.lock >&2
+        git --no-pager diff HEAD -- mise.lock >&2
         echo "==> Commit the refreshed mise.lock (already written above)." >&2
         exit 1
     fi
