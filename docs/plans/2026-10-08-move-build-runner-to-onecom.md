@@ -92,23 +92,35 @@ Checked against `main` at writing:
 
 ### 2. Code (one PR, before the cutover)
 
-- [ ] `mise/tasks/runner-vps/deregister`: after `svc.sh uninstall`, remove
+- [x] `mise/tasks/runner-vps/deregister`: after `svc.sh uninstall`, remove
       `/opt/actions-runner/.runner`, `.credentials` and `.credentials_rsaparams`, so a later
       `register` really re-registers. Update `register`'s comment that tells you to run
-      `deregister` first.
-- [ ] M4: `cache-warm.yml` quota 200G for `krytis-vps`, with its comment's disk numbers.
-- [ ] docs/skills/ci-runner.md: record the deregister gap and its fix.
-- [ ] `mise run docs-links`.
+      `deregister` first. Landed after the cutover, not before it. It also removes the
+      `actions.runner.*.service.d` drop-in directory, which the Contabo inventory below
+      found orphaned.
+- [x] M4: `cache-warm.yml` quota 200G for `krytis-vps`, with its comment's disk numbers.
+      Done in #1159 (#1155); a straight `QUOTA=200G` since #1162 dropped the Blacksmith
+      fallback.
+- [x] docs/skills/ci-runner.md: record the deregister gap and its fix (§ Always-on VPS
+      Runner (issue #794)).
+- [x] `mise run docs-links`.
 
 ### 3. Prepare L (no registration)
 
-- [ ] **Inventory the Contabo box** so nothing is left behind. **Skipped at cutover** to make
-      the 2026-10-09 cron window; still to do while the box exists (M6):
-      `systemctl list-units --type=service --state=running`,
-      `ls /etc/containers/systemd/`, `crontab -l`, `ls /etc/cron.d`,
-      `ls /etc/apt/apt.conf.d` (unattended upgrades?), `sshd -T | grep -E
-      'passwordauth|permitroot'`, `swapon --show`. Anything not explained by
-      `provision.sh`, `register`, beszel or materia gets a line here before step 4.
+- [x] **Inventory the Contabo box** so nothing is left behind. Skipped at cutover to make
+      the 2026-10-09 cron window; done 2026-10-09 afternoon, inside M6. Everything found
+      is explained:
+      - **ours:** the runner's orphaned `actions.runner.*.service.d` drop-in (now removed
+        by `deregister`), `/swapfile` 8G (`provision.sh`), `/opt/actions-runner` with a
+        78G CAS;
+      - **beszel and materia (M5, #1154):** `beszel-agent` quadlet and container,
+        `materia-update.container` with `materia-update.timer`;
+      - **Contabo/Debian image defaults:** `exim4` on loopback only, `/etc/cron.d/staticroute`
+        (Contabo's network route), the `debian` user, `unattended-upgrades` (also running
+        on L), apt's daily timers.
+      - Listening sockets: only sshd, systemd-resolved and loopback exim.
+      - `sshd -T`: `permitrootlogin without-password`, `passwordauthentication no`, the
+        same as L.
 - [x] Remove the stale bench registration files on L (the step 2 gap), and the bench-only
       `/opt/actions-runner/_work/_temp/git-mirrors` if a run left it behind. `.runner` and
       `.credentials*` were already absent. The service drop-in directory and `git-mirrors`
@@ -118,6 +130,7 @@ Checked against `main` at writing:
 - [x] ~~`RUNNER_VPS_HOST=root@<L> mise run runner-vps:install`.~~ Not re-run. It ran on
       2026-10-07 for #1126, and `provision.sh` has not changed since.
 - [ ] M5: materia + beszel on L (paired `kitten-lily/materia` PR), or recorded as dropped.
+      Tracked as #1154. L runs neither on 2026-10-09.
 
 ### 4. Cutover (minutes; pick a time with no job on `krytis-vps`)
 
@@ -154,25 +167,41 @@ the gap queue (for up to 24h) rather than fail.
       - built 23 (elements changed on `main` since the benchmark: `noctalia` 26m46s,
         `bootc` 26m08s, `oo7`, `image.bst` 5m07s, `umbriel` …), pulled 0, pushed 916 to
         bow, failed 0.
-- [ ] Dispatch `runner-vps-gc.yml` with `dry_run: true`: it runs and reports.
+- [x] Dispatch `runner-vps-gc.yml` with `dry_run: true`: it runs and reports. Done as a
+      real run on L instead, **37930363709** (2026-10-09): removed `grype@0.120.0`
+      (mise installs 637M → 551M), reclaimed 264 MB, disk 93G used of 394G, CAS 73G. The
+      dry-run path ran on L through `mise run runner-vps:gc -- --dry-run` (#1159, #1161).
 - [ ] Dispatch `build-iso.yml` (unsealed, `publish_r2: false`): an ISO is produced.
-- [ ] The next same-repo PR's `build-changed.yml` runs on L, or open a throwaway PR as #1123 did.
-- [ ] `mise run runner-vps:status` without any env override: the vault path works.
-- [ ] Measure bow pull and push throughput from L for #1128, using the method in that issue.
+      Waiting on a publish the operator is dispatching first.
+- [x] The next same-repo PR's `build-changed.yml` runs on L, or open a throwaway PR as #1123 did.
+      PRs #1159–#1162 each ran it on `krytis-vps`, machine `cloud-server-10673574`
+      (e.g. 37929107309, 11s). None changed an element, so each reported "Nothing to
+      build"; element builds on L are covered by cache-warm 37904110098 (23 built).
+- [x] `mise run runner-vps:status` without any env override: the vault path works.
+      2026-10-09: resolved `root@85.190.122.137`, `krytis-vps: online (busy=false)`, unit
+      active since 07:17:06 UTC with the OOM drop-in. The unit reported a 12G memory
+      peak and a 980M swap peak (recorded in ci-runner.md § Build concurrency).
+- [x] Measure bow pull and push throughput from L for #1128, using the method in that issue.
+      ByteStream write of fresh random blobs, then read-back, from three clients (Mbit/s):
+      L write 158–176 / read 458–465; workstation 199–202 / 291–315; Contabo 160–249 /
+      **51–55**. Writes are similar everywhere (bow-side limit); reads are not
+      (client-side). Method and caveats: ci-runner.md § Measuring bow throughput per
+      client (#1128).
 
 ### 6. Docs
 
-- [ ] docs/skills/ci-runner.md § Always-on VPS Runner (issue #794): the host, specs,
-      provider, and the co-resident services as of M5.
-- [ ] docs/skills/ci-runner.md § Build concurrency is `builders` x `max-jobs`: current sizing
+- [x] docs/skills/ci-runner.md § Always-on VPS Runner (issue #794): the host, specs,
+      provider, and the co-resident services as of M5 (none yet on L; #1154).
+- [x] docs/skills/ci-runner.md § Build concurrency is `builders` x `max-jobs`: current sizing
       2 × 4 on 15 GiB. Keep the Contabo OOM history as history.
-- [ ] docs/skills/ci-runner.md § casd quota and § The box ships with no swap. The swap
+- [x] docs/skills/ci-runner.md § casd quota and § The box ships with no swap. The swap
       paragraph names Contabo's image. Whether one.com's image shipped swap was not
       recorded before `provision.sh` added `/swapfile`, so say only what is known.
-- [ ] `cache-warm.yml` and `files/runner-vps/provision.sh` comments that quote "197G",
+      § casd quota was rewritten in #1159.
+- [x] `cache-warm.yml` and `files/runner-vps/provision.sh` comments that quote "197G",
       "6-vCPU/11GiB" or Contabo as the *current* box (`grep -rn 'Contabo\|197G\|6-vCPU'`).
       Historical incident notes stay.
-- [ ] `mise run docs-links`.
+- [x] `mise run docs-links`.
 
 ### 7. Decommission (after the M6 window)
 

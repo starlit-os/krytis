@@ -82,14 +82,14 @@ apt-get install -y -qq --no-install-recommends \
     rclone \
     procps
 
-# Swap: Contabo's Debian image ships none at all, which turns any RAM spike
-# into an immediate kernel OOM kill rather than a slowdown. That is not
-# hypothetical — the runner unit was OOM-killed twice inside 24h (2026-09-11
-# 11.4G peak, 2026-09-12 11.1G peak, both against 11GiB total), taking the
-# runner offline for 18h the first time. cache-warm.yml now bounds build
-# concurrency to fit in RAM; this is the backstop for whatever that estimate
-# misses. Sized at 8G — the box has ~130G free and swap it never touches
-# costs nothing. Idempotent: re-running install must not corrupt live swap.
+# Swap: Contabo's Debian image (the box until #1145) shipped none at all, which
+# turns any RAM spike into an immediate kernel OOM kill rather than a slowdown.
+# That is not hypothetical: the runner unit was OOM-killed twice inside 24h
+# (2026-09-11 11.4G peak, 2026-09-12 11.1G peak, both against 11GiB total),
+# taking the runner offline for 18h the first time. cache-warm.yml now bounds
+# build concurrency to fit in RAM; this is the backstop for whatever that
+# estimate misses. Sized at 8G, which costs little on the one.com box's 394G
+# disk. Idempotent: re-running install must not corrupt live swap.
 SWAPFILE=/swapfile
 if ! swapon --show=NAME --noheadings 2>/dev/null | grep -qx "${SWAPFILE}"; then
     if [ ! -f "${SWAPFILE}" ]; then
