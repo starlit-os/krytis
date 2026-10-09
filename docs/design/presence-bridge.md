@@ -2,10 +2,12 @@
 
 Status: **draft, not in the image (2026-10-09)**. The service lives in its own repo,
 [kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge),
-private as of 2026-10-09 and intended to go public. Its unit tests pass and its
-scan → report → clear loop was exercised against a fake IPC server; it has not been
-run against a real Discord. Packaging it into krytis is still open (see
-*Packaging*).
+private as of 2026-10-09 and intended to go public. Its unit tests pass, and the
+README's live check passed on 2026-10-09 against the `com.discordapp.Discord`
+flatpak for World of Warcraft and Hearthstone launched from Faugus: detected,
+reported with the right start time, and cleared on exit
+([kitten-lily/presence-bridge#3](https://github.com/kitten-lily/presence-bridge/pull/3)).
+Packaging it into krytis is still open (see *Packaging*).
 
 This is option 2 of [#595](https://github.com/starlit-os/krytis/issues/595):
 "something outside any sandbox scans `/proc`, matches executables, and pushes
