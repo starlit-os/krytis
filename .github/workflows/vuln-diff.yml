@@ -6,13 +6,19 @@ name: Vulnerability Diff
 # two Grype reports on (vulnerability id, package name, package version) —
 # scripts/vuln-diff.py.
 #
-# Deliberately scans base fresh in this job rather than reusing a stored
+# Deliberately scans base fresh in this run rather than reusing a stored
 # baseline from vuln-scan.yml's periodic run: a PR's base is often not
 # tip-of-main (stacked PRs, older base commits, rebases — see AGENTS.md's
 # stacked-PR note), and a stale stored baseline would misreport. Scanning
-# both commits fresh is the only version-accurate way to diff, at the cost of
-# doubling the `bst show` time versus a single scan — acceptable since that
-# needs no image build (see vuln-scan.yml's header for why that holds).
+# both commits fresh is the only version-accurate way to diff. That needs no
+# image build (see vuln-scan.yml's header for why that holds).
+#
+# Shape (#1157): two parallel `scan` jobs (head, base), then `diff`. Wall
+# time is the slower scan instead of the sum. Each scan restores Grype's
+# installed vulnerability database from the Actions cache (#1156), which
+# grype-db-cache.yml refreshes daily on main. Without it, every run's first
+# Grype call downloaded and imported the ~3 GB database: ~73s of the head
+# scan, against ~8s for the base scan that reused it.
 #
 # Each scan runs its own commit's own `.grype.yaml`, so a PR that adds or
 # removes an ignore rule (like #500/#688) shows up here as fixed/new exactly
@@ -58,15 +64,22 @@ env:
   NEW_VULN_FAIL_ON: ${{ vars.NEW_VULN_FAIL_ON }}
 
 jobs:
-  diff:
-    name: Diff vulnerabilities vs base
+  scan:
+    name: Scan ${{ matrix.side }} for vulnerabilities
     runs-on: ubuntu-26.04
     timeout-minutes: 45
+    strategy:
+      # Both reports are needed; one failing makes the other pointless.
+      fail-fast: true
+      matrix:
+        side: [head, base]
     steps:
-      - name: Checkout PR head
+      # Each side checks out its own commit, so each scan runs that commit's
+      # own mise.toml, uv.lock and .grype.yaml.
+      - name: Checkout PR ${{ matrix.side }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ matrix.side == 'head' && github.event.pull_request.head.sha || github.event.pull_request.base.sha }}
 
       - name: Setup mise
         uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
@@ -74,6 +87,23 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.4
           experimental: true
+
+      # Restore only: grype-db-cache.yml on main is the one writer. Caches
+      # saved by a PR run are visible to that PR alone, so a save here would
+      # only multiply ~0.5 GB entries without helping any other PR. The
+      # restored database may be up to a day old; Grype still checks for a
+      # newer one (at most every 2h, db.max-update-check-frequency) and
+      # downloads it if there is one, so a run never scans a stale database.
+      - name: Date for the Grype DB cache key
+        id: grype-db
+        run: echo "today=$(date -u +%F)" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore Grype vulnerability database
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/grype/db
+          key: grype-db-v6-${{ steps.grype-db.outputs.today }}
+          restore-keys: grype-db-v6-
 
       - name: Install system dependencies
         # --update: refresh the apt index first — runner images carry stale
@@ -86,39 +116,55 @@ jobs:
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
-      - name: Scan PR head for vulnerabilities
-        # Written outside the repo tree (runner.temp) so the base checkout's
-        # `git clean` below cannot touch it.
-        run: mise run vuln-scan --output "${{ runner.temp }}/head-grype.json"
+      - name: Scan PR ${{ matrix.side }} for vulnerabilities
+        # Written outside the repo tree (runner.temp).
+        run: |
+          mise run vuln-scan --output "${{ runner.temp }}/${{ matrix.side }}-grype.json"
+          # Which database the scan used, for the run log: proves whether
+          # the restored copy was current or Grype had to update it.
+          grype db status 2>&1 | grep -E '^(Built|Status):' || true
 
-      - name: Preserve diff script for the base checkout
-        # The base commit may not have scripts/vuln-diff.py at all — it is
-        # new in whichever PR first adds this workflow, and even after that
-        # PR merges, an older base commit (stacked PR, pre-rebase) still
-        # might not carry the current version. The diff step below must
-        # always run HEAD's copy of the tool, not whatever (or nothing) the
-        # base commit happens to have — copy it out before the base checkout
-        # (`clean: true`, below) can remove or shadow it.
-        run: cp scripts/vuln-diff.py "${{ runner.temp }}/vuln-diff.py"
+      - name: Upload ${{ matrix.side }} report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vuln-diff-scan-${{ matrix.side }}
+          path: ${{ runner.temp }}/${{ matrix.side }}-grype.json
+          retention-days: 1
+          if-no-files-found: error
 
-      - name: Checkout PR base
-        # actions/checkout can fetch an arbitrary commit SHA directly, and
-        # defaults to `clean: true` — wipes head's .venv/generated files so
-        # the base scan can't inherit anything from head's checkout.
+  diff:
+    # This job's name is the required status check in ruleset "Main"
+    # ("Diff vulnerabilities vs base"). Keep it exactly.
+    name: Diff vulnerabilities vs base
+    needs: scan
+    # always(): a required check that is SKIPPED counts as passing. If a scan
+    # failed and this job were skipped, the PR would be mergeable with no
+    # diff at all. The first step turns a failed scan into a failure here.
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Require both scans
+        if: needs.scan.result != 'success'
+        run: |
+          echo "::error::A vulnerability scan did not succeed (scan result: ${{ needs.scan.result }}); no diff to report."
+          exit 1
+
+      # HEAD's copy of the diff tool, never the base's: an older base commit
+      # (stacked PR, pre-rebase) may not carry the current version, or any.
+      - name: Checkout PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: scripts/vuln-diff.py
+          sparse-checkout-cone-mode: false
 
-      - name: Re-sync dependencies for base commit
-        # pyproject.toml/uv.lock/mise.toml may differ at the base commit.
-        # No --update here: the install step above already refreshed the
-        # apt index in this job.
-        run: |
-          mise bootstrap --yes
-          uv sync
-
-      - name: Scan PR base for vulnerabilities
-        run: mise run vuln-scan --output "${{ runner.temp }}/base-grype.json"
+      - name: Download both reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: vuln-diff-scan-*
+          merge-multiple: true
+          path: ${{ runner.temp }}
 
       - name: Report gate posture
         # State the posture in the summary, because "no failure" is
@@ -151,15 +197,17 @@ jobs:
           printf '%s\n' "$POSTURE" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Diff vulnerability reports
+        # Standard library only, so the runner's python3 does; no mise or
+        # uv setup in this job.
         run: |
-          uv run python3 "${{ runner.temp }}/vuln-diff.py" \
+          python3 scripts/vuln-diff.py \
             "${{ runner.temp }}/base-grype.json" \
             "${{ runner.temp }}/head-grype.json" \
             --fail-on "${NEW_VULN_FAIL_ON}" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload head/base vulnerability reports
-        if: always()
+        if: always() && needs.scan.result == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: krytis-vuln-diff-${{ github.event.pull_request.number }}-${{ github.run_id }}
