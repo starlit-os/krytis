@@ -3295,18 +3295,21 @@ Consequences that cost real time to rediscover:
   `bwrap: Can't make symlink at …: destination exists and is not a symlink`.
   Equibop does not claim the path and is unaffected. So the obvious
   user-tmpfiles `L %t/discord-ipc-0 → …` fix is not safe by itself.
-- **flatpak persists whatever occupied a granted path** into
-  `.flatpak/<app-id>/xdg-run/`, and it outlives deletion of the host original.
-  Clear the stubs between experiments or results are stale:
-  `for f in $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0; do [ -L "$f" ] && rm -f "$f"; done`
-- **`rpc-bridge` already encodes the correct search order.** Wine/Proton games
-  under Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`,
-  which probes canonical → `app/com.discordapp.Discord/` →
-  `.flatpak/dev.vencord.Vesktop/xdg-run/` →
-  `.flatpak/com.discordapp.Discord/xdg-run/` → the two `snap.discord*` paths.
-  Copy that list rather than inventing one. It has **no Equibop entry** and does
-  not need one: the native element puts Equibop's socket at the canonical path,
-  which is the first entry `rpc-bridge` probes.
+- **flatpak leaves a stub at every granted `xdg-run/` path** in
+  `.flatpak/<app-id>/xdg-run/`, and it outlives the host original. If something
+  occupied the host path when the app started, the stub is that (a symlink, in the
+  #591 experiments). If nothing did, it is an **empty regular file**. On 2026-10-09
+  a system-wide override granting `xdg-run/discord-ipc-0`
+  (`/var/lib/flatpak/overrides/global`, set 14:17) had left one in six apps, each
+  dated to that app's next launch (14:21–14:48,
+  `stat -c '%F %y %n' $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0`). Clear
+  them between experiments, keeping real sockets:
+  `for f in $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0; do [ -S "$f" ] || rm -f "$f"; done`
+- **`rpc-bridge` has no Equibop entry and needs none.** Wine/Proton games under
+  Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`, which
+  probes the canonical path first, and the native element puts Equibop's socket
+  there. Its full search order is in presence-bridge
+  [`ipc.md` § Finding clients](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md#finding-clients).
 
 **Game detection can never work in flatpak.** Discord matches running processes
 against a known-executable list, and a flatpak app is in its own PID namespace:
@@ -3318,24 +3321,27 @@ Binding host `/proc` does not help; the namespace hides the PIDs, not the mount.
 So a title with no RPC support of its own (World of Warcraft holds zero Discord
 sockets) shows **no presence at all** under a flatpak Discord, and the same
 combination works natively. That is expected behaviour, not a regression to
-chase — reach for #595's options list instead.
+chase. The fix is a host process that detects games on the client's behalf:
+[kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge)
+(#595 option 2, `docs/design/presence-bridge.md`). What a host-side detector has to
+know is recorded there, not here. That covers matching on argv0, the size of
+Discord's detectable list, finding client sockets, and treating the socket peer as
+untrusted. See presence-bridge's
+[`detection.md`](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/detection.md)
+and [`ipc.md`](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md).
 
 ### Debugging without false negatives
 
-Four traps, each of which produced a wrong conclusion during the original
-diagnosis:
+One sandbox trap, which produced a wrong conclusion during the original diagnosis:
 
 | Symptom | Reality |
 |---|---|
 | `strings … \| grep …` inside a sandbox returns nothing | `strings` is **not in the freedesktop runtime**; scan `/var/lib/flatpak/app/<id>/current/active/files/` from the host |
-| grep for `discord-ipc-0` in a consumer binary finds nothing | the digit is appended at runtime — search for `/discord-ipc-` |
-| `find $XDG_RUNTIME_DIR -name 'discord-ipc-*'` finds nothing | it silently misses these; `ls` the specific paths |
-| repeated handshakes to a live socket mostly time out | reproduces at ~1/8 on Discord's own socket *and* through its `socat` relay, so it is not the relay; may be an artifact of probing with an invalid `client_id` — do not conclude "relay is broken" |
 
-A handshake probe is the cheapest liveness test: connect, send op `0` with
-`{"v":1,"client_id":"…"}`, read one frame. `op=2 {"code":4000}` means a real
-Discord answered and rejected the ID — the transport is fine. arRPC answers
-`op=1 … READY` and accepts any ID.
+The IPC-side traps and the handshake liveness probe moved to presence-bridge's
+[`ipc.md`](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md):
+`find` missing the sockets, the runtime-appended `discord-ipc-` digit, and
+intermittent handshake timeouts.
 
 ## NetworkManager Is Present and Running, Despite the networkd-Only Stack
 
