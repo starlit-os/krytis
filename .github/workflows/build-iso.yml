@@ -94,6 +94,10 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.4
           experimental: true
+          # krytis-vps only, so the tools are already in /root/.local/share/mise.
+          # The actions/cache round trip installed nothing and cost 48-50s per
+          # run (#1127). See cache-warm.yml's step of this name.
+          cache: false
 
       - name: Install system dependencies
         # --update: refresh the apt index first — runner images carry stale

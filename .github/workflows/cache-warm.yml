@@ -107,6 +107,14 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.4
           experimental: true
+          # Off on the VPS (#1127): its tools already live in
+          # /root/.local/share/mise, so the actions/cache round trip installs
+          # nothing. A miss tarred and uploaded the whole directory (5m13s of a
+          # 5m19s step, run 37515434814); a hit re-extracted it over identical
+          # tools (1m44s). The Blacksmith fallback is ephemeral and keeps it:
+          # same condition as runs-on. Evaluates to the boolean false on a
+          # schedule event, where every inputs.* is null.
+          cache: ${{ github.event_name == 'workflow_dispatch' && inputs.force_blacksmith }}
 
       - name: Install system dependencies
         # --update: refresh the apt index first — runner images carry stale
@@ -147,10 +155,13 @@ jobs:
           echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS} (<=${SLOTS} concurrent compilers)"
           # casd quota (#1077). --deps all keeps the whole build closure,
           # toolchain included; the runtime closure alone already filled 46G
-          # of the old 50G. krytis-vps has a 197G disk, so it gets 100G. The
-          # Blacksmith fallback keeps 50G — its disk was not sized for more.
+          # of the old 50G. krytis-vps (one.com Cloud server L since #1145,
+          # 394G disk, 83G used at cutover) gets 200G (#1155); it was 100G on
+          # the old 197G Contabo box. build-changed.yml sets the same value on
+          # the same CAS, and must move with this one. The Blacksmith fallback
+          # keeps 50G, its disk was not sized for more.
           # See docs/skills/ci-runner.md § casd quota.
-          if [ "${RUNNER_NAME}" = "krytis-vps" ]; then QUOTA=100G; else QUOTA=50G; fi
+          if [ "${RUNNER_NAME}" = "krytis-vps" ]; then QUOTA=200G; else QUOTA=50G; fi
           echo "==> runner ${RUNNER_NAME}: casd quota ${QUOTA}"
           echo "CACHE_WARM_QUOTA=${QUOTA}" >> "${GITHUB_ENV}"
 

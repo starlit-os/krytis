@@ -100,6 +100,10 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.4
           experimental: true
+          # Both runners this targets are persistent boxes with mise's tools
+          # already on disk; the actions/cache round trip installs nothing
+          # (#1127).
+          cache: false
 
       - name: Install system dependencies
         run: mise bootstrap --yes --update
@@ -159,7 +163,9 @@ jobs:
           BUILDERS=2
           [ "${BUILDERS}" -gt "${SLOTS}" ] && BUILDERS=${SLOTS}
           MAX_JOBS=$(( (SLOTS + BUILDERS - 1) / BUILDERS ))
-          QUOTA=100G
+          # cache-warm's krytis-vps quota (#1155), so the run measures what
+          # production would do on this box.
+          QUOTA=200G
           echo "==> ${CORES} cores, ${MEM_GB}GiB RAM -> builders=${BUILDERS} max-jobs=${MAX_JOBS}, casd quota ${QUOTA}"
 
           # Overwrites cache-warm's config on krytis-vps, bow entries and all;

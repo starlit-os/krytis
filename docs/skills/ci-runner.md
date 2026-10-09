@@ -511,6 +511,19 @@ carries `ghcr.io/stryan/materia:stable`, `henrygd/beszel-agent`,
 another project's images. The script prunes *dangling* images only, plus
 krytis-owned tags named explicitly.
 
+**It prunes unused mise tool versions, and only with the runner checkout trusted (#1127).**
+With mise-action's cache off on every VPS job (§ PR build gate: `build-changed.yml` (#743),
+the `cache: false` bullet), nothing else drops old versions from `/root/.local/share/mise`.
+`mise prune --tools` keeps the versions some *tracked* config names, but it skips configs
+that are not *trusted*. The runner checkout's `mise.toml`
+(`/opt/actions-runner/_work/krytis/krytis`) is tracked yet untrusted outside a job. The first
+dry run on the box therefore listed all eleven installed tools as prunable, current `grype`
+included. With `MISE_TRUSTED_CONFIG_PATHS` set to the checkout for that one process, it listed
+exactly `grype@0.120.0`, which `main` had replaced. The script also refuses to prune unless
+`mise ls --current` in the checkout succeeds and lists tools. **Generalisable: any mise
+command that judges "unused" must be shown the config that defines "used", and must not
+trust a blank answer.**
+
 Sunday is deliberate: `cache-warm.yml` is `41 1 * * 1-5`, so a weekend slot
 misses it by a day rather than by minutes (§ Scheduled Workflow Cron Delay).
 `publish.yml`'s `30 3 * * 1-5` (#824) is weekday-only as well, and runs on
@@ -771,11 +784,19 @@ Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` a
   config file. On a 12-core, 30 GiB laptop that gives 2 builders × 6 jobs.
 - **Checkout at depth 2, `--base HEAD^1`.** The default `pull_request` ref is the PR merged
   into its base, so `HEAD^1` is the base and the diff is exactly the PR.
-- **`cache: false` on `jdx/mise-action`.** On this persistent box the tools already live in
-  `/root/.local/share/mise`, but the action's default `actions/cache` restore still
-  downloaded a 621 MB tarball (1m44s of a 1m45s step, run 37588594526). `mise install
-  --locked` then reported all 11 tools "already installed". cache-warm's `Setup mise` pays
-  the same restore: 5m19s in run 37515434814.
+- **`cache: false` on `jdx/mise-action`, on every VPS job (#1127).** On this persistent box
+  the tools already live in `/root/.local/share/mise`, so the action's default
+  `actions/cache` round trip installs nothing. A **hit** downloads a 621 MB tarball and
+  extracts it over identical tools (1m44s of a 1m45s step, run 37588594526, after which
+  `mise install --locked` reported all 11 tools "already installed"). A **miss**, after any
+  `mise.lock` or mise-version change, tars and uploads the whole directory (5m13s of
+  cache-warm's 5m19s `Setup mise`, run 37515434814). The `self-hosted` entries also grew
+  503 → 621 MB in a week and pushed the repo's Actions cache past GitHub's 10 GB limit.
+  `build-changed.yml`, `build-iso.yml` and `bench-cold-build.yml` set `cache: false`.
+  `cache-warm.yml` turns it off only on the VPS path, because its Blacksmith fallback is
+  ephemeral and benefits from the cache: `cache: ${{ github.event_name ==
+  'workflow_dispatch' && inputs.force_blacksmith }}`, the same condition as `runs-on`. Old
+  versions are pruned by the weekly GC instead (§ Weekly GC on the VPS runner (#938)).
 
 **Security.** The job runs PR-authored code (the task, the workflow, every element's
 commands) as root on a persistent host. That is acceptable only because it is limited to
@@ -977,12 +998,15 @@ terminate called after throwing an instance of 'std::system_error'
 ```
 
 Use **50G** for a full `cache-warm` build of the image's runtime closure. **krytis-vps
-uses 100G since #1077**, because `--deps all` also keeps the whole build closure
-(toolchain included). Its disk is 197G; on 2026-10-02 63G was in use, 46G of it the CAS.
-100G of CAS leaves roughly 80G for the OS, `cas/tmp` scratch space (§ A killed casd
-leaks `cas/tmp`, and it is the box's disk ratchet (#938)) and `build-iso`'s podman
-storage. `cache-warm.yml` picks the quota by `RUNNER_NAME`; the Blacksmith fallback
-keeps 50G.
+uses 200G since #1155** (100G from #1077), because `--deps all` also keeps the whole build
+closure (toolchain included). It is the one.com Cloud server L since #1145, with a 394G
+disk; 83G was in use at cutover, 63G of it the CAS. 200G of CAS leaves about 110G for the
+OS, `cas/tmp` scratch space (§ A killed casd leaks `cas/tmp`, and it is the box's disk
+ratchet (#938)) and `build-iso`'s podman storage. On the old 197G Contabo box the quota was
+100G. `cache-warm.yml` picks the quota by `RUNNER_NAME`, and the Blacksmith fallback keeps
+50G. **`build-changed.yml` and `bench-cold-build.yml` set the same 200G** because they share
+this CAS. A job writing a lower quota makes casd evict down to it, throwing away the warm
+closure every later job relies on.
 
 ### A toolchain rebuild does not fit in 6 hours
 
