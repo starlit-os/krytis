@@ -87,8 +87,9 @@ Checked against `main` at writing:
 
 - [x] The operator ordered the move on 2026-10-09 ("migrate to one.com runner"). Applied as
       recommended: M1, M2, M3 (`ssh:BenchOnecomL` stays installed until step 7), M6, and M7
-      in part (below). **Not applied yet:** M4 (quota stays 100G; L's CAS was 63G at
-      cutover, so it fits) and M5 (beszel and materia are not on L).
+      in part (below). **Not applied yet, each tracked as its own sub-issue:** M4 in #1155
+      (quota stays 100G; L's CAS was 63G at cutover, so it fits) and M5 in #1154 (beszel and
+      materia are not on L).
 
 ### 2. Code (one PR, before the cutover)
 
@@ -96,7 +97,7 @@ Checked against `main` at writing:
       `/opt/actions-runner/.runner`, `.credentials` and `.credentials_rsaparams`, so a later
       `register` really re-registers. Update `register`'s comment that tells you to run
       `deregister` first.
-- [ ] M4: `cache-warm.yml` quota 200G for `krytis-vps`, with its comment's disk numbers.
+- [ ] M4: `cache-warm.yml` quota 200G for `krytis-vps`, with its comment's disk numbers. Moved to #1155.
 - [ ] docs/skills/ci-runner.md: record the deregister gap and its fix.
 - [ ] `mise run docs-links`.
 
@@ -117,7 +118,7 @@ Checked against `main` at writing:
       login. Verified a KrytisBuild login with `RUNNER_VPS_HOST=root@<L>` set explicitly.
 - [x] ~~`RUNNER_VPS_HOST=root@<L> mise run runner-vps:install`.~~ Not re-run. It ran on
       2026-10-07 for #1126, and `provision.sh` has not changed since.
-- [ ] M5: materia + beszel on L (paired `kitten-lily/materia` PR), or recorded as dropped.
+- [ ] M5: materia + beszel on L (paired `kitten-lily/materia` PR), or recorded as dropped. Moved to #1154.
 
 ### 4. Cutover (minutes; pick a time with no job on `krytis-vps`)
 
