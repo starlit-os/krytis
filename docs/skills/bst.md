@@ -1292,6 +1292,24 @@ project, and a `source fetch` through it leaves the source fetched for later run
 normal config. `bench-cold-build.yml`'s "Pre-fetch Anubis-blocked sources" step does exactly
 this for all seven.
 
+### A hung source download stalls the whole build, with no timeout
+
+A source fetch whose TCP connection stays open while the server sends nothing never
+fails: nothing in the download path sets a read timeout. The element's fetch stays
+"running", every element that needs it waits, and once the rest of the graph has built,
+`bst` sits idle. In cold-build bench run 37750722696 (#1126) that lasted 4h44m with the
+box at 100% idle. `freedesktop-sdk.bst:components/gstreamer-plugins-rs.bst` was stuck on
+one crate from gitlab.com's raw-files mirror. The job's own timeout (72h there, 24h in
+cache-warm) is the only backstop.
+
+**How to spot it:** CPU idle in `vmstat`, `bst-build.log` not written for a long time, and
+an element with a `START … -fetch.` line but no closing line. `ss -tnp` shows the `bst`
+process holding an ESTABLISHED socket with empty queues.
+
+**How to clear it without losing the run:** `ss -K -tn dst "[<addr>]" dport = :443` destroys
+that socket. The download then fails, BuildStream tries the next URL (here
+`static.crates.io`), and the build carries on. Cancelling instead would cost the job.
+
 ### `git_repo` tracking: excluding a bad tag, and patching ahead of a vendored ref
 
 **A `ref:` downgrade alone doesn't stick — add the bad tag to `exclude:` too.** *Source:

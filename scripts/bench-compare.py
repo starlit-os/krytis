@@ -102,6 +102,12 @@ def load_group(spec: str) -> dict:
                 for name, secs in done[op].items():
                     times[op][name] = times[op].get(name, 0) + secs
             failed |= fails
+    # Across a resumed group, a failure that a later attempt got past is not a
+    # failure of the group: the same operation succeeded, or the element built
+    # (it cannot build without its sources). L's phase 2 (37737682742+
+    # 37739757304): libdvdcss's fetch crashed attempt 1, and attempt 2 fetched
+    # it in the pre-fetch step, so its fetch never appears in either build log.
+    failed = {(op, n) for op, n in failed if n not in times.get(op, {}) and n not in times["build"]}
     return {
         "label": f"{env.get('RUNNER', '?')} / {env.get('PHASE', '?')}",
         "dirs": dirs, "env": env, "run_ids": run_ids, "wall": wall, "exits": exits,

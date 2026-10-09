@@ -1,10 +1,9 @@
 # Benchmark cold-cache builds: krytis-vps vs one.com L
 
-**Issue:** #1126 · **Branch:** `1126-benchmark-cold-build-on-one-com` (step 1) · **Worktree:**
-`krytis.worktrees/feat/gh1126-benchmark-cold-build-on-one-com` · **Status: step 1 done, next is
-step 2.** The Security Gate (§ Decisions, D5) was approved on 2026-10-07: registering a
-third-party host as a repo runner, inside the window. Cloud server M was dropped the same day,
-leaving one one.com box.
+**Issue:** #1126 · **Status: done 2026-10-09.** Results in § Results. The follow-up decision
+to move `krytis-vps` onto the one.com box is #1145. The Security Gate (§ Decisions, D5) was
+approved on 2026-10-07: registering a third-party host as a repo runner, inside the window.
+Cloud server M was dropped the same day, leaving one one.com box.
 
 Measures how long a cold-cache build takes on today's runner and on one.com Cloud server L. Here
 "cold" means an empty local cache and no artifact remote. This is the build a junction bump
@@ -215,7 +214,7 @@ exactly that until cache-warm has run.
 
 ### 5. Phase 2: full closure (straight after phase 1)
 
-- [ ] Dispatch `phase=full` on krytis-vps, and on L if D3 kept it.
+- [x] Dispatch `phase=full` on krytis-vps, and on L if D3 kept it.
       - L attempt 1, **37737682742** (2026-10-08 06:27 UTC): aborted after 10m17s of
         build step, 24 elements built. `core-deps/libdvdcss.bst`'s fetch hit Anubis on
         `code.videolan.org`, which the dulwich-based `git_repo` reports as a `BUG` and
@@ -224,36 +223,38 @@ exactly that until cache-warm has run.
         sources" step. L's phase 2 time is attempt 1 plus the re-dispatch (`<id>+<id>`); a
         full-phase re-dispatch never wipes.
       - L attempt 2, **37739757304** (2026-10-08 06:49 UTC, at `3bc6251`): pre-fetch step
-        passed (`git daemon` is in Debian's `git` package), build continuing.
+        passed (`git daemon` is in Debian's `git` package). Finished 13:10 UTC, 917/917
+        cached, cold check passed.
       - krytis-vps attempt 1, **37746632670** (2026-10-08 07:57 UTC, at `3bc6251`, same build
         inputs as phase 1's `41a54a8`): aborted after 16 minutes, 16 elements built, on fdsdk's
         `components/dav1d.bst`. Same Anubis `BUG`, from a VideoLAN source the first
         pre-fetch did not cover. Fix: pre-fetch all seven VideoLAN-hosted sources in the
         closure, for both projects. krytis-vps's phase 2 is attempt 1 plus the re-dispatch.
-- [ ] Each run: 917/917 cached, 0 pulled, no OOM. Cold full time = phase 1 wall + phase 2 wall.
-- [ ] **Deregister L** as soon as its run ends, if it is still registered, then confirm the runners
-      list shows only krytis-vps (and the local runner, if it happens to be online).
-- [ ] `mise run bench-window close`. If phase 2 was skipped on krytis-vps, dispatch cache-warm
-      now. It pulls the closure from bow; confirm it reports 917/917.
-- [ ] `mise run bench-compare` over all phase 1 and phase 2 runs. Paste under § Results.
+      - krytis-vps attempt 2, **37750722696** (2026-10-08 08:34 UTC, at `2914ff9`, same build
+        inputs): the widened pre-fetch passed. It stalled 4h44m on a hung download (cleared
+        with `ss -K`, § Results) and finished 2026-10-09 06:51 UTC, 917/917 cached, cold
+        check passed.
+- [x] Each run: 917/917 cached, 0 pulled, no OOM. Cold full time = phase 1 wall + phase 2 wall.
+- [x] **Deregister L** as soon as its run ends, if it is still registered, then confirm the runners
+      list shows only krytis-vps (and the local runner, if it happens to be online). Done
+      2026-10-08 15:5x UTC, about 2h45m after its run ended (the operator was offline). The
+      GitHub registration was deleted first, then the service was stopped and uninstalled on
+      the box. The runners list shows only `krytis-vps`. An SSH login whose PIN prompt
+      outlasts sshd's `LoginGraceTime` gets "Connection closed"; retry with the key at hand.
+- [x] `mise run bench-window close` (2026-10-09 06:52 UTC; all five workflows active again).
+      Phase 2 was not skipped on krytis-vps, so its local CAS holds the closure. cache-warm
+      37895827873 was dispatched straight away to restore its bow-wired config.
+- [x] `mise run bench-compare` over all phase 1 and phase 2 runs. Paste under § Results.
 
 ### 6. Write up and tear down
 
-- [ ] § Results: wall times, cold full time vs the 1440-minute cache-warm timeout, steal, OOMs,
-      price per month incl. VAT in one currency (krytis-vps €9.38, one.com 211.25 SEK;
-      convert at the write-up date's rate), and hours per cold rebuild against it. The
-      replacement
-      decision is a human's (Design Gate). This plan reports, it does not recommend.
-- [ ] `docs/skills/ci-runner.md`: measured cold times per box. If a box hit an OOM or heavy
-      steal, add that too. The sizing-formula overshoot and the `force_self_hosted` label reach
-      were recorded there with this plan.
-- [ ] Cancel the one.com subscription unless the decision keeps the box. A kept box gets
-      registered again as a production runner, through that decision, not this plan. If it
-      is cancelled, delete the `ssh:BenchOnecomL` credential from the key too: find its ID
-      with `fido2-token -L -k ssh:BenchOnecomL <device>`, remove it with
-      `fido2-token -D -i <id> <device>` (both ask for the PIN), then delete the handle and
-      `.pub` files.
-- [ ] Delete branch `bench/2026-10`. `git mv` this plan to `docs/plans/done/`.
+- [x] § Results: wall times, cold full time vs the 1440-minute cache-warm timeout, steal, OOMs,
+      price per month incl. VAT in one currency, and hours per cold rebuild against it.
+- [x] `docs/skills/ci-runner.md`: measured cold times per box, in § Cold-build benchmark.
+- [x] ~~Cancel the one.com subscription unless the decision keeps the box.~~ Kept: #1145
+      moves `krytis-vps` onto it. `ssh:BenchOnecomL` and the **Krytis Bench VPS** vault item
+      are handled there (plan M3/M7).
+- [x] Delete branch `bench/2026-10`. `git mv` this plan to `docs/plans/done/`.
 
 ## Risks
 
@@ -333,4 +334,45 @@ count, is most of the gap [INFERENCE]: neither box showed steal or meaningful io
 
 ### Phase 2: full closure
 
-Running: krytis-vps 37746632670, L 37737682742+37739757304.
+**one.com L: 6h29m** (37737682742+37739757304; build step, both attempts), 757 elements built,
+build-time sum 12h41m, 0 pulled, 0 failed, 0 OOM, steal 0%, iowait 1.7% mean, peak swap
+179 MiB. **Cold full build on L: 5h50m + 6h29m = 12h19m.**
+
+**krytis-vps: 22h30m raw, 17h46m excluding a 4h44m stall** (37746632670+37750722696), 757
+elements built, build-time sum 34h16m, 0 pulled, 0 failed, 0 OOM, steal 0%, iowait 2.4% mean,
+peak swap 1140 MiB. Its fetch-time sum (25h05m) is inflated by the hung fetch:
+`gstreamer-plugins-rs` alone shows 21h06m, because it started early and hung long before it
+blocked anything.
+
+**The stall, 2026-10-09 01:10:35 → 05:54:52 UTC.** At 01:10:35 every buildable element was
+done, 750 of 758. The last 8 (`gstreamer-plugins-rs`, then `stacks/codecs`, `oci/krytis/*` up
+to `image.bst`) were waiting on `gstreamer-plugins-rs`'s fetch, hung on one crate download
+(`url-escape`, gitlab.com raw-files mirror). That was an ESTABLISHED HTTPS socket with nothing
+flowing, and nothing in the fetch path has a read timeout. The box sat at 100% idle. `ss -K`
+on that socket made the download fail, BuildStream moved on to `static.crates.io`, and the
+run finished 57 minutes later (docs/skills/bst.md § A hung source download stalls the whole
+build, with no timeout).
+
+**Estimate check.** At 2026-10-08 15:59 UTC, 7.65h in, the per-element model (L's times ×
+2.67 ÷ 1.92) said about 10h remaining, so about 02:00 UTC. Measured, excluding the stall:
+17h46m − 7h39m = 10h07m. The cruder 2.35 × L's wall gave 7.6h, so it undershot. Final
+per-element ratio over the 141 shared elements that took ≥1 min on L: **2.54×**
+(`grpc` 85m vs 36m, `intel-media-driver` 68m vs 29m, `noctalia` 58m vs 25m, `bootc` 56m vs
+22m, `mesa-all-codecs` 47m vs 16m).
+
+### Summary
+
+| | krytis-vps (Contabo Cloud VPS 6) | one.com Cloud server L |
+|---|---|---|
+| Phase 1, toolchain closure (159) | 13h43m | 5h50m |
+| Phase 2, rest of the image (758) | 17h46m (22h30m incl. stall) | 6h29m |
+| **Cold full build (917)** | **31h29m** | **12h19m** |
+| vs cache-warm `timeout-minutes: 1440` | **exceeds it by 7h29m** | fits, 11h41m spare |
+| Price / month incl. VAT | €9.38 | 211.25 SEK ≈ €18.70 (11.30 SEK/€, Yahoo EURSEK=X, 2026-10-09) |
+| Cold builds per month at full use | ~23 | ~58 |
+
+L is 2.56× faster for 1.99× the price. More to the point, a cold rebuild on krytis-vps cannot
+finish inside one cache-warm run, while on L it finishes in about half of one. Neither box
+showed CPU steal or meaningful iowait. No run OOMed: krytis-vps peaked at 2622 MiB of swap
+(phase 1), L at 1270 MiB. The replacement decision went to the human (Design Gate) and is
+#1145.

@@ -3,7 +3,7 @@
 #USAGE arg "<action>" help="open | close | status"
 #USAGE flag "--dry-run" help="Print the gh calls that would change anything, and make none"
 
-# The benchmark window of #1126 (docs/plans/2026-10-07-vps-cold-build-benchmark.md,
+# The benchmark window of #1126 (docs/plans/done/2026-10-07-vps-cold-build-benchmark.md,
 # D4/D5). While it is open nothing can queue behind a multi-day bench run on
 # krytis-vps or land between its phases, and no workflow on main can route a
 # job to the third-party bench box.
