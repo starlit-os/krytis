@@ -177,7 +177,7 @@ while IFS=: read -r file line ref; do
             plugins | reshim | doctor | generate | link | unset | set | activate | \
             latest | current | uninstall | registry | lock | fmt | alias | bin-paths | \
             cache | completion | deactivate | implode | sync | test-tool | tool | deps | \
-            version | watch) continue ;;
+            version | watch | backends) continue ;;
     esac
     report "$file" "$line" "unknown mise task $task"
 done <<<"$backticks"
