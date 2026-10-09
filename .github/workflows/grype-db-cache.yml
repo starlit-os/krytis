@@ -1,0 +1,104 @@
+name: Grype DB cache
+
+# Keeps one current copy of Grype's installed vulnerability database in the
+# Actions cache, for vuln-diff.yml's scans to restore (#1156).
+#
+# Why a separate job on main: an actions/cache entry saved by a pull_request
+# run can be restored by that PR alone, while every PR can restore entries
+# saved on the default branch. vuln-diff.yml therefore only restores, and
+# this is the one writer.
+#
+# What is cached is the *installed* database (~/.cache/grype/db, ~3 GB on
+# disk, ~0.5 GB as the cache's zstd tarball), not Grype's download. Measured
+# on a workstation on 2026-10-09: downloading the 179 MiB archive took 27s,
+# but `grype db import` (decompress and install) took 94s, against ~3s to
+# unpack the cached directory. The import is the cost a fresh runner paid
+# on every vuln-diff head scan (~73s of it).
+#
+# Daily, because Grype publishes a database a day and rejects one older than
+# five days (db.max-allowed-built-age). A restored copy that is a day old is
+# still fine for a scan: Grype checks for a newer one (at most every 2h) and
+# downloads it if there is one.
+
+on:
+  schedule:
+    # Grype's daily database was built at ~06:32 UTC on 2026-10-09 (`grype
+    # db status`). Off the hour, and after it.
+    - cron: '52 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # `gh cache delete` of the superseded entries below.
+  actions: write
+
+concurrency:
+  group: krytis-grype-db-cache
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh the Grype database cache
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup mise
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.10.4
+          experimental: true
+          # Grype only, at mise.lock's version. And no mise cache: an entry
+          # saved here would hold grype alone under the key the other
+          # workflows restore, and they would reinstall everything else.
+          install_args: grype
+          cache: false
+
+      - name: Date for the cache key
+        id: day
+        run: echo "today=$(date -u +%F)" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore the newest cached database
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/grype/db
+          key: grype-db-v6-${{ steps.day.outputs.today }}
+          restore-keys: grype-db-v6-
+
+      - name: Update the database
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: |
+          grype db update
+          grype db status
+
+      # An entry is immutable once saved, so a second run on the same day
+      # has nothing to write (the restore above was an exact hit).
+      - name: Save today's entry
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/grype/db
+          key: grype-db-v6-${{ steps.day.outputs.today }}
+
+      # Keep one entry. Older ones are never restored once today's exists
+      # (restore-keys picks the newest), but GitHub would hold each for 7
+      # days: ~3.5 GB of a 10 GB per-repo budget the repo already overran
+      # once (#1127).
+      - name: Delete superseded entries
+        if: steps.restore.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: grype-db-v6-${{ steps.day.outputs.today }}
+        run: |
+          gh cache list --repo "${GITHUB_REPOSITORY}" --key grype-db-v6- --limit 100 --json id,key \
+            --jq ".[] | select(.key != \"${KEEP}\") | .id" \
+            | while read -r id; do
+                echo "==> Deleting cache entry ${id}"
+                gh cache delete "${id}" --repo "${GITHUB_REPOSITORY}"
+              done
+          gh cache list --repo "${GITHUB_REPOSITORY}" --key grype-db-v6- --json key,sizeInBytes \
+            --jq '.[] | "    kept \(.key): \(.sizeInBytes / 1048576 | floor) MiB"'

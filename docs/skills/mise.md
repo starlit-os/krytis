@@ -883,9 +883,9 @@ started. Nothing in the repo changed — the runner image simply aged past the a
 
 `--update` ("Refresh package manager metadata and update configured repos") runs
 `apt-get update` first (`apk: --update-cache`, `dnf` metadata refresh). Every
-`mise bootstrap` call in `.github/workflows/` carries it. The one exception is
-`vuln-diff.yml`'s *Re-sync dependencies for base commit* step: an earlier step in the
-same job already refreshed the index, so a second `apt-get update` is pure latency.
+`mise bootstrap` call in `.github/workflows/` carries it. (`vuln-diff.yml`'s old *Re-sync
+dependencies for base commit* step was the one exception, a second bootstrap in the same
+job. Since #1157 each scan is its own job with one bootstrap.)
 
 Self-hosted runners are not affected — `Containerfile.runner` runs
 `apt-get update && apt-get install` at image build time, and `mise bootstrap` finds the

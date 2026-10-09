@@ -333,13 +333,30 @@ ubuntu-26.04`) instead of piggybacking on a real publish run.
   ignore rules use, so a PR that adds/removes an ignore rule (like #500/#688)
   shows up as fixed/new exactly like a real dependency change would; each
   report reflects its own commit's own `.grype.yaml`, not a shared baseline.
-  Deliberately scans **both** commits fresh in the same job (checkout head,
-  scan, checkout base via a second `actions/checkout` step — its default
-  `clean: true` wipes head's `.venv`/generated files first — re-sync, scan
-  again) instead of comparing against a stored baseline from the periodic
-  report: a PR's base is often not tip-of-main (stacked PRs, older base
-  commits, rebases), and a stale stored baseline would misreport. Doubling
-  the `bst show` cost is cheap given the 70.6s figure above.
+  Deliberately scans **both** commits fresh, instead of comparing against a
+  stored baseline from the periodic report: a PR's base is often not
+  tip-of-main (stacked PRs, older base commits, rebases), and a stale stored
+  baseline would misreport. Since #1157 the two scans are **parallel jobs**
+  (`Scan head for vulnerabilities`, `Scan base for vulnerabilities`), each
+  checking out its own commit. They hand their JSON to the `Diff
+  vulnerabilities vs base` job as artifacts. That job runs `if: always()` and
+  fails when a scan did not succeed. A *skipped* required check counts as
+  passing, so letting it skip would make a PR with a broken scan mergeable.
+  Its name is the required check in ruleset "Main" and must not change.
+
+  **Grype's database comes from the Actions cache (#1156).** Every fresh
+  runner used to download and import the ~3 GB database on its first Grype
+  call: ~73s of the head scan, against ~8s for the base scan that reused it
+  in the same job. Measured on a workstation (2026-10-09), the download
+  (179 MiB) is the small part at 27s. `grype db import`, which decompresses and
+  installs it, takes 94s. Restoring the installed `~/.cache/grype/db` from a
+  ~0.5 GB cache tarball takes seconds. `grype-db-cache.yml` refreshes it
+  daily **on main**, because an entry a PR run saves is visible to that PR
+  alone. vuln-diff only restores (`actions/cache/restore`, key
+  `grype-db-v6-<date>`, falling back to the newest), and the writer deletes
+  superseded entries, so the cache holds one copy. A day-old copy is still
+  safe: Grype checks for a newer database (at most every 2h) and downloads
+  it, and refuses one older than 5 days.
 
   **The gate is ARMED at `critical` (since 2026-09-03, #690).** A PR that
   introduces a new match at Critical severity fails the `Diff
@@ -389,24 +406,22 @@ ubuntu-26.04`) instead of piggybacking on a real publish run.
     summary instead of failing open silently.
 
 Both scan-output JSON files are written outside the repo tree (`$RUNNER_TEMP`
-/ the default `krytis.grype.json` in the job workspace, uploaded before any
-further checkout) — the pattern to watch for if either workflow grows a step
-that switches git refs again: any Grype/SBOM output living *inside* the repo
-tree does not survive a subsequent `actions/checkout` with its default
-`clean: true`.
+/ the default `krytis.grype.json` in the job workspace), the pattern to watch
+for if either workflow grows a step that switches git refs: any Grype/SBOM
+output living *inside* the repo tree does not survive a later
+`actions/checkout` with its default `clean: true`.
 
 **This bit for real, and not just for output.** `vuln-diff.yml`'s first CI
 run (PR #689) failed with `python3: can't open file '.../scripts/
-vuln-diff.py': No such file or directory` — not the JSON outputs, the
-*diffing tool itself*. The base checkout's `ref` is `main`, which (before
-this PR merges) has no `scripts/vuln-diff.py` at all; `clean: true` removed
-it along with everything else not in that commit's tree, and the later
-`Diff vulnerability reports` step had nothing left to run. Fixed by copying
-`scripts/vuln-diff.py` to `$RUNNER_TEMP` right after the head scan, then
-invoking that copy — the workflow's own tooling must always run HEAD's
-version, never whatever (or nothing) the base commit happens to carry, the
-same way the base scan itself must always use *base's own* `.grype.yaml`.
-**Lesson: when a workflow step is going to `git checkout`/`actions/checkout`
-to a different ref mid-job, everything the *rest of the job* still needs —
-scripts, generated data, anything — must already be outside the repo tree
-before that step runs, not just the final report output.**
+vuln-diff.py': No such file or directory`. The missing file was the
+*diffing tool itself*, not the JSON outputs. The job then checked out base
+after head, and base (`main` before that PR merged) had no
+`scripts/vuln-diff.py`; `clean: true` removed it. The workflow's own tooling
+must always run HEAD's version, never whatever (or nothing) the base commit
+carries, the same way the base scan must always use *base's own*
+`.grype.yaml`. Since #1157 no job switches refs mid-job: the `diff` job
+checks out head (sparse, just the script) and gets both reports as
+artifacts. **Lesson: when a step is going to check out a different ref
+mid-job, everything the *rest of the job* still needs (scripts, generated
+data, anything) must already be outside the repo tree before that step
+runs, not just the final report output.**
