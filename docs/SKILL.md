@@ -29,6 +29,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Generate or debug the firmware key-enrollment `.auth` files, refresh the dbx revocation list, or check whether a binary is revoked (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `mise run dbx-check`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
 | Decide which boot-chain tests to run for a change, or find what is still untested | [`docs/design/secure-boot-testing.md`](design/secure-boot-testing.md) |
 | Work on gaming support, or wonder why there is no native Steam/gamescope/sysext | [`docs/design/gaming-variant.md`](design/gaming-variant.md) |
+| Make Discord show games a flatpak Discord can't detect (WoW under Faugus), or package presence-bridge (kitten-lily/presence-bridge) | [`docs/design/presence-bridge.md`](design/presence-bridge.md), [`docs/skills/bst.md`](skills/bst.md) § Flatpak sandboxing: Discord RPC and game detection |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Reference the upstream live-ISO/installer project krytis's ISO pipeline was forked out of | [`docs/skills/dakota-iso.md`](skills/dakota-iso.md) |

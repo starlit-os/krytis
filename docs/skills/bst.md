@@ -3318,7 +3318,22 @@ Binding host `/proc` does not help; the namespace hides the PIDs, not the mount.
 So a title with no RPC support of its own (World of Warcraft holds zero Discord
 sockets) shows **no presence at all** under a flatpak Discord, and the same
 combination works natively. That is expected behaviour, not a regression to
-chase — reach for #595's options list instead.
+chase. The fix is a host process that detects games on the client's behalf:
+[kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge)
+(#595 option 2, `docs/design/presence-bridge.md`). Three facts it had to
+learn, all of which apply to any host-side detector:
+
+- **Match Wine/Proton games on argv0, not `/proc/<pid>/exe`.** argv0 in
+  `/proc/<pid>/cmdline` is the Windows path (`C:\…\_retail_\WoW.exe`); `exe`
+  is the wine preloader and matches nothing.
+- **Discord's detectable list is ~13 MB of JSON** at
+  `https://discord.com/api/v9/applications/detectable`. ureq 3's default body
+  cap is 10 MB, so a plain `read_to_vec()` fails; raise the limit. Only 8 of its
+  ~11k non-macOS executables are `os: linux` (counted 2026-10-09).
+- **Find clients by globbing, not by app ID.** Any real socket at
+  `$XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-N` or `app/*/discord-ipc-N`
+  is a client. Skip symlinks (the persisted stubs above) and the canonical
+  path, whose listener is native and already detects games.
 
 ### Debugging without false negatives
 
