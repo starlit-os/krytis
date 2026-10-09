@@ -8,6 +8,8 @@
 #      A negative lookbehind keeps the pattern from matching inside URLs
 #      (`.../tcmalloc/blob/master/docs/tuning.md`) or longer paths.
 #   2. Markdown inline links `](target)` resolved relative to the linking file.
+#      An optional title (`](file.md "Title")`) and `<…>` around the target are
+#      stripped first; before that, both valid forms were reported broken.
 #   3. Backticked repo-relative paths under elements/ files/ include/ live/
 #      mise/ patches/ quadlet/ scripts/ .github/, in markdown only.
 #   4. Backticked `mise run <task>` / `mise <task>` invocations, in markdown only.
@@ -91,6 +93,12 @@ done < <(git grep --untracked -I -noP '(?<![A-Za-z0-9._/-])docs/[A-Za-z0-9._/-]+
 
 echo "==> Checking markdown links..."
 while IFS=: read -r file line target; do
+    # A destination may be wrapped in <…> and followed by a title ("…" or '…').
+    # Unwrapped, it can't contain a space, so the first space ends it.
+    case "$target" in
+        '<'*) target="${target#<}" target="${target%%>*}" ;;
+        *) target="${target%% *}" ;;
+    esac
     case "$target" in
         http://* | https://* | mailto:* | '#'*) continue ;;
     esac
