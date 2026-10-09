@@ -107,8 +107,8 @@ and exists purely to keep the build cache warm — publishing on every
 schedule tick would be wrong).
 
 - **Trigger:** `push` to `main`.
-- **Runner:** Blacksmith (same as `cache-warm.yml` — full BST build needs
-  the RAM/disk).
+- **Runner:** Blacksmith (as `publish.yml` is; a full BST build needs the RAM and disk.
+  `cache-warm.yml`, once on Blacksmith too, has run only on `krytis-vps` since #794/#1127).
 - **Concurrency:** `krytis-publish`, `cancel-in-progress: false` (never
   cancel a signing run mid-flight).
 - **Permissions:** `contents: read`, `packages: write` (GHCR push),

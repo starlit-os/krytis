@@ -18,11 +18,6 @@ on:
     # (`30 3 * * 1-5`) so neither runs against a cache the other skipped.
     - cron: '41 1 * * 1-5'
   workflow_dispatch:
-    inputs:
-      force_blacksmith:
-        description: 'Run on Blacksmith instead of the always-on VPS runner (maintenance/outage fallback)'
-        type: boolean
-        default: false
 
 permissions: read-all
 
@@ -32,64 +27,39 @@ concurrency:
 
 jobs:
   warm-cache:
-    # Defaults to the always-on Debian VPS runner (issue #794) — an
-    # unattended cron job needs an unattended runner, unlike the local
-    # container runner (mise runner:*) it replaced here, which is mostly off.
-    # workflow_dispatch can force Blacksmith as the manual fallback for VPS
-    # maintenance or an outage (inverts the old Blacksmith-default/
-    # self-hosted-opt-in direction). Build concurrency is derived from the
-    # runner's cores AND its RAM — see the comment further down.
+    # The always-on VPS runner (issue #794): an unattended cron job needs an
+    # unattended runner, unlike the local container runner (mise runner:*) it
+    # replaced here, which is mostly off. There is no hosted fallback: the
+    # force_blacksmith input was dropped on 2026-10-09 (#1127). A cold full
+    # build is 12h19m on this box (#1126) and does not fit a hosted runner's
+    # 6h limit, and its mise-cache branch was the only path still using
+    # actions/cache here. If the VPS is down, cache-warm waits for it. Build
+    # concurrency is derived from the runner's cores AND its RAM; see the
+    # comment further down.
     #
     # Targets the 'krytis-vps' label specifically, not the bare
     # [self-hosted, linux, x64] the local container runner also registers
-    # under (mise.toml RUNNER_LABELS) — the two would otherwise be
-    # indistinguishable to this ternary whenever both happened to be online,
-    # making routing nondeterministic. See docs/skills/ci-runner.md § Always-on VPS runner.
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 'blacksmith-8vcpu-ubuntu-2404' || fromJSON('["self-hosted","linux","x64","krytis-vps"]') }}
-    # 24h on the VPS, 6h on Blacksmith (#1077). With --deps all a junction
-    # bump rebuilds the toolchain here: run 37003574522's first attempt hit
-    # the old 360 after 123 elements (gcc-stage2 61 min, bootstrap/gcc 70 min)
-    # without reaching llvm or rust. Self-hosted jobs may run up to 5 days;
-    # Blacksmith keeps GitHub's 6h default. Same condition as runs-on above.
-    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) && 360 || 1440 }}
+    # under (mise.toml RUNNER_LABELS); the two would otherwise be
+    # indistinguishable whenever both happened to be online, making routing
+    # nondeterministic. See docs/skills/ci-runner.md § Always-on VPS runner.
+    runs-on: [self-hosted, linux, x64, krytis-vps]
+    # 24h (#1077). With --deps all a junction bump rebuilds the toolchain
+    # here: run 37003574522's first attempt hit the old 360 after 123
+    # elements (gcc-stage2 61 min, bootstrap/gcc 70 min) without reaching
+    # llvm or rust. Self-hosted jobs may run up to 5 days.
+    timeout-minutes: 1440
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The persistent VPS accumulates state between jobs that an ephemeral
-      # runner never would. Condition mirrors the runs-on ternary above
-      # deliberately: same expression, same two hosts.
-      - name: Clear stale FUSE mounts (self-hosted)
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_blacksmith) }}
+      # runner never would.
+      - name: Clear stale FUSE mounts
         # buildbox-fuse mounts under the CAS outlive a killed build. Now that
         # OOMPolicy=continue keeps the runner alive across a kill, that residue
         # is guaranteed to survive into the next job. Shared with
         # build-changed.yml, which runs on the same box.
         run: scripts/clear-stale-fuse-mounts.sh
-
-      - name: Maximize build space
-        # Blacksmith only. This action is built for a throwaway GitHub-hosted
-        # runner: it deletes system paths to reclaim space and runs
-        # `swapoff -a && rm -f /mnt/swapfile`. On the persistent VPS the first
-        # is pointless (124G free of 197G) and the second actively disables
-        # the swap provision.sh adds as OOM headroom — undoing, at the start
-        # of every run, the backstop this workflow now depends on.
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.force_blacksmith }}
-        # ublue-os/remove-unwanted-software has had no push since 2025-10-10
-        # and no v10 tag was ever cut, breaking Renovate's github-tags lookup
-        # (#703). hastd/free-disk-space is properly tagged, actively
-        # maintained, and its bare defaults already free more space than the
-        # old action's fixed removal list ever did with these inputs — see
-        # docs/skills/ci-runner.md § *`remove-unwanted-software` → `free-disk-space` migration* for
-        # the full path-by-path comparison.
-        #
-        # Deliberately pinned to v0.1.1, not the newest v0.1.2: the two
-        # releases are behaviorally identical for us (v0.1.2 only adds an
-        # opt-in skip-if-available input, unused here), so this leaves
-        # Renovate a real minor bump to open and auto-merge as proof the
-        # github-tags lookup that broke on the old action now actually
-        # works end-to-end.
-        uses: hastd/free-disk-space@68572aeaadb7f76bd408246328e95926323402b5 # v0.1.2
 
       # `version:` is not cosmetic on this job. Without it mise-action skips
       # setup entirely whenever a mise binary already exists — which on this
@@ -107,14 +77,11 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.10.4
           experimental: true
-          # Off on the VPS (#1127): its tools already live in
-          # /root/.local/share/mise, so the actions/cache round trip installs
-          # nothing. A miss tarred and uploaded the whole directory (5m13s of a
-          # 5m19s step, run 37515434814); a hit re-extracted it over identical
-          # tools (1m44s). The Blacksmith fallback is ephemeral and keeps it:
-          # same condition as runs-on. Evaluates to the boolean false on a
-          # schedule event, where every inputs.* is null.
-          cache: ${{ github.event_name == 'workflow_dispatch' && inputs.force_blacksmith }}
+          # Off (#1127): the VPS's tools already live in /root/.local/share/mise,
+          # so the actions/cache round trip installs nothing. A miss tarred and
+          # uploaded the whole directory (5m13s of a 5m19s step, run
+          # 37515434814); a hit re-extracted it over identical tools (1m44s).
+          cache: false
 
       - name: Install system dependencies
         # --update: refresh the apt index first — runner images carry stale
@@ -158,10 +125,9 @@ jobs:
           # of the old 50G. krytis-vps (one.com Cloud server L since #1145,
           # 394G disk, 83G used at cutover) gets 200G (#1155); it was 100G on
           # the old 197G Contabo box. build-changed.yml sets the same value on
-          # the same CAS, and must move with this one. The Blacksmith fallback
-          # keeps 50G, its disk was not sized for more.
+          # the same CAS, and must move with this one.
           # See docs/skills/ci-runner.md § casd quota.
-          if [ "${RUNNER_NAME}" = "krytis-vps" ]; then QUOTA=200G; else QUOTA=50G; fi
+          QUOTA=200G
           echo "==> runner ${RUNNER_NAME}: casd quota ${QUOTA}"
           echo "CACHE_WARM_QUOTA=${QUOTA}" >> "${GITHUB_ENV}"
 
