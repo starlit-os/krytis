@@ -524,6 +524,12 @@ exactly `grype@0.120.0`, which `main` had replaced. The script also refuses to p
 command that judges "unused" must be shown the config that defines "used", and must not
 trust a blank answer.**
 
+The first real run (`runner-vps-gc.yml` 37930363709, 2026-10-09) removed `grype@0.120.0`,
+taking installs from 637M to 551M, yet logged "nothing to prune". `mise prune` words its
+output differently with and without `--dry-run`, and the filter had been written against the
+dry-run wording. The script now reports the difference between `mise ls --installed` before
+and after the prune, which does not depend on mise's wording.
+
 Sunday is deliberate: `cache-warm.yml` is `41 1 * * 1-5`, so a weekend slot
 misses it by a day rather than by minutes (§ Scheduled Workflow Cron Delay).
 `publish.yml`'s `30 3 * * 1-5` (#824) is weekday-only as well, and runs on

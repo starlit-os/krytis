@@ -203,8 +203,23 @@ else
     else
         PRUNE=(--yes)
     fi
-    MISE_TRUSTED_CONFIG_PATHS="${MISE_CHECKOUT}" "${MISE_BIN}" prune --tools "${PRUNE[@]}" 2>&1 \
-        | grep -E 'is prunable|remove ' | sed 's/^/    /' || echo "    nothing to prune"
+    # Report from the installed versions before and after, not from mise's
+    # own output: that differs between --dry-run and a real prune, and the
+    # first real run (37930363709) removed grype@0.120.0 while a filter
+    # written against the dry-run wording printed "nothing to prune".
+    installed() { "${MISE_BIN}" ls --installed --no-header 2>/dev/null | awk '{print $1 "@" $2}' | sort -u; }
+    BEFORE_TOOLS=$(installed)
+    MISE_TRUSTED_CONFIG_PATHS="${MISE_CHECKOUT}" "${MISE_BIN}" prune --tools "${PRUNE[@]}" >"${TMPDIR:-/tmp}/gc-mise-prune.log" 2>&1 \
+        || { echo "    (non-fatal: mise prune failed)"; sed 's/^/    | /' "${TMPDIR:-/tmp}/gc-mise-prune.log"; }
+    if [ "${DRY_RUN}" = "1" ]; then
+        PRUNABLE=$(sed -n 's/^mise \([^ ]*\) is prunable.*/\1/p' "${TMPDIR:-/tmp}/gc-mise-prune.log")
+        echo "    would remove: ${PRUNABLE:-nothing}" | tr '\n' ' '; echo
+    else
+        REMOVED=$(comm -23 <(printf '%s\n' "${BEFORE_TOOLS}") <(installed))
+        echo "    removed: ${REMOVED:-nothing}" | tr '\n' ' '; echo
+        echo "    now: $(du -sh "${HOME}/.local/share/mise/installs" 2>/dev/null | cut -f1 || echo unknown)"
+    fi
+    rm -f "${TMPDIR:-/tmp}/gc-mise-prune.log"
 fi
 
 # --- Report -----------------------------------------------------------------
