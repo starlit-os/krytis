@@ -15,8 +15,10 @@ systemd-gpt-auto-generator   ← detects GPT type 4f68bce3-e8cd-4db1-96e7-fbcaf9
                                 └── systemctl switch-root /sysroot
 ```
 
-`bootc-root-setup.service` has `ConditionKernelCommandLine=composefs` — it only
-runs when `composefs=<hash>` is in the kernel command line (set by `bootc install`).
+`bootc-root-setup.service` has `ConditionKernelCommandLine=|composefs` and (since
+bootc v1.17.0) `ConditionKernelCommandLine=|composefs.digest` — it only runs when a
+`composefs=<hash>` or `composefs.digest=v1-…` karg is on the kernel command line (set by
+`bootc install`, or baked into a sealed UKI, which since v1.17.0 carries both).
 If this service is skipped or absent, `/sysroot` stays as raw btrfs (no `/usr/`),
 and `initrd-switch-root.service` fails with "no init found".
 
