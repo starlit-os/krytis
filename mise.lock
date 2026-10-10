@@ -32,7 +32,6 @@ specifiers = ["v1.39.0"]
 checksum = "sha256:0a623ed38907b9cb633d07593b4d19a4ba741a6a50d226eb243bd16f2f5ba81b"
 url = "https://github.com/jdx/fnox/releases/download/v1.39.0/fnox-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/fnox/.github/workflows/release.yml"
-repository_ids = { repository = "1078762196" }
 
 [[tools.grype]]
 version = "0.120.1"
@@ -105,7 +104,6 @@ specifiers = ["6.12.1"]
 checksum = "sha256:db25b616258fce61af2e07f1aa1c7ed33c7303a8a38abade121920b1dca86488"
 url = "https://github.com/jdx/usage/releases/download/v6.12.1/usage-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
-repository_ids = { repository = "677629099" }
 
 [[tools.uv]]
 version = "0.12.24"
