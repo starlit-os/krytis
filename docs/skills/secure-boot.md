@@ -154,7 +154,7 @@ failing `RUN` step.
 
 ## `bootc container ukify` must run in a throwaway stage, never the final image
 
-`bootc install to-disk` recomputes the composefs digest over **whatever image it is installing** and verifies it against the `composefs=` parameter baked into the UKI's `.cmdline` section. If they disagree, install fails late with:
+`bootc install to-disk` recomputes the composefs digest over **whatever image it is installing** and verifies it against every composefs parameter baked into the UKI's `.cmdline` section — `composefs=` alone before bootc v1.17.0, `composefs.digest=v1-…` plus `composefs=` since (§ Verifying the baked digest below). If they disagree, install fails late with:
 
 ```
 error: Installing to disk: Setting up composefs boot: Setting up UKI boot:
@@ -218,8 +218,8 @@ which is tmpfs on some hosts.
 Upstream fixed this and krytis already carries the fix: composefs-rs `5a227a0` falls back
 to a named tmpfile on `ENOTSUP` ([composefs-rs#368](https://github.com/composefs/composefs-rs/pull/368),
 merged 2026-07-29; [bootc#2340](https://github.com/bootc-dev/bootc/issues/2340) closed
-2026-08-04), `5a227a0` is an ancestor of composefs-rs `v0.9.2`, and `elements/core/bootc.bst`
-pins bootc `v1.16.14` against exactly that `v0.9.2`. The `/var/tmp` bind-mount stays anyway —
+2026-08-04), `5a227a0` is an ancestor of composefs-rs `v0.9.2`, and the bootc `v1.17.0` that
+`elements/core/bootc.bst` pins still builds against exactly that `v0.9.2`. The `/var/tmp` bind-mount stays anyway —
 see the correction below: #528 showed the failure is not purely an "does this filesystem
 support `O_TMPFILE`" question, so the bind-mount is now an unconditional invariant rather
 than a workaround waiting to be dropped.
@@ -280,32 +280,57 @@ podman build --squash-all -t localhost/krytis:sealed \
 
 #528 asked for exactly this check, and `mise/tasks/verify-composefs-digest` is it: after the
 two-phase
-build, confirm the digest baked into the UKI's `.cmdline` still matches the committed
+build, confirm the digests baked into the UKI's `.cmdline` still match the committed
 image, without rebuilding (a rebuild can produce a *different* correct digest and prove
 nothing — see the empirical procedure above). The by-hand procedure below is what the task
-automates; it was verified end-to-end against the **then-published**
-`ghcr.io/starlit-os/krytis:sealed` during the #528 investigation, which found no mismatch:
+automates:
 
 ```bash
-# 1. Extract the baked digest — no ukify/objcopy needed, .cmdline is a plain string
+# 1. Extract the baked digests — no ukify/objcopy needed, .cmdline is a plain string
 #    inside the PE, and its own format (128 lowercase hex chars, SHA-512) is specific
 #    enough that a raw byte-scan of the extracted UKI is safe:
 CID=$(podman create ghcr.io/starlit-os/krytis:sealed true)
 podman cp "${CID}:/boot/EFI/Linux/krytis.efi" /tmp/krytis.efi
 podman rm -f "${CID}"
-grep -aoE 'composefs=[0-9a-f]{128}' /tmp/krytis.efi
+grep -aoE 'composefs\.digest=v1-sha512-12:[0-9a-f]{128}' /tmp/krytis.efi   # V1
+grep -aoE 'composefs=[0-9a-f]{128}' /tmp/krytis.efi                        # V2
 
-# 2. Recompute against the COMMITTED image — bootc container compute-composefs-digest
-#    is the lower-level primitive `bootc container ukify` calls internally (hidden from
-#    --help, present since bootc 1.16.x). Run it from inside the image itself (which
-#    already carries a matching bootc) against a read-only view of that same image:
-podman run --rm \
-    --mount type=image,src=ghcr.io/starlit-os/krytis:sealed,target=/target,rw=false \
-    ghcr.io/starlit-os/krytis:sealed \
-    bootc container compute-composefs-digest /target
+# 2. Recompute each against the COMMITTED image, in its own EROFS format —
+#    bootc container compute-composefs-digest is the lower-level primitive
+#    `bootc container ukify` calls internally (hidden from --help). Run it from inside
+#    the image itself (which already carries a matching bootc) against a read-only view
+#    of that same image. Add -v <dir>:/var/tmp if O_TMPFILE fails (§ ukify's temp repo):
+for v in v1 v2; do
+    podman run --rm \
+        --mount type=image,src=ghcr.io/starlit-os/krytis:sealed,target=/target,rw=false \
+        ghcr.io/starlit-os/krytis:sealed \
+        bootc container compute-composefs-digest --erofs-version "$v" /target
+done
 ```
 
-The two outputs matched byte-for-byte on the 2026-08-09 published image.
+The V1 recompute must equal the `composefs.digest=` hex and the V2 recompute the
+`composefs=` hex. The single-karg form of this procedure matched byte-for-byte on the
+2026-08-09 published image (bootc 1.16.x).
+
+**bootc v1.17.0 bakes two digests, and the recompute defaults to the other one.** Before
+v1.17.0, ukify wrote only `composefs=<hex>` (V2 EROFS) and `compute-composefs-digest` took
+no format flag. Since v1.17.0 (bootc `ba10fb16fc`, `ef027c5b3f`) ukify writes
+`composefs.digest=v1-sha512-12:<hex>` (V1 EROFS, what a v1.17 initramfs boots) followed by
+`composefs=<hex>` as a fallback for v1.16 stagers, and `compute-composefs-digest` gained
+`--erofs-version` with a **default of `v1`**. The old check — grep `composefs=`, recompute
+with no flag — therefore compares a V2 digest to a V1 one and fails on every correct image:
+publish runs 37607427447 and 37950298256 (2026-10-07, 2026-10-09) died in `seal-uki`'s
+`[3/3]` with "composefs digest mismatch (#528)" right after the bootc bump in `8c73fde`.
+Each karg must be paired with its own `--erofs-version`, and both checked:
+`bootc install` (`reconcile_uki_candidates` in bootc `crates/lib/src/bootc_composefs/boot.rs`)
+rejects the UKI unless every candidate on its cmdline names a boot image it can find.
+`grep -c composefs.digest` on `usr/lib/bootc/initramfs-setup` inside the initramfs is a
+quick way to confirm the initramfs was regenerated with a V1-capable bootc, which the
+bootc ukify man page requires for the default dual-karg output.
+
+Against an image carrying bootc 1.16.x, use only the `composefs=` grep and drop
+`--erofs-version` (the flag does not exist there; V2 was the only format). The task itself
+requires both kargs, so it rejects a UKI built by a pre-1.17 ukify.
 
 `--mount type=image` (podman core since ~2.2, unrelated to the `--mount=type=bind,from=`
 Containerfile directive used elsewhere in this doc) is the load-bearing choice over the
@@ -321,8 +346,7 @@ is still a genuine read-only OCI-derived view of the committed image, not a rebu
 `mise/tasks/verify-composefs-digest` (#528) automates exactly these two steps and is
 now `mise/tasks/seal-uki`'s `[3/3]` phase — reach for the by-hand version above only
 when debugging the task itself or checking an image outside the seal-uki flow (e.g.
-a pulled `ghcr.io/starlit-os/krytis:sealed`, as this section's own verification was
-done).
+a pulled `ghcr.io/starlit-os/krytis:sealed`).
 
 
 

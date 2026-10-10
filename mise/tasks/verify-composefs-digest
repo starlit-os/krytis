@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="Assert the composefs= digest baked into a sealed image's UKI matches the committed image itself (#528)"
+#MISE description="Assert the composefs digests baked into a sealed image's UKI match the committed image itself (#528)"
 #USAGE flag "--image <tag>" default="localhost/krytis:sealed" help="Sealed image to verify"
 
 set -euo pipefail
 
-# Why this exists: `bootc container ukify` bakes a composefs= digest into the UKI's
+# Why this exists: `bootc container ukify` bakes composefs digests into the UKI's
 # frozen .cmdline at seal time (mise/tasks/seal-uki). Nothing checked that the baked
 # value still matches the image that was actually committed — a mismatch was invisible
 # until a real machine booted and stopped at "The UKI has the wrong composefs=
@@ -39,7 +39,7 @@ IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:sealed}}"
 
 podman image exists "${IMAGE}" || { echo "==> ERROR: ${IMAGE} does not exist locally." >&2; exit 1; }
 
-echo "==> Verifying composefs digest baked into ${IMAGE}'s UKI (#528)..."
+echo "==> Verifying composefs digests baked into ${IMAGE}'s UKI (#528)..."
 
 DIGEST_TMP="$(mktemp -d -p /var/tmp krytis-verify-digest-XXXXXX)"
 if ! python3 -c '
@@ -70,31 +70,44 @@ if ! podman cp "${CID}:/boot/EFI/Linux/krytis.efi" "${UKI_TMP}" 2>/dev/null; the
     exit 1
 fi
 
+# Since bootc v1.17.0 (bootc ba10fb16fc, ef027c5b3f) ukify bakes TWO digests of two
+# different EROFS formats, and `bootc install` requires every one of them to match:
+#   composefs.digest=v1-sha512-12:<hex>   V1 — what a v1.17+ initramfs boots
+#   composefs=<hex>                        V2 — fallback for a v1.16 stager
+# `compute-composefs-digest` defaults to V1 since v1.17.0, so each karg has to be
+# recomputed with its own --erofs-version. Pairing `composefs=` with the default
+# reports a mismatch on every correct image — that broke publish from 2026-10-07 on.
+#
 # .cmdline is a plain string inside the PE; SHA-512 hex (128 lowercase chars) is
 # specific enough that a raw byte-scan is safe — no ukify/objcopy dependency.
-mapfile -t MATCHES < <(grep -aoE 'composefs=[0-9a-f]{128}' "${UKI_TMP}")
-if [ "${#MATCHES[@]}" -eq 0 ]; then
-    echo "==> ERROR: no composefs= parameter found in ${IMAGE}'s UKI .cmdline section." >&2
-    exit 1
-fi
-if [ "${#MATCHES[@]}" -gt 1 ]; then
-    echo "==> ERROR: found ${#MATCHES[@]} composefs= matches in the UKI, expected exactly 1." >&2
-    exit 1
-fi
-BAKED_DIGEST="${MATCHES[0]#composefs=}"
+verify_karg() {
+    local karg="$1" pattern="$2" erofs_version="$3"
+    local matches baked recomputed
+    mapfile -t matches < <(grep -aoE "${pattern}[0-9a-f]{128}" "${UKI_TMP}")
+    if [ "${#matches[@]}" -ne 1 ]; then
+        echo "==> ERROR: found ${#matches[@]} ${karg} parameters in ${IMAGE}'s UKI .cmdline, expected exactly 1." >&2
+        echo "    A UKI from bootc ukify v1.17.0 or later carries one composefs.digest=v1-… and one composefs=." >&2
+        exit 1
+    fi
+    baked="${matches[0]##*[=:]}"
 
-RECOMPUTED_DIGEST="$(podman run --rm \
-    --mount type=image,src="${IMAGE}",target=/target,rw=false \
-    -v "${DIGEST_TMP}:/var/tmp" \
-    "${IMAGE}" \
-    bootc container compute-composefs-digest /target)"
+    recomputed="$(podman run --rm \
+        --mount type=image,src="${IMAGE}",target=/target,rw=false \
+        -v "${DIGEST_TMP}:/var/tmp" \
+        "${IMAGE}" \
+        bootc container compute-composefs-digest --erofs-version "${erofs_version}" /target)"
 
-if [ "${BAKED_DIGEST}" != "${RECOMPUTED_DIGEST}" ]; then
-    echo "==> ERROR: composefs digest mismatch (#528) — the UKI's baked digest does not match the committed image." >&2
-    echo "    baked in UKI:  sha512:${BAKED_DIGEST}" >&2
-    echo "    recomputed:    sha512:${RECOMPUTED_DIGEST}" >&2
-    echo "    'bootc install' would abort with: The UKI has the wrong composefs= parameter" >&2
-    exit 1
-fi
+    if [ "${baked}" != "${recomputed}" ]; then
+        echo "==> ERROR: composefs digest mismatch (#528) — the UKI's ${karg} digest does not match the committed image." >&2
+        echo "    baked in UKI:  sha512:${baked}" >&2
+        echo "    recomputed:    sha512:${recomputed} (--erofs-version ${erofs_version})" >&2
+        echo "    'bootc install' would abort with: The UKI has the wrong composefs= parameter" >&2
+        exit 1
+    fi
+    echo "==> ${karg} digest verified: sha512:${baked}"
+}
 
-echo "==> Composefs digest verified: sha512:${BAKED_DIGEST}"
+verify_karg 'composefs.digest=v1' 'composefs\.digest=v1-sha512-12:' v1
+verify_karg 'composefs=' 'composefs=' v2
+
+echo "==> Composefs digests verified for ${IMAGE}"
