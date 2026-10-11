@@ -971,7 +971,8 @@ backlog specific to this repo/account, not routine jitter.
 **Fix applied:** moved both off `:00` to arbitrary non-round minutes, and
 in #824 the whole chain moved 5h earlier so the scheduled publish it now
 feeds lands in the maintainer's morning: `track-bst-sources.yml` →
-`13 0 * * *`, `cache-warm.yml` → `41 1 * * 1-5`, `publish.yml` →
+`13 0 * * *` (since #1191, `13 0,12 * * *`: the 12:13 pass sits outside the
+chain and only shortens the tracking cooldown), `cache-warm.yml` → `41 1 * * 1-5`, `publish.yml` →
 `30 3 * * 1-5`. The relative spacing is what matters and is unchanged —
 ~90min from tracking to cache-warm so tracking PRs have a window to land
 before cache-warm builds, ~110min from cache-warm to publish so publish

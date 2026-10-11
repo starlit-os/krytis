@@ -1680,6 +1680,37 @@ Two non-obvious things found building it:
   A reopen fired within seconds can still win. A control run of the old script against a throwaway draft PR (#1186, 2026-10-11) logged `closed` at 11:23:49Z, `head_ref_force_pushed` at :50 and `reopened` at :52. That is why the bug was intermittent.
 
   The script now creates the commit on a scratch branch (`tracking-scratch/<run_id>-<attempt>/<branch>`, made from `main`), moves the tracked branch onto it with one forced ref update, and deletes the scratch branch on exit. The PR's head goes straight from the old update commit to the new one and is never 0 ahead, so nothing closes it and there is no reopen step. A PR a person closed stays closed, and the caller opens a fresh one. The scratch branch sits outside `auto/`. Ruleset "Main" targets only `~DEFAULT_BRANCH`, and the only `push:`-triggered workflow (`checks.yml`) is filtered to `main`, so creating the scratch branch triggers nothing.
+- **Read a single ref with `git/ref/heads/<name>` (singular), not `git/refs/heads/<name>`.** The plural form is the namespace listing. GitHub documents that when `<name>` doesn't exist but other refs start with it, the call returns those refs as an array, so an existence check built on it can pass for a branch that isn't there. The failure actually observed is a different one, hit while building the cooldown: on a `404`, `gh api … --jq` still prints the error body to stdout. `X=$(gh api … || true)` therefore set `X` to `{"message":"Not Found",…}`, and the script tried to fetch that as a commit. Take the value only from a successful call: `X=$(gh api …) || X=""`. Writes still use the plural form (`PATCH git/refs/heads/<name>`, `POST git/refs`).
+
+### Tracking cooldown: 24h from first sighting
+
+Renovate holds every update for 24h after its release (`minimumReleaseAge`, see [`renovate.md`](renovate.md)). The tracking jobs get the same protection, measured from the first run that saw the update, not from the upstream release.
+
+**Why first sighting.** A uniform clock is the only one available for every source: `bst source track` on a `git_repo`, GitHub releases, PyPI, GitLab tags, the zig index, CachyOS packages, container digests and Microsoft's dbx file. Upstream dates would need a lookup per source, and some sources don't have one that can be trusted: a lightweight tag only carries its commit's date, which can be months older than the tag.
+
+**Mechanism:**
+
+- `scripts/commit-tracking-update.sh` fingerprints the update: a sha256 of the `git diff -U0 --binary` lines that are not headers, so only the added and removed lines count. It writes the fingerprint and the first-sighting time as trailers on the commit:
+
+  ```
+  Tracking-Fingerprint: <sha256>
+  Tracking-First-Seen: 2026-10-11T12:49:16Z
+  Tracking-Ready-At: 2026-10-12T12:49:16Z
+  ```
+
+  Each run recreates the branch, so the previous head commit is the only state. If its fingerprint matches, `First-Seen` carries over. If upstream changed anything in the update, the clock restarts. An unrelated edit to the same element on `main` doesn't restart it, because context lines aren't in the fingerprint.
+- `scripts/tracking-pr.sh <branch> <title> <body-file>` replaces the 24 copies of the "create or edit the PR" block. It reads those trailers from the branch head:
+  - Before `Ready-At`, it opens the PR as a draft, or converts an existing one back to draft, with a "Cooling until …" note at the top of the body.
+  - From `Ready-At` on, it marks the PR ready for review.
+  - A head commit with no trailers fails closed and counts as cooling.
+- **Effective delay is 24–36h.** The schedule runs twice a day (`13 0,12 * * *`, plus GitHub's drift). The run 24h after first sighting lands a few minutes either side of `Ready-At`, and when it falls short the PR leaves draft one run (12h) later. With the daily schedule this replaced, that miss cost a whole day, so 48h waits were common. Manual `workflow_dispatch` runs re-evaluate too. Every run also recommits each pending branch, so open tracking PRs get a `synchronize`, and their PR checks run, twice a day.
+- **First-party sources are exempt.** The guard is against a hijacked third-party release. A changed file skips the cooldown only when it is a `.bst` whose first `url:` is under `kitten-lily/` or `starlit-os/` (today `desktop/noctalia.bst` and `desktop/presence-bridge.bst`). Every other changed file cools, including non-element files and noctalia-dev's `umbriel`/`noctalia-greeter`. The commit carries `Tracking-Cooldown: exempt (first-party source)`.
+- **Testing it:** `TRACKING_COOLDOWN_SECONDS` overrides the 86400s window. The 2026-10-11 smoke run on throwaway draft PR #1189 used 90s and passed five checks:
+  1. A new update opened a draft.
+  2. Re-running it kept `First-Seen`.
+  3. After `Ready-At` the PR was marked ready.
+  4. A changed update went back to draft with a new `First-Seen`.
+  5. A change to `desktop/presence-bridge.bst` alone was exempt and marked ready at once.
 
 ### GitHub App token for opening tracking PRs
 
