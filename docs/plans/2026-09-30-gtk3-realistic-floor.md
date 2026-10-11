@@ -1,6 +1,10 @@
 # Shrink GTK3 to its realistic floor
 
-**Issue:** #641 · **Branch:** `641-investigate-dropping-gtk3` (this plan) · **Status: ready, not started.**
+**Issue:** #641 · **Status (2026-10-11): in progress.** Done:
+- step 0 (#1030), step 1 (#1031) and step 2 (#1032), all on 2026-10-01;
+- step 4's libportal and gnome-desktop half (#1074) and step 5a's libdecor half (#1075), both on 2026-10-06 in #1115.
+
+Step 3 (#1033) is on hold upstream: Disks 51 has only a beta, with open bugs. That keeps step 4's libcanberra half (#1034) blocked. Steps 5a plymouth (#1035, Breakage Gate), 5b (#1036) and 6 (#181) are open.
 
 GTK3 ships in the image for 15 different reasons (#641 has the full map). Four of them krytis
 cannot change today: zen-browser, Equibop, Proton Pass and `xdg-desktop-portal-gtk`.
@@ -424,9 +428,11 @@ accepts the change, skip this step.
 Research, then a decision. Find a non-GTK3 backend for every interface xdp-gtk serves on
 krytis (see [Why xdg-desktop-portal-gtk stays](#why-xdg-desktop-portal-gtk-stays)).
 
-**What must be replaced.** xdp-gnome already covers FileChooser, Print, Access, Account,
-AppChooser and DynamicLauncher; Umbriel only needs rerouting to it (#1029). Three interfaces
-are left:
+**What must be replaced.** xdp-gnome covers FileChooser, Print, Account, AppChooser and
+DynamicLauncher; Umbriel only needs rerouting to it (#1029). It covers Access only in part:
+a parented request gets a GTK4 dialog, but a parentless one is delegated to `org.gnome.Shell`
+(`src/access.c`, ~line 330), which fails without gnome-shell. Four gaps are left (#181 has
+the source read):
 
 - **Inhibit.** xdp-gnome's `gnome.portal` doesn't list it. xdp-gtk's `src/inhibit.c` tries
   `org.gnome.SessionManager` and falls back to `org.freedesktop.ScreenSaver`, which niri owns.
@@ -434,11 +440,14 @@ are left:
   (gnome-shell); nothing on the krytis bus owns that name. xdp-gtk uses
   `org.freedesktop.Notifications`, which noctalia owns. That is why niri pins
   `Notification=gtk`.
+- **Access, parentless requests.** For example, device or camera prompts from apps that pass
+  no parent window. niri's upstream `niri-portals.conf` already pins `Access=gtk`.
 - **Email.** Only gtk and kde implement it. Losing it may be acceptable.
 
 **Candidates.** Starting point: the Arch Wiki [XDG Desktop Portal § List of backends and
 interfaces](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
-table (revision 884317), narrowed to the three interfaces above:
+table (revision 884317), narrowed to Inhibit, Notification and Email. The parentless-Access
+gap was found later; #181's own table adds an Access column for each candidate.
 
 | Backend | Inhibit | Notification | Email | Notes |
 |---|---|---|---|---|
