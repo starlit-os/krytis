@@ -112,10 +112,12 @@ done < <(git grep --untracked -I -noE '\]\([^)]+\)' -- '*.md' ':(exclude)docs/pl
     sed -E 's/^([^:]*):([0-9]+):\]\((.*)\)$/\1:\2:\3/')
 
 # Task names: mise/tasks/<group>/<name> → "group:name", plus [tasks."name"]
-# headers in any tracked .toml. The second source is load-bearing: the fido2:*
-# tasks a user runs on a booted system are declared in files/fido2-tasks/
-# config.toml (shipped to /etc/mise/config.toml), not in mise/tasks/, because
-# mise only directory-scans project configs. `mise tasks --json` is *not* used
+# headers in any tracked .toml or .bst. The second source is load-bearing: the
+# tasks a user runs on a booted system are not in mise/tasks/, because mise only
+# directory-scans project configs. fido2:* is declared in files/fido2-tasks/
+# config.toml (shipped to /etc/mise/config.toml); presence-bridge:* in a heredoc
+# in elements/desktop/presence-bridge.bst (shipped to /etc/mise/conf.d/), hence
+# the leading-whitespace allowance. `mise tasks --json` is *not* used
 # — it hides the hidden <name>-update tasks and includes whatever the running
 # user has in ~/.config/mise, so it both false-positives and false-negatives.
 # The task list includes untracked files for the same reason the reference scans
@@ -127,7 +129,7 @@ while IFS= read -r t; do
 done < <(git ls-files --cached --others --exclude-standard 'mise/tasks/*' | sed 's|/|:|3')
 while IFS= read -r t; do
     TASKS["$t"]=1
-done < <(git grep --untracked -hoP '^\[tasks\.\K[^\]]+' -- '*.toml' | tr -d '"')
+done < <(git grep --untracked -hoP '^\s*\[tasks\.\K[^\]]+' -- '*.toml' '*.bst' | tr -d '"')
 
 # Backticked spans, once, for both remaining checks. `-o` emits one match per
 # line with the originating line number, so multiple spans on a line all land.

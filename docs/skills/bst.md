@@ -369,7 +369,9 @@ assertion on what it produced (`test -s <output>`), not on its exit status.
 
 ## System-wide mise tasks via BST element
 
-**File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly in `/etc/mise/config.toml` using `[tasks.*]` TOML blocks pointing to the script files. Ship both: the scripts (for execution) and `config.toml` (for discovery).
+**File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly with `[tasks.*]` TOML blocks pointing to the script files, either in `/etc/mise/config.toml` or in a `/etc/mise/conf.d/*.toml` fragment. Ship both: the scripts (for execution) and the TOML (for discovery).
+
+**A second element declaring tasks uses a `conf.d` fragment, never `config.toml`.** `config/fido2-tasks.bst` owns `/etc/mise/config.toml`; another element installing it is an overlap. mise loads `[tasks.*]` from `/etc/mise/conf.d/<name>.toml` with no `config.toml` present at all (checked 2026-10-11 with mise 2026.10.7: `MISE_SYSTEM_CONFIG_DIR=<dir>` holding only `conf.d/pb.toml`, run from a directory with no project config, lists and runs the task). One-line tasks need no script file: `desktop/presence-bridge.bst` heredocs `/etc/mise/conf.d/presence-bridge.toml` with inline `run = "systemctl --user enable --now …"` strings.
 
 Use quoted keys for namespace separators: `[tasks."fido2:enroll"]`.
 
@@ -2388,16 +2390,20 @@ sources:
     name: ...
 ```
 
-**cargo2 sources are generated from Cargo.lock**, not written by hand:
+**cargo2 sources are generated from Cargo.lock**, not written by hand. `bst source
+track` does it: the cargo2 plugin sets `BST_REQUIRES_PREVIOUS_SOURCES_TRACK`, so
+tracking stages every source above it (git ref already moved, `kind: patch` sources
+applied) and rebuilds the `ref:` list from that tree's `Cargo.lock` in the same pass.
+A new element can ship the cargo2 source with no `ref:` at all and let the first
+track fill it in (`desktop/presence-bridge.bst`, #1152: the tracked list was
+byte-identical to the script's output). The script is for a `Cargo.lock` outside the
+element, e.g. `mise run greetd-relock` writing a lock bump before its patch exists:
 
 ```bash
 python3 files/scripts/generate_cargo_sources.py /path/to/Cargo.lock
 ```
 
-To update after a version bump:
-1. `mise run bst -- source track desktop/<name>.bst`
-2. `mise run bst -- shell --build desktop/<name>.bst` — copy out the new Cargo.lock
-3. Regenerate cargo2 sources and replace the block in the element
+To update after a version bump: `mise run bst -- source track desktop/<name>.bst`.
 
 **`url: crates:crates` is mandatory, and its absence is legal upstream.** The
 cargo2 plugin defaults to `https://static.crates.io/crates/` when `url:` is
@@ -3295,18 +3301,21 @@ Consequences that cost real time to rediscover:
   `bwrap: Can't make symlink at …: destination exists and is not a symlink`.
   Equibop does not claim the path and is unaffected. So the obvious
   user-tmpfiles `L %t/discord-ipc-0 → …` fix is not safe by itself.
-- **flatpak persists whatever occupied a granted path** into
-  `.flatpak/<app-id>/xdg-run/`, and it outlives deletion of the host original.
-  Clear the stubs between experiments or results are stale:
-  `for f in $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0; do [ -L "$f" ] && rm -f "$f"; done`
-- **`rpc-bridge` already encodes the correct search order.** Wine/Proton games
-  under Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`,
-  which probes canonical → `app/com.discordapp.Discord/` →
-  `.flatpak/dev.vencord.Vesktop/xdg-run/` →
-  `.flatpak/com.discordapp.Discord/xdg-run/` → the two `snap.discord*` paths.
-  Copy that list rather than inventing one. It has **no Equibop entry** and does
-  not need one: the native element puts Equibop's socket at the canonical path,
-  which is the first entry `rpc-bridge` probes.
+- **flatpak leaves a stub at every granted `xdg-run/` path** in
+  `.flatpak/<app-id>/xdg-run/`, and it outlives the host original. If something
+  occupied the host path when the app started, the stub is that (a symlink, in the
+  #591 experiments). If nothing did, it is an **empty regular file**. On 2026-10-09
+  a system-wide override granting `xdg-run/discord-ipc-0`
+  (`/var/lib/flatpak/overrides/global`, set 14:17) had left one in six apps, each
+  dated to that app's next launch (14:21–14:48,
+  `stat -c '%F %y %n' $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0`). Clear
+  them between experiments, keeping real sockets:
+  `for f in $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0; do [ -S "$f" ] || rm -f "$f"; done`
+- **`rpc-bridge` has no Equibop entry and needs none.** Wine/Proton games under
+  Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`, which
+  probes the canonical path first, and the native element puts Equibop's socket
+  there. Its full search order is in presence-bridge
+  [`ipc.md` § Finding clients](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md#finding-clients).
 
 **Game detection can never work in flatpak.** Discord matches running processes
 against a known-executable list, and a flatpak app is in its own PID namespace:
@@ -3318,24 +3327,27 @@ Binding host `/proc` does not help; the namespace hides the PIDs, not the mount.
 So a title with no RPC support of its own (World of Warcraft holds zero Discord
 sockets) shows **no presence at all** under a flatpak Discord, and the same
 combination works natively. That is expected behaviour, not a regression to
-chase — reach for #595's options list instead.
+chase. The fix is a host process that detects games on the client's behalf:
+[kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge)
+(#595 option 2, `docs/design/presence-bridge.md`). What a host-side detector has to
+know is recorded there, not here. That covers matching on argv0, the size of
+Discord's detectable list, finding client sockets, and treating the socket peer as
+untrusted. See presence-bridge's
+[`detection.md`](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/detection.md)
+and [`ipc.md`](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md).
 
 ### Debugging without false negatives
 
-Four traps, each of which produced a wrong conclusion during the original
-diagnosis:
+One sandbox trap, which produced a wrong conclusion during the original diagnosis:
 
 | Symptom | Reality |
 |---|---|
 | `strings … \| grep …` inside a sandbox returns nothing | `strings` is **not in the freedesktop runtime**; scan `/var/lib/flatpak/app/<id>/current/active/files/` from the host |
-| grep for `discord-ipc-0` in a consumer binary finds nothing | the digit is appended at runtime — search for `/discord-ipc-` |
-| `find $XDG_RUNTIME_DIR -name 'discord-ipc-*'` finds nothing | it silently misses these; `ls` the specific paths |
-| repeated handshakes to a live socket mostly time out | reproduces at ~1/8 on Discord's own socket *and* through its `socat` relay, so it is not the relay; may be an artifact of probing with an invalid `client_id` — do not conclude "relay is broken" |
 
-A handshake probe is the cheapest liveness test: connect, send op `0` with
-`{"v":1,"client_id":"…"}`, read one frame. `op=2 {"code":4000}` means a real
-Discord answered and rejected the ID — the transport is fine. arRPC answers
-`op=1 … READY` and accepts any ID.
+The IPC-side traps and the handshake liveness probe moved to presence-bridge's
+[`ipc.md`](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md):
+`find` missing the sockets, the runtime-appended `discord-ipc-` digit, and
+intermittent handshake timeouts.
 
 ## NetworkManager Is Present and Running, Despite the networkd-Only Stack
 
@@ -3458,6 +3470,19 @@ kmscon[1077]: NOTICE: terminal: Display [DP] with backend [drm2d] ...
 Two symptoms, one cause: a `login:` prompt on screen between the Plymouth splash and the greeter, and — because the greeter's tty1 logind session never went **active** — `noctalia-greeter-compositor` dying on wlroots' hard-coded `WAIT_SESSION_TIMEOUT` (`10000 // ms`, `backend/backend.c:35`, no retry) on every single boot, masked only by greetd's `Restart=always` (#711, #712).
 
 **Audit rule when vendoring any element that ships systemd units:** list every unit with an `[Install]` section, and confirm each is either named by a preset rule or genuinely wanted enabled. `grep -l '^\[Install\]' /usr/lib/systemd/system/*` against a staged tree, cross-checked with `find /etc/systemd/system -name '*<pkg>*'` after `systemctl --root=<tree> preset-all`, catches this before it boots.
+
+### User units fall through too
+
+The same default-`enable` policy applies to `/usr/lib/systemd/user/`. The image's preset
+step (`oci/krytis/init-scripts.bst`) also presets user units globally, so a user unit with
+an `[Install]` section and no `user-preset` rule ships **enabled for every user**.
+Leaving the preset out does not mean "off". `desktop/presence-bridge.bst` (#1152) was meant
+to ship disabled. Its first build, with no preset file, produced
+`/etc/systemd/user/graphical-session.target.wants/presence-bridge.service`, and
+`systemctl --global is-enabled presence-bridge.service` printed `enabled` inside
+`localhost/krytis:latest`. Ship `%{indep-libdir}/systemd/user-preset/80-<name>.preset`
+containing `disable <unit>`. A user's own `systemctl --user enable` writes
+`~/.config/systemd/user`, which the global preset never touches, so the opt-in still works.
 
 ### Keep `NAutoVTs` aligned with the VT layout — but never set `ReserveVT=0`
 

@@ -98,7 +98,8 @@ gaming packages should start from that ref rather than re-porting from upstream.
   titles are recoverable — Proton's `rpc-bridge` already handles them once the
   right override ships. Titles that rely on detection alone (World of Warcraft)
   simply show nothing, and did work when Discord ran natively. See
-  `docs/skills/bst.md` § Flatpak sandboxing: Discord RPC and game detection.
+  `docs/skills/bst.md` § Flatpak sandboxing: Discord RPC and game detection,
+  and `docs/design/presence-bridge.md` for the host-side detector that covers them.
 - **App pre-installs have a home already**: `elements/config/flatpak-preinstall.bst`
   (marker-file-gated oneshot, see `docs/skills/bst.md` § Flatpak Pre-install
   Service Pattern) and the Flathub remote via

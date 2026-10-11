@@ -366,6 +366,11 @@ set -euo pipefail
 DRY_RUN="${usage_dry_run:-false}"
 ```
 
+`#USAGE` lines are KDL, not shell: `\$` inside a `help="…"` string is an invalid
+escape. mise then only *warns* ("invalid usage spec") and runs the task with no
+parsed flags, so the first `${usage_<flag>}` under `set -u` fails as an unbound
+variable. Write `$` bare, or leave it out.
+
 ### Calling other tasks
 
 Use `#MISE depends=["other-task"]` to declare a prerequisite task (no args). mise runs it

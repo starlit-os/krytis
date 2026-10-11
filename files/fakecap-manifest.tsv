@@ -502,6 +502,7 @@
 /./etc/lvm/profile/vdo-small.profile	components/lvm2.bst	monthly
 /./etc/man_db.conf	components/man-db.bst	monthly
 /./etc/mise/conf.d/aliases.toml	config/mise-aliases.bst	monthly
+/./etc/mise/conf.d/presence-bridge.toml	desktop/presence-bridge.bst	monthly
 /./etc/mise/config.toml	config/fido2-tasks.bst	monthly
 /./etc/mise/tasks/fido2/enroll	config/fido2-tasks.bst	monthly
 /./etc/mise/tasks/fido2/enroll-luks	config/fido2-tasks.bst	monthly
@@ -2244,6 +2245,7 @@
 /./usr/bin/pr	core/uutils-coreutils.bst	monthly
 /./usr/bin/pre-grohtml	components/groff.bst	monthly
 /./usr/bin/preconv	components/groff.bst	monthly
+/./usr/bin/presence-bridge	desktop/presence-bridge.bst	monthly
 /./usr/bin/printenv	bootstrap/coreutils.bst	monthly
 /./usr/bin/printenv	core/uutils-coreutils.bst	monthly
 /./usr/bin/printf	bootstrap/coreutils.bst	monthly
@@ -124152,6 +124154,7 @@
 /./usr/lib/debug/usr/bin/pr.debug	bootstrap/coreutils.bst	monthly
 /./usr/lib/debug/usr/bin/pre-grohtml.debug	components/groff.bst	monthly
 /./usr/lib/debug/usr/bin/preconv.debug	components/groff.bst	monthly
+/./usr/lib/debug/usr/bin/presence-bridge.debug	desktop/presence-bridge.bst	monthly
 /./usr/lib/debug/usr/bin/printenv.debug	bootstrap/coreutils.bst	monthly
 /./usr/lib/debug/usr/bin/printf.debug	bootstrap/coreutils.bst	monthly
 /./usr/lib/debug/usr/bin/prlimit.debug	components/_private/util-linux-base.bst	monthly
@@ -158751,6 +158754,7 @@
 /./usr/lib/systemd/user-generators/systemd-xdg-autostart-generator	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/user-generators/systemd-xdg-autostart-generator	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/user-preset/71-krytis-starlit-update.preset	config/starlit-update.bst	monthly
+/./usr/lib/systemd/user-preset/80-presence-bridge.preset	desktop/presence-bridge.bst	monthly
 /./usr/lib/systemd/user-preset/80-xwayland-satellite.preset	config/xwayland-satellite.bst	monthly
 /./usr/lib/systemd/user-preset/90-systemd.preset	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/user-preset/90-systemd.preset	core-deps/systemd.bst	monthly
@@ -158859,6 +158863,7 @@
 /./usr/lib/systemd/user/portable/profile/strict/service.conf	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/user/portable/profile/trusted/service.conf	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/user/portable/profile/trusted/service.conf	core-deps/systemd.bst	monthly
+/./usr/lib/systemd/user/presence-bridge.service	desktop/presence-bridge.bst	monthly
 /./usr/lib/systemd/user/printer.target	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/user/printer.target	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/user/session.slice	core-deps/systemd-base.bst	monthly
@@ -333020,6 +333025,7 @@
 /./usr/share/licenses/krytis/papirus-icon-theme/Papirus/32x32/apps/licensequick.svg	desktop/papirus-icon-theme.bst	monthly
 /./usr/share/licenses/krytis/papirus-icon-theme/Papirus/48x48/apps/licensequick.svg	desktop/papirus-icon-theme.bst	monthly
 /./usr/share/licenses/krytis/papirus-icon-theme/Papirus/64x64/apps/licensequick.svg	desktop/papirus-icon-theme.bst	monthly
+/./usr/share/licenses/krytis/presence-bridge/LICENSE	desktop/presence-bridge.bst	monthly
 /./usr/share/licenses/krytis/proton-pass/usr/lib/proton-pass/LICENSES.chromium.html	desktop/proton-pass.bst	monthly
 /./usr/share/licenses/krytis/proton-pass/usr/share/doc/proton-pass/copyright	desktop/proton-pass.bst	monthly
 /./usr/share/licenses/krytis/qemu/COPYING	dev/qemu.bst	monthly
