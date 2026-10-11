@@ -1128,7 +1128,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
 | Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list) |
-| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below) |
+| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below); `ref-status [--ref <rev>] [--text-file <path>] [--no-issues] [--all]` — report-only: closed krytis `#N` next to open-status wording, and other projects' issue/PR status claims flagged undated, stale or closed, across `docs/`, `elements/`, `mise/tasks/` and open issue bodies. A manual step of the `skill-rot-audit` skill, not a gate: it needs `gh` auth and exits 0 whatever it finds (see below) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 | Element pin checks | `rust-bindgen-check` `gnome-disk-utility-check` — assert a forked override still matches the freedesktop-sdk / gnome-build-meta element it was copied from; `gtk3-mirror-check` — the same for every GTK3-strip mirror of #641 (`overrides/libportal.bst`, `gnome-desktop.bst`, `libdecor.bst`), table-driven, failing with "delete this mirror" once upstream drops GTK3 itself (see [`bst.md`](bst.md) § Default-`auto` meson features are *on* in both junctions); `libdisplay-info-check` — whether the 0.3.0 hold can be dropped yet; `greetd-relock` — regenerate greetd's `Cargo.lock` bump patch; `gtk3-audit [--tag]` — graph + ELF scan of what still pulls GTK3 in, against a ratcheting allowlist that each #641 step trims (see [`bst.md`](bst.md) § "What pulls library X into the image" needs the graph *and* an ELF scan) |
@@ -1185,6 +1185,66 @@ same as an oversized file: a stale exemption would otherwise silently excuse a f
 file re-added at that path. `--max-bytes` and `--ref` override the 5 MiB ceiling and
 the revision checked, which is also how to see the failure for yourself —
 `mise run large-blob-check --ref e3b241c` still reports the original offender.
+
+**`ref-status` is a lead generator, so precision mattered more than recall — the first
+draft drowned its own signal.** Run against the tree just before #1069 (the doc-rot fix
+for the #1056 triage), the literal rule from #1071 — a closed krytis `#N` with *open,
+until, pending, …* on its line or the next — produced 74 krytis findings, almost all
+wrong. The narrowing that brought it to 8, each one a fix for a measured false-positive
+class:
+
+- **Bare `until #N` is history, not a condition.** "krytis had the same mismatch until
+  #934" was the single biggest class. `until`/`once`/`when` only count in the future
+  form with the reference as subject (`until #N lands`, `once #N ships`).
+- **The next line only counts inside the reference's own sentence and paragraph.** In a
+  live plan, an `**Issue:**` line followed by a `**Blocked by:**` line pinned "Blocked
+  by" on the issue above it; in `signing.md`, a sentence ending "…closing" a bare
+  number, followed by "As of … it is open", pinned the next sentence's claim on it.
+  `**Field:**` lines and list items start a new statement.
+- **Wording goes to the nearest reference, within 60 characters.** Tables and long
+  wrapped lines put several `#N` near one *open*.
+- **"open" needs a status sense.** `open-ended`, `an open PR`, `to open a terminal` and
+  `can't open file` all matched `\bopen\b`.
+- **Closure wording in the sentence wins** (`closed`, `merged`, `fixed`, `closes`, but
+  not `not yet released` / `never merged`), and ticked `- [x]` items and "was still …"
+  are narrated history.
+- **A birth date is not an as-of date.** "open since 2026-02-04" says when the item was
+  filed, not when anyone last checked it, so it neither dates the claim nor makes later
+  activity "stale". "No activity since <date>" *is* an as-of date.
+
+What is left still includes true-but-deliberate text: an issue body specifying this very
+check, or a live plan whose "Blocked by" lists closed issues (the plan probably wants
+archiving, which is a lead too). That is the point of reporting instead of failing.
+
+API shape, both non-obvious:
+
+- **GitHub: one GraphQL query per 100 references, across repositories.** Each query is a
+  set of `repository(owner:, name:)` aliases, each holding `issueOrPullRequest(number:)`
+  aliases. A full run (≈520 unique references, 6 of them GitLab) costs 6 queries and 6
+  rate-limit points, not 500+ REST calls. A missing number or repository comes back as a
+  `null` node plus an `errors` array, and `gh api graphql` **exits 1** while still
+  printing the partial `data` — parse stdout regardless and treat only "no `data`" as
+  fatal. GraphQL follows renamed and transferred repositories:
+  `containers/container-libs` answers as `podman-container-tools/container-libs`, and the
+  report shows "now <nameWithOwner>" so a stale citation is visible too.
+- **GitLab: anonymous REST, one call per unique reference.** `gitlab.gnome.org` serves
+  public issues and MRs without a token, and a `/-/work_items/<n>` URL (what GNOME's
+  GitLab now links) resolves through the ordinary `/projects/<path>/issues/<n>` endpoint.
+  Text-form `group/project#N` is ambiguous between GitHub and GitLab, so the task only
+  sends it to GitLab when the same project path appears in a GitLab URL somewhere in the
+  scan; `name#N` shorthands are resolved only when exactly one `owner/name` in the scan
+  has that name, and are otherwise listed, never guessed.
+
+**Bare `#N` is always krytis.** An upstream number written bare in a sentence about
+systemd or mise resolves against krytis: it lands in "resolved to nothing" when krytis has
+no such number, and is misread when it does. Write `owner/repo#N` for anything that is
+not krytis.
+
+`--ref <rev>` reads the tree through `git ls-tree`/`git cat-file --batch`, so
+`mise run ref-status --ref <merge>^1 --no-issues` shows what a fix should have caught
+before it landed. `--text-file <path>` scans one file as an issue body: rebuild an old
+body from `repository { issue(number: N) { userContentEdits { nodes { editedAt diff } } } }`
+(each `diff` is the **full body** at that edit, newest first) to check an issue's history.
 
 ### Hidden tasks
 

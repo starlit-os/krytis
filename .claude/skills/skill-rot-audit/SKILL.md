@@ -77,6 +77,34 @@ Text*`) so the matcher can bound it against the prose that follows.
 Scope discipline when the sweep is a closing step after `upstream-lessons`: audit **the
 files that run appended to**, not the whole tree.
 
+Then run its stale-status counterpart:
+
+```bash
+mise run ref-status            # add --no-issues to skip open issue bodies
+```
+
+`docs-links` proves a reference *resolves*; it cannot tell that a sentence about an issue
+or PR's **state** was true when written and has since changed — the class behind most of
+the #1056 triage (#1071). `ref-status` reads every `#N`, `owner/repo#N` and GitHub/GitLab
+issue/PR/MR URL in `docs/` (minus `docs/plans/done/`), `elements/**/*.bst`, `mise/tasks/`
+and the **open krytis issue bodies**, fetches live state, and reports two things:
+
+1. a CLOSED/MERGED krytis `#N` with open-status wording (*open, blocked on, pending, not
+   yet, waiting, tracked in, until #N lands…*) in its own sentence;
+2. another project's issue/PR whose prose makes a status claim (*open, unmerged,
+   unreleased, no activity, in flight…*), with its live state, flagged **UNDATED** (no
+   `YYYY-MM-DD` — AGENTS.md's "Undated claims about someone else's project"), **STALE**
+   (it changed after the date the prose gives) or **CLOSED** (described open, isn't).
+
+Every line is a **lead for step 4's classification, not a verdict**: a doc quoting a
+retracted claim to refute it, a plan narrating what was blocked at the time, and an issue
+body describing rot all read exactly like the rot. It needs `gh` auth, so it is a manual
+sweep step, not a PR gate. `--ref <rev>` scans a past tree (`git show`, no checkout) and
+`--text-file <path>` scans one file as an issue body — reconstruct an old body from
+`userContentEdits` to check what a fix should have caught. Bare `#N` always means krytis:
+an upstream number written bare shows up under "resolved to nothing", or worse, resolves to
+the wrong krytis issue — write `owner/repo#N` for anything that is not krytis.
+
 ### 2. Establish ground truth before reading any prose
 
 Read the inventory first, so you are checking claims against a known tree instead of
@@ -123,7 +151,8 @@ These are the cheap ones, and the ones that rot silently. In descending value:
 - a workflow job/step name, runner label, or action pin;
 - a count ("three places", "both elements") — re-run the grep, do not trust the number;
 - a version-scoped claim ("as of niri 25.x") — check the element's current pin;
-- an issue/PR reference whose prose implies open work — `gh issue view <n> --json state`.
+- an issue/PR reference whose prose implies open work — `mise run ref-status` covers the
+  whole tree in one pass; `gh issue view <n> --json state` for a single one.
 
 **Executable config is the source of truth; prose that disagrees with it is stale.** That
 is dakota's post-prune restructuring principle and it settles every conflict: the workflow
@@ -199,7 +228,8 @@ diagnosis is the part that compounds; a sweep that fixes 60 claims and records n
 about why they rotted buys one clean pass and no immunity.
 
 If the sweep exposes a rot class the mechanical checks could have caught, extend
-`mise/tasks/docs-links` in the same PR. That is how checks 3 and 4 got there.
+`mise/tasks/docs-links` (or, for issue/PR state wording, `mise/tasks/ref-status`) in the
+same PR. That is how checks 3 and 4 got there.
 
 ### 7. Commit and PR
 
@@ -214,6 +244,8 @@ human's call.
 - `AGENTS.md` § Plan & Design Docs (`docs/design/` vs `docs/plans/`, and the freeze).
 - `mise/tasks/docs-links` — the mechanical half; its header comment documents each check
   and why it is scoped the way it is.
+- `mise/tasks/ref-status` — the stale-status half; its docstring documents what counts as
+  a reference, a status claim and a date, and why each heuristic is as narrow as it is.
 - `docs/.links-ignore` — the two legitimate categories for a permanently unresolvable path.
 - `docs/skills/dakota.md` — the 5385→450-line prune that established "executable config is
   the source of truth".
