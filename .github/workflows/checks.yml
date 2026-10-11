@@ -67,6 +67,12 @@ jobs:
         # it reads the checked-out tree via `git ls-tree`, never history.
         run: mise run large-blob-check
 
+      - name: Check carried-patch inventory
+        # Every kind: patch source and kitten-lily/starlit-os fork pin needs a row
+        # in docs/design/carried-patches.md, and every row needs its carry (#1070).
+        # Reads the checkout and PyYAML from `uv sync` above; no network.
+        run: mise run patch-inventory-check
+
       - name: Shell syntax
         # Catches the class of typo that only surfaces when a task is invoked,
         # which for the boot-chain tasks can be 40 minutes into a QEMU run.

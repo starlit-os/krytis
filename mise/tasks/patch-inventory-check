@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+#MISE description="Fail if docs/design/carried-patches.md and the elements disagree on which patches and fork pins krytis carries"
+"""Two-way check between the carry inventory and the element tree (#1070).
+
+The inventory used to be a table in #483's issue body. The 2026-10-02 refresh
+(#1056 item 19) found it missing six of nine carries: five patched elements and
+the kitten-lily/noctalia fork pin. Removals were always recorded, because the
+person deleting a patch goes looking for its row. Additions never were, because
+no PR diff could show the table. With the table in docs/design/carried-patches.md,
+this check makes a missing row a CI failure.
+
+A carry is either of:
+
+  patch     any mapping with `kind: patch` or `kind: patch_queue` (both
+            plugins are registered in project.conf), identified by its `path:`;
+  fork pin  any `url:` that resolves (via include/aliases.yml) to a repo in an
+            org krytis owns, unless that repo is in FIRST_PARTY below.
+
+The check fails on:
+
+  MISSING   an element carries something the inventory table doesn't list;
+  STALE     a row names an element, patch path or fork pin that no longer exists
+            in that element;
+  STALE     a FIRST_PARTY entry that no source uses any more;
+  BAD ROW   a row the parser can't read. A malformed row fails loudly instead of
+            being skipped, because a skipped row would hide a carry.
+
+Scope. Every `elements/**/*.bst` and `include/**/*.yml` is scanned, from tracked
+and untracked-but-not-ignored files alike (the same list docs-links builds since
+#1126, so a brand-new element fails locally before CI sees it). The include files
+are scanned because `(@)` can splice them into any element's `sources:`. The
+junction elements (freedesktop-sdk.bst, gnome-build-meta.bst, plugins/*.bst) are
+.bst files too, so a patch applied to a junction's own source is covered. The YAML
+is walked whole, not just top-level `sources:`, so sources inside `(?)`
+conditionals are found as well.
+
+Checked against the tree, not the diff, like large-blob-check and for the same
+reason: a diff-scoped gate only ever sees the commit that adds a carry, and
+anything that landed before the gate existed would stay invisible. That is
+exactly how #483's table went stale.
+
+Why a FIRST_PARTY allowlist instead of a fork list. Run without network access,
+the check can't ask GitHub whether `kitten-lily/<repo>` is a fork. The choice is
+which side defaults to "carry":
+
+  - list the forks, pass everything else: a new fork pin needs someone to remember
+    to list it, which is the #483 failure all over again;
+  - list the first-party repos, treat everything else as a fork (chosen): a new
+    first-party repo fails until someone classifies it, and that failure is loud,
+    one line, and fixed by a reviewed entry with a reason.
+
+presence-bridge is why this list exists: `github:kitten-lily/presence-bridge.git`
+sits in the same org as the noctalia fork, but it is krytis's own project
+(`gh api repos/kitten-lily/presence-bridge --jq .fork` -> false). A plain "any
+kitten-lily URL is a fork" rule would demand an inventory row for it.
+
+Written in Python with the YAML parsed, not grep, for the reason
+gtk3-mirror-check gives: `kind: patch` and its `path:` are separate lines at any
+indent (ghostty's sit four spaces deep), and line matching can't pair them
+reliably.
+"""
+
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+import yaml
+
+DOC = "docs/design/carried-patches.md"
+SECTION = "## Inventory"
+COLUMNS = ["Element", "Carry", "Nature", "Why", "Removal condition"]
+PATCH_KINDS = {"patch", "patch_queue"}
+OWNED_ORGS = ("kitten-lily", "starlit-os")
+
+# owner/repo -> reason. Every entry needs a reason a reviewer can check: a repo
+# in an owned org that is NOT a fork (`gh api repos/<owner>/<repo> --jq .fork`
+# says false). Forks never go here; they get a row in DOC.
+FIRST_PARTY = {
+    "kitten-lily/presence-bridge": (
+        "krytis's own Discord presence service, not a fork "
+        "(docs/design/presence-bridge.md)"
+    ),
+}
+
+OWNED_RE = re.compile(
+    r"^https://(?:github\.com|raw\.githubusercontent\.com)/"
+    r"(" + "|".join(map(re.escape, OWNED_ORGS)) + r")/([^/]+?)(?:\.git)?(?:/|$)",
+    re.IGNORECASE,
+)
+BACKTICK_RE = re.compile(r"`([^`]+)`")
+
+Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def load_aliases():
+    data = yaml.load(pathlib.Path("include/aliases.yml").read_text(), Loader=Loader)
+    return data["aliases"]
+
+
+def owned_slug(url, aliases):
+    """`owner/repo` (lowercased) if url names a repo in an owned org, else None."""
+    alias, sep, rest = url.partition(":")
+    if sep and alias in aliases:
+        url = aliases[alias] + rest
+    m = OWNED_RE.match(url)
+    return f"{m.group(1)}/{m.group(2)}".lower() if m else None
+
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from walk(value)
+
+
+def scan_tree(aliases, problems):
+    """{(element, carry): display} for every carry in the tree, plus every owned slug seen."""
+    files = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard",
+         "--deduplicate", "--", "elements/*.bst", "include/*.yml"],
+        check=True, capture_output=True, text=True,
+    ).stdout.split()
+    carries, owned_seen = {}, set()
+    for name in files:
+        path = pathlib.Path(name)
+        if not path.is_file():  # deleted in the worktree, still in the index
+            continue
+        try:
+            data = yaml.load(path.read_text(), Loader=Loader)
+        except yaml.YAMLError as e:
+            problems.append(f"  UNPARSED {name}: {e}")
+            continue
+        for node in walk(data):
+            if node.get("kind") in PATCH_KINDS:
+                patch = node.get("path")
+                if not isinstance(patch, str):
+                    problems.append(f"  BAD SRC  {name}: kind: {node['kind']} source without a path:")
+                    continue
+                carries[(name, ("path", patch))] = f"{node['kind']} {patch}"
+            url = node.get("url")
+            if isinstance(url, str):
+                slug = owned_slug(url, aliases)
+                if slug is None:
+                    continue
+                owned_seen.add(slug)
+                if slug not in FIRST_PARTY:
+                    carries[(name, ("fork", slug))] = f"fork pin {url}"
+    return carries, owned_seen
+
+
+def split_row(line):
+    # Cells are separated by unescaped pipes; a pipe inside a cell must be `\|`.
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+
+
+def parse_doc(aliases, problems):
+    """{(element, carry): line number} for every carry the inventory table lists."""
+    lines = pathlib.Path(DOC).read_text().splitlines()
+    try:
+        start = lines.index(SECTION) + 1
+    except ValueError:
+        problems.append(f"  BAD DOC  {DOC}: no '{SECTION}' heading")
+        return {}
+    rows = []
+    for lineno, line in enumerate(lines[start:], start + 1):
+        if line.startswith("## "):
+            break
+        if line.startswith("|"):
+            rows.append((lineno, line))
+    if len(rows) < 2 or split_row(rows[0][1]) != COLUMNS:
+        problems.append(f"  BAD DOC  {DOC}:{start}: inventory table must start with columns {' | '.join(COLUMNS)}")
+        return {}
+
+    listed = {}
+    for lineno, line in rows[2:]:  # skip header and |---| separator
+        where = f"{DOC}:{lineno}"
+        cells = split_row(line)
+        if len(cells) != len(COLUMNS):
+            problems.append(f"  BAD ROW  {where}: {len(cells)} cells, expected {len(COLUMNS)}")
+            continue
+        elements = BACKTICK_RE.findall(cells[0])
+        if len(elements) != 1 or not re.fullmatch(r"(elements/.+\.bst|include/.+\.yml)", elements[0]):
+            problems.append(f"  BAD ROW  {where}: Element cell must be exactly one backticked elements/….bst path, got {cells[0]!r}")
+            continue
+        element = elements[0]
+        tokens = BACKTICK_RE.findall(cells[1])
+        if not tokens:
+            problems.append(f"  BAD ROW  {where}: {element}: Carry cell lists nothing")
+            continue
+        for token in tokens:
+            if ":" in token:
+                slug = owned_slug(token, aliases)
+                if slug is None:
+                    problems.append(f"  BAD ROW  {where}: {element}: `{token}` is not a repo URL in {'/'.join(OWNED_ORGS)}")
+                    continue
+                key = (element, ("fork", slug))
+            else:
+                key = (element, ("path", token))
+            if key in listed:
+                problems.append(f"  BAD ROW  {where}: {element}: `{token}` already listed at line {listed[key]}")
+                continue
+            listed[key] = lineno
+    return listed
+
+
+def main():
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+    os.chdir(root)
+
+    print(f"==> Checking carried patches and fork pins against {DOC}...")
+    problems = []
+    aliases = load_aliases()
+    carries, owned_seen = scan_tree(aliases, problems)
+    listed = parse_doc(aliases, problems)
+
+    for key in sorted(carries.keys() - listed.keys()):
+        element, _ = key
+        problems.append(f"  MISSING  {element}: {carries[key]} has no row in {DOC}")
+
+    for key in sorted(listed.keys() - carries.keys()):
+        element, (kind, value) = key
+        where = f"{DOC}:{listed[key]}"
+        shown = value if kind == "path" else f"fork pin {value}"
+        if not pathlib.Path(element).is_file():
+            why = "element no longer exists"
+        elif kind == "path" and not pathlib.Path(value).exists():
+            why = "patch no longer exists"
+        elif kind == "fork" and value in FIRST_PARTY:
+            why = "repo is in FIRST_PARTY, so it is not a carry"
+        else:
+            why = "element no longer carries it"
+        problems.append(f"  STALE    {element}: {shown} ({why}; row at {where})")
+
+    for slug, reason in FIRST_PARTY.items():
+        if slug not in owned_seen:
+            problems.append(f"  STALE    FIRST_PARTY {slug}: no source uses it any more ({reason})")
+
+    if problems:
+        print("\n".join(problems))
+        print(f"""==> patch-inventory-check FAILED.
+
+    Every patch or fork pin krytis carries against a source it does not own
+    needs a row in {DOC},
+    added or removed in the same PR as the carry. That file's Inventory
+    section describes the column format.
+
+      MISSING  add a row (or the path/URL to the element's existing row).
+      STALE    delete the row or token. If the carry moved, fix the path.
+      BAD ROW  keep exactly one backticked element path in the first column, and
+               only backticked patch paths / fork URLs in the second.
+
+    A `kitten-lily/*` or `starlit-os/*` repo that is NOT a fork
+    (`gh api repos/<owner>/<repo> --jq .fork` -> false) goes in FIRST_PARTY in
+    mise/tasks/patch-inventory-check, with a reason.""")
+        return 1
+
+    elements = {element for element, _ in carries}
+    print(f"==> patch-inventory-check passed: {len(carries)} carr{'y' if len(carries) == 1 else 'ies'} "
+          f"in {len(elements)} element(s), {len(FIRST_PARTY)} first-party repo(s) exempt.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -519,7 +519,10 @@ Worktrees for fork work live beside the fork, not in krytis:
 ### Auditing the fork inventory (which forks are live, and how far they've drifted)
 
 "Which forks are we on?" is answered by the element sources, not by the fork list: a fork
-only matters if some `sources:` entry names it. Both halves are one command each.
+only matters if some `sources:` entry names it. Every fork pin krytis builds has a row in
+`docs/design/carried-patches.md`, and `mise run patch-inventory-check` keeps that list in
+step with the elements. The commands below also cover what the check can't see: forks
+nothing points at, and how far a carried branch has drifted.
 
 ```shell
 # Forks that exist, in both orgs we own.

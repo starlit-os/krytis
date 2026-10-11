@@ -1128,7 +1128,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
 | Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list) |
-| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below); `ref-status [--ref <rev>] [--text-file <path>] [--no-issues] [--all]` — report-only: closed krytis `#N` next to open-status wording, and other projects' issue/PR status claims flagged undated, stale or closed, across `docs/`, `elements/`, `mise/tasks/` and open issue bodies. A manual step of the `skill-rot-audit` skill, not a gate: it needs `gh` auth and exits 0 whatever it finds (see below) |
+| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below); `patch-inventory-check` — fail if a `kind: patch` source or owned-org fork pin has no row in [`docs/design/carried-patches.md`](../design/carried-patches.md), or a row names a carry that is gone (`checks.yml`, every PR; see below); `ref-status [--ref <rev>] [--text-file <path>] [--no-issues] [--all]` — report-only: closed krytis `#N` next to open-status wording, and other projects' issue/PR status claims flagged undated, stale or closed, across `docs/`, `elements/`, `mise/tasks/` and open issue bodies. A manual step of the `skill-rot-audit` skill, not a gate: it needs `gh` auth and exits 0 whatever it finds (see below) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 | Element pin checks | `rust-bindgen-check` `gnome-disk-utility-check` — assert a forked override still matches the freedesktop-sdk / gnome-build-meta element it was copied from; `gtk3-mirror-check` — the same for every GTK3-strip mirror of #641 (`overrides/libportal.bst`, `gnome-desktop.bst`, `libdecor.bst`), table-driven, failing with "delete this mirror" once upstream drops GTK3 itself (see [`bst.md`](bst.md) § Default-`auto` meson features are *on* in both junctions); `libdisplay-info-check` — whether the 0.3.0 hold can be dropped yet; `greetd-relock` — regenerate greetd's `Cargo.lock` bump patch; `gtk3-audit [--tag]` — graph + ELF scan of what still pulls GTK3 in, against a ratcheting allowlist that each #641 step trims (see [`bst.md`](bst.md) § "What pulls library X into the image" needs the graph *and* an ELF scan) |
@@ -1185,6 +1185,32 @@ same as an oversized file: a stale exemption would otherwise silently excuse a f
 file re-added at that path. `--max-bytes` and `--ref` override the 5 MiB ceiling and
 the revision checked, which is also how to see the failure for yourself —
 `mise run large-blob-check --ref e3b241c` still reports the original offender.
+
+**`patch-inventory-check` uses the same tree-not-diff design, for the same reason.**
+The carried-patch table spent its first months as #483's issue body. Every PR that
+*removed* a carry updated it, because whoever deletes a patch goes looking for its row.
+No PR that *added* one did, because the diff never showed the table. By 2026-10-02 six of
+nine carries were missing (#1070). The check parses every `elements/**/*.bst` and
+`include/**/*.yml` (an `(@)` include can splice `sources:` into any element) as YAML.
+It walks the whole document, so a patch inside a `(?)` conditional or on a junction
+element counts too. It compares both directions: carry without a row is `MISSING`, row
+without a carry is `STALE`. It cannot judge whether a row's *Why* or *Removal condition*
+is still true; that stays a review question, and for mirrors the `<name>-check` drift
+tasks cover it.
+
+**A `kitten-lily/*` URL is not automatically a fork.** `desktop/presence-bridge.bst`
+builds `github:kitten-lily/presence-bridge.git`, which is krytis's own project
+(`gh api repos/kitten-lily/presence-bridge --jq .fork` → `false`), in the same org as
+the `kitten-lily/noctalia` fork pin. The check runs without network access, so it can't
+ask GitHub. It treats every source URL that resolves (through `include/aliases.yml`) to a
+`kitten-lily/*` or `starlit-os/*` repo as a fork pin needing a row, unless the repo is in
+the task's `FIRST_PARTY` dict with a reason. The default is deliberately "fork". The
+inverse, a list of known forks, would pass a new fork pin nobody remembered to list,
+which is the #483 failure again. A new first-party repo instead fails once, loudly,
+until somebody classifies it. As with `large-blob-check`'s allowlist, a `FIRST_PARTY`
+entry no source uses any more fails the gate. A fork in an org krytis doesn't own looks
+like any upstream URL, so the check can't see it; such pins still need a hand-written
+row.
 
 **`ref-status` is a lead generator, so precision mattered more than recall — the first
 draft drowned its own signal.** Run against the tree just before #1069 (the doc-rot fix

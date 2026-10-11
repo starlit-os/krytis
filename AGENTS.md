@@ -176,9 +176,12 @@ The #1056 triage (2026-10-02) found two more ways rot gets in, both outside what
   `publish.yml` change whose comment says "That is the gap #418 closes". When a PR changes a
   fact, grep the **open** krytis issues for it as well as `docs/`
   (`gh issue list --state open --search '<term> in:body'`), and edit the bodies that state the
-  old version in the same work session. The same goes for inventory tables kept in an issue:
-  #483's carried-patch table was missing six of nine carries (five patched elements and a fork
-  pin), because each was added by a PR whose diff could not show the table.
+  old version in the same work session. An inventory table is worse off in an issue than
+  in a doc: #483's carried-patch table was missing six of nine carries (five patched
+  elements and a fork pin), because each was added by a PR whose diff could not show the
+  table. It now lives in `docs/design/carried-patches.md`, where
+  `mise run patch-inventory-check` fails CI when it disagrees with the elements (#1070).
+  Any inventory a PR can make stale belongs in the repo, next to a check that can read it.
 
 ---
 

@@ -15,6 +15,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Package a Zig project, or regenerate a `build.zig.zon` dep list | [`docs/skills/bst.md`](skills/bst.md) § Zig Projects |
 | Package a prebuilt desktop app — choose `.deb` vs portable tarball, defuse an Electron self-updater | [`docs/skills/bst.md`](skills/bst.md) § Electron self-updaters on a read-only image |
 | Backport a patch onto a release pinned by a junction | [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
+| Add, drop or audit a carried patch or fork pin (`mise run patch-inventory-check`) | [`docs/design/carried-patches.md`](design/carried-patches.md), [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
 | Work with greetd / noctalia-greeter / wlroots rendering | [`docs/skills/desktop.md`](skills/desktop.md) |
 | Make seance's sidebar track omp (oh-my-pi) sessions, or write an omp extension (`mise run omp-seance:install`, `mise run omp-seance:test`) | [`docs/skills/desktop.md`](skills/desktop.md) § seance: tracking omp (oh-my-pi) sessions with a user extension (#1018) |
 | Change which terminal `Mod+Return` opens, or which one runs commands for other apps (`xdg-terminal-exec`, noctalia's `Terminal=true` entries) — they are deliberately different | [`docs/skills/desktop.md`](skills/desktop.md) § TerminalEmulator is a category, not a capability |

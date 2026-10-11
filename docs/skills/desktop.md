@@ -637,11 +637,12 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
 - Verify before committing: check out the pinned ref, `patch -p1 --dry-run <
   patches/noctalia-greeter/<name>.patch` from the repo root. Confirms both hunk context and
   strip level before `bst build` ever sees it.
-- **Add or update a row in [issue #483](https://github.com/starlit-os/krytis/issues/483)'s
-  patch inventory in the same PR** — that issue is the single tracked list of every patch
-  krytis carries against a non-krytis-owned source (own fix or upstream backport alike), and
-  removing a patch (once upstream absorbs it, as happened with
-  `0001-show-pam-info-cue.patch`) needs the same row deleted there.
+- **Add or update a row in [`docs/design/carried-patches.md`](../design/carried-patches.md)
+  in the same PR**. That file is the single list of every patch krytis carries against a
+  non-krytis-owned source (own fix or upstream backport alike). Removing a patch (once
+  upstream absorbs it, as happened with `0001-show-pam-info-cue.patch`) means deleting
+  its row too. `mise run patch-inventory-check` fails the PR if either side is missing.
+  The same applies to a fork pin, such as switching `url:` to a `kitten-lily/*` fork.
 
 ### Contributing back to `noctalia-dev`: no AI policy exists, but the PR template is bot-enforced
 
