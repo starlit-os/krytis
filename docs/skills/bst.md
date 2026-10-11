@@ -369,7 +369,9 @@ assertion on what it produced (`test -s <output>`), not on its exit status.
 
 ## System-wide mise tasks via BST element
 
-**File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly in `/etc/mise/config.toml` using `[tasks.*]` TOML blocks pointing to the script files. Ship both: the scripts (for execution) and `config.toml` (for discovery).
+**File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly with `[tasks.*]` TOML blocks pointing to the script files, either in `/etc/mise/config.toml` or in a `/etc/mise/conf.d/*.toml` fragment. Ship both: the scripts (for execution) and the TOML (for discovery).
+
+**A second element declaring tasks uses a `conf.d` fragment, never `config.toml`.** `config/fido2-tasks.bst` owns `/etc/mise/config.toml`; another element installing it is an overlap. mise loads `[tasks.*]` from `/etc/mise/conf.d/<name>.toml` with no `config.toml` present at all (checked 2026-10-11 with mise 2026.10.7: `MISE_SYSTEM_CONFIG_DIR=<dir>` holding only `conf.d/pb.toml`, run from a directory with no project config, lists and runs the task). One-line tasks need no script file: `desktop/presence-bridge.bst` heredocs `/etc/mise/conf.d/presence-bridge.toml` with inline `run = "systemctl --user enable --now …"` strings.
 
 Use quoted keys for namespace separators: `[tasks."fido2:enroll"]`.
 
@@ -2388,16 +2390,20 @@ sources:
     name: ...
 ```
 
-**cargo2 sources are generated from Cargo.lock**, not written by hand:
+**cargo2 sources are generated from Cargo.lock**, not written by hand. `bst source
+track` does it: the cargo2 plugin sets `BST_REQUIRES_PREVIOUS_SOURCES_TRACK`, so
+tracking stages every source above it (git ref already moved, `kind: patch` sources
+applied) and rebuilds the `ref:` list from that tree's `Cargo.lock` in the same pass.
+A new element can ship the cargo2 source with no `ref:` at all and let the first
+track fill it in (`desktop/presence-bridge.bst`, #1152: the tracked list was
+byte-identical to the script's output). The script is for a `Cargo.lock` outside the
+element, e.g. `mise run greetd-relock` writing a lock bump before its patch exists:
 
 ```bash
 python3 files/scripts/generate_cargo_sources.py /path/to/Cargo.lock
 ```
 
-To update after a version bump:
-1. `mise run bst -- source track desktop/<name>.bst`
-2. `mise run bst -- shell --build desktop/<name>.bst` — copy out the new Cargo.lock
-3. Regenerate cargo2 sources and replace the block in the element
+To update after a version bump: `mise run bst -- source track desktop/<name>.bst`.
 
 **`url: crates:crates` is mandatory, and its absence is legal upstream.** The
 cargo2 plugin defaults to `https://static.crates.io/crates/` when `url:` is
@@ -3464,6 +3470,19 @@ kmscon[1077]: NOTICE: terminal: Display [DP] with backend [drm2d] ...
 Two symptoms, one cause: a `login:` prompt on screen between the Plymouth splash and the greeter, and — because the greeter's tty1 logind session never went **active** — `noctalia-greeter-compositor` dying on wlroots' hard-coded `WAIT_SESSION_TIMEOUT` (`10000 // ms`, `backend/backend.c:35`, no retry) on every single boot, masked only by greetd's `Restart=always` (#711, #712).
 
 **Audit rule when vendoring any element that ships systemd units:** list every unit with an `[Install]` section, and confirm each is either named by a preset rule or genuinely wanted enabled. `grep -l '^\[Install\]' /usr/lib/systemd/system/*` against a staged tree, cross-checked with `find /etc/systemd/system -name '*<pkg>*'` after `systemctl --root=<tree> preset-all`, catches this before it boots.
+
+### User units fall through too
+
+The same default-`enable` policy applies to `/usr/lib/systemd/user/`. The image's preset
+step (`oci/krytis/init-scripts.bst`) also presets user units globally, so a user unit with
+an `[Install]` section and no `user-preset` rule ships **enabled for every user**.
+Leaving the preset out does not mean "off". `desktop/presence-bridge.bst` (#1152) was meant
+to ship disabled. Its first build, with no preset file, produced
+`/etc/systemd/user/graphical-session.target.wants/presence-bridge.service`, and
+`systemctl --global is-enabled presence-bridge.service` printed `enabled` inside
+`localhost/krytis:latest`. Ship `%{indep-libdir}/systemd/user-preset/80-<name>.preset`
+containing `disable <unit>`. A user's own `systemctl --user enable` writes
+`~/.config/systemd/user`, which the global preset never touches, so the opt-in still works.
 
 ### Keep `NAutoVTs` aligned with the VT layout — but never set `ReserveVT=0`
 

@@ -85,7 +85,7 @@ forming an impression from the doc:
 ```bash
 ls elements/*/ include/ scripts/ mise/tasks/ patches/ files/ live/src/
 git ls-files 'mise/tasks/*' | sed 's|/|:|3'     # every repo task name
-grep -rn '^\[tasks\.' --include='*.toml' .      # image-shipped tasks too
+grep -rnE '^\s*\[tasks\.' --include='*.toml' --include='*.bst' .  # image-shipped tasks too
 ```
 
 Krytis-specific traps worth memorising:
@@ -98,8 +98,10 @@ Krytis-specific traps worth memorising:
 - `include/` holds `aliases.yml` and `variables.yml` (plus generated `image-version.yml`).
   Every other `include/*.yml` in the docs is freedesktop-sdk's.
 - Task names are `mise/tasks/<group>/<name>` → `<group>:<name>`, **plus** `[tasks."…"]`
-  headers in any `.toml`. `files/fido2-tasks/config.toml` declares the `fido2:*` tasks that
-  ship to `/etc/mise/config.toml` on a booted system — real tasks, absent from `mise/tasks/`.
+  headers in any `.toml` or `.bst`. `files/fido2-tasks/config.toml` declares the `fido2:*`
+  tasks that ship to `/etc/mise/config.toml`, and a heredoc in
+  `elements/desktop/presence-bridge.bst` declares `presence-bridge:*` in
+  `/etc/mise/conf.d/` — real tasks on a booted system, absent from `mise/tasks/`.
 - `mise tasks --json` is **not** authoritative: it hides the `<name>-update` tasks and
   includes the running user's own `~/.config/mise` tasks.
 - Some real paths are gitignored (`files/boot-keys/`, `include/image-version.yml`). Their

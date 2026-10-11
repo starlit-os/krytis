@@ -1,13 +1,13 @@
 # presence-bridge — host-side game detection for sandboxed Discord
 
-Status: **draft, not in the image (2026-10-09)**. The service lives in its own repo,
-[kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge),
-private as of 2026-10-09 and intended to go public. Its unit tests pass, and the
+Status: **in the image, installed disabled (2026-10-11)**. The service lives in its
+own repo, [kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge),
+public since 2026-10-09 (GitHub `PublicEvent` at 08:26Z). Its unit tests pass, and the
 README's live check passed on 2026-10-09 against the `com.discordapp.Discord`
 flatpak for World of Warcraft and Hearthstone launched from Faugus: detected,
 reported with the right start time, and cleared on exit
 ([kitten-lily/presence-bridge#3](https://github.com/kitten-lily/presence-bridge/pull/3)).
-Packaging it into krytis is still open (see *Packaging*).
+krytis builds it as `desktop/presence-bridge.bst` (see *Packaging*).
 
 This is option 2 of [#595](https://github.com/starlit-os/krytis/issues/595):
 "something outside any sandbox scans `/proc`, matches executables, and pushes
@@ -44,20 +44,24 @@ bridge skips the canonical `$XDG_RUNTIME_DIR/discord-ipc-N` by default.
 
 ## Packaging
 
-Planned shape, following `core/bootc.bst` and `config/xwayland-satellite.bst`:
+`desktop/presence-bridge.bst`, a `kind: manual` cargo build in the shape of
+`desktop/xwayland-satellite.bst` (upstream has no Makefile, so `kind: make` does not
+apply), pulled in by `stacks/desktop-apps.bst`:
 
-- A new `kind: make` element under `elements/desktop/`, with a `git_repo` source on
-  `github:kitten-lily/presence-bridge.git` with a `track:` glob on release tags,
-  followed by a `cargo2` block generated from the repo's `Cargo.lock`
-  (`docs/skills/bst.md` § Rust / Cargo Projects). Listing the element in the
-  `track` matrix of `.github/workflows/track-bst-sources.yml` satisfies the
-  AGENTS.md update path gate: `bst source track` moves the git ref and regenerates
-  the `cargo2` refs from the new lockfile in one pass.
-- Install `/usr/bin/presence-bridge` and the repo's `systemd/presence-bridge.service`
-  to `%{indep-libdir}/systemd/user/`, plus a `user-preset` enabling it.
-- Enabled by default is cheap: while no client socket exists the service only
-  probes for one, with no `/proc` scan and no request to discord.com.
-
-**Blocked while the repo is private.** BuildStream fetches the `git_repo` source
-anonymously, so CI and bow cannot fetch a private repo. The element has to wait for
-the repo to go public.
+- A `git_repo` source on `github:kitten-lily/presence-bridge.git` with `track: v*`,
+  matching the `v{{ version }}` tags release-plz cuts, followed by a `cargo2` source.
+  `bst source track` moves the git ref and regenerates the `cargo2` refs from the new
+  tag's `Cargo.lock` in one pass (`docs/skills/bst.md` § Rust / Cargo Projects).
+  Listing the element in the `track` matrix of `.github/workflows/track-bst-sources.yml`
+  satisfies the AGENTS.md update path gate. The tags are unsigned; the tracked
+  `ref:` pins the commit, so a moved tag cannot change what krytis builds.
+- Installs `/usr/bin/presence-bridge` and the repo's own
+  `systemd/presence-bridge.service` to `%{indep-libdir}/systemd/user/`.
+- **The unit ships disabled** (maintainer decision on #1152), even though running it
+  is cheap — while no client socket exists it only probes for one, with no `/proc`
+  scan and no request to discord.com. That takes a `disable presence-bridge.service`
+  user-preset rule: with no rule, the image's global preset step enables it
+  (`docs/skills/bst.md` § User units fall through too). Users opt in with
+  `mise presence-bridge:enable` and out with `mise presence-bridge:disable`
+  (`systemctl --user enable|disable --now presence-bridge.service`), declared by the
+  same element in `/etc/mise/conf.d/presence-bridge.toml`.

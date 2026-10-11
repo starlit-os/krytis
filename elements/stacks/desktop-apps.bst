@@ -23,6 +23,12 @@ depends:
   # Closes #609.
   - desktop/equibop.bst
 
+  # presence-bridge: host-side game detection reported to sandboxed (flatpak)
+  # Discord clients, which cannot see host PIDs (#595). Built from source,
+  # installed disabled; `mise presence-bridge:enable` opts in.
+  # docs/design/presence-bridge.md.
+  - desktop/presence-bridge.bst
+
   # ── Disk management ────────────────────────────────────────────────────────
   # GNOME Disks: partition editor / LUKS / SMART / disk-image tooling over the
   # udisks2 daemon already in the image. Local mirror of
