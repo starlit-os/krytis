@@ -1422,6 +1422,19 @@ element and a name-based check reports them as false gaps: `core/linux-cachyos.b
 by `kernel-update`, and `desktop/zig.bst` by `ghostty-update` (which bumps Zig when ghostty's
 `minimum_zig_version` moves). A naive name match over-reported 12 gaps where there were 9.
 
+### `releases/latest` is not "the latest source release"
+
+Most `<name>-update` tasks read `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name`
+and then download a fixed asset name from that tag. That breaks as soon as upstream
+publishes a release without that asset. `Qalculate/libqalculate` v5.13.2 (2026-10-10) is a
+Windows-only rebuild: its assets are `qalculate-5.13.2-x64.msi` and `.zip`, with no
+`libqalculate-5.13.2.tar.gz`. From then on `libqalculate-update` 404'd on every run,
+failing `track-libqalculate` even though there was nothing to update. The fix is to
+select the newest non-draft, non-prerelease release that *has* the asset (see the jq
+filter in `mise/tasks/libqalculate-update`), so a binary-only release reads as "up to
+date". If another updater starts 404ing on its download, check the release's asset list
+before suspecting the URL pattern: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].name'`.
+
 ### An auto-track `ref:` bump never builds the element — upstream dep additions land broken
 
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
