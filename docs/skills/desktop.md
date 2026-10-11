@@ -232,7 +232,7 @@ again with a different filename:
 ```sh
 config_file="$config_dir/config.toml"          # ~/.config/umbriel/config.toml
 if [ ! -f "$config_file" ]; then
-    printf '[include]\n%s\n' 'files = ["noctalia.toml"]' >"$config_file"
+    printf '[include.optional]\n%s\n' 'files = ["noctalia.toml"]' >"$config_file"
     exit 0
 fi
 ```
@@ -242,13 +242,28 @@ the palette include. Lookup is first-match, so `/etc/xdg/umbriel/` is never read
 again — every krytis default vanishes, *and so does upstream's packaged
 default*, because the tier-2 overlay is what pulled tier 3 in. The session drops
 to compiled-in defaults plus colours. With the seed present, `apply.sh` takes
-its other branch and awk-merges `"noctalia.toml"` into the existing
-`include.files`, appending it **last**, so precedence lands correctly with no
+its other branch: it preserves every user-owned entry in the required
+`[include]` list and adds its own to the optional one, which umbriel applies
+*after* the required files — so precedence lands correctly with no
 coordination between the two projects:
 
 ```toml
-files = ["/etc/xdg/umbriel/config.toml", "noctalia.toml"]
+[include]
+files = ["/etc/xdg/umbriel/config.toml"]
+
+[include.optional]
+files = ["noctalia.toml"]
 ```
+
+(noctalia ≤ v5.1.0 wrote a single required list,
+`files = ["/etc/xdg/umbriel/config.toml", "noctalia.toml"]`, relying on
+last-entry-wins instead. v5.2.0 moved to the optional section and added a
+`build_required()` pass that migrates the old entry out. Both shapes put the
+palette after the system config: umbriel merges `include.files`, then
+`include.optional.files`, then the including file itself (umbriel
+`src/config/config_merge.cpp`, `expandFile`). The optional shape also skips a
+missing palette silently, where a missing required include logs
+`include not found`.)
 
 Unlike `niri-skel.bst`, which seeds the *same* files at both tiers, the umbriel
 seed is a different file — a two-line include. Copying `/etc/xdg`'s config into
@@ -321,7 +336,7 @@ familiar key that behaves differently is worse than one that does nothing.
 | `toggle-column-tabbed-display` (`Mod+W`) | no tabbed columns at all — zero `tab` actions, zero schema keys |
 | `center-visible-columns` (`Mod+Ctrl+C`) | only `column-center`, which is niri's `center-column` (`Mod+C`) |
 | `reset-window-height` (`Mod+Ctrl+R`) | secondary extent can cycle and modify, not reset |
-| `screenshot-window` (`Alt+Print`) | neither umbriel nor noctalia captures a single window; region and fullscreen route through `noctalia msg` |
+| `screenshot-window` (`Alt+Print`) | no window capture at keybind level: umbriel has no screenshot action, and `noctalia msg` offers only `screenshot-region`, `screenshot-fullscreen [pick\|all]` and `screenshot-annotate` |
 | `urgent-color` | no urgency colour anywhere in the schema |
 | `tab-indicator`, `recent-windows` | subsystems do not exist |
 | `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` exposes only `match.namespace` + four blur keys; `colors.backdrop` is a colour, not placement |
@@ -333,14 +348,58 @@ familiar key that behaves differently is worse than one that does nothing.
 upstream already binds that key to `window-toggle-maximize` and a table merge
 cannot remove a bind, so it is left as upstream set it.
 
-#### Upstream bug found during the port
+#### noctalia's Umbriel template: a schema mismatch, fixed by the v5.2.0 bump
 
-noctalia v5.0.1's `umbriel.toml` template emits `colors.border.scratchpad_focused`
-and `colors.border.scratchpad_unfocused`. umbriel `2c683ca`'s schema has only
-`colors.border.{focused,outer,unfocused}`, so any account enabling the template
-gets a config `umbriel config validate` rejects. Same drift class as #980, on
-noctalia's side. Both are `noctalia-dev/` repos — Upstream Gate applies, nothing
-has been filed.
+noctalia **v5.1.0**'s `umbriel.toml` template emitted
+`colors.border.scratchpad_focused` and `colors.border.scratchpad_unfocused`,
+which umbriel accepts nowhere — its schema has only
+`colors.border.{focused,outer,unfocused}`. Any account enabling the template
+got a config `umbriel config validate` rejected.
+
+**v5.2.0 fixes it**, by moving those two colours to a construct that does
+exist (`window_rule[].border_color_focused` / `_unfocused` are both real
+schema paths):
+
+```toml
+[[window_rule]]
+match.is_scratchpad = true
+border_color_focused   = "#…FF"
+border_color_unfocused = "#…FF"
+```
+
+So nothing needs to be carried on the fork and nothing needs raising upstream.
+Re-checked 2026-10-11 against the current pin, `v5.2.1-3-g1047f8fd…` on
+`kitten-lily/noctalia` `feat/system-prompter`: `assets/templates/umbriel/umbriel.toml`
+and `apply.sh` are unchanged in these respects, and in `localhost/krytis:latest`
+(noctalia v5.2.1, umbriel `e4b67608c45c`) `umbriel config validate` accepts the
+`[[window_rule]]` shape and still rejects `colors.border.scratchpad_focused` with
+`unknown key`.
+
+**The same release also rewrote `apply.sh`, and that matters more than the
+fix.** v5.2.0 switches the generated entry from `[include]` to
+`[include.optional]` and adds a `build_required()` pass that migrates
+`noctalia.toml` out of the required section while preserving user-owned
+includes. Re-running the A/B against v5.2.0's own script:
+
+| | `/etc/xdg` reached? | `umbriel config validate` |
+|---|---|---|
+| no seed | **no** — `[include.optional] files = ["noctalia.toml"]` | **OK** |
+| seeded | yes — `[include]` `/etc/xdg/…` + `[include.optional]` `noctalia.toml` | OK |
+
+Note the top-right cell. Under v5.1.0 an unseeded account produced an
+*invalid* config, because the scratchpad keys tripped the validator — the
+breakage was at least loud. Under v5.2.0 it validates cleanly while silently
+discarding every krytis default. **Fixing the schema bug removed the only
+accidental signal that the seed was missing**, which makes
+`config/umbriel-skel.bst` the sole thing standing between a user and a
+silently-default session. A gate that only checks validity would not catch it;
+`umbriel-config-validate` asserts the seed's *presence* for exactly this reason.
+
+**Check the version against the image, not against a log line you read
+earlier.** This entry first said v5.0.1, taken from an `[app] noctalia vX`
+banner in a throwaway test image two rebuilds old. `podman run --rm
+--entrypoint noctalia localhost/krytis:latest --version` is the cheap answer,
+and `elements/desktop/noctalia.bst`'s `ref:` is the authoritative one.
 
 
 **Umbriel's routing comes from upstream, plus a krytis delta** — `xdg-desktop-portal-umbriel`
@@ -382,11 +441,31 @@ is written out in the element's `FORK PIN` comment as prose — there is no comm
 PR at all — between 2026-09-08 and 2026-09-25 upstream shipped v5.1.0 and nothing in the
 repo could say the image was a release behind. Advancing it is manual and has three steps
 that all matter: rebase `feat/system-prompter` onto the new tag, **push that tag to the
-fork**, then `mise run bst source track desktop/noctalia.bst`. Skipping the tag push is
-silent rather than fatal — `git describe` falls back to the newest tag the *fork* knows,
-so the ref lands as `v5.0.1-56-g<sha>` instead of `v5.1.0-2-g<sha>`: same commit, but the
-ref no longer states which release the image is on, which is the only thing that ref
-prefix is for. The v5.0.0-beta2 re-pin
+fork**, then re-pin.
+
+**Skipping the tag push is fatal, not cosmetic — this section used to claim the
+opposite.** BuildStream's `git_repo` plugin resolves the tag component of a
+`git describe` ref against the *fork* remote, so a ref naming a tag the fork
+lacks aborts the fetch outright (observed on the v5.2.0 bump, #982):
+
+```
+FAILURE desktop/noctalia.bst: ref refs/tags/v5.2.0 not found in remote
+        https://github.com/kitten-lily/noctalia.git
+```
+
+Tags do not propagate to a fork on push, and `gh repo sync` does not carry them
+either — the fork had `v5.0.1` and `v5.1.0` but not `v5.2.0`. Fix with
+`git push origin refs/tags/<tag>` before re-pinning.
+
+The older "silent, not fatal" claim described a different path: it is true only
+when the ref is generated by `git describe` inside a clone that has *no*
+upstream tags, where describe falls back to the newest tag the fork knows and
+the ref lands as `v5.0.1-56-g<sha>` instead of `v5.1.0-2-g<sha>` — same commit,
+but the ref no longer states which release the image is on. Any clone that has
+run `git fetch upstream --tags` (which a rebase onto a new tag requires)
+produces the correct-looking ref and the hard failure instead.
+
+The v5.0.0-beta2 re-pin
 (99 commits past the old `main` pin) changed the upstream dependency surface —
 upstream un-vendored `md4c`/`tomlplusplus` from `third_party/` and added
 `nlohmann_json` and stb header requirements. The v5.0.0-beta.4 re-pin (#352)

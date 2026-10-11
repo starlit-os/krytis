@@ -10,7 +10,7 @@
 # Its apply.sh branches on whether this file already exists:
 #
 #   if [ ! -f "$config_file" ]; then
-#       printf '[include]\n%s\n' 'files = ["noctalia.toml"]' >"$config_file"
+#       printf '[include.optional]\n%s\n' 'files = ["noctalia.toml"]' >"$config_file"
 #       exit 0
 #   fi
 #
@@ -23,15 +23,23 @@
 # is the same trap krytis#490 hit with niri, which is why config/niri-skel.bst
 # exists; see krytis#982.
 #
-# When the file DOES exist, apply.sh instead awk-merges "noctalia.toml" into
-# include.files and appends it LAST, so the resulting order is correct without
-# any coordination:
+# When the file DOES exist, apply.sh instead leaves every user-owned entry in
+# the required include.files alone and adds its own to include.optional.files,
+# which umbriel applies AFTER the required list -- so the resulting order is
+# correct without any coordination:
 #
 #   [include]
-#   files = ["/etc/xdg/umbriel/config.toml", "noctalia.toml"]
+#   files = ["/etc/xdg/umbriel/config.toml"]
+#
+#   [include.optional]
+#   files = ["noctalia.toml"]
 #
 # -- system config first, live noctalia palette overriding it, and upstream's
 # packaged default pulled in transitively by the system config's own include.
+# (noctalia <= v5.1.0 appended "noctalia.toml" to the required list instead and
+# relied on last-entry-wins. v5.2.0 moved it to the optional section and
+# migrates the old entry out; both orders are correct here, but the optional
+# one also skips a deleted palette file silently instead of warning.)
 #
 # Edit freely: values set below the include win over everything it pulls in,
 # and additional includes can be listed after it.

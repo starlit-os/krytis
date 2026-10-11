@@ -50,6 +50,7 @@ include/flags.yml                         # freedesktop-sdk's (exports CFLAGS); 
 include/runtime.yml                       # freedesktop-sdk's (included by project.conf); cited by bst.md
 include/meson.build                       # wlroots' own source tree; cited by desktop.md
 docs/user/configuration.md                # noctalia-dev/umbriel's own docs; cited by desktop.md and files/umbriel/*.toml
+docs/user/keybinds.md                     # noctalia-dev/umbriel's own docs; cited by files/umbriel/binds.toml for the screenshot route
 patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch  # gnome-build-meta's patch set; cited by bst.md
 scripts/Makefile.in                       # xdg-utils' own source tree; cited by desktop.md
 scripts/build-live-squashfs.sh            # dakota-iso's; cited by dakota-iso.md, secure-boot.md
