@@ -171,8 +171,16 @@ the gap queue (for up to 24h) rather than fail.
       real run on L instead, **37930363709** (2026-10-09): removed `grype@0.120.0`
       (mise installs 637M → 551M), reclaimed 264 MB, disk 93G used of 394G, CAS 73G. The
       dry-run path ran on L through `mise run runner-vps:gc -- --dry-run` (#1159, #1161).
-- [ ] Dispatch `build-iso.yml` (unsealed, `publish_r2: false`): an ISO is produced.
-      Waiting on a publish the operator is dispatching first.
+- [x] Dispatch `build-iso.yml` (unsealed, `publish_r2: false`): an ISO is produced.
+      Run as **sealed with `publish_r2: true`** instead, after publish 38086375133:
+      **38090707517** (2026-10-10 22:15 UTC, `cabf73e`) on machine `cloud-server-10673574`,
+      21 min, success, against 26 and 31 min for the last two runs on Contabo. Steps: pull
+      payload 176s + sealed payload 182s, Build ISO 794s (the task's own
+      `verify-iso-payload` included), R2 upload 115s for a 4.375 GiB ISO.
+      `iso.ririi.dev` serves it: size 4697595904 and the checksum match. Disk afterwards: 153G
+      used of 394G. rclone logged a 501 on the first attempt of both uploads, then
+      `Attempt 2/3 succeeded`. The Contabo run 35999308963 did the same, so this is not new;
+      it is recorded in ci-runner.md § R2 publish.
 - [x] The next same-repo PR's `build-changed.yml` runs on L, or open a throwaway PR as #1123 did.
       PRs #1159–#1162 each ran it on `krytis-vps`, machine `cloud-server-10673574`
       (e.g. 37929107309, 11s). None changed an element, so each reported "Nothing to

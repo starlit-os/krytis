@@ -718,6 +718,15 @@ ISO it just built. Both checks, not one: a size match with a checksum
 mismatch means Cloudflare served an equally-sized *older* object, which is
 precisely what a size-only check cannot see.
 
+**Expect `ERROR : … Failed to copy: NotImplemented: Not Implemented` (HTTP 501) on every
+upload, then `Attempt 2/3 succeeded`.** Both rclone calls (the ISO and its `.sha256`) log
+this at the end of the first attempt, after all 4.375 GiB have been sent. The second attempt
+finishes in the same second with `Checks: 1 / 1`, which means rclone found the object already
+present and matching, and so the bytes did land. Seen on run 35999308963 (Contabo,
+2026-09-24) and run 38090707517 (one.com L, 2026-10-10). Which R2 call answers 501 is not
+known; the size-plus-checksum check above is what proves the publish, not rclone's
+output. A 501 that does *not* end in `Attempt 2/3 succeeded` is a real failure.
+
 **A successful publish suppresses the artifact upload, and the `failure()`
 clause in that condition is not decoration.** The step carries
 `if: ${{ !(inputs.sealed && inputs.publish_r2) || failure() }}`. Skipping
