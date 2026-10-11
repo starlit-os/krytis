@@ -1422,6 +1422,19 @@ element and a name-based check reports them as false gaps: `core/linux-cachyos.b
 by `kernel-update`, and `desktop/zig.bst` by `ghostty-update` (which bumps Zig when ghostty's
 `minimum_zig_version` moves). A naive name match over-reported 12 gaps where there were 9.
 
+### `releases/latest` is not "the latest source release"
+
+Most `<name>-update` tasks read `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name`
+and then download a fixed asset name from that tag. That breaks as soon as upstream
+publishes a release without that asset. `Qalculate/libqalculate` v5.13.2 (2026-10-10) is a
+Windows-only rebuild: its assets are `qalculate-5.13.2-x64.msi` and `.zip`, with no
+`libqalculate-5.13.2.tar.gz`. From then on `libqalculate-update` 404'd on every run,
+failing `track-libqalculate` even though there was nothing to update. The fix is to
+select the newest non-draft, non-prerelease release that *has* the asset (see the jq
+filter in `mise/tasks/libqalculate-update`), so a binary-only release reads as "up to
+date". If another updater starts 404ing on its download, check the release's asset list
+before suspecting the URL pattern: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].name'`.
+
 ### An auto-track `ref:` bump never builds the element — upstream dep additions land broken
 
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
@@ -1640,7 +1653,15 @@ Every "Create or update PR" step commits via `createCommitOnBranch` (GraphQL) th
 Two non-obvious things found building it:
 
 - **`gh api graphql -f`/`-F` cannot pass JSON-typed (array/object) GraphQL variables.** Both flags always coerce to a string (or, for `-F`, a small set of scalar literals) — there is no way to hand `[FileAddition!]!` a real JSON array through them. Build the whole request body (`{query, variables: {...}}`) as JSON with `jq -n --argjson ...` and pipe it to `gh api graphql --input -` instead.
-- **Force-pushing a branch to be identical to its base — even for a moment — auto-closes any open PR for it.** The script's reset step (`git checkout -B` equivalent: move the branch ref to `main`'s current tip) briefly leaves the branch 0 commits ahead before the commit step adds one back; GitHub reacts to that intermediate state by closing the PR (observed directly building this: PR #705, closed and force-pushed in the same timeline event, by the API caller, not a person). The original `git commit && git push --force-with-lease` flow never hit this because reset-then-commit was one local operation force-pushed atomically in a single push; two separate API calls are two separate events GitHub can react to in between. The script defends against it: after committing, it checks for a `CLOSED` (not merged) PR on the branch and reopens it — without that, a caller's default `gh pr list --head <branch>` (open-only) would find nothing and create a duplicate PR instead of updating the real one.
+- **Never let the tracked branch point at its base, even for a moment: GitHub auto-closes the PR, and reopening it is a race.** The script used to reset the branch to `main` and then commit onto it. Between those two API calls the branch was 0 commits ahead, and GitHub closed the open PR (PR #705, closed and force-pushed in the same timeline event by the API caller). The old `git commit && git push --force-with-lease` flow never hit this, because the reset and the commit went out in one push.
+
+  Reopening it afterwards is a race the script can lose two ways, and #1168 lost both, stranding a zen-browser bump from 2026-10-10 to 10-11.
+  - **The close lands late.** The bot closed #1168 at 09:31:29Z, the same second the commit landed, yet the script's `gh pr list --state all` straight after still saw it open, so it never tried to reopen it.
+  - **The reopen comes too late.** Once GitHub has registered the force-push on a closed PR, it refuses with `state cannot be changed. The auto/track-zen-browser branch was force-pushed or recreated` (workflow.md has the same rule for a human re-sign, #1101 → #1102). Every later run hit that, and the failed reopen ended the job under `set -e` before the caller's "open a PR if none is open" branch ran.
+
+  A reopen fired within seconds can still win. A control run of the old script against a throwaway draft PR (#1186, 2026-10-11) logged `closed` at 11:23:49Z, `head_ref_force_pushed` at :50 and `reopened` at :52. That is why the bug was intermittent.
+
+  The script now creates the commit on a scratch branch (`tracking-scratch/<run_id>-<attempt>/<branch>`, made from `main`), moves the tracked branch onto it with one forced ref update, and deletes the scratch branch on exit. The PR's head goes straight from the old update commit to the new one and is never 0 ahead, so nothing closes it and there is no reopen step. A PR a person closed stays closed, and the caller opens a fresh one. The scratch branch sits outside `auto/`. Ruleset "Main" targets only `~DEFAULT_BRANCH`, and the only `push:`-triggered workflow (`checks.yml`) is filtered to `main`, so creating the scratch branch triggers nothing.
 
 ### GitHub App token for opening tracking PRs
 

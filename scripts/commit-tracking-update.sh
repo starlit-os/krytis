@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Reset <branch> to origin/main's tip and create one new commit there
-# containing whatever changed (vs HEAD) under the given <path> arguments
-# (files or directories), via GitHub's createCommitOnBranch GraphQL
-# mutation instead of `git commit && git push`.
+# Point <branch> at one new commit on top of origin/main's tip, containing
+# whatever changed (vs HEAD) under the given <path> arguments (files or
+# directories), created via GitHub's createCommitOnBranch GraphQL mutation
+# instead of `git commit && git push`.
 #
 # Why: github-actions[bot] has no settings page, so there is no way to
 # attach a GPG/SSH signing key to it — its commits can never verify.
@@ -44,12 +44,27 @@ if [ "${#CHANGED[@]}" -eq 0 ]; then
   exit 1
 fi
 
-echo "commit-tracking-update: resetting $BRANCH to main ($MAIN_SHA)"
-if gh api "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
-  gh api -X PATCH "repos/$REPO/git/refs/heads/$BRANCH" -f sha="$MAIN_SHA" -F force=true >/dev/null
-else
-  gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$MAIN_SHA" >/dev/null
-fi
+# The commit is built on a throwaway scratch branch, and only then is $BRANCH
+# moved onto it, in one ref update. $BRANCH must never point at main itself,
+# not even for the moment between a reset and a commit: GitHub auto-closes an
+# open PR whose head is 0 commits ahead of its base (PR #705), does so
+# asynchronously (#1168 closed after this script had already listed it as
+# open), and once it has registered the follow-up force-push it refuses to
+# reopen the PR ("state cannot be changed. The … branch was force-pushed or
+# recreated"). #1168 stranded an update that way until someone opened a
+# new PR by hand. See docs/skills/bst.md § Signed commits via
+# `scripts/commit-tracking-update.sh`.
+#
+# The scratch name sits outside auto/ so nothing that matches tracking
+# branches by prefix sees it; run id + attempt keep parallel matrix jobs apart.
+SCRATCH="tracking-scratch/${GITHUB_RUN_ID:-local-$$}-${GITHUB_RUN_ATTEMPT:-1}/$BRANCH"
+cleanup_scratch() {
+  gh api -X DELETE "repos/$REPO/git/refs/heads/$SCRATCH" >/dev/null 2>&1 || true
+}
+trap cleanup_scratch EXIT
+
+echo "commit-tracking-update: building the commit on $SCRATCH (from main, $MAIN_SHA)"
+gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$SCRATCH" -f sha="$MAIN_SHA" >/dev/null
 
 # Build additions/deletions as proper JSON (not string concatenation) so
 # base64 payloads and unicode paths can never break the request body.
@@ -71,7 +86,7 @@ for f in "${DELETED[@]:-}"; do
   DELETIONS_JSON=$(jq -c --arg path "$f" '. + [{path: $path}]' <<<"$DELETIONS_JSON")
 done
 
-echo "commit-tracking-update: committing ${#CHANGED[@]} file(s) to $BRANCH"
+echo "commit-tracking-update: committing ${#CHANGED[@]} file(s)"
 
 QUERY='
 mutation($repo: String!, $branch: String!, $oid: GitObjectID!, $headline: String!, $additions: [FileAddition!]!, $deletions: [FileDeletion!]!) {
@@ -85,10 +100,10 @@ mutation($repo: String!, $branch: String!, $oid: GitObjectID!, $headline: String
   }
 }'
 
-jq -n \
+COMMIT=$(jq -n \
   --arg query "$QUERY" \
   --arg repo "$REPO" \
-  --arg branch "$BRANCH" \
+  --arg branch "$SCRATCH" \
   --arg oid "$MAIN_SHA" \
   --rawfile headline "$MESSAGE_FILE" \
   --argjson additions "$ADDITIONS_JSON" \
@@ -107,23 +122,15 @@ jq -n \
     if .errors then
       (.errors | tostring) | halt_error(1)
     else
-      "Committed: " + .data.createCommitOnBranch.commit.oid + " " + .data.createCommitOnBranch.commit.url
+      .data.createCommitOnBranch.commit | .oid + " " + .url
     end
-  '
+  ')
+read -r NEW_OID NEW_URL <<<"$COMMIT"
 
-# The ref-reset above briefly makes $BRANCH identical to main (0 commits
-# ahead) before the commit above adds one back — GitHub reacts to that
-# intermediate "nothing to merge" state by auto-closing any open PR for
-# this branch (observed directly: #699 testing, PR #705). Reopen it if so
-# — the alternative is a caller's `gh pr list --head "$BRANCH"` (open-only
-# by default) finding nothing and creating a duplicate PR instead of
-# updating the real one.
-EXISTING_STATE=$(gh pr list --head "$BRANCH" --state all --json number,state,isDraft --jq '.[0]' 2>/dev/null || true)
-if [ -n "$EXISTING_STATE" ]; then
-  PR_NUMBER=$(jq -r '.number' <<<"$EXISTING_STATE")
-  PR_STATE=$(jq -r '.state' <<<"$EXISTING_STATE")
-  if [ "$PR_STATE" = "CLOSED" ]; then
-    echo "commit-tracking-update: reopening PR #$PR_NUMBER (auto-closed by the ref reset above)"
-    gh pr reopen "$PR_NUMBER" >/dev/null
-  fi
+echo "commit-tracking-update: moving $BRANCH to $NEW_OID"
+if gh api "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
+  gh api -X PATCH "repos/$REPO/git/refs/heads/$BRANCH" -f sha="$NEW_OID" -F force=true >/dev/null
+else
+  gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$NEW_OID" >/dev/null
 fi
+echo "Committed: $NEW_OID $NEW_URL"
