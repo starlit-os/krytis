@@ -70,7 +70,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/presence-bridge.git
   track: v*
-  ref: v0.1.0-0-g4ab72ad5cbec152b168f4d8a26f9c83103e6915d
+  ref: v0.2.0-0-ge446bdcdca816cb8eb712a49da7f4cc756aa6290
 - kind: cargo2
   url: crates:crates
   ref:
