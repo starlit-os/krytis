@@ -646,8 +646,9 @@ If a local fix is needed before it lands upstream, add a `kind: patch` source af
 
 ### Contributing back to `noctalia-dev`: no AI policy exists, but the PR template is bot-enforced
 
-Relevant because krytis carries fork patches it may want to upstream (#999), and because
-krytis's own commits carry `Assisted-by:` trailers per `AGENTS.md`.
+Relevant because krytis carries fork patches it may want to upstream (the inventory is
+`docs/design/carried-patches.md`), and because krytis's own commits carry `Assisted-by:`
+trailers per `AGENTS.md`.
 
 **There is no AI/LLM contribution policy anywhere in `noctalia-dev`, checked 2026-09-29.**
 Every path named in this subsection belongs to an upstream `noctalia-dev/*` tree, not to
@@ -699,7 +700,8 @@ inhibit-release path re-read on the v5.2.1 fork pin for the resume-flash fix bel
 **The locker authenticates through PAM service `login`, not `greetd`** — hardcoded in
 noctalia's `src/shell/lockscreen/lock_screen.cpp`, reaching krytis's `system-auth` from
 `elements/config/u2f-config.bst`. So a PAM decision taken for the greeter (e.g. #585's
-`pam_u2f` disable) does not apply here, and noctalia#4283's homed retry stall does. See
+`pam_u2f` disable) does not apply here. Since #999 the locker answers only the first password
+prompt, so with an enrolled FIDO2 key plugged in it takes the PIN rather than the password. See
 `docs/skills/pam.md` § The lock screen authenticates through `login`, not `greetd`.
 
 **Do not add swayidle/hypridle/swaylock/a `sleep.target` lock unit to get lock-on-suspend.**

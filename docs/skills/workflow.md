@@ -583,6 +583,16 @@ loop while `git rev-parse` resolved them fine a moment later, and the loop silen
 empty strings — reporting `IDENTICAL` for everything. Any comparison loop that can pass by
 comparing nothing must print the hash it compared, so an empty compare is visible.
 
+**Carrying an upstream commit that hasn't reached a release yet:** cherry-pick it onto the
+carried branch with `git cherry-pick -x` and keep the upstream author, as the noctalia
+`fbf410e2` backport did for #999. The `(cherry picked from commit …)` line means
+`git log --grep <sha>` finds it. When the branch is next rebased onto a tag that already
+contains the upstream commit, `git rebase` skips the copy because its patch-id matches, the
+same way the redundant BUILDING.md commit was dropped on 2026-09-25. Check the rebase output
+for the skip, then delete the carry's entry from the element header and
+`docs/design/carried-patches.md`. If the rebase *conflicts* on it instead, upstream changed the
+fix before releasing it. Take upstream's version and drop the cherry-pick.
+
 ## Archiving an Upstream Freezes Its PRs — Deleting the Head Fork Is the Only Exit
 
 A PR whose **base** repo gets archived becomes immutable for everyone, author included.

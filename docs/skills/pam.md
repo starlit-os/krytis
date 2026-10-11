@@ -1397,7 +1397,7 @@ Two facts worth extracting, both confirmed by more than one independent report:
 Until #996 krytis's first-boot wizard asked for the one setting every upstream thread tells
 people to disable. It no longer does.
 
-## The lock screen authenticates through `login`, not `greetd` — and noctalia#4283 hits krytis as shipped
+## The lock screen authenticates through `login`, not `greetd` — and only its first password prompt is answered
 
 **Neither this file nor `docs/skills/desktop.md` said which PAM service the locker opens
 before #996.** It matters: every PAM decision made for the greeter is invisible to the lock
@@ -1423,23 +1423,33 @@ all four phases, so the locker runs krytis's `system-auth` from
   greeter, where `elements/config/greetd-config.bst` has it commented out for #585. A FIDO2
   decision taken for `greetd` does not carry to the locker.
 
-**[noctalia#4283](https://github.com/noctalia-dev/noctalia/issues/4283) therefore applies to
-krytis as shipped.** The lock screen re-supplies the same rejected password to every
-`PAM_PROMPT_ECHO_OFF`, so `pam_systemd_home`'s five retries all consume it and a mistyped
-password takes 12–15 s to be reported instead of ~3 s. Confirmed present at krytis's pinned
-ref: `pamConversation()` in `src/auth/pam_authenticator.cpp` answers every `ECHO_OFF` from
-the same `PamConversationData.password` pointer with no once-only guard. The issue is open
-upstream with no fix, and upstream v5.2.0 does not address it — bumping the pin will not help.
+**[noctalia#4283](https://github.com/noctalia-dev/noctalia/issues/4283) applied to krytis as
+shipped until #999.** The lock screen re-supplied the same rejected password to every
+`PAM_PROMPT_ECHO_OFF`, so `pam_systemd_home`'s five retries all consumed it and a mistyped
+password took 12–15 s to be reported instead of ~3 s. Upstream fixed it on 2026-10-08 in
+`fbf410e2` ("prevent infinite PAM retry loops on lock screen"). That's swaylock's shape
+([swaylock#447](https://github.com/swaywm/swaylock/pull/447)): a `passwordSent` flag in
+`PamConversationData`, and `PAM_CONV_ERR` for any later `ECHO_OFF`. v5.2.1 predates the fix,
+so krytis carries it as a backport (`07c8bc7f9`) on the `kitten-lily/noctalia` fork until a
+release contains it (`docs/design/carried-patches.md`).
 
-**This one is ours to fix, not upstream's — tracked in #999.** `elements/desktop/noctalia.bst`
-already pins the **kitten-lily fork** (`github:kitten-lily/noctalia.git`,
-`track: feat/system-prompter`), so the change lands in a repo krytis owns and no Upstream Gate
-applies. The fix shape is swaylock's
-([swaylock#447](https://github.com/swaywm/swaylock/pull/447)): answer the first `ECHO_OFF`
-with the password, return `PAM_CONV_ERR` for any later one — a single flag in
-`PamConversationData`. Opening the matching PR against `noctalia-dev/noctalia` is worth doing
-rather than carrying the patch forever, but that is Upstream Gate work and needs explicit
-instruction.
+**Consequence: with an enrolled FIDO2 key plugged in, the lock screen takes the PIN, not the
+password.** Accepted on #999 (2026-10-11). Checked against both modules' source:
+
+- pam_u2f runs first in `system-auth`. It sends `PAM_PROMPT_ECHO_OFF` "Please enter the PIN: "
+  only when a connected authenticator matches an enrolled credential and wants a PIN
+  (Yubico/pam-u2f `util.c`, `opts.pin == FIDO_OPT_TRUE`). It never sets `PAM_AUTHTOK`.
+- So `pam_systemd_home` asks for "Password: " itself (`pam_systemd_home.c`, v261.3), and that
+  is the second `ECHO_OFF`. The locker returns `PAM_CONV_ERR`, the module returns
+  `PAM_CONV_ERR` (`default=ignore` in `system-auth`), `pam_unix` gets the same treatment, and
+  the stack ends at `pam_deny`.
+- With the key plugged in, type the PIN and touch the key. With no key, or no enrolled
+  credential, pam_u2f doesn't prompt and the password is the first and only answer.
+
+Before the fix, a password typed with an enrolled key plugged in was handed to the key as a
+PIN. [INFERENCE, from CTAP2's PIN rules; not hardware-tested] Each such unlock spent one of the
+key's PIN retries: three wrong in a row needs a replug, and eight blocks the PIN. The once-only
+answer makes that case fail visibly instead.
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 

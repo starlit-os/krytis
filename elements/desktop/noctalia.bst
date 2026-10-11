@@ -56,9 +56,9 @@ depends:
 # dropped. Upstream's async dispatch falls back to sdbus-c++'s default
 # timeout; manually verified this is not an issue in practice.
 #
-# FORK PIN: kitten-lily/noctalia branch feat/system-prompter, not yet
-# upstreamed (no PR opened against noctalia-dev/noctalia -- that needs an
-# explicit instruction per AGENTS.md's Upstream Gate). It carries two changes:
+# FORK PIN: kitten-lily/noctalia branch feat/system-prompter. Changes 1 and 2
+# are not upstreamed (no PR opened against noctalia-dev/noctalia -- that needs
+# an explicit instruction per AGENTS.md's Upstream Gate). It carries three:
 #   1. the native org.gnome.keyring.SystemPrompter provider that oo7 depends on
 #      for every unlock prompt, per the note above;
 #   2. fix(lockscreen) 1047f8fd8: lid-close / lock-and-suspend locks skip the
@@ -66,6 +66,13 @@ depends:
 #      a frame without the pre-lock desktop capture. Without it the panel keeps a
 #      screenshot of the unlocked desktop through sleep and shows it on resume.
 #      See docs/skills/desktop.md § The last frame before sleep is what resume shows.
+#   3. fix(auth) 07c8bc7f9: a backport of upstream fbf410e2 (noctalia#4283,
+#      #999), which answers only the first PAM_PROMPT_ECHO_OFF per unlock attempt,
+#      so a mistyped password costs one pam_systemd_home pass instead of five.
+#      With an enrolled FIDO2 key plugged in, pam_u2f's PIN prompt takes that one
+#      answer, so the lock screen then wants the PIN, not the password. See
+#      docs/skills/pam.md § The lock screen authenticates through `login`, not `greetd`.
+#      It is upstream code: drop it at the first release that contains fbf410e2.
 #
 # Rebase history of the carried commit. 2026-08-17: onto upstream main
 # 87b203c68 (v5.0.0-beta.8-135) -- the 1722-line feature commit applied across
@@ -91,7 +98,9 @@ depends:
 # byte-identical hunks (docs/skills/workflow.md § Rebasing a carried fork
 # branch). v5.2.0 -> v5.2.1 adds one `dependency()`, wayland-server, inside
 # meson.build's `if build_tests` block, so -Dtests=disabled below keeps the
-# dependency lists unchanged. The lockscreen fix then went on top as its own commit.
+# dependency lists unchanged. The lockscreen fix then went on top as its own
+# commit, and on 2026-10-11 the fbf410e2 backport on top of that (`git
+# cherry-pick -x`, clean, upstream author kept).
 #
 # Rebase the branch onto the new tag and re-track when upstream cuts a
 # release: `track: <branch>` cannot see tags, so no auto-track PR will ever
@@ -100,7 +109,8 @@ depends:
 # Revert to
 #   url: github:noctalia-dev/noctalia.git
 #   track: v*
-# once both changes land upstream (or are dropped). Tracking a branch instead
+# once changes 1 and 2 land upstream (or are dropped) and a release contains
+# change 3. Tracking a branch instead
 # of the v* tag glob means `bst source track` follows the branch head, not
 # releases -- expect more frequent auto-track PRs than usual until then, and
 # note that an unrelated commit on that branch changes what krytis ships.
@@ -108,7 +118,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.2.1-3-g1047f8fd88f99c5e0fa01907b41db331c31af497
+  ref: v5.2.1-4-g07c8bc7f9958c3c30ddadcc09ada53794fdadb55
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test
