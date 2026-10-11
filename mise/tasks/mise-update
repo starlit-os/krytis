@@ -7,14 +7,17 @@ set -euo pipefail
 ELEMENT="elements/core/mise.bst"
 REPO="jdx/mise"
 
-echo "==> Fetching latest ${REPO} release..."
-LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+CURRENT_VER=$(grep -oP 'download/v\K[^/]+' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+# Newest release with both binaries, not `releases/latest`
+# (scripts/github-release-with-assets.sh).
+echo "==> Fetching latest ${REPO} release with both binaries..."
+LATEST_TAG=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER}" \
+  "${REPO}" 'mise-{tag}-linux-x64-musl' 'mise-{tag}-linux-arm64-musl')
 LATEST_VER="${LATEST_TAG#v}"
 
 echo "==> Latest: ${LATEST_TAG}"
-
-CURRENT_VER=$(grep -oP 'download/v\K[^/]+' "${ELEMENT}" | head -1)
-echo "==> Current: ${CURRENT_VER}"
 
 if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
   echo "==> Already up to date (${CURRENT_VER})"

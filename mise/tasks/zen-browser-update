@@ -6,13 +6,16 @@ set -euo pipefail
 
 ELEMENT="elements/desktop/zen-browser.bst"
 
-echo "==> Fetching latest zen-browser/desktop release..."
-LATEST_VER=$(gh api repos/zen-browser/desktop/releases/latest --jq '.tag_name')
-
-echo "==> Latest: ${LATEST_VER}"
-
 CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
 echo "==> Current: ${CURRENT_VER}"
+
+# Newest release with both tarballs, not `releases/latest`
+# (scripts/github-release-with-assets.sh). Tags carry no "v".
+echo "==> Fetching latest zen-browser/desktop release with both tarballs..."
+LATEST_VER=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER}" \
+  zen-browser/desktop zen.linux-x86_64.tar.xz zen.linux-aarch64.tar.xz)
+
+echo "==> Latest: ${LATEST_VER}"
 
 if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
   echo "==> Already up to date (${CURRENT_VER})"

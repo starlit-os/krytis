@@ -15,27 +15,17 @@ set -euo pipefail
 ELEMENT="elements/desktop/libqalculate.bst"
 REPO="Qalculate/libqalculate"
 
-# Not `releases/latest`: upstream also publishes Windows-only rebuilds as full
-# releases. v5.13.2 (2026-10-10) carries only qalculate-5.13.2-x64.{msi,zip} and
-# no libqalculate-5.13.2.tar.gz, so taking `latest` 404'd on every run until a
-# source release followed. Take the newest published (non-draft, non-prerelease)
-# release that actually ships the source tarball; a Windows-only release then
-# reads as "already up to date".
-echo "==> Fetching newest ${REPO} release with a source tarball..."
-LATEST_TAG=$(gh api "repos/${REPO}/releases?per_page=30" --jq '
-  [.[] | select((.draft or .prerelease) | not)
-       | select(.tag_name as $t | any(.assets[]; .name == "libqalculate-\($t | ltrimstr("v")).tar.gz"))
-  ][0].tag_name // empty')
-if [ -z "${LATEST_TAG}" ]; then
-  echo "ERROR: none of the last 30 ${REPO} releases ships a libqalculate-<version>.tar.gz" >&2
-  exit 1
-fi
-LATEST_VER="${LATEST_TAG#v}"
-
-echo "==> Latest with source: ${LATEST_TAG}"
-
 CURRENT_VER=$(grep -oP 'libqalculate-\K[0-9.]+(?=\.tar\.gz)' "${ELEMENT}" | head -1)
 echo "==> Current: ${CURRENT_VER}"
+
+# Not `releases/latest`: upstream also publishes Windows-only rebuilds as full
+# releases (v5.13.2, 2026-10-10, has no source tarball). The helper picks the
+# newest release that ships libqalculate-<ver>.tar.gz.
+echo "==> Fetching newest ${REPO} release with a source tarball..."
+LATEST_TAG=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER}" \
+  "${REPO}" 'libqalculate-{ver}.tar.gz')
+LATEST_VER="${LATEST_TAG#v}"
+echo "==> Latest with source: ${LATEST_TAG}"
 
 if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
   echo "==> Already up to date (${CURRENT_VER})"
