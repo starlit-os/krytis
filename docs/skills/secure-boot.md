@@ -332,6 +332,26 @@ Against an image carrying bootc 1.16.x, use only the `composefs=` grep and drop
 `--erofs-version` (the flag does not exist there; V2 was the only format). The task itself
 requires both kargs, so it rejects a UKI built by a pre-1.17 ukify.
 
+**The 1.16 → 1.17 upgrade, observed on hardware (2026-10-11): it booted straight on V1.**
+bootc `ef027c5b3f` says a 1.16 stager "create[s] only V2 images and state", so a
+dual-karg UKI's first boot should select the V2 fallback, and only the next
+upgrade (staged by the 1.17 client) moves to V1. On a real krytis machine this did not happen.
+`sudo bootc update` ran under the 2026-10-06 `:sealed` (bootc 1.16.14, cmdline
+`composefs=5525aedb…` only) and staged the first dual-karg `:sealed`. bootc 1.16.14's
+`bootc-finalize-staged` finalized it. The first boot after that came up on the **V1** digest:
+
+- `findmnt -no SOURCE /` → `composefs:c57e17fa…`, `verity=require`. That is the
+  `composefs.digest=v1-sha512-12:` hex from `/proc/cmdline`.
+- `bootc status` shows `Verity: c57e17fa…`, and the state directory is
+  `/sysroot/state/deploy/c57e17fa…`. No directory exists for the cmdline's V2 digest.
+
+The journal (`journalctl -b -1 | grep -iE 'bootc|composefs'`) does not show which step produced
+the V1 EROFS image, so the mechanism is unexplained. The outcome is still valid,
+because both kargs name the same image and `bootc install` accepts either. Practical
+consequence: a field upgrade from 1.16 exercises the V1 boot path immediately, and the
+V2 fallback went unused in this test. Don't read "booted on V1" after a 1.16-staged upgrade as a sign
+that the client was already 1.17. Check the previous boot's cmdline instead.
+
 `--mount type=image` (podman core since ~2.2, unrelated to the `--mount=type=bind,from=`
 Containerfile directive used elsewhere in this doc) is the load-bearing choice over the
 `podman mount`/`podman unshare` pairing used in the
