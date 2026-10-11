@@ -39,10 +39,15 @@ kind: manual
 # that path being reached at all.
 #
 # Passwordless sudo below is scoped to a dedicated `pangolin` group (see
-# sysusers.d below — group is created empty; add users manually, e.g.
-# `usermod -aG pangolin <user>`) and to the `pangolin up` subcommand only
-# (`Args::Prefix` on the literal arg "up" — sudo-rs's supported wildcard
-# form, matching "up" plus any further args). This is a stable, public CLI
+# sysusers.d below -- group is created empty) and to the `pangolin up`
+# subcommand only. Users must opt in. krytis accounts are systemd-homed, so
+# `usermod -aG` does nothing for them: their groups live in the user record,
+# set with `homectl update <user> --member-of=<groups>`, and that replaces the
+# list, so repeat the existing groups (`userdbctl user <user>` shows them).
+# Even then `sudo pangolin up` fails for homed users until #915's upstream NSS
+# lookup bug is fixed (fosrl/cli#27). The `up` match is `Args::Prefix` on the
+# literal arg "up" (sudo-rs's supported wildcard form, matching "up" plus any
+# further args). This is a stable, public CLI
 # surface — unlike the internal shell-wrapper string, renaming/removing
 # the `up` subcommand would be a documented breaking change upstream, not
 # silent drift.
