@@ -15,6 +15,13 @@
   // credential, which is what will let these PRs merge once #154's
   // required_signatures ruleset rule lands — see #698, #154.
   "platformCommit": "enabled",
+  // Hold every update until its release is 24h old, then let it automerge as
+  // usual: a hijacked release should not reach a build, unattended, within
+  // hours of being published. This used to cover only the `mise` manager and
+  // jdx/mise (mise's own `minimum_release_age` default is 24h, and since
+  // jdx/mise#13128 mise no longer enforces it on a pin replayed from
+  // mise.lock). GitHub Actions and pep621 bumps automerged within the hour.
+  "minimumReleaseAge": "1 day",
   "customManagers": [
     {
       // The GitHub Actions runner version is pinned in two places that must
@@ -97,26 +104,21 @@
       "automergeStrategy": "merge",
     },
     {
-      // Cool every tool `mise install` consumes for 24h, matching mise's own
-      // `minimum_release_age` default. mise no longer *enforces* that window
-      // on an exact pin replayed from mise.lock (jdx/mise#13128, #13251), so
-      // this is not what keeps CI green — the mise version pin is. What it
-      // restores is the protection the default was for: these bumps
-      // auto-merge unattended, and a hijacked release should not reach a
-      // build within hours of being published.
-      "matchManagers": ["mise"],
-      "minimumReleaseAge": "1 day",
+      // Some updates carry no release timestamp at the branch stage:
+      // `digest`/`pinDigest` (every SHA-pinned action) and the github-runner
+      // datasource (`runs-on: ubuntu-26.04`, a hardcoded list). Under the
+      // default `minimumReleaseAgeBehaviour: "timestamp-required"` their
+      // `renovate/stability-days` check would stay pending forever, so automerge
+      // would silently never happen (renovatebot/renovate#45236, open as of
+      // 2026-10-11). Lookup has already aged a digest against the newest
+      // matching version's timestamp, so letting the branch stage pass on
+      // a missing timestamp gives up nothing.
+      "matchUpdateTypes": ["digest", "pinDigest"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
     },
     {
-      // Same window for the CI mise binary, which the native mise manager
-      // cannot see (it is a workflow input, not a [tools] entry) and which
-      // every runner self-updates to before anything else runs. Matchers
-      // inside one rule are ANDed, so this cannot be folded into the rule
-      // above — a single rule naming both a manager and this depName would
-      // match nothing at all. pass-cli needs no rule here: it is
-      // automerge: false below, so a human already gates it.
-      "matchDepNames": ["jdx/mise"],
-      "minimumReleaseAge": "1 day",
+      "matchDepTypes": ["github-runner"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
     },
     {
       // Hard-pinned in pyproject.toml for BST 2.5.x compatibility. A bump has
