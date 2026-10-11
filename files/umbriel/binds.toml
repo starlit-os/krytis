@@ -49,9 +49,17 @@
 "Mod+Shift+P" = { action = "dpms-off", repeat = false }
 
 # ── Screenshots ──────────────────────────────────────────────────────────────
-# niri has built-in screenshot actions; umbriel has none, and the image ships
-# no grim/slurp/satty. Routed through noctalia, which does. niri's Print was an
-# interactive region grab and Ctrl+Print the whole screen.
+# niri has built-in screenshot actions; umbriel has none. Upstream documents
+# three routes, and noctalia is the one it recommends for a Noctalia shell --
+# umbriel's own docs/user/keybinds.md § "Example: Noctalia shell integration"
+# binds `spawn:noctalia msg screenshot-region` (on Mod+P; krytis keeps niri's
+# Print instead, and upstream's own packaged config uses Mod+P for
+# window-toggle-pinned anyway). The other two are not alternatives here:
+#   - grim/slurp, used in that file's submap example. Neither is in the image.
+#   - the Screenshot portal. xdg-desktop-portal-umbriel implements
+#     org.freedesktop.impl.portal.Screenshot and krytis already ships it, but
+#     that serves portal-aware applications, not compositor keybinds.
+# niri's Print was an interactive region grab and Ctrl+Print the whole screen.
 "Print" = { action = "spawn:noctalia msg screenshot-region", repeat = false }
 "Ctrl+Print" = { action = "spawn:noctalia msg screenshot-fullscreen", repeat = false }
 

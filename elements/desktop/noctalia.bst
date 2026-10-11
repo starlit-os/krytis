@@ -77,6 +77,14 @@ depends:
 # dropped it as redundant. v5.0.1 -> v5.1.0 changed no `dependency()` call in
 # noctalia's meson.build (39 entries either side, verified by diffing the two
 # tags), so this element's build-depends/depends lists are unchanged.
+# 2026-09-28: onto the v5.2.0 tag (121 commits); the fork branch moved, but no
+# krytis pin ever named it. ONE conflict, in src/app/application_services.cpp:
+# v5.2.0 added `installSecretServiceCollectionWatch()` immediately after
+# `installSecretServiceNameWatch()`, where the fork commit had added
+# `syncSecretPrompter()` plus its config-reload callback. Purely additive --
+# both calls kept, upstream's watch first. v5.1.0 -> v5.2.0 changed no
+# `dependency()` call (39 unique names either side, verified 2026-10-11 by
+# diffing the sorted `dependency('...')` sets at the two tags).
 # 2026-10-08: onto the v5.2.1 tag (69 commits). Two one-line conflicts, both
 # adjacent additions beside upstream's new secret_collection_probe (meson.build
 # source list, application_services.cpp include); all 17 carried files have
