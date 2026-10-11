@@ -2,7 +2,8 @@
 
 Status: **in the image, installed disabled (2026-10-11)**. The service lives in its
 own repo, [kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge),
-public since 2026-10-09 (GitHub `PublicEvent` at 08:26Z). Its unit tests pass, and the
+public since about 08:16Z on 2026-10-11
+(`docs/skills/workflow.md` § When a repo went public). Its unit tests pass, and the
 README's live check passed on 2026-10-09 against the `com.discordapp.Discord`
 flatpak for World of Warcraft and Hearthstone launched from Faugus: detected,
 reported with the right start time, and cleared on exit

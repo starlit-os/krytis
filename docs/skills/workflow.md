@@ -613,6 +613,25 @@ Two consequences worth planning around:
   the tombstone is all that remains: `gh search prs --author <you> --state open` across
   every repo, not just the one you are thinking about.
 
+## When a Repo Went Public
+
+**The events API's `PublicEvent.created_at` is wrong. Order by event `id` instead.**
+kitten-lily/presence-bridge's `PublicEvent` reports `created_at` `2026-10-09T08:26:48Z`,
+which is the repo's own `created_at` to the second. Its `id` (`16934366227`) falls between
+two events stamped `2026-10-11T08:16:04Z` and `08:16:52Z`, and event ids increase
+monotonically. So the repo went public around 08:16Z on 2026-10-11, not at creation. The
+repo's own docs agree: on 2026-10-10 it still behaved as private on the free plan, with
+rulesets unenforced and `allow_auto_merge` refusing to stick. #1152 first shipped
+"public since 2026-10-09", taken from `created_at`. To date the change:
+
+```shell
+gh api 'repos/<owner>/<repo>/events?per_page=100' --paginate \
+  -q '.[] | [.id, .created_at, .type] | @tsv' | sort -n | grep -C2 PublicEvent
+```
+
+The events API lists only recent events, so record the date while the event is still
+listed.
+
 ## Where Plan and Design Docs Go
 
 `docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.
