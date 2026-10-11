@@ -2942,7 +2942,7 @@ documents nothing about who is meant to win.
 **uutils-coreutils pattern** (additive, not a junction override): fdsdk has no `components/coreutils.bst` — only a bootstrap-chain `bootstrap/coreutils.bst` that cannot be overridden. uutils is added as a new `elements/core/uutils-coreutils.bst` that layers on top.
 
 - Multicall binary installed at `/usr/bin/uutils-coreutils`.
-- Two symlinks per utility: `uutils-<prog>` (always) and `<prog>` (plain-name, for replacing the GNU bin) — except **cp, mv, rm** which stay on GNU due to unresolved TOCTOU issues (projectbluefin/common#290).
+- Two symlinks per utility: `uutils-<prog>` (always) and `<prog>` (plain-name, for replacing the GNU bin) — except **cp, mv, rm**, which stay on GNU. Ubuntu's 2026-04-22 rust-coreutils update counted 8 open TOCTOU issues in those three. projectbluefin/common#290 ("keep cp, mv, and rm from GNU coreutils") is dakota adopting the same rule; it closed as *completed* because dakota did it (projectbluefin/dakota#316), not because uutils fixed anything. Re-evaluating the carve-out is #1158.
 - `overlap-whitelist` must list every plain-name symlink that collides; cp/mv/rm are excluded from symlinks AND from the whitelist.
 - Build flags: `--features feat_os_unix --no-default-features` (no `--locked`; uses `cargo2` source for offline crate registry).
 - Update path: `kind: git_repo` with `track:` glob → option A (no mise update task or CI override needed beyond the `track:` matrix entry in `track-bst-sources.yml`).

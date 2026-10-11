@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- This plan implements **only** `fido2-luks-passphrase` (passphrase always required as fallback). Do **not** implement a passphrase-less `fido2-luks` type — [starlit-os/krytis#250](https://github.com/starlit-os/krytis/issues/250) (FIDO2 boot-unlock race, unresolved after 2 real-hardware fix attempts) means a failed unlock with no fallback would leave the system unbootable. This is a hard requirement, not a style preference.
+- This plan implements **only** `fido2-luks-passphrase` (passphrase always required as fallback). Do **not** implement a passphrase-less `fido2-luks` type. When this was written, [starlit-os/krytis#250](https://github.com/starlit-os/krytis/issues/250) (FIDO2 boot-unlock race, unresolved after 2 real-hardware fix attempts) meant a failed unlock with no fallback would leave the system unbootable. #250 closed on 2026-08-12, but the requirement stands until #512 decides otherwise. This is a hard requirement, not a style preference.
 - Every new fisherman subprocess-shelling function must keep secrets out of argv/log exactly like the existing code does: passphrases go through temp files (`--unlock-key-file=`), never CLI args or stdin logged verbatim. The FIDO2 PIN goes through the systemd Credentials mechanism (a mode-`0400` temp file), never argv.
 - Match existing code conventions exactly in each repo — do not introduce a second style alongside a working one. Every task below cites the precedent it mirrors.
 - Full findings and open questions are recorded in [starlit-os/krytis#512](https://github.com/starlit-os/krytis/issues/512) — read it before starting if anything here is unclear.
@@ -1383,7 +1383,7 @@ Expected: the FIDO2 switch is visible and (if a key is detected) defaulted on; i
 
 - [ ] **Step 4: Reboot the installed disk and confirm boot behavior**
 
-Expected: given #250 is still open, boot MAY fall back to the passphrase prompt (this is the known, accepted failure mode per this plan's Global Constraints) — confirm the passphrase still successfully unlocks when FIDO2 doesn't win the race. This is not a regression; it's the documented current limitation.
+Expected: boot unlocks the root with a FIDO2 touch. #250, the boot-time race this plan was written around, closed on 2026-08-12, and `krytis-fido2-root-unlock.service` now handles root unlock. A passphrase prompt is no longer the accepted failure mode. It means a regression, or a slot enrolled with a PIN, which a headless boot cannot answer (#1058, so enroll touch-only). Either way, confirm the passphrase fallback still unlocks.
 
 - [ ] **Step 5: Record the result**
 

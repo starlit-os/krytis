@@ -137,7 +137,7 @@ images signed via GitHub Actions OIDC" at all.
 Note the asymmetry: `cosign verify` handles URI SANs perfectly well, which is exactly what
 the CI step above relies on. It is only `policy.json` that cannot.
 
-An upstream fix exists but has not landed. [`containers/image#2235`](https://github.com/containers/image/pull/2235)
+An upstream fix exists but has not landed (as of 2026-10-11). [`containers/image#2235`](https://github.com/containers/image/pull/2235)
 ("Accept URI for Sigstore Signed Images") would have added URI-SAN support to the `fulcio`
 block, but after stalling on DCO/review friction from February 2024 it was **closed
 unmerged** on 2025-08-26 when `containers/image` folded into the `containers/container-libs`
@@ -146,7 +146,7 @@ monorepo (since renamed `podman-container-tools/container-libs`). The demand mov
 ("Extend Fulcio signature acceptance options to support 'workflow identity'"), and
 [`podman-container-tools/container-libs#625`](https://github.com/podman-container-tools/container-libs/pull/625)
 (opened 2026-02-04) implements it: a `buildSignerURI` match on Fulcio's OID
-`1.3.6.1.4.1.57264.1.9` extension, closing #34. As of 2026-10-01 it is open and blocked,
+`1.3.6.1.4.1.57264.1.9` extension, closing #34. As of 2026-10-11 it is open and blocked,
 with one contributor LGTM, repeated pings to the maintainers, and no maintainer review;
 last activity 2026-05-25. So the timeline is: #625 merges, *then* it reaches the
 `containers/image` version `bootc` vendors. Treat host-side keyless enforcement as

@@ -2,9 +2,13 @@
 # regular-login account at boot, via a oneshot systemd service.
 #
 # Neither systemd-sysusers nor systemd-homed populate /etc/subuid/subgid
-# the way `useradd` does -- confirmed open upstream gap (systemd/systemd#21952,
-# systemd/systemd#29297, containers/podman#20040, containers/podman#24828),
-# not a krytis oversight. Without a range, rootless podman fails for that
+# the way `useradd` does. This is a long-standing upstream gap, not a krytis
+# oversight. Every issue about it is closed without either tool writing those
+# files: systemd/systemd#21952 (2022) and systemd/systemd#29297 (2024) as
+# completed, containers/podman#20040 (2023), where podman's maintainer said it
+# was systemd's to fix, and podman#24828 as not planned. Users on
+# systemd/systemd#29297 were still adding entries by hand in 2025-12 (as of
+# 2026-10-11). Without a range, rootless podman fails for that
 # account with "potentially insufficient UIDs or GIDs available in user
 # namespace" -- breaking per-user podman-restart.service and
 # podman-auto-update.service on every boot for a homed user, plus any manual
