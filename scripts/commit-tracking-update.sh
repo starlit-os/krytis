@@ -19,6 +19,10 @@
 # of the block this replaces; a directory picks up every file that
 # actually changed under it, not just the expected one).
 #
+# The commit body carries the cooldown trailers (Tracking-Fingerprint,
+# Tracking-First-Seen, then Tracking-Ready-At or Tracking-Cooldown: exempt)
+# that scripts/tracking-pr.sh reads to decide draft vs ready.
+#
 # Requires: gh (authenticated, contents:write on the target repo), jq.
 
 set -euo pipefail
@@ -42,6 +46,57 @@ mapfile -t DELETED < <(git diff --name-only --diff-filter=D HEAD -- "$@")
 if [ "${#CHANGED[@]}" -eq 0 ]; then
   echo "commit-tracking-update: no changes detected under: $*" >&2
   exit 1
+fi
+
+# Cooldown: an update must be seen for 24h before its PR leaves draft
+# (scripts/tracking-pr.sh). The clock is the first run that committed *this*
+# update, identified by a fingerprint of its added and removed lines. Hunk
+# headers and context are left out, so an unrelated edit to the same element
+# on main doesn't restart it, but any change upstream does. The fingerprint and
+# the first-seen time ride along as commit trailers. The branch is recreated
+# on every run, so the previous head commit is the only state there is. See
+# docs/skills/bst.md § Tracking cooldown: 24h from first sighting.
+COOLDOWN_SECONDS="${TRACKING_COOLDOWN_SECONDS:-86400}"
+FINGERPRINT=$(git diff -U0 --binary HEAD -- "$@" \
+  | { grep -vE '^(diff --git |index |@@ |--- |\+\+\+ )' || true; } \
+  | sha256sum | cut -d' ' -f1)
+FIRST_SEEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# `git/ref/` (singular) is an exact match. `git/refs/heads/<name>` lists every
+# ref under that prefix when <name> itself is missing, and on a 404 `gh api`
+# still prints the error body, so only a successful call may set PREV_SHA.
+PREV_SHA=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq '.object.sha' 2>/dev/null) || PREV_SHA=""
+if [ -n "$PREV_SHA" ]; then
+  PREV_MESSAGE=$(gh api "repos/$REPO/git/commits/$PREV_SHA" --jq '.message')
+  prev_fp=$(sed -n 's/^Tracking-Fingerprint: //p' <<<"$PREV_MESSAGE" | tail -n 1)
+  prev_seen=$(sed -n 's/^Tracking-First-Seen: //p' <<<"$PREV_MESSAGE" | tail -n 1)
+  if [ "$prev_fp" = "$FINGERPRINT" ] && [ -n "$prev_seen" ]; then
+    FIRST_SEEN="$prev_seen"
+  fi
+fi
+
+# First-party sources skip the cooldown: the risk it guards against is a
+# hijacked third-party release, not our own. That holds only when every
+# changed file is an element whose primary (first) source lives under
+# kitten-lily/ or starlit-os/. Anything else (a .bin, a mise task, a
+# third-party element) cools.
+FIRST_PARTY=1
+for f in "${CHANGED[@]}"; do
+  if [[ "$f" != *.bst ]] || [ ! -f "$f" ]; then FIRST_PARTY=0; break; fi
+  primary_url=$(grep -oP '^\s*url:\s*\K\S+' "$f" | head -n 1 || true)
+  if ! [[ "$primary_url" =~ (^|[:/])(kitten-lily|starlit-os)/ ]]; then FIRST_PARTY=0; break; fi
+done
+
+BODY="Tracking-Fingerprint: ${FINGERPRINT}
+Tracking-First-Seen: ${FIRST_SEEN}"
+if [ "$FIRST_PARTY" -eq 1 ]; then
+  BODY="${BODY}
+Tracking-Cooldown: exempt (first-party source)"
+  echo "commit-tracking-update: first-party source, no cooldown"
+else
+  READY_AT=$(date -u -d "@$(( $(date -u -d "$FIRST_SEEN" +%s) + COOLDOWN_SECONDS ))" +%Y-%m-%dT%H:%M:%SZ)
+  BODY="${BODY}
+Tracking-Ready-At: ${READY_AT}"
+  echo "commit-tracking-update: first seen ${FIRST_SEEN}, ready at ${READY_AT}"
 fi
 
 # The commit is built on a throwaway scratch branch, and only then is $BRANCH
@@ -89,10 +144,10 @@ done
 echo "commit-tracking-update: committing ${#CHANGED[@]} file(s)"
 
 QUERY='
-mutation($repo: String!, $branch: String!, $oid: GitObjectID!, $headline: String!, $additions: [FileAddition!]!, $deletions: [FileDeletion!]!) {
+mutation($repo: String!, $branch: String!, $oid: GitObjectID!, $headline: String!, $body: String!, $additions: [FileAddition!]!, $deletions: [FileDeletion!]!) {
   createCommitOnBranch(input: {
     branch: { repositoryNameWithOwner: $repo, branchName: $branch }
-    message: { headline: $headline }
+    message: { headline: $headline, body: $body }
     expectedHeadOid: $oid
     fileChanges: { additions: $additions, deletions: $deletions }
   }) {
@@ -106,6 +161,7 @@ COMMIT=$(jq -n \
   --arg branch "$SCRATCH" \
   --arg oid "$MAIN_SHA" \
   --rawfile headline "$MESSAGE_FILE" \
+  --arg body "$BODY" \
   --argjson additions "$ADDITIONS_JSON" \
   --argjson deletions "$DELETIONS_JSON" \
   '{
@@ -115,6 +171,7 @@ COMMIT=$(jq -n \
       branch: $branch,
       oid: $oid,
       headline: ($headline | rtrimstr("\n")),
+      body: $body,
       additions: $additions,
       deletions: $deletions
     }
@@ -128,7 +185,7 @@ COMMIT=$(jq -n \
 read -r NEW_OID NEW_URL <<<"$COMMIT"
 
 echo "commit-tracking-update: moving $BRANCH to $NEW_OID"
-if gh api "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
+if gh api "repos/$REPO/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
   gh api -X PATCH "repos/$REPO/git/refs/heads/$BRANCH" -f sha="$NEW_OID" -F force=true >/dev/null
 else
   gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$NEW_OID" >/dev/null
