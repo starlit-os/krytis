@@ -1,0 +1,746 @@
+#!/usr/bin/env python3
+#MISE description="Report issue/PR references whose live state contradicts the prose around them (report only, never edits)"
+#USAGE flag "--ref <rev>" help="Scan the tree at this git revision, read through git without checking it out. Default: the working tree, untracked files included"
+#USAGE flag "--text-file <path>" help="Scan only this file, read as a krytis issue body (bare #N = starlit-os/krytis). Skips the tree and the open issues"
+#USAGE flag "--no-issues" help="Do not scan open krytis issue bodies"
+#USAGE flag "--all" help="Also list other projects' references whose prose makes no status claim"
+"""Leads for the stale-status rot class that `mise run docs-links` cannot see (#1071).
+
+docs-links proves a path, task name or `§` citation still resolves. It cannot
+tell that a sentence about an issue or PR's *state* was true when written and
+has since changed. That class produced most of the #1056 triage's rot:
+signing.md's undated "no upstream fix is in flight", desktop.md's systemd#37079
+"no activity since 2026-07-25" two months after new comments, #512's body
+calling #250 open seven weeks after it closed.
+
+Scanned: docs/ (minus the frozen docs/plans/done/), elements/**/*.bst and
+mise/tasks/** — whole files, not just `#` comments, because docstrings, YAML
+description strings and `echo` hints cite issues too — plus every OPEN krytis
+issue body (`gh issue list`). This file is skipped: its comments quote the
+claims it reports. References recognised:
+
+  #N                       krytis. Bare #N always means starlit-os/krytis.
+  krytis#N                 krytis.
+  owner/repo#N             GitHub, unless the same path appears in a GitLab
+                           URL somewhere in the scan (then that GitLab host).
+  group/project!N          GitLab merge request; only when the project path
+                           appears in a GitLab URL in the scan.
+  name#N                   resolved only if exactly one owner/name in the scan
+                           has that repo name; otherwise counted, never guessed.
+  github.com/…/(issues|pull)/N, gitlab.com / gitlab.gnome.org /
+  gitlab.freedesktop.org …/-/(issues|merge_requests|work_items)/N
+
+Two report sections:
+
+  a. A CLOSED/MERGED krytis issue or PR with open-status wording (KRYTIS_OPEN)
+     on its line or the next one, inside its own sentence, within NEAR
+     characters, and nearer to it than to any other krytis reference. Skipped
+     when its sentence already says it closed (CLOSURE) — "#250 — closed, and
+     the fix changes this design" is the repair, not the rot — when the
+     wording is narrated history ("while #84 was still open"), and on ticked
+     `- [x]` task-list lines.
+  b. Another project's reference whose prose makes a status claim
+     (EXTERNAL_OPEN without CLOSURE wording) in its own sentence, in the
+     sentence before it if that one cites nothing, or in one of the next three
+     sentences that cite nothing and open on the item as subject ("It is…",
+     "The issue is…", "No activity since…"). Each is printed with live state,
+     and flagged:
+       UNDATED   a claim with no YYYY-MM-DD: in the sentence itself for the
+                 sentence before the reference, anywhere from the reference's
+                 sentence on otherwise — AGENTS.md's "Undated claims about
+                 someone else's project" rule;
+       STALE     the item changed after the latest date the context gives
+                 (open: updatedAt; closed/merged: closedAt/mergedAt — a comment
+                 on a closed item does not falsify "closed on <date>");
+       CLOSED    an open-status claim about an item no longer open.
+     A bare mention with no status wording is not listed (noise kills the
+     report); --all lists those too.
+
+Known blind spot, by design: bare #N is always krytis, so "#22901" in a
+sentence about systemd resolves against krytis — listed under "resolved to
+nothing" when krytis has no such number, misread when it does. Write
+owner/repo#N for anything that is not krytis.
+
+Every finding is a lead for a human or the skill-rot-audit classification,
+never a verdict: quoting a retracted claim to refute it reads exactly like the
+claim. Exit status is 0 whatever is found; 2 on a usage or API-auth error.
+
+API use: one GitHub GraphQL query per 100 unique references, each fetching
+`issueOrPullRequest(number:)` aliases across many repositories (GraphQL
+follows renamed/transferred repositories, e.g. containers/container-libs →
+podman-container-tools/container-libs). GitLab is anonymous REST, one call per
+unique reference. Nothing is fetched twice in a run.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+
+KRYTIS = ("github.com", "starlit-os/krytis")
+GRAPHQL_BATCH = 100
+
+# "open" as a status, not "open a terminal" / "an open PR" / "can't open file".
+OPEN = r"(?<!\ban )(?<!\bto )open(?!-)(?!\s+(?:a|an|the|in|file|source|up|it|them|with|PRs?|issues?)\b)"
+# Open-status wording next to a krytis reference (section a). Word-bounded,
+# case-insensitive. "until"/"once"/"when" … "lands" only count in their
+# future-tense conditional form with the reference as subject ("until #642
+# lands", "once the fix in #1001 merges") — the form AGENTS.md names as the
+# commonest way a closed #N rots. Bare "until #N" is nearly always history
+# ("krytis had the same mismatch until #934") and drowned the report, and an
+# unanchored "after … lands" matched "after install (#444) … the oneshot lands".
+KRYTIS_OPEN = re.compile(
+    rf"\b(?:still open|{OPEN}|blocked (?:on|by)|pending|not yet|waiting|tracked (?:in|by)|"
+    r"in progress|unresolved|outstanding|"
+    r"(?:until|once|when|after|before|as soon as)\s+(?:[^\s.;#]+\s+){0,3}?\S*#\d+\S*\s+"
+    r"(?:lands?|merges?|ships?|is (?:merged|fixed|resolved|closed|done|shipped|released)))\b",
+    re.I,
+)
+# Status wording about another project's issue/PR (section b).
+EXTERNAL_OPEN = re.compile(
+    rf"\b(?:still open|{OPEN}|unmerged|not (?:yet )?merged|unreleased|"
+    r"not (?:yet )?released|no activity|inactive|in flight|in progress|pending|"
+    r"draft|stalled|waiting|awaiting|unscheduled|not yet|blocked (?:on|by)|"
+    r"unfixed|unresolved|no (?:upstream )?fix|needs-rebase|"
+    r"(?:has|have)n[’']t (?:landed|merged|shipped)|has not (?:landed|been merged|shipped))\b",
+    re.I,
+)
+# The sentence already reports the reference closed: not rot. Negated forms
+# ("not yet released", "never merged") are open-status wording, not closure.
+CLOSURE = re.compile(
+    r"(?<!not )(?<!yet )(?<!n't )(?<!never )"
+    r"\b(?:closed|closes|merged|landed|shipped|fixed|fixes|resolved|completed|superseded|"
+    r"reverted|released|retired|withdrawn)\b",
+    re.I,
+)
+# Narrated history: "while #84 was still open".
+PAST = re.compile(r"\b(?:was|were|been)\s+(?:still\s+)?$", re.I)
+# A sentence after the reference's own one only carries a claim about it when
+# it opens on the item as its subject ("It is still open", "No activity since").
+FOLLOW_SUBJECT = re.compile(
+    r"(?:[*_`>\s]*)(?:it|this|the (?:issue|pr|pull request|mr|merge request|bug|report|fix|change|patch)|"
+    r"upstream|still|no activity|open|unmerged|not yet|unfixed)\b",
+    re.I,
+)
+DATE = re.compile(r"(?<![\d-])(20\d\d-[01]\d-[0-3]\d)(?![\d-])")
+# "open since 2026-02-04" / "filed 2026-09-17" date the item's birth, not the
+# claim: activity after it does not make the sentence stale, and it does not
+# say when "open" was last checked. "No activity since <date>" is an as-of.
+OPENED_ON = re.compile(r"\b(?:open|opened|filed|created|reported)\s+(?:since\s+|on\s+)?$", re.I)
+
+
+def as_of_dates(text):
+    return [m.group(1) for m in DATE.finditer(text) if not OPENED_ON.search(text, 0, m.start())]
+
+
+# Max chars between a krytis reference and its status wording. 100 let in
+# "the PR sits open forever … the failure mode called out in #14" (~70 apart);
+# every true positive seen so far ("#1005 (…) is open", "#250 (open)") is <45.
+NEAR = 60
+
+# --- reference patterns, in precedence order; earlier spans mask later ones ---
+GH_URL = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)/(?:issues|pull)/(\d+)")
+GL_URL = re.compile(
+    r"https?://(gitlab\.com|gitlab\.gnome\.org|gitlab\.freedesktop\.org)/"
+    r"((?:[\w.-]+/)+?[\w.-]+)/(?:-/)?(issues|merge_requests|work_items)/(\d+)"
+)
+OWNER_REPO = re.compile(r"(?<![\w./-])([\w.-]+/[\w.-]+?)([#!])(\d+)\b(?![\w-])")
+# The name must end alphanumeric: "post-#594" is prose plus a bare krytis #N.
+SHORTHAND = re.compile(r"(?<![\w./#-])([A-Za-z][\w.-]*?[A-Za-z0-9])#(\d+)\b(?![\w-])")
+BARE = re.compile(r"(?<![\w/.&$#{])#(\d{1,5})\b(?![\w-])")
+
+ABBREV = re.compile(r"\b(?:e\.g|i\.e|vs|etc|cf|approx|no|v)\.$", re.I)
+# Any non-space may open a sentence: "…only. cosmic-epoch#3453 is still open"
+# starts lowercase, and an uppercase-only split glued it to the sentence before.
+SENTENCE_END = re.compile(r"(?<=[.!?])[\"'”’)\]*_`]*\s+(?=\S)|\s+\|\s+")
+COMMENT_LINE = re.compile(r"\s*(?:#(?![\d!])|//)")
+MD_STRIP = re.compile(r"\s*(?:(?:#{1,6}|>|[-*+]|\d+\.|\|)\s+)*")
+CODE_STRIP = re.compile(r"\s*(?:(?:(?:#(?![\d!]))+|//+)\s*)*")
+
+
+@dataclass(frozen=True)
+class Key:
+    host: str
+    repo: str
+    number: int
+    kind: str = ""  # GitLab only: issues | merge_requests
+
+    def __str__(self):
+        if (self.host, self.repo) == KRYTIS:
+            return f"#{self.number}"
+        sep = "!" if self.kind == "merge_requests" else "#"
+        host = "" if self.host == "github.com" else f"{self.host}:"
+        return f"{host}{self.repo}{sep}{self.number}"
+
+
+@dataclass
+class Sentence:
+    text: str
+    line: int  # 0-based first line
+    has_ref: bool = False
+
+
+@dataclass
+class Ref:
+    key: Key
+    line: int  # 0-based
+    col: int
+    sentence: int = -1
+
+
+@dataclass
+class Source:
+    label: str  # a repo path, the --text-file path, or "issue #512"
+    text: str
+    markdown: bool
+    lines: list = field(default_factory=list)
+    sentences: list = field(default_factory=list)
+    # line -> list of (sentence index, joined start, joined end, strip, line start)
+    line_spans: dict = field(default_factory=dict)
+    refs: list = field(default_factory=list)
+
+    def cite(self, line):
+        if self.label.startswith("issue #"):
+            return f"{self.label} line {line + 1}"
+        return f"{self.label}:{line + 1}"
+
+
+calls = {"github": 0, "gitlab": 0, "issues": 0}
+
+
+def die(msg):
+    print(f"ref-status: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def git(*args):
+    r = subprocess.run(["git", *args], capture_output=True)
+    if r.returncode != 0:
+        die(f"git {' '.join(args)}: {r.stderr.decode().strip()}")
+    return r.stdout
+
+
+def in_scope(path):
+    if path.startswith("docs/"):
+        return not path.startswith("docs/plans/done/")
+    if path.startswith("elements/"):
+        return path.endswith(".bst")
+    # This file's comments quote the very claims it reports.
+    return path.startswith("mise/tasks/") and path != "mise/tasks/ref-status"
+
+
+def tree_sources(rev):
+    if rev:
+        names = git("ls-tree", "-r", "--name-only", "-z", rev, "--", "docs", "elements", "mise/tasks")
+    else:
+        names = git("ls-files", "--cached", "--others", "--exclude-standard", "-z",
+                    "--", "docs", "elements", "mise/tasks")
+    paths = sorted(p for p in names.decode().split("\0") if p and in_scope(p))
+    if rev:
+        batch = subprocess.run(["git", "cat-file", "--batch"], capture_output=True,
+                               input="".join(f"{rev}:{p}\n" for p in paths).encode()).stdout
+        blobs, pos = [], 0
+        for _ in paths:
+            header_end = batch.index(b"\n", pos)
+            size = int(batch[pos:header_end].split()[2])
+            blobs.append(batch[header_end + 1:header_end + 1 + size])
+            pos = header_end + 1 + size + 1
+    else:
+        blobs = []
+        for p in paths:
+            try:
+                with open(p, "rb") as f:
+                    blobs.append(f.read())
+            except (FileNotFoundError, IsADirectoryError):
+                blobs.append(b"\0")
+    for path, data in zip(paths, blobs):
+        if b"\0" in data:
+            continue
+        yield Source(path, data.decode(errors="replace"), path.endswith(".md"))
+
+
+def issue_sources():
+    calls["issues"] += 1
+    r = subprocess.run(["gh", "issue", "list", "-R", "/".join(KRYTIS[1:]), "--state", "open",
+                        "--limit", "1000", "--json", "number,body"], capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"gh issue list failed (is `gh auth status` logged in?): {r.stderr.strip()}")
+    for issue in sorted(json.loads(r.stdout), key=lambda i: i["number"]):
+        yield Source(f"issue #{issue['number']}", issue["body"] or "", True)
+
+
+# --- sentences --------------------------------------------------------------
+
+def segment(src):
+    """Split src into paragraphs, then sentences, keeping a line↔offset map."""
+    src.lines = src.text.splitlines()
+    para, fenced, prev_comment = [], False, None
+
+    def flush():
+        if not para:
+            return
+        joined, starts = "", []
+        for i, strip, body in para:
+            if joined:
+                joined += " "
+            starts.append((i, len(joined), strip))
+            joined += body
+        bounds, pos = [], 0
+        for m in SENTENCE_END.finditer(joined):
+            if ABBREV.search(joined[:m.start()].rstrip("\"'”’)]*_`")):
+                continue
+            bounds.append((pos, m.start()))
+            pos = m.end()
+        bounds.append((pos, len(joined)))
+        base = len(src.sentences)
+        for s, e in bounds:
+            first = max(i for i, st, _ in starts if st <= s) if s else starts[0][0]
+            src.sentences.append(Sentence(joined[s:e], first))
+        for k, (i, st, strip) in enumerate(starts):
+            end = starts[k + 1][1] - 1 if k + 1 < len(starts) else len(joined)
+            src.line_spans[i] = (base, bounds, st, end, strip, joined)
+        para.clear()
+
+    for i, line in enumerate(src.lines):
+        if src.markdown:
+            if line.lstrip().startswith(("```", "~~~")):
+                flush()
+                fenced = not fenced
+                continue
+            standalone = fenced or re.match(r"\s*(#{1,6}\s|\|)", line)
+            # A list item or a `**Field:**` line is a new statement, not a
+            # wrapped continuation ("**Issue:** #309" / "**Blocked by:** #31").
+            new_item = re.match(r"\s*(?:(?:[-*+]|\d+\.)\s|\*\*[^*\n]{1,40}:\*\*)", line)
+            m = MD_STRIP.match(line)
+        else:
+            comment = bool(COMMENT_LINE.match(line))
+            standalone = False
+            new_item = comment != prev_comment
+            prev_comment = comment
+            m = CODE_STRIP.match(line)
+        body = line[m.end():].rstrip()
+        if not body:
+            flush()
+            continue
+        if standalone or new_item:
+            flush()
+        para.append((i, m.end(), body))
+        if standalone:
+            flush()
+    flush()
+
+
+def sentence_of(src, line, col):
+    span = src.line_spans.get(line)
+    if not span:
+        return -1
+    base, bounds, start, _, strip, _ = span
+    pos = start + max(0, col - strip)
+    for k, (s, e) in enumerate(bounds):
+        if pos <= e:
+            return base + k
+    return base + len(bounds) - 1
+
+
+# --- references -------------------------------------------------------------
+
+def gitlab_projects(sources):
+    """Project path -> host, for every GitLab URL in the scan."""
+    found = {}
+    for src in sources:
+        for m in GL_URL.finditer(src.text):
+            found.setdefault(m.group(2), m.group(1))
+    return found
+
+
+def repo_names(sources, gl):
+    """Repo name -> {owner/repo}, from every owner/repo reference in the scan."""
+    names = {}
+    for src in sources:
+        for m in GH_URL.finditer(src.text):
+            names.setdefault(m.group(2).lower(), set()).add(("github.com", f"{m.group(1)}/{m.group(2)}"))
+        for m in OWNER_REPO.finditer(src.text):
+            if m.group(2) == "#":
+                host = gl.get(m.group(1), "github.com")
+                names.setdefault(m.group(1).rsplit("/", 1)[1].lower(), set()).add((host, m.group(1)))
+    for path, host in gl.items():
+        names.setdefault(path.rsplit("/", 1)[1].lower(), set()).add((host, path))
+    return names
+
+
+def extract(src, gl, names, unresolved):
+    seen = set()
+    for i, line in enumerate(src.lines):
+        taken = []
+
+        def free(m):
+            return not any(m.start() < e and s < m.end() for s, e in taken)
+
+        def add(key, m):
+            taken.append(m.span())
+            if (i, key) not in seen:
+                seen.add((i, key))
+                src.refs.append(Ref(key, i, m.start()))
+
+        for m in GH_URL.finditer(line):
+            add(Key("github.com", f"{m.group(1)}/{m.group(2)}", int(m.group(3))), m)
+        for m in GL_URL.finditer(line):
+            kind = "merge_requests" if m.group(3) == "merge_requests" else "issues"
+            add(Key(m.group(1), m.group(2), int(m.group(4)), kind), m)
+        for m in OWNER_REPO.finditer(line):
+            if not free(m):
+                continue
+            repo, sep, n = m.group(1), m.group(2), int(m.group(3))
+            if repo in gl:
+                add(Key(gl[repo], repo, n, "merge_requests" if sep == "!" else "issues"), m)
+            elif sep == "#":
+                add(Key("github.com", repo, n), m)
+        for m in SHORTHAND.finditer(line):
+            if not free(m):
+                continue
+            name, n = m.group(1), int(m.group(2))
+            if name.lower() == "krytis":
+                add(Key(*KRYTIS, n), m)
+                continue
+            if name.isupper():  # PKCS#7, PKCS#11
+                continue
+            owners = names.get(name.lower(), set())
+            if len(owners) == 1:
+                host, repo = next(iter(owners))
+                add(Key(host, repo, n, "" if host == "github.com" else "issues"), m)
+            else:
+                unresolved.setdefault(name, []).append(src.cite(i))
+                taken.append(m.span())
+        for m in BARE.finditer(line):
+            if free(m):
+                add(Key(*KRYTIS, int(m.group(1))), m)
+    for ref in src.refs:
+        ref.sentence = sentence_of(src, ref.line, ref.col)
+        if ref.sentence >= 0:
+            src.sentences[ref.sentence].has_ref = True
+
+
+# --- live state ---------------------------------------------------------------
+
+def github_states(keys):
+    by_repo = {}
+    for k in keys:
+        by_repo.setdefault(k.repo, []).append(k)
+    states, cost = {}, 0
+    work = [(repo, k) for repo in sorted(by_repo) for k in sorted(by_repo[repo], key=lambda k: k.number)]
+    for start in range(0, len(work), GRAPHQL_BATCH):
+        chunk = work[start:start + GRAPHQL_BATCH]
+        repos = {}
+        for repo, k in chunk:
+            repos.setdefault(repo, []).append(k)
+        parts, alias = [], {}
+        for r, (repo, ks) in enumerate(repos.items()):
+            owner, name = repo.split("/", 1)
+            fields = " ".join(
+                f"n{k.number}: issueOrPullRequest(number: {k.number}) {{ ...S }}" for k in ks)
+            parts.append(f"r{r}: repository(owner: {json.dumps(owner)}, name: {json.dumps(name)}) "
+                         f"{{ nameWithOwner {fields} }}")
+            alias[f"r{r}"] = ks
+        query = ("fragment S on IssueOrPullRequest { __typename "
+                 "... on Issue { state stateReason closedAt updatedAt } "
+                 "... on PullRequest { state merged mergedAt closedAt updatedAt isDraft } } "
+                 "query { " + " ".join(parts) + " rateLimit { cost remaining } }")
+        calls["github"] += 1
+        r = subprocess.run(["gh", "api", "graphql", "-f", f"query={query}"], capture_output=True, text=True)
+        try:
+            data = json.loads(r.stdout)["data"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            die(f"GitHub GraphQL failed (is `gh auth status` logged in?): {r.stderr.strip() or r.stdout.strip()}")
+        cost += (data.get("rateLimit") or {}).get("cost", 0)
+        # NOT_FOUND errors come back as partial data with a null node; they
+        # are reported as unresolved references, not as a failure.
+        for a, ks in alias.items():
+            node = data.get(a) or {}
+            for k in ks:
+                item = node.get(f"n{k.number}")
+                if item:
+                    states[k] = {
+                        "type": "PR" if item["__typename"] == "PullRequest" else "issue",
+                        "state": item["state"],
+                        "draft": item.get("isDraft", False),
+                        "updated": item["updatedAt"][:10],
+                        "changed": (item.get("mergedAt") or item.get("closedAt") or "")[:10],
+                        "moved": node.get("nameWithOwner") if node.get("nameWithOwner") != k.repo else None,
+                    }
+    return states, cost
+
+
+def gitlab_fetch(url):
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code not in (408, 429, 500, 502, 503, 504) or attempt == 3:
+                return None
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 3:
+                return None
+        time.sleep(10)
+    return None
+
+
+def gitlab_states(keys):
+    states = {}
+    for k in sorted(keys, key=str):
+        calls["gitlab"] += 1
+        url = (f"https://{k.host}/api/v4/projects/{urllib.parse.quote(k.repo, safe='')}"
+               f"/{k.kind}/{k.number}")
+        item = gitlab_fetch(url)
+        if not item:
+            continue
+        state = {"opened": "OPEN", "closed": "CLOSED", "merged": "MERGED", "locked": "CLOSED"}
+        states[k] = {
+            "type": "MR" if k.kind == "merge_requests" else "issue",
+            "state": state.get(item.get("state"), str(item.get("state")).upper()),
+            "draft": bool(item.get("draft") or item.get("work_in_progress")),
+            "updated": (item.get("updated_at") or "")[:10],
+            "changed": (item.get("merged_at") or item.get("closed_at") or "")[:10],
+            "moved": None,
+        }
+    return states
+
+
+def describe(st):
+    s = f"{st['type']} {st['state']}"
+    if st["type"] == "PR" and st["state"] == "CLOSED":
+        s += " (unmerged)"
+    if st["draft"] and st["state"] == "OPEN":
+        s += " draft"
+    if st["state"] != "OPEN" and st["changed"]:
+        s += f" {st['changed']}"
+    s += f", updated {st['updated']}"
+    if st["moved"]:
+        s += f", now {st['moved']}"
+    return s
+
+
+def excerpt(text, width=170):
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= width else text[:width - 1] + "…"
+
+
+# --- the two sections ---------------------------------------------------------
+
+def paragraph(src, line):
+    span = src.line_spans.get(line)
+    return span[0] if span else None
+
+
+def is_krytis(key):
+    return (key.host, key.repo) == KRYTIS
+
+
+def joined_pos(src, ref):
+    _, _, start, _, strip, _ = src.line_spans[ref.line]
+    return start + max(0, ref.col - strip)
+
+
+def checked_item(line):
+    """A ticked task-list item narrates finished work: "- [x] #512 still lists…"."""
+    return re.match(r"\s*[-*+] \[[xX]\]", line) is not None
+
+
+def krytis_findings(sources, states):
+    """Section a: closed krytis #N with open-status wording tied to it."""
+    out = []
+    for src in sources:
+        by_para = {}
+        for ref in src.refs:
+            if is_krytis(ref.key) and ref.line in src.line_spans:
+                by_para.setdefault(paragraph(src, ref.line), []).append(ref)
+        for ref in src.refs:
+            st = states.get(ref.key)
+            if (not is_krytis(ref.key) or not st or st["state"] == "OPEN" or ref.sentence < 0
+                    or checked_item(src.lines[ref.line])):
+                continue
+            if CLOSURE.search(src.sentences[ref.sentence].text):
+                continue
+            # The ref's line plus the next one, cut to the ref's own sentence:
+            # wrapped prose splits "#250 is still" / "open", but the next
+            # line's *other* sentence ("closing #34. As of … it is open") is a
+            # claim about something else.
+            base, bounds, start, end, _, joined = src.line_spans[ref.line]
+            if paragraph(src, ref.line + 1) == base:
+                end = src.line_spans[ref.line + 1][3]
+            s, e = bounds[ref.sentence - base]
+            lo, hi = max(s, start), min(e, end)
+            positions = [(joined_pos(src, r), r) for r in by_para[base]]
+            for m in KRYTIS_OPEN.finditer(joined, lo, hi):
+                if PAST.search(joined, 0, m.start()):
+                    continue
+                # Attribute the wording to the nearest krytis reference only.
+                dist, nearest = min(((max(0, m.start() - p, p - m.end()), r) for p, r in positions),
+                                    key=lambda t: t[0])
+                if nearest is ref and dist <= NEAR:
+                    out.append((src, ref, st, m.group(0)))
+                    break
+    return out
+
+
+def is_claim(text):
+    return bool(EXTERNAL_OPEN.search(text)) and not CLOSURE.search(text)
+
+
+def external_context(src, ref):
+    """(prev, own, following) sentences for ref, within its paragraph.
+
+    prev: the sentence before, if it cites nothing ("No upstream fix is in
+    flight. [containers/image#2235](…) would have…"). following: up to two
+    sentences after, citing nothing ("…#37079 is open. No activity since
+    2026-07-25.").
+    """
+    if ref.sentence < 0:
+        return None, None, []
+    para = paragraph(src, src.sentences[ref.sentence].line)
+    own = src.sentences[ref.sentence]
+    prev = None
+    if ref.sentence - 1 >= para and not src.sentences[ref.sentence - 1].has_ref:
+        prev = src.sentences[ref.sentence - 1]
+    following, nxt = [], ref.sentence + 1
+    while (nxt < len(src.sentences) and len(following) < 3 and not src.sentences[nxt].has_ref
+           and paragraph(src, src.sentences[nxt].line) == para):
+        following.append(src.sentences[nxt])
+        nxt += 1
+    return prev, own, following
+
+
+def external_findings(sources, states, list_all):
+    """Section b: other projects' references whose prose makes a status claim."""
+    rows = []
+    for src in sources:
+        for ref in src.refs:
+            if is_krytis(ref.key) or checked_item(src.lines[ref.line]):
+                continue
+            prev, own, following = external_context(src, ref)
+            if own is None:
+                continue
+            claims = []  # (sentence, dated)
+            body_dated = any(as_of_dates(s.text) for s in [own, *following])
+            # A date after an undated sentence does not date it: "No upstream
+            # fix is in flight. [#2235] … closed unmerged on 2025-08-26" says
+            # nothing about when "in flight" was last true.
+            if prev and is_claim(prev.text):
+                claims.append((prev, bool(as_of_dates(prev.text))))
+            if is_claim(own.text):
+                claims.append((own, body_dated))
+            claims += [(s, body_dated) for s in following
+                       if FOLLOW_SUBJECT.match(s.text) and is_claim(s.text)]
+            if not claims and not list_all:
+                continue
+            dates = sorted(d for s in [prev, own, *following] if s for d in as_of_dates(s.text))
+            when = dates[-1] if dates else None
+            st, flags = states.get(ref.key), []
+            if st and claims:
+                undated = [s for s, dated in claims if not dated]
+                if undated:
+                    flags.append(("UNDATED", undated[0]))
+                # A comment on a closed item does not falsify "closed on
+                # <date>"; only its closing does.
+                pivot = st["updated"] if st["state"] == "OPEN" else st["changed"]
+                if when and pivot and pivot > when:
+                    verb = "updated" if st["state"] == "OPEN" else st["state"].lower()
+                    flags.append(("STALE", f"{verb} {pivot}, after the text's {when}"))
+                if st["state"] != "OPEN":
+                    flags.append(("CLOSED", f"described as open, now {st['state']}"
+                                  f"{' ' + st['changed'] if st['changed'] else ''}"))
+            rows.append((src, ref, st, when, [s for s, _ in claims], flags))
+    return rows
+
+
+def main():
+    t0 = time.monotonic()
+    os.chdir(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True,
+                            text=True, check=True).stdout.strip())
+    rev = os.environ.get("usage_ref") or ""
+    text_file = os.environ.get("usage_text_file") or ""
+    no_issues = os.environ.get("usage_no_issues") == "true"
+    list_all = os.environ.get("usage_all") == "true"
+
+    if text_file:
+        try:
+            with open(text_file, encoding="utf-8", errors="replace") as f:
+                sources = [Source(text_file, f.read(), True)]
+        except OSError as e:
+            die(f"--text-file: {e}")
+        scope = f"text file {text_file}"
+    else:
+        if rev and subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+                                  capture_output=True).returncode != 0:
+            die(f"--ref {rev}: not a commit in this repository")
+        sources = list(tree_sources(rev))
+        scope = f"tree at {rev}" if rev else "working tree"
+        if not no_issues:
+            sources += list(issue_sources())
+            scope += " + open issue bodies"
+
+    for src in sources:
+        segment(src)
+    gl = gitlab_projects(sources)
+    names = repo_names(sources, gl)
+    unresolved_short = {}
+    for src in sources:
+        extract(src, gl, names, unresolved_short)
+
+    keys = {r.key for s in sources for r in s.refs}
+    gh_keys = {k for k in keys if k.host == "github.com"}
+    gl_keys = keys - gh_keys
+    n_krytis = sum((k.host, k.repo) == KRYTIS for k in keys)
+    print(f"==> Scanning {scope}: {len(sources)} sources, "
+          f"{sum(len(s.refs) for s in sources)} references, {len(keys)} unique "
+          f"({n_krytis} krytis, {len(gh_keys) - n_krytis} other GitHub, {len(gl_keys)} GitLab)")
+
+    states, cost = github_states(gh_keys)
+    states.update(gitlab_states(gl_keys))
+
+    found = krytis_findings(sources, states)
+    print(f"\n==> a. Closed krytis references next to open-status wording ({len(found)})")
+    for src, ref, st, word in found:
+        line = src.lines[ref.line]
+        print(f"  {src.cite(ref.line)}  {ref.key}  {describe(st)}  [{word!r}]")
+        print(f"      {excerpt(line.strip())}")
+
+    rows = external_findings(sources, states, list_all)
+    flagged = [r for r in rows if r[5]]
+    print(f"\n==> b. Other projects' references with status wording ({len(rows)} listed, {len(flagged)} flagged)")
+    for src, ref, st, when, claims, flags in sorted(rows, key=lambda r: (not r[5], r[0].label, r[1].line)):
+        state = describe(st) if st else "UNRESOLVED (not found)"
+        dated = f"text dated {when}" if when else "text undated"
+        print(f"  {src.cite(ref.line)}  {ref.key}  {state}; {dated}")
+        for flag, what in flags:
+            if isinstance(what, Sentence):
+                at = ref.line if what is src.sentences[ref.sentence] else what.line
+                print(f"      {flag}: {src.cite(at)} \"{excerpt(what.text, 140)}\"")
+            else:
+                print(f"      {flag}: {what}")
+        if not flags and claims:
+            print(f"      \"{excerpt(claims[0].text, 140)}\"")
+
+    missing = sorted({(str(r.key), s.cite(r.line)) for s in sources for r in s.refs if r.key not in states})
+    if missing:
+        print(f"\n==> References that resolved to nothing ({len(missing)}) — typo, private, or not an issue/PR")
+        for key, where in missing:
+            print(f"  {where}  {key}")
+    if unresolved_short:
+        print(f"\n==> Shorthand name#N not resolved (no single owner/name for it in the scan; not guessed): "
+              + ", ".join(f"{n} ({len(v)})" for n, v in sorted(unresolved_short.items())))
+
+    print(f"\n==> ref-status: {len(found)} krytis + {len(flagged)} external findings in "
+          f"{time.monotonic() - t0:.1f}s; API calls: {calls['github']} GitHub GraphQL "
+          f"(rate-limit cost {cost}), {calls['issues']} gh issue list, {calls['gitlab']} GitLab REST.")
+    print("    Leads, not verdicts: classify each with the skill-rot-audit skill before editing.")
+
+
+if __name__ == "__main__":
+    main()
