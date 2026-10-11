@@ -120,4 +120,4 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/umbriel.git
   track: refs/heads/main
-  ref: 21456686a8f21f82a0675cad658ffbeed35269b6
+  ref: 2339fc37297b15286efb801f071792512feabf77
