@@ -28,13 +28,17 @@ check_icon_drift() {
   fi
 }
 
-echo "==> Fetching latest Equicord/Equibop release..."
-LATEST_TAG=$(gh api repos/Equicord/Equibop/releases/latest --jq '.tag_name')
-LATEST_VER="${LATEST_TAG#v}"
-echo "==> Latest: ${LATEST_VER} (${LATEST_TAG})"
-
 CURRENT_VER=$(grep -oP 'version: "\K[^"]+' "${ELEMENT}" | head -1)
 echo "==> Current: ${CURRENT_VER}"
+
+# The newest release carrying both tarballs, not `releases/latest`: a release
+# whose assets are missing or still uploading must not 404 the job
+# (scripts/github-release-with-assets.sh).
+echo "==> Fetching latest Equicord/Equibop release with both tarballs..."
+LATEST_TAG=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER}" \
+  Equicord/Equibop 'equibop-{ver}.tar.gz' 'equibop-{ver}-arm64.tar.gz')
+LATEST_VER="${LATEST_TAG#v}"
+echo "==> Latest: ${LATEST_VER} (${LATEST_TAG})"
 
 check_icon_drift "${LATEST_TAG}"
 

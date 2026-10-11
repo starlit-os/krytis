@@ -7,14 +7,17 @@ set -euo pipefail
 ELEMENT="elements/core/gum.bst"
 REPO="charmbracelet/gum"
 
-echo "==> Fetching latest ${REPO} release..."
-LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
+CURRENT_VER=$(grep -oP 'gum_\K[^_]+(?=_Linux)' "${ELEMENT}" | head -1)
+echo "==> Current: ${CURRENT_VER}"
+
+# Newest release with both archives, not `releases/latest`
+# (scripts/github-release-with-assets.sh).
+echo "==> Fetching latest ${REPO} release with both archives..."
+LATEST_TAG=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER}" \
+  "${REPO}" 'gum_{ver}_Linux_x86_64.tar.gz' 'gum_{ver}_Linux_arm64.tar.gz')
 LATEST_VER="${LATEST_TAG#v}"
 
 echo "==> Latest: ${LATEST_TAG}"
-
-CURRENT_VER=$(grep -oP 'gum_\K[^_]+(?=_Linux)' "${ELEMENT}" | head -1)
-echo "==> Current: ${CURRENT_VER}"
 
 if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
   echo "==> Already up to date (${CURRENT_VER})"

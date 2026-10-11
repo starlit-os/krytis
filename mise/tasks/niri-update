@@ -7,11 +7,15 @@ set -euo pipefail
 ELEMENT="elements/desktop/niri.bst"
 REPO="niri-wm/niri"
 
-echo "==> Fetching latest ${REPO} release..."
-LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
-LATEST_VER="${LATEST_TAG#v}"
-
 CURRENT_VER=$(grep -oP 'refs/tags/v\K[^\s/]+(?=\.tar\.gz)' "${ELEMENT}" | head -1)
+
+# Newest release with the vendored-dependencies tarball, not `releases/latest`
+# (scripts/github-release-with-assets.sh). The source tarball is the tag
+# archive, which exists for every tag.
+echo "==> Fetching latest ${REPO} release with vendored dependencies..."
+LATEST_TAG=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER}" \
+  "${REPO}" 'niri-{ver}-vendored-dependencies.tar.xz')
+LATEST_VER="${LATEST_TAG#v}"
 echo "==> Latest: ${LATEST_TAG}  Current: v${CURRENT_VER}"
 
 if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then

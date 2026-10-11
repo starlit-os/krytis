@@ -1424,16 +1424,34 @@ by `kernel-update`, and `desktop/zig.bst` by `ghostty-update` (which bumps Zig w
 
 ### `releases/latest` is not "the latest source release"
 
-Most `<name>-update` tasks read `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name`
-and then download a fixed asset name from that tag. That breaks as soon as upstream
-publishes a release without that asset. `Qalculate/libqalculate` v5.13.2 (2026-10-10) is a
-Windows-only rebuild: its assets are `qalculate-5.13.2-x64.msi` and `.zip`, with no
-`libqalculate-5.13.2.tar.gz`. From then on `libqalculate-update` 404'd on every run,
-failing `track-libqalculate` even though there was nothing to update. The fix is to
-select the newest non-draft, non-prerelease release that *has* the asset (see the jq
-filter in `mise/tasks/libqalculate-update`), so a binary-only release reads as "up to
-date". If another updater starts 404ing on its download, check the release's asset list
-before suspecting the URL pattern: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].name'`.
+An updater that reads `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name` and then
+downloads a fixed asset name from that tag has two ways to fail:
+
+- **A release without the asset.** `Qalculate/libqalculate` v5.13.2 (2026-10-10) is a
+  Windows-only rebuild: its assets are `qalculate-5.13.2-x64.msi` and `.zip`, with no
+  `libqalculate-5.13.2.tar.gz`. From then on `libqalculate-update` 404'd on every run,
+  failing `track-libqalculate` even though there was nothing to update.
+- **A release published before its assets finish uploading.** A run inside that window
+  404s on a file that turns up later. libqalculate's `qalculate-5.13.1-x64.zip` was
+  attached about 3 h after its release was published.
+
+**Every updater that downloads a release asset asks
+`scripts/github-release-with-assets.sh` instead**, naming the exact assets it is about to
+fetch, with `{tag}`/`{ver}` placeholders. It prints the newest non-draft, non-prerelease
+release that carries all of them, and that release can be older than the newest one.
+`--current <ver>` stops the walk at the pinned release, so an updater never moves
+backwards and never fails just because newer releases lack the files.
+`--strip-suffix` handles tags like libsodium's `1.0.22-RELEASE`. Updaters that download
+the tag archive (`archive/refs/tags/<tag>.tar.gz`, which exists for every tag) do not
+need it: `falcond-update`, `scx-loader-update` and `tarball-update`'s `github-tag`
+provider still read `releases/latest`.
+
+Skipping is not silent. Each skipped release goes to stderr, and under Actions it is also
+appended to the step summary, as `` `Qalculate/libqalculate`: skipped release v5.13.2
+(missing: libqalculate-5.13.2.tar.gz) ``. That line is the only signal when upstream
+*renames* an asset: the updater then reads "up to date" forever, the #640 failure mode.
+A skip that repeats across many runs means the template is stale, not that upstream is
+slow. To check by hand: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].name'`.
 
 ### An auto-track `ref:` bump never builds the element — upstream dep additions land broken
 

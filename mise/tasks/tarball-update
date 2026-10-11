@@ -20,7 +20,8 @@
 # Row format:  name|element|provider|locator|extra
 #
 #   github-release   locator=<owner/repo>   extra=<tarball basename prefix>
-#       Latest GitHub *release*, asset published on the release itself:
+#       Newest GitHub *release* that carries the asset (not `releases/latest`,
+#       see scripts/github-release-with-assets.sh):
 #       .../releases/download/<tag>/<prefix>-<version>.tar.gz
 #
 #   github-tag       locator=<owner/repo>   extra=<tag prefix, "" or "v">
@@ -42,7 +43,7 @@
 #       must never wander to 0.17.
 #
 #   github-release-glued   locator=<owner/repo>   extra=<tarball basename prefix>
-#       Latest GitHub release, asset named `<prefix><tag>.tar.xz` — no
+#       Newest GitHub release carrying `<prefix><tag>.tar.xz` — no
 #       separator between prefix and version, tag keeps its leading "v", and
 #       the archive is .tar.xz not .tar.gz. Needed for
 #       lassekongo83/adw-gtk3, whose release CI glues the prefix straight onto
@@ -141,7 +142,7 @@ update_one() {
     case "$provider" in
       github-release)
         cur=$(url_lines "$element" | grep -oP "${extra}-\K[0-9][0-9.]*(?=\.tar\.gz)" | head -1)
-        local tag; tag=$(gh api "repos/${locator}/releases/latest" --jq '.tag_name')
+        local tag; tag=$(scripts/github-release-with-assets.sh --current "$cur" "$locator" "${extra}-{ver}.tar.gz")
         new="${tag#v}"
         url="https://github.com/${locator}/releases/download/${tag}/${extra}-${new}.tar.gz"
         elem="github_files:${locator}/releases/download/${tag}/${extra}-${new}.tar.gz"
@@ -192,7 +193,7 @@ update_one() {
         ;;
       github-release-glued)
         cur=$(url_lines "$element" | grep -oP "${extra}\Kv[0-9][0-9.]*(?=\.tar\.xz)" | head -1)
-        local tag; tag=$(gh api "repos/${locator}/releases/latest" --jq '.tag_name')
+        local tag; tag=$(scripts/github-release-with-assets.sh --current "${cur#v}" "$locator" "${extra}{tag}.tar.xz")
         new="$tag"
         url="https://github.com/${locator}/releases/download/${tag}/${extra}${tag}.tar.xz"
         elem="github_files:${locator}/releases/download/${tag}/${extra}${tag}.tar.xz"

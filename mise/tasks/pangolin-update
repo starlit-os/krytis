@@ -7,15 +7,16 @@ set -euo pipefail
 ELEMENT="elements/core/pangolin-cli.bst"
 REPO="fosrl/cli"
 
-echo "==> Fetching latest ${REPO} release..."
-LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name')
-LATEST_VER="${LATEST_TAG#v}"
-
-echo "==> Latest: ${LATEST_TAG}"
-
-CURRENT_VER=$(grep -oP 'pangolin-cli_linux_amd64\K' "${ELEMENT}" || grep -oP '/\K[^/]+(?=/pangolin-cli_linux)' "${ELEMENT}" | head -1)
 CURRENT_VER=$(grep -oP 'download/\K[^/]+(?=/pangolin-cli_linux_amd64)' "${ELEMENT}" | head -1)
 echo "==> Current: ${CURRENT_VER}"
+
+# Newest release with both binaries, not `releases/latest`
+# (scripts/github-release-with-assets.sh). CURRENT_VER here is the tag itself.
+echo "==> Fetching latest ${REPO} release with both binaries..."
+LATEST_TAG=$(scripts/github-release-with-assets.sh --current "${CURRENT_VER#v}" \
+  "${REPO}" pangolin-cli_linux_amd64 pangolin-cli_linux_arm64)
+
+echo "==> Latest: ${LATEST_TAG}"
 
 if [ "${LATEST_TAG}" = "${CURRENT_VER}" ]; then
   echo "==> Already up to date (${CURRENT_VER})"
