@@ -82,8 +82,8 @@ focus_on_activate = true
 # variables umbriel refuses to let a config set because it owns them:
 # XDG_CURRENT_DESKTOP, XDG_SESSION_DESKTOP and XDG_SESSION_TYPE (upstream
 # docs/user/configuration.md § Environment). umbriel publishes those itself --
-# XDG_CURRENT_DESKTOP=Umbriel, which is what xdg-desktop-portal-umbriel's own
-# umbriel-portals.conf (`default=umbriel;gtk`) keys off.
+# XDG_CURRENT_DESKTOP=Umbriel, which selects umbriel-portals.conf: krytis's
+# /etc/xdg copy (default=umbriel;gnome;gtk, krytis#1029) ahead of upstream's.
 MOZ_ENABLE_WAYLAND = "1"
 MOZ_DBUS_REMOTE = "1"
 GDK_BACKEND = "wayland"

@@ -52,10 +52,12 @@ depends:
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst
   - gnome-build-meta.bst:core-deps/xdg-desktop-portal-gnome.bst
   # Umbriel's own Screencast/Screenshot portal backend -- upstream ships its
-  # own umbriel-portals.conf routing (default=umbriel;gtk).
+  # own umbriel-portals.conf routing (default=umbriel;gtk), which krytis's
+  # /etc/xdg file below shadows (#1029).
   - desktop/xdg-desktop-portal-umbriel.bst
-  # krytis's /etc/xdg deltas over niri's and umbriel's routing files
-  # (Secret → oo7-portal, #1028).
+  # krytis's /etc/xdg routing over niri's and umbriel's files: Secret →
+  # oo7-portal (#1028), Umbriel through xdp-gnome (#1029), and none pins for
+  # what xdp-gnome can't serve without gnome-shell (#1029, #1054).
   - config/xdg-desktop-portal-routing.bst
 
   # ── Credentials ────────────────────────────────────────────────────────

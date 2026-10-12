@@ -25,8 +25,13 @@ Fails on:
   no config     no `Using portal configuration file` line for a desktop: xdp
                 fell back to the legacy UseIn= matching;
   redundant     a key in a krytis /etc/xdg/xdg-desktop-portal/<d>-portals.conf
-                that the upstream /usr/share file now resolves the same way on
-                its own — upstream caught up, delete the key (#1028).
+                whose removal changes nothing: that file's own default= or the
+                upstream /usr/share file already resolves the interface the
+                same way — upstream caught up, delete the key (#1028);
+  stale none    a `<iface>=none` pin in a krytis /etc file for an interface
+                the desktop's own backend (OWN_BACKEND) now declares in its
+                .portal file — drop the pin (#1029). A none pin wins whatever
+                is installed, so the table alone stays green.
 
 The tables are the expected state. A PR that changes routing on purpose edits
 its rows in the same commit. See docs/skills/desktop.md § xdg-desktop-portal
@@ -42,23 +47,24 @@ XDP_SECONDS = 4
 
 # interface (without the org.freedesktop.impl.portal. prefix) -> (backend, why)
 NIRI_UPSTREAM = "niri-portals.conf default=gnome;gtk"
+UMBRIEL_KRYTIS = "krytis umbriel-portals.conf default=umbriel;gnome;gtk"
 EXPECTED = {
     "niri": {
         "Access": ("gtk", "niri-portals.conf interface key"),
         "Account": ("gnome", NIRI_UPSTREAM),
         "AppChooser": ("gnome", NIRI_UPSTREAM),
         "Background": ("gnome", NIRI_UPSTREAM),
-        "Clipboard": ("gnome", "needs Mutter RemoteDesktop, niri lacks it (#1054)"),
+        "Clipboard": ("none", "krytis pin: needs Mutter RemoteDesktop, niri lacks it (#1054)"),
         "DynamicLauncher": ("gnome", NIRI_UPSTREAM),
         "Email": ("gtk", "gnome.portal lacks it"),
         "FileChooser": ("gnome", "Nautilus"),
-        "GlobalShortcuts": ("gnome", "needs org.gnome.Shell, niri lacks it (#1054)"),
+        "GlobalShortcuts": ("none", "krytis pin: needs org.gnome.Shell, niri lacks it (#1054)"),
         "Inhibit": ("gtk", "gnome.portal lacks it"),
-        "InputCapture": ("gnome", "needs Mutter, niri lacks it (#1054)"),
+        "InputCapture": ("none", "krytis pin: needs Mutter InputCapture, niri lacks it (#1054)"),
         "Lockdown": ("gnome", NIRI_UPSTREAM),
         "Notification": ("gtk", "niri-portals.conf interface key"),
         "Print": ("gnome", NIRI_UPSTREAM),
-        "RemoteDesktop": ("gnome", "needs Mutter RemoteDesktop, niri lacks it (#1054)"),
+        "RemoteDesktop": ("none", "krytis pin: needs Mutter RemoteDesktop, niri lacks it (#1054)"),
         "ScreenCast": ("gnome", "niri implements Mutter ScreenCast"),
         "Screenshot": ("gnome", "niri implements org.gnome.Shell.Screenshot"),
         "Secret": ("oo7-portal", "krytis /etc delta, niri's file says gnome-keyring (#1028)"),
@@ -67,29 +73,36 @@ EXPECTED = {
         "Wallpaper": ("gnome", NIRI_UPSTREAM),
     },
     "Umbriel": {
-        "Access": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
-        "Account": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
-        "AppChooser": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Background": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Clipboard": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "DynamicLauncher": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
-        "Email": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
-        "FileChooser": ("gtk", "umbriel-portals.conf default=umbriel;gtk (#1029)"),
-        "GlobalShortcuts": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Inhibit": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
-        "InputCapture": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Lockdown": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Notification": ("gtk", "umbriel-portals.conf default=umbriel;gtk"),
-        "Print": ("gtk", "umbriel-portals.conf default=umbriel;gtk (#1029)"),
-        "RemoteDesktop": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Access": ("gtk", "krytis pin: xdp-gnome needs org.gnome.Shell for parentless requests"),
+        "Account": ("gnome", UMBRIEL_KRYTIS),
+        "AppChooser": ("gnome", UMBRIEL_KRYTIS),
+        "Background": ("none", "krytis pin: needs org.gnome.Shell.Introspect (#1029)"),
+        "Clipboard": ("none", "krytis pin: needs Mutter RemoteDesktop (#1029)"),
+        "DynamicLauncher": ("gnome", UMBRIEL_KRYTIS),
+        "Email": ("gtk", "gnome.portal lacks it"),
+        "FileChooser": ("gnome", "Nautilus (#1029)"),
+        "GlobalShortcuts": ("none", "krytis pin: needs org.gnome.Shell (#1029)"),
+        "Inhibit": ("gtk", "gnome.portal lacks it"),
+        "InputCapture": ("none", "krytis pin: needs Mutter InputCapture (#1029)"),
+        "Lockdown": ("gnome", UMBRIEL_KRYTIS),
+        "Notification": ("gtk", "krytis pin: xdp-gnome needs org.gtk.Notifications"),
+        "Print": ("gnome", UMBRIEL_KRYTIS),
+        "RemoteDesktop": ("none", "krytis pin: needs Mutter RemoteDesktop (#1029)"),
         "ScreenCast": ("umbriel", "xdg-desktop-portal-umbriel"),
         "Screenshot": ("umbriel", "xdg-desktop-portal-umbriel"),
-        "Secret": ("oo7-portal", "krytis /etc delta (#1028)"),
-        "Settings": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Usb": ("none", "neither umbriel nor gtk implements it (#1029)"),
-        "Wallpaper": ("none", "neither umbriel nor gtk implements it (#1029)"),
+        "Secret": ("oo7-portal", "krytis pin (#1028)"),
+        "Settings": ("gnome", "gsettings; noctalia writes color-scheme (#1029)"),
+        "Usb": ("gnome", UMBRIEL_KRYTIS),
+        "Wallpaper": ("none", "krytis pin: noctalia ignores org.gnome.desktop.background (#1029)"),
     },
 }
+
+# desktop -> its own portal backend. A krytis `none` pin for an interface this
+# backend's .portal file declares is stale (#1029). niri has no entry: it is
+# not a portal backend, and its gaps close inside niri's own D-Bus services
+# (#1054), which no .portal file shows. gnome is deliberately not checked: it
+# declares every pinned interface, which is why the pins exist.
+OWN_BACKEND = {"Umbriel": "umbriel"}
 
 PREFIX = "org.freedesktop.impl.portal."
 USING = re.compile(r"Using (\S+)\.portal for org\.freedesktop\.impl\.portal\.(\w+)")
@@ -166,23 +179,40 @@ def resolve_in(conf, iface, impls):
 
 
 def check_redundant(confs, impls):
-    """Fail on an /etc delta key the upstream /usr/share file already resolves the same way."""
+    """Fail on an /etc key whose removal would not change the interface's backend:
+    the same file's default= or, below it, the upstream /usr/share file resolves it
+    the same way on its own."""
     ok = True
     for path, lines in sorted(confs.items()):
         if not path.startswith("/etc/"):
             continue
-        upstream = confs.get("/usr/share/xdg-desktop-portal/" + os.path.basename(path))
-        if upstream is None:
-            continue
-        upstream = preferred(upstream)
-        for key in preferred(lines):
+        ours = preferred(lines)
+        upstream = preferred(confs.get("/usr/share/xdg-desktop-portal/" + os.path.basename(path), []))
+        for key in ours:
             if not key.startswith(PREFIX):
                 continue
             iface = key[len(PREFIX):]
-            ours = resolve_in(preferred(lines), iface, impls)
-            if ours is not None and resolve_in(upstream, iface, impls) == ours:
-                print(f"  REDUNDANT: {path}: {iface}={ours} — upstream's file now says the same;"
-                      " delete the key")
+            want = resolve_in(ours, iface, impls)
+            rest = {k: v for k, v in ours.items() if k != key}
+            without = resolve_in(rest, iface, impls)
+            if without is None:
+                without = resolve_in(upstream, iface, impls)
+            if want is not None and without == want:
+                print(f"  REDUNDANT: {path}: {iface}={want} — it resolves the same without"
+                      " the key; delete it")
+                ok = False
+    return ok
+
+
+def check_stale_none(confs, impls):
+    """Fail on a krytis `none` pin for an interface the desktop's own backend now declares."""
+    ok = True
+    for desktop, backend in OWN_BACKEND.items():
+        path = f"/etc/xdg/xdg-desktop-portal/{desktop.lower()}-portals.conf"
+        for key, value in preferred(confs.get(path, [])).items():
+            iface = key[len(PREFIX):]
+            if key.startswith(PREFIX) and "none" in value and iface in impls.get(backend, ()):
+                print(f"  STALE NONE: {path}: {backend} now implements {iface}; drop the pin")
                 ok = False
     return ok
 
@@ -234,6 +264,7 @@ def main():
 
     impls = implements(portals)
     ok &= check_redundant(confs, impls)
+    ok &= check_stale_none(confs, impls)
 
     universe = set().union(*impls.values())
     for desktop in EXPECTED:

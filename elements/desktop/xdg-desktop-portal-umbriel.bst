@@ -14,8 +14,9 @@
 # Data files (umbriel.portal, umbriel-portals.conf preferring
 # `default=umbriel;gtk` for XDG_CURRENT_DESKTOP=Umbriel, both D-Bus/systemd
 # service units) are all installed by upstream's own meson.build. krytis's
-# changes to that routing are a delta file in
-# config/xdg-desktop-portal-routing.bst, not edits here.
+# routing is config/xdg-desktop-portal-routing.bst's /etc/xdg file, not edits
+# here; its default= shadows this umbriel-portals.conf for every interface
+# umbriel, gnome or gtk implements (krytis#1029).
 #
 # Does not link wlroots -- captures via raw wayland-protocols staging
 # extensions (ext-image-capture-source-v1, ext-image-copy-capture-v1,
