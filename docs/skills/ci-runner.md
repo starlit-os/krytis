@@ -89,7 +89,8 @@ Task 7), where it blocked a local `renovate-check --dry-run` verification.
 
 A second, distinct self-hosted runner, registered under the name `krytis-vps`. Since
 2026-10-09 (#1145) it is a **one.com Cloud server L**: Debian 13 (trixie), 8 vCPU,
-15.6 GiB RAM (`MemTotal` 15 GiB), 394 GB disk, host `cloud-server-10673574`. From #794
+15.6 GiB RAM (`MemTotal` 15 GiB), 394 GB disk, OS hostname `krytis-runner` (one.com's
+`cloud-server-10673574` until 2026-10-12; § Host-native says why it changed). From #794
 until then it was a Contabo Cloud VPS 6 (6 vCPU/12 GB, 11 GiB `MemTotal`/200 GB,
 host `krytis-build`); a cold full build took 31h29m there against 12h19m on L (#1126).
 It exists to take `cache-warm.yml`'s scheduled cron run off Blacksmith: a
@@ -117,10 +118,8 @@ container.
 section said it was** ("no other tenant — the VM itself is the isolation
 boundary"), which `files/runner-vps/gc.sh`'s own header has contradicted since
 #938 ("Shared box: it also carries …"). Measured on the Contabo box 2026-09-25; the
-shape matters more than the count. **The one.com box carries neither service yet**
-(2026-10-09: the runner unit is the only non-Debian service running, and
-`/etc/containers/systemd/` holds only the empty `users/`). Moving them is #1154,
-and once it lands the paragraphs below apply to L as written:
+shape matters more than the count. The one.com box started without either service
+and got both back on 2026-10-12 (#1154, kitten-lily/materia#144):
 
 - `beszel-agent` (`docker.io/henrygd/beszel-agent`, monitoring) runs as an
   always-on **root** quadlet beside the runner. `Privileged=false`, but it binds
@@ -142,6 +141,24 @@ publishes put six UEFI private keys in the workspace for the duration of the
 build, and this is not a host that can hold them. `publish.yml` stays on
 Blacksmith. Evidence and the full measurement in
 `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md` § V0. Tenancy on the VPS
+
+**Both services belong to `kitten-lily/materia`, not this repo.** materia knows the box as
+server `krytis-runner`, an "adopted" host: its four bootstrap files come from the materia
+repo's `server:adopt-render --server-name krytis-runner` task, copied over by hand, because L
+never went through Ignition. Change the agent in materia, not on the box: the next
+`materia-update` run (daily at 05:00 UTC and 2 min after boot) rewrites
+`/etc/containers/systemd/beszel-agent/`.
+
+**The OS hostname is load-bearing.** materia picks its `MANIFEST.toml` `Hosts.<name>`
+entry by the box's hostname. If the hostname matches no entry, the run logs `Nothing to
+do` and exits `success`, so a renamed box loses monitoring without any error. That is
+why L was renamed from one.com's `cloud-server-10673574`, and why
+`/etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg` sets `preserve_hostname: true`
+(Debian's `cloud.cfg` ships `false`, so cloud-init would restore the metadata name at
+boot). The hostname is not the GitHub runner's name, which stays `krytis-vps`
+(`RUNNER_VPS_NAME`). It is also unrelated to the local container `krytis-runner` from
+`mise runner:start`. A replacement box must take the same hostname before materia
+runs on it, or it needs its own `Hosts.` entry.
 
 Managed via `mise runner-vps:{install,register,deregister,status}`
 (`mise/tasks/runner-vps/`, provisioning script in `files/runner-vps/provision.sh`).
