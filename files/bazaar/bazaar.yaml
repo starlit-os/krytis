@@ -1,0 +1,22 @@
+# Bazaar main config. The path isn't a krytis choice: the Flathub build bakes
+# -Dhardcoded_main_config_path=/run/host/etc/bazaar/bazaar.yaml in at compile
+# time, and /run/host/etc is this host's /etc seen from inside the sandbox.
+# Reaching it needs the host-etc permission, which
+# /usr/libexec/krytis/bazaar-host-etc.sh grants at boot.
+#
+# Don't create config.yaml or blocklist.txt beside this file. The Flathub build
+# hardcodes those two paths as well and loads them in addition to the files
+# named here, so a second file would split the config across two places.
+yaml-blocklist-paths:
+  - /run/host/etc/bazaar/blocklist.yaml
+
+curated-config-paths:
+  - /run/host/etc/bazaar/curated.yaml
+
+# starlit-update.timer already runs `flatpak update --system` daily
+# (files/starlit-update/starlit-update.service). A second auto-update toggle
+# in Bazaar's preferences would only blur which one is in charge.
+# Bazaar hides the "App Updates" group only while its own auto-update is off
+# (the gsettings default): a user who has already switched it on keeps the
+# group so they can switch it back off (bz-preferences-dialog.blp, 0.9.7).
+hide-auto-update-options: true

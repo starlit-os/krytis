@@ -104,12 +104,13 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
   table. Never grant one yourself. If a new Bluefin pick looks like a case for one,
   drop it anyway and point it out to the user as a possible exception.
 - **krytis's own edits sit on top of the mirror.** Keep them on every refresh:
-  - *Section renames.* Bluefin's "Games" is krytis's "Gaming". The diff task prints
-    Bluefin's section names, so map them before placing rows.
-  - *krytis additions.* Rows tagged ➕ **krytis addition** (e.g. Faugus and Bottles
-    under Gaming) aren't Bluefin's. They go at the end of their section. Don't remove
-    them because Bluefin doesn't list them. If Bluefin later adds one, drop the tag
-    and move the row to Bluefin's position.
+  - *Section renames.* Bluefin's "Bluefin Recommends" is krytis's "Krytis Recommends",
+    and its "Games" is krytis's "Gaming". The diff task prints Bluefin's section names,
+    so map them before placing rows.
+  - *krytis additions.* Rows tagged ➕ **krytis addition** (Pinta under Office &
+    Productivity; Faugus, Bottles and Equibop under Gaming) aren't Bluefin's. They go
+    at the end of their section. Don't remove them because Bluefin doesn't list them.
+    If Bluefin later adds one, drop the tag and move the row to Bluefin's position.
   - *Headings.* A section heading's total counts krytis additions as well as Bluefin's
     rows.
 - **No individual games.** Curate launchers and tools (Steam, Heroic, Lutris, Faugus,
@@ -122,8 +123,9 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
   itself later removes a struck app, remove it from both places.
 - Add, remove, rename and move rows so each section table mirrors Bluefin's list, in
   Bluefin's order. Each section heading reads `(<accepted>/<total>)`, where total is
-  Bluefin's row count and accepted is the rows not struck through. Recount both after
-  every add, drop or move, and update the snapshot line (SHA, date, totals).
+  Bluefin's row count plus krytis additions, and accepted is the rows not struck through.
+  Recount both after every add, drop or move, and update the snapshot line (SHA, date,
+  totals).
 - Replace the marker with the `New marker:` line the task printed.
 - Re-check **Currently preinstalled by krytis** against its two sources,
   `files/flatpak-preinstall/flatpak-preinstall.sh` (`APPS=`) and `live/src/flatpaks`.
@@ -136,21 +138,29 @@ Edit `docs/design/bazaar-curated-candidates.md` in place:
 
 Then give the user a short summary of the new, removed and renamed apps, each with its
 Flathub link and one line on how it fits krytis (niri, not GNOME; no Homebrew;
-proprietary or free). The doc is only the candidate pool. Choosing which apps go into
-krytis's own `curated.yaml` is #245's decision and the user's, so don't pre-select.
+proprietary or free). The doc is the candidate pool, but its rows that aren't struck
+through are also exactly what `files/bazaar/curated.yaml` ships. So don't pre-select:
+ask the user about each new pick before committing, strike the ones they drop, and leave
+the rest unstruck.
 
-When the user does pick, the picks go into the `appids.list` entries of krytis's
-`curated.yaml` and nowhere else. The #245 wiring owns the rows, banners, titles,
-`bazaar.yaml` and `blocklist.yaml`. The five rules a list change must meet are in the
-candidate doc's **Contract with the wiring** section. Check rules 1 and 2 before
-proposing a list: every ID must pass `flatpak remote-info flathub <id>`, and no ID may
-appear in `blocklist.yaml`. flathub.org is blocked in the cloud sandbox, so rule 1 can
-only be checked on a dev machine. Say so rather than skipping it.
+**Keep `files/bazaar/curated.yaml` in step in the same commit.** Each section's
+`appids.list` holds that section's unstruck rows, in the doc's order. Kept picks go in at
+Bluefin's position, Bluefin's removals and renames come out or change in both files, and
+nothing else in `curated.yaml` changes: `elements/config/bazaar-config.bst` and the
+wiring own the rows, banners, titles, `bazaar.yaml` and `blocklist.yaml`. The five rules
+a list change must meet are in the candidate doc's **Contract with the wiring** section.
+Check rules 1 and 2 before committing: every ID must pass `flatpak remote-info flathub
+<id>` without an `End-of-life:` line, and no ID may appear in `blocklist.yaml`.
+flathub.org is blocked in the cloud sandbox, so rule 1 can only be checked on a dev
+machine. Say so rather than skipping it. To see the page render, follow
+`docs/skills/bst.md` § Bazaar curated config and the host-etc permission, which loads the
+edited files into the installed Bazaar without root or a rebuild.
 
 ### 5. Commit
 
-Commit the doc update, marker included, as one `docs(bazaar): …` commit on a no-issue
-branch (for example `docs/bazaar-recommends-<date>`) unless the user ties the run to an
+Commit the doc update, marker included, together with any `files/bazaar/curated.yaml`
+change, as one `feat(bazaar): …` commit (or `docs(bazaar): …` if `curated.yaml` didn't
+change) on a no-issue branch (for example `docs/bazaar-recommends-<date>`) unless the user ties the run to an
 issue. Run `mise run docs-links` first. If anything about the process turned out to be
 wrong, such as a new schema or a moved file, fix this skill and
 `docs/skills/desktop.md` § *Bluefin's Bazaar curated list* in the same commit.

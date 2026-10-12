@@ -2688,7 +2688,10 @@ repo. A search of the legacy repo is how #245 first concluded that Bluefin had "
 positive list".
 
 krytis mirrors that list as candidates in `docs/design/bazaar-curated-candidates.md`.
-The last-mined common SHA sits in an HTML-comment marker in the same file.
+The last-mined common SHA sits in an HTML-comment marker in the same file. The rows that
+aren't struck through are what krytis's own page ships, in `files/bazaar/curated.yaml`
+(`elements/config/bazaar-config.bst`; see `docs/skills/bst.md` § Bazaar curated config
+and the host-etc permission for the wiring and how to test it).
 `mise run bazaar-recommends-diff` reports what has changed since that SHA, and the
 `bluefin-bazaar-recommends` skill (`.claude/skills/bluefin-bazaar-recommends/`) does the
 refresh. Non-obvious points:

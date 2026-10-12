@@ -1,0 +1,239 @@
+# Bazaar's "Curated" tab. Read from /run/host/etc/bazaar/curated.yaml (see
+# bazaar.yaml); Bazaar watches the file and reloads it live.
+#
+# Schema: Bazaar 0.9's typed rows (`- banner:` / `- section:`). The legacy
+# root-level `css:` + `rows: - sections:` form is rejected by Bazaar 0.9+.
+#
+# Banners are plain CSS gradients, no `image:`: krytis has no branding art for
+# this page. Colours are noctalia's default palette,
+# files/noctalia-skel/community-palettes/Rose%20Pine%20Moon.json (dark block for
+# dark-color, light block for light-color), from the base colour to one accent.
+#
+# The app lists mirror the accepted rows of
+# docs/design/bazaar-curated-candidates.md, which records why each Bluefin pick
+# was kept or dropped. Change a list there first, then here. A list change must
+# meet that doc's "Contract with the wiring" rules: every ID resolves on
+# Flathub, and no ID is also in blocklist.yaml (the blocklist wins, so the tile
+# would silently never render).
+rows:
+- banner:
+    height: 120
+    # Rose Pine iris
+    dark-color: "linear-gradient(135deg, #232136 0%, #c4a7e7 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #907aa9 100%)"
+- section:
+    title:
+      en: Krytis Recommends
+    subtitle:
+      string:
+        en: Our favourite applications
+    appids:
+      list:
+      - io.github.sitraorg.sitra
+      - io.speedofsound.SpeedOfSound
+      - app.fotema.Fotema
+      - org.gnome.gitlab.YaLTeR.VideoTrimmer
+      - io.github.tanaybhomia.Whisp
+      - cx.modal.TestCenter
+      - re.sonny.Eloquent
+      - de.schmidhuberj.DieBahn
+      - org.gnome.gitlab.cheywood.Pulp
+      - com.github.Darazaki.Spedread
+      - io.github.pleromix.IceBox
+      - com.github.ADBeveridge.Raider
+      - io.github.kelvinnovais.Kasasa
+- banner:
+    height: 120
+    # Rose Pine foam
+    dark-color: "linear-gradient(135deg, #232136 0%, #9ccfd8 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #56949f 100%)"
+- section:
+    title:
+      en: Browsers
+    subtitle:
+      string:
+        en: Use the web with your favourite browser
+    appids:
+      list:
+      - org.mozilla.firefox
+      - com.brave.Browser
+- banner:
+    height: 120
+    # Rose Pine love
+    dark-color: "linear-gradient(135deg, #232136 0%, #eb6f92 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #b4637a 100%)"
+- section:
+    title:
+      en: Media
+    subtitle:
+      string:
+        en: Listen, watch and stream
+    appids:
+      list:
+      - app.ytmdesktop.ytmdesktop
+      - de.haeckerfelix.Shortwave
+      - io.bassi.Amberol
+      - org.videolan.VLC
+      - com.github.wwmm.easyeffects
+      - me.timschneeberger.jdsp4linux
+      - org.jellyfin.JellyfinDesktop
+      - com.rafaelmardojai.Blanket
+      - org.nickvision.tubeconverter
+- banner:
+    height: 120
+    # Rose Pine gold
+    dark-color: "linear-gradient(135deg, #232136 0%, #f6c177 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #ea9d34 100%)"
+- section:
+    title:
+      en: Office & Productivity
+    subtitle:
+      string:
+        en: Work smarter
+    appids:
+      list:
+      - com.collaboraoffice.Office
+      - org.onlyoffice.desktopeditors
+      - io.github.nokse22.Exhibit
+      - org.gimp.GIMP
+      - org.inkscape.Inkscape
+      - org.kde.krita
+      - io.gitlab.theevilskeleton.Upscaler
+      - org.audacityteam.Audacity
+      - io.github.alainm23.planify
+      - com.logseq.Logseq
+      - com.github.PintaProject.Pinta
+- banner:
+    height: 120
+    # Rose Pine pine
+    dark-color: "linear-gradient(135deg, #232136 0%, #3e8fb0 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #286983 100%)"
+- section:
+    title:
+      en: Gaming
+    subtitle:
+      string:
+        en: Launchers, tools and chat for playing on Linux
+    appids:
+      list:
+      - com.valvesoftware.Steam
+      - com.heroicgameslauncher.hgl
+      - net.lutris.Lutris
+      - com.vysp3r.ProtonPlus
+      - com.dec05eba.gpu_screen_recorder
+      - com.github.Matoking.protontricks
+      - com.obsproject.Studio
+      - io.github.Faugus.faugus-launcher
+      - com.usebottles.bottles
+      - org.equicord.equibop
+- banner:
+    height: 120
+    # Rose Pine rose
+    dark-color: "linear-gradient(135deg, #232136 0%, #ea9a97 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #d7827e 100%)"
+- section:
+    title:
+      en: Utilities
+    subtitle:
+      string:
+        en: Small tools for everyday jobs
+    appids:
+      list:
+      - app.drey.Warp
+      - org.localsend.localsend_app
+      - com.github.zocker_160.SyncThingy
+      - org.gnome.gitlab.somas.Apostrophe
+      - io.github.vikdevelop.SaveDesktop
+      - org.gnome.World.PikaBackup
+      - io.ente.auth
+      - de.leopoldluley.Clapgrep
+      - hu.irl.cameractrls
+      - com.belmoussaoui.Decoder
+      - io.github.wartybix.Constrict
+      - io.gitlab.adhami3310.Converter
+      - com.jeffser.Pigment
+      - com.github.finefindus.eyedropper
+      - io.github.plrigaux.sysd-manager
+      - io.github.zarestia_dev.rclone-manager
+- banner:
+    height: 120
+    # Rose Pine foam
+    dark-color: "linear-gradient(135deg, #232136 0%, #9ccfd8 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #56949f 100%)"
+- section:
+    title:
+      en: Sustainability & Education
+    subtitle:
+      string:
+        en: Invest in the future
+    appids:
+      list:
+      - org.endlessos.Key
+      - no.bragefuglseth.Keypunch
+      - org.tuxpaint.Tuxpaint
+      - im.bernard.Memorado
+      - io.github.josephmawa.Egghead
+      - page.codeberg.lo_vely.Nucleus
+      - org.turbowarp.TurboWarp
+      - io.github.GGalya1.RiscvAdventure
+      - as.may.moat
+      - app.drey.MultiplicationPuzzle
+      - io.github.josephmawa.SpellingBee
+- banner:
+    height: 120
+    # Rose Pine iris
+    dark-color: "linear-gradient(135deg, #232136 0%, #c4a7e7 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #907aa9 100%)"
+- section:
+    title:
+      en: AI and Machine Learning
+    subtitle:
+      string:
+        en: Explore the best of open source AI
+    appids:
+      list:
+      - com.jeffser.Alpaca
+      - io.github.qwersyk.Newelle
+      - ai.jan.Jan
+      - ink.whis.Whis
+- banner:
+    height: 120
+    # Rose Pine gold
+    dark-color: "linear-gradient(135deg, #232136 0%, #f6c177 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #ea9d34 100%)"
+- section:
+    title:
+      en: Desktop Development
+    subtitle:
+      string:
+        en: Tools for building and debugging software
+    appids:
+      list:
+      - de.wwwtech.gitte
+      - io.github.shonebinu.Brief
+      - org.gnome.design.IconLibrary
+      - io.github.getnf.embellish
+      - dev.geopjr.Collision
+      - app.drey.Elastic
+      - io.github.nokse22.asciidraw
+      - io.github.ronniedroid.concessio
+- banner:
+    height: 120
+    # Rose Pine pine
+    dark-color: "linear-gradient(135deg, #232136 0%, #3e8fb0 100%)"
+    light-color: "linear-gradient(135deg, #faf4ed 0%, #286983 100%)"
+- section:
+    title:
+      en: Cloud Native Development
+    subtitle:
+      string:
+        en: Containers, servers, networks and APIs
+    appids:
+      list:
+      - io.podman_desktop.PodmanDesktop
+      - me.iepure.devtoolbox
+      - com.mardojai.ForgeSparks
+      - io.github.mfat.sshpilot
+      - io.github.totoshko88.RustConn
+      - io.github.tobagin.digger
+      - io.github.lo2dev.Echo
