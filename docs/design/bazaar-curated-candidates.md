@@ -4,9 +4,10 @@
 
 Candidate Flatpaks for krytis's Bazaar "Curated" page
 ([#245](https://github.com/starlit-os/krytis/issues/245)), mirrored from Bluefin's
-list. The rows **not** struck through are krytis's **initial curated list**: 90 apps,
-plus Pinta once its section is decided. It will be refined over time. The wiring's
-`curated.yaml` takes its `appids.list` entries from these rows.
+list. The rows **not** struck through are krytis's **curated list**: 91 apps, 87 of
+Bluefin's plus four krytis additions (Pinta, Faugus, Bottles and Equibop, tagged ➕). It will be
+refined over time. `files/bazaar/curated.yaml` ships exactly these rows, in this order,
+in each section's `appids.list`.
 
 - **Source:** `system_files/bluefin/etc/bazaar/curated.yaml` in
   [`projectbluefin/common`](https://github.com/projectbluefin/common/blob/main/system_files/bluefin/etc/bazaar/curated.yaml).
@@ -35,37 +36,45 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   *Decided*). If Bluefin adds an IDE, check whether its hooks intercept it before
   proposing it.
 - **krytis already ships some of these natively.** Zed (`elements/desktop/zed.bst`)
-  duplicates `dev.zed.Zed`. Equibop (`elements/desktop/equibop.bst`) covers the same
-  need as `com.discordapp.Discord`. The #245 wiring plan blocklists both IDs, so they
-  can't go on krytis's page (see *Contract with the wiring* below). Zen (`elements/desktop/zen-browser.bst`) sits
-  beside the Browsers row. And Bluefin's `app.drey.Warp` is a file-transfer app,
-  **not** the Warp terminal krytis shipped until #1005 dropped it.
+  duplicates `dev.zed.Zed`, so `files/bazaar/blocklist.yaml` hides that Flatpak and it
+  can't go on krytis's page (see *Contract with the wiring* below). Zen
+  (`elements/desktop/zen-browser.bst`) sits beside the Browsers row. And Bluefin's
+  `app.drey.Warp` is a file-transfer app, **not** the Warp terminal krytis shipped until
+  #1005 dropped it.
+- **Discord clients.** `com.discordapp.Discord` is dropped as proprietary and blocked.
+  The Equibop Flatpak (`org.equicord.equibop`) is on the Gaming section instead, decided
+  in [this comment](https://github.com/starlit-os/krytis/issues/245#issuecomment-6111480315)
+  when #1194 planned to replace the native `elements/desktop/equibop.bst` with the
+  Flatpak plus `elements/desktop/presence-bridge.bst`.
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
   (a plain GTK app is fine; a shell-extension manager wouldn't be) needs a check
   under niri.
 - **Proprietary and paid apps are out**, except Steam. They're struck from the list,
   and they and the exception are recorded under *Decided*.
 - **Blocklist interplay:** Bluefin's `blocklist.yaml` hides `com.visualstudio.code-oss`,
-  editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. Any krytis
-  blocklist is a separate decision from the curated list.
+  editors like Neovim/Vim/Emacs/Helix/micro, Ptyxis, fwupd and Bazaar itself. krytis's
+  `files/bazaar/blocklist.yaml` is narrower: Bazaar, the Flatpak duplicates of native
+  apps, and Discord. It is a separate decision from the curated list.
 
 ## Contract with the wiring
 
-The #245 wiring work
-([comment](https://github.com/starlit-os/krytis/issues/245#issuecomment-5887731857))
-ships krytis's own `curated.yaml` as a skeleton: the rows, banners and section titles.
-The curation work owns only the ID list inside each `appids.list`. Every list change
-has to satisfy five rules:
+`files/bazaar/curated.yaml`, installed by `elements/config/bazaar-config.bst` (#245),
+owns the rows, banners and section titles. The curated list owns only the ID list inside
+each `appids.list`. Every list change has to satisfy five rules:
 
 1. Every ID resolves: `flatpak remote-info flathub <id>` succeeds. A delisted or renamed
-   ID fails silently.
-2. No ID is also in krytis's `blocklist.yaml`, because the blocklist wins. It blocks
-   Flatpaks krytis already ships natively: `dev.zed.Zed`, `com.discordapp.Discord`,
-   `org.vim.Vim` and `org.freedesktop.fwupd`. The last two were agreed in
+   ID fails silently. Also check the output for an `End-of-life:` line, which is how
+   Memorize was caught.
+2. No ID is also in `files/bazaar/blocklist.yaml`, because the blocklist wins and the
+   tile never renders. It blocks Flatpaks krytis already ships natively
+   (`me.proton.Pass`, `dev.zed.Zed`, `app.zen_browser.zen`, `org.vim.Vim`,
+   `org.freedesktop.fwupd`), plus Bazaar itself and `com.discordapp.Discord`. Vim and
+   fwupd were agreed in
    [this reply](https://github.com/starlit-os/krytis/issues/245#issuecomment-5888011213).
 3. The modern schema only.
 4. No `image:` under `banner:` unless branding art lands in the same change.
-5. Changing a list touches no other file. If it has to, raise that on #245.
+5. A list change touches only `files/bazaar/curated.yaml` and this doc. If it has to
+   touch anything else, raise that on a new issue.
 
 ## Currently preinstalled by krytis
 
@@ -109,7 +118,7 @@ These were preinstalled on the ISO and have been removed from `live/src/flatpaks
 |---|---|---|
 | **Ignition** | Dropped. It manages GNOME-style autostart entries, not niri's `spawn-at-startup`. | [Flathub](https://flathub.org/apps/io.github.flattool.Ignition) · `io.github.flattool.Ignition` |
 | **Smile** | Dropped. | [Flathub](https://flathub.org/apps/it.mijorus.smile) · `it.mijorus.smile` |
-| **Pinta** | Moves to the curated page: "Bluefin Recommends" or a category, not decided yet. It's a krytis addition, since Bluefin doesn't curate it. | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
+| **Pinta** | Moved to the curated page's Office & Productivity section, beside GIMP, Inkscape and Krita. It's a krytis addition, since Bluefin doesn't curate it. | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
 
 Bluefin candidates rejected for krytis's curated page. These rows stay in *The list* so
 it keeps mirroring Bluefin, struck through so a refresh doesn't propose them again:
@@ -137,6 +146,7 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **Blender** | Dropped: a specialist creative tool, not an office or productivity app. | [Flathub](https://flathub.org/apps/org.blender.Blender) · `org.blender.Blender` |
 | **Ardour** | Dropped: a specialist creative tool, not an office or productivity app. | [Flathub](https://flathub.org/apps/org.ardour.Ardour) · `org.ardour.Ardour` |
 | **Boatswain** | Dropped: its use case (Elgato Stream Deck control) is too narrow. | [Flathub](https://flathub.org/apps/com.feaneron.Boatswain) · `com.feaneron.Boatswain` |
+| **Memorize** | Dropped: Flathub marks it end-of-life ("This application is no longer maintained.", `flatpak remote-info flathub io.github.david_swift.Flashcards`, 2026-10-12). Memorado covers the same use in the same section. | [Flathub](https://flathub.org/apps/io.github.david_swift.Flashcards) · `io.github.david_swift.Flashcards` |
 | **Android Studio** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.google.AndroidStudio) · `com.google.AndroidStudio` |
 | **CLion** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.jetbrains.CLion) · `com.jetbrains.CLion` |
 | **Discord** | Proprietary: `LicenseRef-proprietary` in its AppStream metadata. | [Flathub](https://flathub.org/apps/com.discordapp.Discord) · `com.discordapp.Discord` |
@@ -171,7 +181,9 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 
 ## The list
 
-### Bluefin Recommends (13/14)
+### Krytis Recommends (13/14)
+
+This is Bluefin's "Bluefin Recommends" section, renamed for krytis.
 
 | App | Summary | Links |
 |---|---|---|
@@ -219,7 +231,7 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Blanket** | Listen to ambient sounds † | [Flathub](https://flathub.org/apps/com.rafaelmardojai.Blanket) · `com.rafaelmardojai.Blanket` |
 | **Parabolic** | Download web video and audio | [Flathub](https://flathub.org/apps/org.nickvision.tubeconverter) · `org.nickvision.tubeconverter` |
 
-### Office & Productivity (10/14)
+### Office & Productivity (11/15)
 
 | App | Summary | Links |
 |---|---|---|
@@ -237,8 +249,9 @@ made from them. Systems already installed keep their copy in `/var/lib/flatpak`.
 | **Planify** | Task manager with Todoist / Nextcloud sync † | [Flathub](https://flathub.org/apps/io.github.alainm23.planify) · `io.github.alainm23.planify` |
 | ~~**Obsidian**~~ | ~~Markdown-based knowledge base~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/md.obsidian.Obsidian) · `md.obsidian.Obsidian` |
 | **Logseq** | Connect your notes and knowledge | [Flathub](https://flathub.org/apps/com.logseq.Logseq) · `com.logseq.Logseq` |
+| **Pinta** | Edit images and paint digitally. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/com.github.PintaProject.Pinta) · `com.github.PintaProject.Pinta` |
 
-### Gaming (9/17)
+### Gaming (10/18)
 
 This is Bluefin's "Games" section, renamed for krytis.
 
@@ -261,6 +274,7 @@ This is Bluefin's "Games" section, renamed for krytis.
 | ~~**Threadbare**~~ | ~~Endless Access game about learning to make games †~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
 | **Faugus** | A simple and lightweight app for running games using UMU-Launcher. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/io.github.Faugus.faugus-launcher) · `io.github.Faugus.faugus-launcher` |
 | **Bottles** | Run Windows software. ➕ **krytis addition** | [Flathub](https://flathub.org/apps/com.usebottles.bottles) · `com.usebottles.bottles` |
+| **Equibop** | A snappy Discord desktop client. ➕ **krytis addition**, in place of the proprietary Discord client | [Flathub](https://flathub.org/apps/org.equicord.equibop) · `org.equicord.equibop` |
 
 ### Utilities (16/19)
 
@@ -286,12 +300,12 @@ This is Bluefin's "Games" section, renamed for krytis.
 | ~~**Mozilla VPN**~~ | ~~A fast, secure and easy to use VPN. Built by the makers of Firefox~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/org.mozilla.vpn) · `org.mozilla.vpn` |
 | **RClone Manager** | Browse and sync cloud storage | [Flathub](https://flathub.org/apps/io.github.zarestia_dev.rclone-manager) · `io.github.zarestia_dev.rclone-manager` |
 
-### Sustainability & Education (12/12)
+### Sustainability & Education (11/12)
 
 | App | Summary | Links |
 |---|---|---|
 | **Endless Key** | Offline library of educational content for learners † | [Flathub](https://flathub.org/apps/org.endlessos.Key) · `org.endlessos.Key` |
-| **Memorize** | Study flashcards | [Flathub](https://flathub.org/apps/io.github.david_swift.Flashcards) · `io.github.david_swift.Flashcards` |
+| ~~**Memorize**~~ | ~~Study flashcards~~ **Dropped**, see *Decided* | [Flathub](https://flathub.org/apps/io.github.david_swift.Flashcards) · `io.github.david_swift.Flashcards` |
 | **Keypunch** | Practise your typing skills † | [Flathub](https://flathub.org/apps/no.bragefuglseth.Keypunch) · `no.bragefuglseth.Keypunch` |
 | **Tux Paint** | Drawing program for children † | [Flathub](https://flathub.org/apps/org.tuxpaint.Tuxpaint) · `org.tuxpaint.Tuxpaint` |
 | **Memorado** | Memorise with spaced-repetition flashcards † | [Flathub](https://flathub.org/apps/im.bernard.Memorado) · `im.bernard.Memorado` |

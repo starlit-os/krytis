@@ -701,6 +701,20 @@ if [ -n "${POLKIT_MISSING}" ]; then
     FAILED=1
 fi
 
+# Bazaar can only read /etc/bazaar/*.yaml through the host-etc:ro override that
+# bazaar-host-etc.service writes (#245). Without it the Curated tab and the
+# blocklist silently vanish: no error, no log line. The unit failing would
+# already show up as a failed unit above; this catches the override not landing.
+BAZAAR_OVERRIDE=$(SSH cat /var/lib/flatpak/overrides/io.github.kolunmi.Bazaar 2>/dev/null || true)
+case "${BAZAAR_OVERRIDE}" in
+    *"host-etc:ro"*) echo "    Bazaar has its host-etc:ro override" ;;
+    *)
+        echo "    FAIL: /var/lib/flatpak/overrides/io.github.kolunmi.Bazaar lacks host-etc:ro — Bazaar cannot read /etc/bazaar (#245)" >&2
+        printf '      %s\n' "${BAZAAR_OVERRIDE:-<missing>}" >&2
+        FAILED=1
+        ;;
+esac
+
 # The first-boot wizard must actually reach its prompts (#531). For months it
 # exited instantly, skipping keymap and timezone without a word, because both
 # files already existed: /etc/vconsole.conf copied from the factory by

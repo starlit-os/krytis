@@ -1,0 +1,17 @@
+[Unit]
+Description=Give Bazaar read-only access to the host /etc
+Documentation=https://github.com/starlit-os/krytis/issues/245
+# Same shape as flatpak-cursor-path.service: writes into /var, needs no
+# network, and must reassert itself if /var is reset, so there is no
+# ConditionPathExists gate. Ordered before the graphical session so the first
+# Bazaar launch, including the bazaar-daemon spawned at session start,
+# already sees its config.
+Before=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/krytis/bazaar-host-etc.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

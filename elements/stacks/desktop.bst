@@ -273,6 +273,13 @@ depends:
   # removal service is needed. Closes #66; resolves #175 installer concern.
   - config/flatpak-preinstall.bst
 
+  # ── Bazaar config ───────────────────────────────────────────────────────
+  # Curated page, blocklist, and the boot-time `flatpak override` that gives
+  # Bazaar read-only access to /etc so it can read them. Bazaar itself is the
+  # --system flatpak the pre-install service above installs, not an element.
+  # Closes #245.
+  - config/bazaar-config.bst
+
   # ── Background updates ──────────────────────────────────────────────────
   # Silently updates bootc, system Flatpak, firmware, and mise tools on a
   # daily timer. Placed here (not base-system) because it covers system

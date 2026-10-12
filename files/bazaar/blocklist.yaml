@@ -1,0 +1,27 @@
+# Apps hidden from Bazaar's browse, search and Curated pages. Blocking is
+# display-only: upstream says "under no circumstance does Bazaar touch the
+# underlying flatpak configuration". A blocked app that is already installed
+# still shows in the library and still gets updates, and `flatpak install`
+# from a terminal is unaffected.
+#
+# Narrower than Bluefin's list (projectbluefin/common
+# system_files/bluefin/etc/bazaar/blocklist.yaml). Bluefin also hides Neovim,
+# Helix, Emacs, micro and Ptyxis because Homebrew or its image is the
+# supported route to them. krytis has no other way to install those, so
+# hiding them would only take the option away.
+#
+# Every ID here must resolve on Flathub: a wrong ID fails silently and the app
+# stays visible. Check with `flatpak remote-info flathub <id>`.
+blocklists:
+  - block:
+      # The store itself: updating the app store from inside the app store.
+      - io.github.kolunmi.Bazaar
+      # Flatpak duplicates of apps the image ships natively.
+      - me.proton.Pass          # elements/desktop/proton-pass.bst
+      - dev.zed.Zed             # elements/desktop/zed.bst
+      - app.zen_browser.zen     # elements/desktop/zen-browser.bst
+      - org.vim.Vim             # elements/overrides/vim.bst (vim and gvim)
+      - org.freedesktop.fwupd   # freedesktop-sdk.bst:components/fwupd.bst
+      # Proprietary. The Equibop flatpak (org.equicord.equibop) is the
+      # Discord client on the Curated page's Gaming section instead.
+      - com.discordapp.Discord
