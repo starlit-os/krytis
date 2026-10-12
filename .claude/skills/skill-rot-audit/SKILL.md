@@ -214,6 +214,18 @@ expensive way.
   (`desktop.md`'s "no pixman fallback in this path" describes wlroots' selection algorithm,
   not a failure); and a **dated historical marker** ("7.2.6 today — it was 7.2.2 when this
   was written"), which is the *repair* for version rot, not an instance of it.
+  `ref-status` adds a fourth: **a closed upstream issue whose goal *was* the status quo.**
+  projectbluefin/common#290 is titled "keep cp, mv, and rm from GNU coreutils" and closed as
+  *completed* when dakota did exactly that. The report flags it "described open, now CLOSED"
+  next to krytis's "cp/mv/rm stay on GNU", and the 2026-10-11 triage misread the closure as
+  "the carve-out's reason is gone". Read the issue's title and closing PR before acting on
+  any CLOSED flag. A closed issue settles whatever it asked for, which may be the opposite of
+  what the surrounding sentence worries about.
+- **Never copy a long line back from a truncated tool preview.** Previews cut lines at a
+  fixed width and end them with `…`. Pasting that text back as the replacement silently
+  drops the rest of the line. `pam.md:918` lost 597 of its 1366 characters this way during the
+  2026-10-11 sweep before a length check (`awk 'NR==918{print length}'`) caught it. Read
+  the line raw first, then edit only the words that change.
 
 ### 6. Report, then write back
 

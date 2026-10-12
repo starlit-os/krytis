@@ -49,11 +49,12 @@ Umbriel table for `portal-routing-check`.
   `org.gnome.Mutter.ServiceChannel` is absent. The display-state and introspect trackers only
   watch their names. So routing to gnome under Umbriel does not take the whole backend down.
 - **Umbriel parents portal dialogs itself.** umbriel#214 ("center dialogs over their parent and
-  support xdg-foreign", merged 2026-09-10 as `936fb9c562`) is already in krytis's pinned ref
-  `229d64a`. xdp-gnome and xdp-gtk dialogs should therefore open centred over the requesting
-  app's window, whether or not the Mutter service channel exists. umbriel#215 (attach modal
-  dialogs to their parent: shade the parent and follow it as it moves) is still open. Step 4
-  checks what actually happens.
+  support xdg-foreign", merged 2026-09-10 as `936fb9c562`) is in krytis's pin (`229d64a` when
+  this was written, `2339fc3` as of 2026-10-11). xdp-gnome and xdp-gtk dialogs should
+  therefore open centred over the requesting app's window, whether or not the Mutter service
+  channel exists. umbriel#215 (attach modal dialogs to their parent: shade the parent and
+  follow it as it moves) merged 2026-10-07 as `b24a1b4` and is in the `2339fc3` pin too.
+  Step 4 checks what actually happens.
 - **Nobody upstream is tracking any of the `none`-pinned interfaces.** As of 2026-10-01,
   `xdg-desktop-portal-umbriel`'s README lists only ScreenCast and Screenshot, and all 14 of its
   issues/PRs concern those two. In `noctalia-dev/umbriel`'s 353 issues/PRs, the only related
@@ -193,9 +194,9 @@ Every place that claims Umbriel routes `default=umbriel;gtk`:
   - A Flatpak libadwaita app follows the noctalia dark/light toggle **live**, without a
     restart.
   - A Flatpak file chooser opens (Nautilus) and returns a file. Because of umbriel#214, expect
-    it centred over the app's window. Expect it not to be modal yet: umbriel#215 is still
-    open, so the parent can still be focused. If it isn't centred, record that in the
-    desktop.md section. It is not a blocker.
+    it centred over the app's window, and because of umbriel#215 (in the pin since
+    `2339fc3`), modal: the parent is shaded and can't take focus. If either doesn't hold,
+    record that in the desktop.md section. It is not a blocker.
   - `journalctl --user -u xdg-desktop-portal-gnome` shows startup warnings only, nothing
     failing.
   - A Flatpak notification still appears through noctalia (Notification stayed on gtk).

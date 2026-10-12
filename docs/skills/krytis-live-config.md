@@ -306,8 +306,8 @@ in the output says so; the ISO simply installs the wrong image.
 registry-named base image in a **multistage** build against the registry even
 when it exists locally and the policy is `missing` —
 [containers/podman#27197](https://github.com/containers/podman/issues/27197),
-[#27779](https://github.com/containers/podman/issues/27779),
-[#28038](https://github.com/containers/podman/issues/28038). Single-stage builds
+[containers/podman#27779](https://github.com/containers/podman/issues/27779),
+[containers/podman#28038](https://github.com/containers/podman/issues/28038). Single-stage builds
 with the same ref resolve locally, which is why this never showed up in
 `mise run lint`.
 

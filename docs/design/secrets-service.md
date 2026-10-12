@@ -88,8 +88,8 @@ anything but matter for a future attempt:
   GCR4 as a library) — niri has no equivalent shell-level component, so the legacy GCR3
   binary is the only viable path today. Krytis gets it only transitively through
   `gnome-keyring.bst`'s runtime dependency — `oo7.bst` must add `sdk/gcr-3.bst` explicitly
-  or manual unlock silently breaks. **Confirmed as a live, currently-open failure mode on a
-  peer non-shell compositor**: [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453)
+  or manual unlock silently breaks. **Confirmed as a live failure mode on a peer non-shell
+  compositor, still open as of 2026-10-11**: [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453)
   — `gcr-prompter` installed and present, but fails to activate after a mid-session daemon
   restart, hanging every libsecret caller rather than erroring cleanly. Treat this as a
   required boot-test scenario, not a theoretical edge case. Full detail in
@@ -98,8 +98,8 @@ anything but matter for a future attempt:
   component rather than carrying GCR3 — noctalia's own `SystemPrompter` (see § Path
   forward below). Since #594 the image ships no `gcr-3` at all and `oo7.bst` never
   gained the dependency this bullet demanded; `noctalia.bst` links `sdk/gcr.bst`
-  (gcr-4) for `GcrSecretExchange` only. cosmic-epoch#3453 is still open upstream, and
-  is still the reason a *missing* prompter is a hang rather than an error.
+  (gcr-4) for `GcrSecretExchange` only. cosmic-epoch#3453 is still open upstream (as of
+  2026-10-11), and is still the reason a *missing* prompter is a hang rather than an error.
 
 ## Decision
 
@@ -526,7 +526,7 @@ read-shaped and easy to miss in casual testing.
 
 This is the real mechanism behind the Ghostty instability recorded in
 `docs/skills/pam.md` § oo7 `default` alias on a locked collection (the alias itself resolves while locked; measured 2026-10-02), and it is
-**unfixed upstream as of 2026-08-12**. It should be treated as a second, independent hold
+**unfixed upstream as of 2026-10-11** (oo7 `main`'s `search_inner_items` still returns empty for a locked keyring). It should be treated as a second, independent hold
 reason alongside oo7#506 — accepting the FIDO2 gap is no longer sufficient to unblock #84,
 because even a user who is willing to unlock manually gets no opportunity to.
 

@@ -22,7 +22,7 @@
 #
 # The floor below is not stylistic: mise enforced its 24h `minimum_release_age`
 # default against exact, already-locked versions until jdx/mise#13128 (2026.9.7)
-# and #13251 (2026.9.10). Pinning anything older reintroduces the original
+# and jdx/mise#13251 (2026.9.10). Pinning anything older reintroduces the original
 # failure on the first same-day tool bump.
 
 set -uo pipefail
@@ -84,7 +84,7 @@ if [ "$(printf '%s\n' "$distinct" | grep -c .)" -gt 1 ]; then
 elif [ -n "$distinct" ] && [ "$(printf '%s\n%s\n' "$MIN_VERSION" "$distinct" | sort -V | head -1)" != "$MIN_VERSION" ]; then
     echo "  pinned ${distinct} is older than ${MIN_VERSION}, which is the first"
     echo "  release that installs an exact mise.lock pin inside the"
-    echo "  minimum_release_age window (jdx/mise#13128, #13251)"
+    echo "  minimum_release_age window (jdx/mise#13128, jdx/mise#13251)"
     fail=1
 fi
 

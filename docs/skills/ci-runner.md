@@ -1288,7 +1288,7 @@ mise defaults `minimum_release_age` to **24h**, and 2026.9.5 applied that
 cutoff even to an exact version replayed from `mise.lock`.
 [jdx/mise#13128](https://github.com/jdx/mise/pull/13128) (2026.9.7) stopped
 the cutoff from rejecting locked versions, and
-[#13251](https://github.com/jdx/mise/pull/13251) (2026.9.10) did the same for
+[jdx/mise#13251](https://github.com/jdx/mise/pull/13251) (2026.9.10) did the same for
 an exact `packslip:` pin. Renovate merged `usage` 6.10.0 three hours after
 release; every runner on ≥ 2026.9.7 installed it, the VPS refused. The
 `Static gates` job on that same PR passed — hosted runner, current mise — so

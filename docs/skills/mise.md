@@ -1773,7 +1773,7 @@ Other krytis-owned files in that directory: `ssh-agent.fish`
 `docs/skills/desktop.md` § SSH agent). It needs no ordering guarantee, so it
 carries no numeric prefix.
 
-**Known limitation:** fish [#8553](https://github.com/fish-shell/fish-shell/issues/8553) — `vendor_conf.d` load order is not guaranteed to be stable across all fish versions. The numeric prefix is a best-effort workaround; no complete fix available until upstream resolves this.
+**Known limitation:** fish [fish-shell/fish-shell#8553](https://github.com/fish-shell/fish-shell/issues/8553) — `vendor_conf.d` load order is not guaranteed to be stable across all fish versions. The numeric prefix is a best-effort workaround; the issue is still open as of 2026-10-11, so there is no complete fix yet.
 
 ## ISO build task (`mise run build-iso`)
 

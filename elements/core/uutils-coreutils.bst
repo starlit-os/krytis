@@ -1,8 +1,10 @@
 # uutils-coreutils — Rust coreutils replacement.
 # Installs multicall binary as /usr/bin/uutils-coreutils and creates two
 # symlinks for each util: uutils-<prog> (always) and <prog> (skipped for
-# cp/mv/rm — those stay on GNU due to unresolved TOCTOU issues, see
-# projectbluefin/common#290).
+# cp/mv/rm). Those stay on GNU because Ubuntu's 2026-04-22 rust-coreutils
+# update counted 8 open TOCTOU issues in them. projectbluefin/common#290 made
+# dakota do the same, and it closed when that shipped (projectbluefin/dakota#316); it is
+# not a sign the issues are fixed. Whether to drop the carve-out is #1158.
 #
 # overlap-whitelist covers all plain-name symlinks that overwrite GNU bins
 # already installed from the bootstrap layer.

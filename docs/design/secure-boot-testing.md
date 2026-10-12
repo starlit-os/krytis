@@ -428,7 +428,7 @@ to deploy it — every machine installed from a sealed ISO was on a stream it co
 not upgrade from. Locally built sealed images were fine (`iso-install-test
 --secure` installs one and install runs the same verification), so this was
 specific to the published artifact, which predated #443's two-phase seal fix.
-Tracked in #448 along with that tag's other two problems (stale, key-less).
+#448 (closed 2026-08-05) covered this along with that tag's other two problems (stale, key-less).
 
 **Pass path since confirmed** (#456), against a sealed image `publish.yml` (#450)
 had published minutes earlier (`ghcr.io/starlit-os/krytis:sealed`, created

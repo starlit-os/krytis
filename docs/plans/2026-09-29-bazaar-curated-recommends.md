@@ -232,9 +232,10 @@ Verified already on this workstation via `flatpak search`:
 | `desktop/warp.bst` | — | not on Flathub (`flatpak search warp-terminal` → no matches) |
 
 **Re-derive this table at implementation time — do not trust it as an inventory.** It was
-produced by reading `elements/stacks/desktop-apps.bst` on 2026-09-29, and the native app
-set is actively changing: #1005 ("Default to seance, drop warp") is open and would remove
-the `warp.bst` row and add `desktop/seance.bst`. Regenerate from the file, not from here.
+produced by reading `elements/stacks/desktop-apps.bst` on 2026-09-29. The native app set has
+changed since: #1005 ("Default to seance, drop warp", closed 2026-09-30) removed the `warp.bst`
+row and added `desktop/seance.bst`, and #1194 plans to remove Equibop. Regenerate from the
+file, not from here.
 
 Resolve the three unverified rows before writing the blocklist — do not guess an ID:
 
