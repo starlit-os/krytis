@@ -215,9 +215,10 @@ the gap queue (for up to 24h) rather than fail.
 ### 7. Decommission (after the M6 window)
 
 - [ ] Cancel the Contabo VPS. In `kitten-lily/materia`, remove `[Hosts.krytis-build]`,
-      `attributes/krytis-build.yml` and `provisioning/servers/krytis-build/`. Delete its
-      beszel hub system: on 2026-10-12 the hub API showed the `ririi@` account only
-      `Flutterina` and `krytis-runner`, so `krytis-build` is under another account or gone.
+      `attributes/krytis-build.yml` and `provisioning/servers/krytis-build/`. In the beszel
+      hub, delete the system **Krytis Build VPS**. L's system is **Krytis Runner**. Both
+      belong to the `lily@kittenlily.net` hub account, which is the one the dashboard shows;
+      the `ririi@` account in the Personal vault does not see them.
 - [ ] Delete `ssh:BenchOnecomL` from the YubiKey (`fido2-token -L -k ssh:BenchOnecomL`, then
       `-D -i <id>`), its handle and `.pub` files, and the **Krytis Bench VPS** vault item
       (after M7's merge).
