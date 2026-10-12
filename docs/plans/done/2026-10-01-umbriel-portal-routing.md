@@ -1,14 +1,14 @@
 # Route Umbriel portals through xdp-gnome
 
 **Issue:** #1029 · **Branch:** `1029-fix-umbriel-portal-routing-gaps` · **Worktree:**
-`krytis.worktrees/fix/gh1029-fix-umbriel-portal-routing-gaps` · **Status: ready, waiting on the
-Design Gate.** Flatpak apps under Umbriel get different dialogs and settings (see § Visible
-changes), so a human signs off on § Decisions before step 1.
+`krytis.worktrees/fix/gh1029-fix-umbriel-portal-routing-gaps` · **Status: done.** Design Gate
+decided 2026-10-12 (all three as recommended); see § Outcome. The same branch carries #1054's
+four niri pins.
 
-**Depends on** [#1027's plan](done/2026-10-01-niri-portal-routing-cleanup.md) step 1
+**Depends on** [#1027's plan](2026-10-01-niri-portal-routing-cleanup.md) step 1
 (`mise run portal-routing-check`) and its *Verified facts*: the headless resolution command,
 xdp's per-interface fall-through, and the `none` semantics. This plan does not repeat them.
-It does not depend on [#1028](done/2026-10-01-oo7-secret-portal.md), which landed first: the
+It does not depend on [#1028](2026-10-01-oo7-secret-portal.md), which landed first: the
 element in step 1 and a one-key `umbriel-portals.conf` (Secret → oo7-portal) already exist,
 so this plan extends that file and keeps its Secret line.
 
@@ -67,11 +67,11 @@ Umbriel table for `portal-routing-check`.
 
 ## Decisions (Design Gate)
 
-| # | Question | Recommendation |
-|---|---|---|
-| D1 | Accept the visible changes below for Flatpak apps in Umbriel | yes. The niri session already behaves this way, so the two sessions converge |
-| D2 | `Wallpaper=none` (today's state) instead of a gnome no-op | yes, see *Checked while writing* |
-| D3 | Carry the routing downstream, or propose it to `noctalia-dev/xdg-desktop-portal-umbriel` | carry it. Upstream's file can't assume xdp-gnome is installed, and krytis's choice depends on krytis shipping xdp-gnome. Proposing it upstream is an **Upstream Gate** call: nothing is opened without an explicit instruction |
+| # | Question | Recommendation | Decided 2026-10-12 |
+|---|---|---|---|
+| D1 | Accept the visible changes below for Flatpak apps in Umbriel | yes. The niri session already behaves this way, so the two sessions converge | accepted |
+| D2 | `Wallpaper=none` (today's state) instead of a gnome no-op | yes, see *Checked while writing* | `none` |
+| D3 | Carry the routing downstream, or propose it to `noctalia-dev/xdg-desktop-portal-umbriel` | carry it. Upstream's file can't assume xdp-gnome is installed, and krytis's choice depends on krytis shipping xdp-gnome. Proposing it upstream is an **Upstream Gate** call: nothing is opened without an explicit instruction | downstream only, nothing filed |
 
 **Visible changes for Flatpak apps under Umbriel:**
 
@@ -84,7 +84,7 @@ Umbriel table for `portal-routing-check`.
 
 ## Step 1 — Ship a krytis `umbriel-portals.conf`
 
-- [ ] `files/xdg-desktop-portal/umbriel-portals.conf`:
+- [x] `files/xdg-desktop-portal/umbriel-portals.conf`:
 
   ```ini
   # krytis routing for XDG_CURRENT_DESKTOP=Umbriel. Loaded before upstream's
@@ -114,11 +114,11 @@ Umbriel table for `portal-routing-check`.
 
   xdp parses the file with `GKeyFile`, which treats `#` lines as comments. If a comment ever
   breaks parsing, xdp stops loading the file and `portal-routing-check` fails.
-- [ ] `elements/config/xdg-desktop-portal-routing.bst` already exists (#1028) and installs
+- [x] `elements/config/xdg-desktop-portal-routing.bst` already exists (#1028) and installs
       every `files/xdg-desktop-portal/*-portals.conf`, so this step only rewrites the file.
       Update the element header: the Umbriel file is no longer a pure delta, because its
       `default=` shadows upstream's file for everything umbriel, gnome or gtk implements.
-- [ ] `files/fakecap-manifest.tsv` already carries the Umbriel row (#1028); no change.
+- [x] `files/fakecap-manifest.tsv` already carries the Umbriel row (#1028); no change.
 
 **Why `default=umbriel;gnome;gtk` and not an explicit allowlist (`default=none` + one key per
 interface).** An allowlist would stop a *future* xdp-gnome interface from landing silently.
@@ -132,7 +132,7 @@ check's expected table is the guard: that change turns `build` red.
 
 ## Step 2 — Update the expected table
 
-- [ ] `mise/tasks/portal-routing-check`, Umbriel table:
+- [x] `mise/tasks/portal-routing-check`, Umbriel table:
 
 | Backend | Interfaces |
 |---|---|
@@ -146,7 +146,7 @@ Before the change, run the task against a scratch image with the conf bind-mount
 (`-v files/xdg-desktop-portal:/etc/xdg/xdg-desktop-portal:ro,Z` on the same `podman run`).
 That confirms the table before paying for a build.
 
-- [ ] Add a **stale-`none`** rule to `portal-routing-check`. The table above can't catch the
+- [x] Add a **stale-`none`** rule to `portal-routing-check`. The table above can't catch the
       case where umbriel grows one of the pinned interfaces: a `none` pin wins whatever is
       installed (#1027 plan), so the effective backend stays `none` and the check stays
       green.
@@ -166,26 +166,26 @@ That confirms the table before paying for a build.
 
 Every place that claims Umbriel routes `default=umbriel;gtk`:
 
-- [ ] `docs/skills/desktop.md` lines 284–286 (Umbriel env port) and the line-346 paragraph
+- [x] `docs/skills/desktop.md` lines 284–286 (Umbriel env port) and the line-346 paragraph
       as #1027 left it: Umbriel now has a krytis-owned delta in `/etc/xdg`.
-- [ ] `files/umbriel/config.toml` lines 85–86 comment.
-- [ ] `elements/desktop/xdg-desktop-portal-umbriel.bst` header (lines 14–19 as #1027 left
+- [x] `files/umbriel/config.toml` lines 85–86 comment.
+- [x] `elements/desktop/xdg-desktop-portal-umbriel.bst` header (lines 14–19 as #1027 left
       them) and `elements/stacks/desktop.bst` lines 54–56: upstream's file is shipped but
       shadowed.
-- [ ] `docs/plans/2026-09-30-gtk3-realistic-floor.md` lines 484–486 (*umbriel session*
+- [x] `docs/plans/2026-09-30-gtk3-realistic-floor.md` lines 484–486 (*umbriel session*
       bullet). That plan is still live, and its step 6 (#181) reads this result. After this
       PR, Umbriel's xdp-gtk surface is the same as niri's: Access, Notification, Inhibit,
       Email.
-- [ ] `docs/skills/desktop.md` § xdg-desktop-portal routing (#1027): add the "xdp-gnome
+- [x] `docs/skills/desktop.md` § xdg-desktop-portal routing (#1027): add the "xdp-gnome
       outside GNOME" table from #1029, with source line references. Add the facts from
       *Checked while writing*, each with its upstream commit. This is the durable learning;
       the issue body is not where people look.
-- [ ] `mise run docs-links`.
+- [x] `mise run docs-links`.
 
 ## Step 4 — Verify
 
-- [ ] `mise run build`. `portal-routing-check` passes with the new table.
-- [ ] `mise boot-test`, then log into an Umbriel session on the VM or real hardware
+- [x] `mise run build`. `portal-routing-check` passes with the new table.
+- [ ] `mise boot-test` (passed), then log into an Umbriel session on the VM or real hardware
       (`compositor-smoke` doesn't exercise portals):
   - `/usr/libexec/xdg-desktop-portal --replace --verbose` loads
     `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf` first, with the table above.
@@ -206,3 +206,33 @@ Every place that claims Umbriel routes `default=umbriel;gtk`:
 `noctalia-dev/xdg-desktop-portal-umbriel`'s `umbriel-portals.conf` could pin `Access` and
 `Notification` to gtk and list gnome after umbriel when xdp-gnome is present. That's a
 proposal to raise only on instruction. Report it in the PR description.
+
+## Outcome (2026-10-12)
+
+- **Pre-build probe.** `localhost/krytis:latest` plus a `COPY` layer of
+  `files/xdg-desktop-portal/*-portals.conf`: `portal-routing-check passed`, niri 17/21
+  interfaces served, Umbriel 15/21. Negative probes, one layer each, all fail as intended:
+  `GlobalShortcuts` appended to `umbriel.portal` → `STALE NONE`; `FileChooser=gnome;` added
+  to the Umbriel file → `REDUNDANT` (its own `default=` already says so);
+  `Notification=gtk;` added to the niri file → `REDUNDANT` (niri's file already says so).
+- **The `REDUNDANT` rule had to change.** It compared each `/etc` key only against the
+  upstream `/usr/share` file. The Umbriel file now has its own `default=`, so it would have
+  flagged `Access=gtk` as redundant (upstream's `default=umbriel;gtk` gives gtk too), even
+  though removing the key moves Access to gnome. The rule now asks whether *removing the key*
+  changes anything: same file's `default=` first, then upstream's.
+- **`mise run build`** (13 elements built, toolchain cached): `portal-routing-check passed`.
+  **`mise boot-test` PASSED.**
+- **Headless Umbriel session.** In `localhost/krytis:latest` with `--device /dev/dri`,
+  umbriel `WLR_BACKENDS=headless` and xdp under `XDG_CURRENT_DESKTOP=Umbriel`, the routing
+  log says `Using gnome.portal for …Settings`, `…FileChooser (default config)`, and
+  `Using gtk.portal for …Access` / `…Notification (interface specific config)`.
+  xdp-gnome starts with only the expected `Failed to open service channel Wayland
+  connection` warning. `gsettings set org.gnome.desktop.interface color-scheme
+  default|prefer-light|prefer-dark` gives `Settings.ReadOne org.freedesktop.appearance
+  color-scheme` 0/2/1, with a `SettingChanged` signal each time, so the change reaches apps
+  live. No `org.gnome.Shell`/`org.gnome.Mutter` name on the bus. This became
+  `mise run umbriel-portal-smoke`: it passes on the built image, and fails all four of its
+  assertions on a probe layer with the krytis `umbriel-portals.conf` deleted.
+- **Still unchecked:** the box above that needs a real Umbriel session (a Flatpak file
+  chooser, centring and modality, a Flatpak notification). It is in the PR's test plan for
+  the reviewer.

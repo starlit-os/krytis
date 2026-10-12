@@ -296,9 +296,10 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   `XDG_SESSION_TYPE`.** umbriel owns them and refuses overrides (upstream
   `docs/user/configuration.md` § Environment). niri's `environment` block sets
   all three; porting them is not merely redundant, it is rejected. umbriel
-  publishes `XDG_CURRENT_DESKTOP=Umbriel` itself, which is what
-  `xdg-desktop-portal-umbriel`'s `umbriel-portals.conf` (`default=umbriel;gtk`)
-  keys off. The other ten variables port unchanged.
+  publishes `XDG_CURRENT_DESKTOP=Umbriel` itself, which is what selects
+  `umbriel-portals.conf`: krytis's `/etc/xdg` copy (`default=umbriel;gnome;gtk;`, #1029)
+  ahead of `xdg-desktop-portal-umbriel`'s own (`default=umbriel;gtk`). The other ten
+  variables port unchanged.
 - **`general.autostart` entries are command *lines*, not argv.** Verified in a
   headless run: `spawned 'flatpak run --command=bazaar-daemon
   io.github.kolunmi.Bazaar --no-window'`. The niri equivalent was a
@@ -402,10 +403,11 @@ banner in a throwaway test image two rebuilds old. `podman run --rm
 and `elements/desktop/noctalia.bst`'s `ref:` is the authoritative one.
 
 
-**Umbriel's routing comes from upstream, plus a krytis delta** — `xdg-desktop-portal-umbriel`
-ships its own valid `umbriel-portals.conf` (`default=umbriel;gtk`) via its own
-`meson.build`; krytis adds only `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf`
-(Secret → oo7-portal, #1028). See § xdg-desktop-portal routing.
+**Umbriel's routing is krytis's, not upstream's** — `xdg-desktop-portal-umbriel` ships its
+own valid `umbriel-portals.conf` (`default=umbriel;gtk`) via its own `meson.build`, but
+krytis's `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf` (`default=umbriel;gnome;gtk;`
+plus pins, #1029) shadows it for every interface those backends implement. See
+§ xdg-desktop-portal routing.
 
 **Tracking caveat**: as of #774/#775, neither `noctalia-dev/umbriel` nor
 `noctalia-dev/xdg-desktop-portal-umbriel` has tags/releases (checked
@@ -1484,17 +1486,71 @@ coming from the lower file. Two traps:
 | `portals/umbriel.portal` | `desktop/xdg-desktop-portal-umbriel.bst` |
 | `portals/oo7-portal.portal` | `desktop/oo7.bst` (oo7's `portal/` sub-project) |
 
-**krytis's routing files are deltas.** Each `/etc/xdg` file holds only the keys krytis
-changes and no `default=`, so every other interface falls through to the upstream file.
-Today both hold one key, `org.freedesktop.impl.portal.Secret=oo7-portal;` (#1028): niri
-v26.04's file routes Secret to `gnome-keyring`, which krytis does not ship, and umbriel's
-`default=umbriel;gtk` has no Secret backend. The routing value is the `.portal` file's
-basename (`oo7-portal`), not its `DBusName`. Delete the niri key once `desktop/niri.bst`
-pins a release containing niri `02fdd8e758` ("portals: add oo7 as secret portal",
-`Secret=oo7-portal;gnome-keyring;`); `portal-routing-check` fails with `REDUNDANT` when
-that lands. Measured on a probe image: with the delta files removed, Secret resolves to
-none in both sessions even though `oo7-portal.portal` says `UseIn=gnome` — xdp only
-consults `UseIn` when no portals.conf is loaded.
+**krytis's routing files.** Both live in `files/xdg-desktop-portal/`. The routing value is
+the `.portal` file's basename (`oo7-portal`), not its `DBusName`.
+
+- **`niri-portals.conf` is a delta**: keys only, no `default=`, so every other interface
+  falls through to niri's file. `Secret=oo7-portal;` (#1028): niri v26.04's file routes
+  Secret to `gnome-keyring`, which krytis does not ship. Delete it once `desktop/niri.bst`
+  pins a release containing niri `02fdd8e758` ("portals: add oo7 as secret portal",
+  `Secret=oo7-portal;gnome-keyring;`); `portal-routing-check` fails with `REDUNDANT` then.
+  Plus `none` for GlobalShortcuts, RemoteDesktop, Clipboard and InputCapture (#1054; see
+  *What niri itself implements* below).
+- **`umbriel-portals.conf` is a full routing file**: `default=umbriel;gnome;gtk;` (#1029)
+  shadows upstream's `default=umbriel;gtk` for everything umbriel, gnome or gtk implements.
+  Pins: `Access=gtk` and `Notification=gtk` (same as niri upstream), `none` for Background,
+  GlobalShortcuts, RemoteDesktop, Clipboard, InputCapture and Wallpaper, and
+  `Secret=oo7-portal` (#1028). Why each one: *xdp-gnome outside GNOME* below.
+
+Measured on a probe image: with the delta files removed, Secret resolves to none in both
+sessions even though `oo7-portal.portal` says `UseIn=gnome` — xdp only consults `UseIn`
+when no portals.conf is loaded.
+
+**xdp-gnome outside GNOME.** Declaring an interface in `gnome.portal` doesn't mean xdp-gnome
+can serve it without gnome-shell. Read from xdp-gnome `a4f6ed6` (2026-09-19) with
+`grep '"org.gnome.Shell\|"org.gnome.Mutter' src/*.c`:
+
+| Interface | xdp-gnome needs | Under niri v26.04 | Under Umbriel |
+|---|---|---|---|
+| Settings, Lockdown | gsettings only | works | works; noctalia writes `org.gnome.desktop.interface color-scheme` itself (`src/app/application_services.cpp:134` at the `91c8c02` pin) |
+| AppChooser, Usb, FileChooser, Print, Account, DynamicLauncher | no shell calls; FileChooser forwards to `org.gnome.Nautilus` (`src/filechooser.c`) | works | works |
+| Wallpaper | writes `org.gnome.desktop.background` | upstream routes to gnome | silent no-op: noctalia never reads that key (no `org.gnome.desktop.background`/`picture-uri` in the `kitten-lily/noctalia` pin `91c8c02`, checked 2026-10-12) → `none` |
+| Access | own GTK4 dialog only with a resolvable parent, else `AccessDialog` on `org.gnome.Shell` (`src/access.c`) | pinned to gtk upstream | pinned to gtk |
+| Notification | `org.gtk.Notifications` (`src/notification.c:158`), gnome-shell only | pinned to gtk upstream | pinned to gtk; xdp-gtk uses `org.freedesktop.Notifications`, which noctalia owns |
+| Background | `org.gnome.Shell.Introspect` (`src/background.c:372`) | works (niri implements it) | `none` |
+| GlobalShortcuts | `org.gnome.Shell` shortcuts provider (`src/globalshortcuts.c:1201`) | `none` (#1054) | `none` |
+| RemoteDesktop, Clipboard | `org.gnome.Mutter.RemoteDesktop`; Clipboard rides RemoteDesktop sessions | `none` (#1054) | `none` |
+| InputCapture | `org.gnome.Mutter.InputCapture` | `none` (#1054) | `none` |
+
+Routing a shell-dependent interface to gnome doesn't make it work: the app gets a dialog or
+a session that fails at call time, and can't detect that up front. `none` makes it visibly
+unsupported. Supporting facts:
+
+- **Umbriel provides no `org.gnome.Shell`/`org.gnome.Mutter` names**: none appear in
+  `noctalia-dev/umbriel` at `26cd1fc` (2026-09-30) or at the `e4b6760` pin (tarball grep,
+  2026-10-12). Recheck on umbriel bumps that touch D-Bus.
+- **xdp-gnome starts without Mutter.** libgxdp `gxdp_wayland_init` (`df896e34`, the revision
+  xdp-gnome's wrap pins) falls back to plain GTK Wayland with the warning "Compositor
+  service channel missing, portal dialogs may misbehave" when
+  `org.gnome.Mutter.ServiceChannel` is absent, so routing to gnome under Umbriel doesn't
+  take the backend down.
+- **Umbriel parents portal dialogs itself**: umbriel#214 (`936fb9c562`, centring over the
+  parent, xdg-foreign) and umbriel#215 (`b24a1b4`, modal attach: shade the parent and follow
+  it) are both in the `2339fc3` pin and later.
+- **Nobody upstream tracks the Umbriel `none` interfaces** (as of 2026-10-01): umbriel ships
+  no libei/EIS, xdg-desktop-portal-umbriel covers only ScreenCast/Screenshot, and its
+  `SCOPE.md` leaves wallpaper to the shell. #1055 tracks real backends.
+- **`mise run umbriel-portal-smoke` proves Settings works under Umbriel** (#1029). It runs
+  umbriel with `WLR_BACKENDS=headless` and `--device /dev/dri` (as
+  `mise run compositor-smoke` does), then xdp under `XDG_CURRENT_DESKTOP=Umbriel`, all in
+  one `dbus-run-session`. `gsettings set org.gnome.desktop.interface color-scheme
+  default|prefer-light|prefer-dark` reads back 0/2/1
+  through `org.freedesktop.portal.Settings.ReadOne org.freedesktop.appearance color-scheme`,
+  with a `SettingChanged` signal each time. Pass `XDG_RUNTIME_DIR`, `HOME` and
+  `XDG_CURRENT_DESKTOP` as `podman run -e`, and push `WAYLAND_DISPLAY` with
+  `dbus-update-activation-environment` once the socket exists. Backends are D-Bus-activated
+  and only get the bus's environment, so variables exported inside the script are lost:
+  `xdg-desktop-portal-umbriel` then exits with `XDG_RUNTIME_DIR is invalid`.
 
 **Resolving routing headlessly** — no session, GPU, seat or root needed:
 
@@ -1512,17 +1568,28 @@ with no backend logs `Found '<x>' in configuration for …` but no `Using` line.
 **`mise run portal-routing-check`** runs that resolution for `niri` and `Umbriel` in one
 container and compares every interface against the EXPECTED tables in
 `mise/tasks/portal-routing-check`. It fails on a backend change, an interface no row
-classifies, any `Error loading …` warning, a desktop with no routing file loaded, or a
-key in an `/etc/xdg` delta that the upstream `/usr/share` file now resolves the same way
-on its own (`REDUNDANT`: upstream caught up, delete the key). It runs at the end of
-`mise run build`. A deliberate routing change edits the EXPECTED rows in the same commit.
+classifies, any `Error loading …` warning, a desktop with no routing file loaded, an
+`/etc/xdg` key whose removal changes nothing because the same file's `default=` or the
+upstream `/usr/share` file already resolves it that way (`REDUNDANT`: delete the key), and
+an Umbriel `none` pin for an interface `umbriel.portal` now declares (`STALE NONE`: drop
+the pin; `OWN_BACKEND` in the task). It runs at the end of `mise run build`. A deliberate
+routing change edits the EXPECTED rows in the same commit.
+
+**Guarding a `none` pin.** A `none` pin keeps the interface at `none` whatever gets
+installed, so the EXPECTED table alone stays green when the pin goes stale. Check for that
+where the gap can show up. A new interface in a backend's `.portal` file is machine-readable,
+which is how `STALE NONE` works. A compositor that gains a D-Bus service (niri, #1054) is
+not, so the niri pins are a manual check on every niri bump.
 
 **What niri itself implements.** niri v26.04 (niri-wm/niri, `src/dbus/` at tag `v26.04`)
 serves `org.gnome.Shell.Screenshot`, `org.gnome.Shell.Introspect`, and Mutter's
 `ScreenCast`, `DisplayConfig` and `ServiceChannel` — enough for xdg-desktop-portal-gnome's
-Screenshot and ScreenCast. It lacks what xdp-gnome needs for GlobalShortcuts,
-RemoteDesktop, Clipboard and InputCapture (#1054), even though `niri-portals.conf` routes
-them to gnome.
+Screenshot, ScreenCast and Background. It lacks what xdp-gnome needs for GlobalShortcuts,
+RemoteDesktop, Clipboard and InputCapture, which niri's `default=gnome;gtk;` routes to gnome,
+so krytis pins those four to `none` (#1054). Upstream plans to close the gaps inside niri,
+not by changing the routing: niri#1966 (RemoteDesktop, open as of 2026-10-12), draft niri#3587
+(GlobalShortcuts), niri#823 (InputCapture). On a niri bump, drop a pin once its service
+appears in `src/dbus/`.
 
 ### A `.portal` file without `[portal]` is silently skipped
 

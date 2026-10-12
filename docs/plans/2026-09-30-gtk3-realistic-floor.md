@@ -429,7 +429,7 @@ Research, then a decision. Find a non-GTK3 backend for every interface xdp-gtk s
 krytis (see [Why xdg-desktop-portal-gtk stays](#why-xdg-desktop-portal-gtk-stays)).
 
 **What must be replaced.** xdp-gnome covers FileChooser, Print, Account, AppChooser and
-DynamicLauncher; Umbriel only needs rerouting to it (#1029). It covers Access only in part:
+DynamicLauncher; since #1029 both sessions route those to it. It covers Access only in part:
 a parented request gets a GTK4 dialog, but a parentless one is delegated to `org.gnome.Shell`
 (`src/access.c`, ~line 330), which fails without gnome-shell. Four gaps are left (#181 has
 the source read):
@@ -494,16 +494,17 @@ Routing in the built image, and live on a krytis host:
 - **niri session:** `niri-portals.conf` (niri upstream) is `default=gnome;gtk;` and pins
   `Access=gtk` and `Notification=gtk`. `gnome.portal` implements neither `Inhibit` nor `Email`,
   so those land on gtk too.
-- **umbriel session:** `umbriel-portals.conf` is `default=umbriel;gtk`, and `umbriel.portal`
-  only implements ScreenCast and Screenshot. Under Umbriel, xdp-gtk **is** the FileChooser,
-  and also Print, Notification, Inhibit, Access, Account, Email and DynamicLauncher (#1029).
+- **umbriel session:** since #1029, krytis's `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf`
+  is `default=umbriel;gnome;gtk;` with `Access=gtk` and `Notification=gtk`, the same pins as
+  niri. `umbriel.portal` only implements ScreenCast and Screenshot. So Umbriel's xdp-gtk
+  surface equals niri's: Access, Notification, Inhibit and Email.
 - **Live bus:** xdp-gtk bridges `Notification` to `org.freedesktop.Notifications` (owned by
   noctalia) and `Inhibit` to `org.freedesktop.ScreenSaver` (owned by niri). Nothing else in the
   image implements `org.freedesktop.impl.portal.Inhibit`.
 
 Removing it needs a non-GTK3 backend for Inhibit and Notification that works under both
-sessions, plus Umbriel routing that sends FileChooser, Print and Access to xdp-gnome. Step 6
-evaluates the options. Picking one is a Design Gate decision.
+sessions, plus one for parentless Access. Step 6 evaluates the options. Picking one is a
+Design Gate decision.
 
 ## Upstream candidates (propose only — Upstream Gate)
 

@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+#MISE description="Run umbriel headlessly with xdg-desktop-portal and assert Settings (color-scheme) reaches apps through xdp-gnome"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to run out of (must already be built/loaded)"
+
+# portal-routing-check proves which backend xdp *picks* under Umbriel; this
+# proves the picked one works there. Umbriel provides no org.gnome.Shell or
+# org.gnome.Mutter names, and #1029 routes Settings to xdg-desktop-portal-gnome
+# anyway, so the question is whether xdp-gnome serves it without them.
+#
+# One container, one dbus-run-session: umbriel on the headless wlroots backend
+# (same /dev/dri requirement as compositor-smoke), then xdp under
+# XDG_CURRENT_DESKTOP=Umbriel. For each color-scheme value, gsettings writes
+# it, and the task asserts both a Settings.ReadOne round trip and the
+# SettingChanged signal a running Flatpak would get.
+#
+# Backends are D-Bus-activated and only see the bus's environment, so
+# XDG_RUNTIME_DIR/HOME/XDG_CURRENT_DESKTOP come in via `podman run -e`, and
+# WAYLAND_DISPLAY via dbus-update-activation-environment. Without that,
+# xdg-desktop-portal-umbriel exits "XDG_RUNTIME_DIR is invalid".
+# See docs/skills/desktop.md § xdg-desktop-portal routing.
+
+set -uo pipefail
+
+IMAGE="${usage_image:-localhost/krytis:latest}"
+
+if ! podman image exists "$IMAGE"; then
+    echo "==> FAILED: no such image '$IMAGE' — run 'mise run build' first." >&2
+    exit 1
+fi
+if [ ! -e /dev/dri ]; then
+    echo "==> SKIPPED: no /dev/dri on this host — the headless backend still needs a render node."
+    exit 0
+fi
+
+echo "==> Running umbriel + xdg-desktop-portal headlessly out of $IMAGE..."
+
+# shellcheck disable=SC2016  # expanded inside the container
+SCRIPT='
+: >/tmp/umbriel-defaults.toml
+/usr/bin/umbriel -c /tmp/umbriel-defaults.toml >/tmp/umbriel.log 2>&1 &
+for _ in $(seq 50); do
+    s=$(ls "$XDG_RUNTIME_DIR" | grep -m1 "^wayland-[0-9]*$") && break
+    sleep 0.2
+done
+[ -n "$s" ] || { echo "@@FAIL umbriel never created a wayland socket"; tail -5 /tmp/umbriel.log; exit 1; }
+export WAYLAND_DISPLAY=$s
+dbus-update-activation-environment WAYLAND_DISPLAY
+/usr/libexec/xdg-desktop-portal --verbose >/tmp/xdp.log 2>&1 &
+sleep 3
+grep -o "Using [a-z0-9-]*\.portal for org\.freedesktop\.impl\.portal\.Settings" /tmp/xdp.log | sed "s/^/@@ROUTE /"
+P="--dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop"
+for v in default:0 prefer-light:2 prefer-dark:1; do
+    name=${v%%:*} want=${v##*:}
+    gdbus monitor --session $P >/tmp/mon.log 2>&1 & mon=$!
+    sleep 0.5
+    gsettings set org.gnome.desktop.interface color-scheme "$name"
+    sleep 1
+    got=$(gdbus call --session $P --method org.freedesktop.portal.Settings.ReadOne \
+          org.freedesktop.appearance color-scheme | grep -oE "uint32 [0-9]+" | cut -d" " -f2)
+    sig=$(grep -c "SettingChanged (.org.gnome.desktop.interface., .color-scheme., <.$name.>)" /tmp/mon.log)
+    echo "@@VALUE $name want=$want got=${got:-none} signals=$sig"
+done
+gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+    --method org.freedesktop.DBus.ListNames | tr "," "\n" | grep -oE "org\.gnome\.(Shell|Mutter)[A-Za-z.]*" | sed "s/^/@@GNOME /"
+'
+
+OUT=$(podman run --rm --device /dev/dri \
+    -e XDG_RUNTIME_DIR=/tmp/xdg -e HOME=/tmp/home \
+    -e WLR_BACKENDS=headless -e XDG_CURRENT_DESKTOP=Umbriel \
+    --entrypoint sh "$IMAGE" -c "mkdir -p -m700 /tmp/xdg /tmp/home; timeout 40 dbus-run-session -- sh -c '$SCRIPT' 2>/dev/null")
+
+fail=0
+if grep -q '^@@ROUTE Using gnome.portal' <<<"$OUT"; then
+    echo "    OK   Settings routed to gnome.portal"
+else
+    echo "    FAIL Settings not routed to gnome.portal: $(grep '^@@ROUTE' <<<"$OUT" || echo 'no Using line')" >&2
+    fail=1
+fi
+while read -r _ name want got signals; do
+    want=${want#want=} got=${got#got=} signals=${signals#signals=}
+    if [[ "$got" == "$want" && "$signals" -ge 1 ]]; then
+        echo "    OK   color-scheme $name → $want, SettingChanged emitted"
+    else
+        echo "    FAIL color-scheme $name: want $want, got $got, $signals SettingChanged signal(s)" >&2
+        fail=1
+    fi
+done < <(grep '^@@VALUE' <<<"$OUT")
+if [ "$(grep -c '^@@VALUE' <<<"$OUT")" -ne 3 ]; then
+    echo "    FAIL expected 3 color-scheme probes, got $(grep -c '^@@VALUE' <<<"$OUT")" >&2
+    grep '^@@FAIL' <<<"$OUT" >&2
+    fail=1
+fi
+if grep -q '^@@GNOME' <<<"$OUT"; then
+    # Not a failure of the routing, but the premise of the none pins changed.
+    echo "    NOTE org.gnome.Shell/Mutter names on the bus: $(grep '^@@GNOME' <<<"$OUT" | cut -d' ' -f2 | tr '\n' ' ')"
+    echo "         Recheck the Umbriel none pins (docs/skills/desktop.md § xdg-desktop-portal routing)."
+fi
+
+if [ "$fail" -ne 0 ]; then
+    echo "==> umbriel-portal-smoke FAILED." >&2
+    exit 1
+fi
+echo "==> umbriel-portal-smoke PASSED."
