@@ -2,9 +2,17 @@
 # Installs multicall binary as /usr/bin/uutils-coreutils and creates two
 # symlinks for each util: uutils-<prog> (always) and <prog> (skipped for
 # cp/mv/rm). Those stay on GNU because Ubuntu's 2026-04-22 rust-coreutils
-# update counted 8 open TOCTOU issues in them. projectbluefin/common#290 made
-# dakota do the same, and it closed when that shipped (projectbluefin/dakota#316); it is
-# not a sign the issues are fixed. Whether to drop the carve-out is #1158.
+# update counted 8 open issues in them (it called them TOCTOU; three are not
+# races). projectbluefin/common#290 made dakota do the same, and it closed
+# when that shipped (projectbluefin/dakota#316); it is not a sign the issues
+# are fixed.
+#
+# As of 2026-10-12 all 8 are closed and fixed by 0.11.0 (the last was
+# uutils#10014), and Ubuntu 26.10 ships 0.12.0 with cp/mv/rm from uutils.
+# uutils#14991 (cross-device directory mv writes through a symlink planted
+# in the destination) is new and open. Whether to drop the carve-out is
+# #1158. The comment inside install-commands below predates the fixes; it is
+# part of the cache key, so it changes with that decision, not on its own.
 #
 # overlap-whitelist covers all plain-name symlinks that overwrite GNU bins
 # already installed from the bootstrap layer.
