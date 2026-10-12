@@ -34,8 +34,9 @@ kind: meson
 # either, so a mirror could keep the plug-in and still drop the dep. It is
 # disabled because nothing on krytis can start it, not because it would fail
 # to compile. So the cost of bringing SMART notifications back is a starter
-# unit, not a dependency closure: #726 tracks whether we want them and by
-# which mechanism. Flipping this option means updating
+# unit, not a dependency closure. #726 decided (2026-10-12) not to: SMART
+# alerts are built on udisks2 instead — docs/skills/desktop.md § Disk health:
+# udisks2 exposes SMART without root. Flipping this option means updating
 # mise/tasks/gnome-disk-utility-check, which asserts it.
 #
 # libcanberra is declared here even though upstream's element does not declare

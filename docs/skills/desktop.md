@@ -1217,9 +1217,10 @@ anything on krytis, and each is easy to get backwards:
 Consequence for packaging: `OnlyShowIn=GNOME;` is the mechanism that makes a feature
 unreachable, not "it has GNOME in the name". Check the entry, not the branding — and if a
 feature you *want* ships with `OnlyShowIn=GNOME`, the fix is a session-side autostart entry
-or unit of our own, not the upstream one. #726 is the open worked example: GNOME Disks'
+or unit of our own, not the upstream one. #726 was the worked example: GNOME Disks'
 SMART-failure notifier is a desktop-agnostic binary that only its autostart scoping keeps
-from running here.
+from running here. #726 then decided not to start it at all; see
+docs/skills/desktop.md § Disk health: udisks2 exposes SMART without root.
 
 ## niri vs wlroots
 
@@ -2678,6 +2679,98 @@ spawn-at-startup "flatpak" "run" "--command=bazaar-daemon" "io.github.kolunmi.Ba
 Bazaar itself is a `--system` flatpak (`files/flatpak-preinstall/flatpak-preinstall.sh`,
 #66), not a BST element — nothing to add to the dependency graph for this class of plugin,
 just the settings.toml enable + the niri-side daemon spawn.
+
+### Plugin notifications are toast-only: 6 s, no history, dropped under DND
+
+`noctalia.notify(title, body)` and `noctalia.notifyError(title, body)` (Luau) both end in
+`NotificationManager::addInternal()` with `origin = Internal`, `persistInHistory = false`,
+`timeout = kDefaultNotificationTimeout` (6000 ms) and `dndPolicy = Respect`. `notifyError`
+only raises the urgency to `Critical`; it changes none of the rest. So a plugin alert:
+
+- auto-dismisses after 6 s, critical or not;
+- never reaches notification history (`shouldTrackHistory()` keeps internal notifications
+  only when `persistInHistory` is set);
+- is discarded outright while Do Not Disturb is on (`notification_toast.cpp` erases pending
+  `Respect` toasts), and with no history entry it is simply gone.
+
+Verified against the pinned fork ref `91c8c02` (`src/scripting/luau_host.cpp` `luau_notify`,
+`src/notification/notifications.h`, `notification_manager.{h,cpp}`). noctalia's own alerts
+that must not be missed opt out of this with knobs the plugin API does not expose: calendar
+reminders set `persistInHistory = true`, the battery warning uses `DndPolicy::ShowToast`.
+
+For an alert whose value is lost if missed, a plugin should run
+`notify-send --urgency critical …` through `noctalia.runAsync` instead (`/usr/bin/notify-send`
+is in the image; `umedbazarov/crashes` does exactly this). That arrives over D-Bus as an
+`External` notification, and external ones are kept in history; DND still hides the toast.
+Check this before recommending a third-party plugin for anything alert-shaped.
+
+**Plugin API range.** The pinned noctalia accepts `plugin_api` 3–32
+(`kOldestSupportedPluginApiVersion`/`kCurrentPluginApiVersion` in
+`src/scripting/plugin_api.h`); a catalog row above that is held back to an older release or
+marked incompatible. Re-read that header after a noctalia bump rather than trusting this
+number.
+
+## Disk health: udisks2 exposes SMART without root
+
+**Decision for #726 (2026-10-12): SMART-failure alerts are built on udisks2.** A system-side
+watcher on udisks2's SMART properties (plus btrfs device stats) writes to the journal under a
+fixed `MESSAGE_ID`, which covers headless/SSH use. A session-side listener on that message
+sends `notify-send --urgency critical` (see § Plugin notifications are toast-only above for
+why not `noctalia.notify`). Rejected: reviving `gsd-disk-utility-notify` (option 2 in #726),
+and `gustav0ar/drive-health` as the alert path (below). Implementation is tracked in #726;
+once it lands, this paragraph must describe what shipped, not the plan.
+
+**udisksd already reads SMART as root and publishes it to unprivileged callers.**
+`gnome-build-meta.bst:core-deps/udisks2.bst` is in the image via `core/gvfs-daemon.bst`.
+NVMe drives carry `org.freedesktop.UDisks2.NVMe.Controller` on their
+`/org/freedesktop/UDisks2/drives/<id>` object: properties `SmartCriticalWarning` (`as`, empty
+when healthy), `SmartTemperature` (`q`, Kelvin), `SmartPowerOnHours`, `SmartUpdated`, all
+`emits-change`, so a watcher can subscribe instead of polling. `SmartGetAttributes` returns
+the full health log (`avail_spare`, `spare_thresh`, `percent_used`, `media_errors`,
+`num_err_log_entries`, `unsafe_shutdowns`, `temp_sensors`, `wctemp`/`cctemp`, …). Verified
+2026-10-12 on `26.08.202610102045` as a normal user in the active session, with no polkit
+prompt:
+
+```bash
+busctl --system tree org.freedesktop.UDisks2 | grep drives/
+busctl --system introspect org.freedesktop.UDisks2 /org/freedesktop/UDisks2/drives/<id> | grep Smart
+busctl --system call org.freedesktop.UDisks2 /org/freedesktop/UDisks2/drives/<id> \
+  org.freedesktop.UDisks2.NVMe.Controller SmartGetAttributes 'a{sv}' 0 --json=short
+```
+
+Limits seen on that machine:
+
+- **SATA** drives get `org.freedesktop.UDisks2.Drive.Ata` (`SmartFailing`,
+  `SmartNumBadSectors`, …) via libatasmart (`components/libatasmart.bst`, `/usr/bin/skdump`).
+  Not observed live, because the test machine has no SATA disk.
+- **USB-bridged** disks expose no SMART interface at all: the `ConnectionBus "usb"` drive
+  had only `org.freedesktop.UDisks2.Drive`. That is a coverage gap for any udisks2-based
+  design.
+- An **inactive** session (SSH) has not been tested against the udisks2 polkit policy. The
+  system-side watcher runs as root, so this only matters for ad-hoc `busctl` checks.
+- `smartctl` is **not** in the image and the udisks2 path does not need it. smartmontools
+  exists in `freedesktop-sdk-extra` if that changes (docs/skills/zirconium-hawaii.md).
+- noctalia core has no udisks2 code (`grep -ri udisks src/` empty at `91c8c02`).
+
+**Why not `gustav0ar/drive-health`** (community plugin v1.2.7, the only SMART plugin in either
+catalog as of 2026-10-12). It is a good panel to suggest for *viewing* drive details. It is
+the wrong alert path on krytis:
+
+- It reads SMART only through `smartctl`. Without it, the plugin's own collector
+  (`drive-health/scripts/collect_raw.sh` in noctalia-dev/community-plugins) emits
+  `"smart":[]` and the plugin is limited to inventory, sysfs temperatures and free space.
+  Its "install missing dependency" card knows pacman/apt/dnf/zypper/apk/xbps/emerge only.
+- "Full SMART" mode runs `pkexec bash <user-owned plugin dir>/packaging/install-system-collector.sh`,
+  which installs scripts to `/usr/local/libexec/noctalia-drive-health/` (`/var/usrlocal` on
+  krytis) and a unit and timer to `/etc/systemd/system`, with the user's primary GID baked
+  into the unit. That is root-owned host state outside the image, installed from a
+  git-pulled plugin.
+- Shipping that collector in the image instead fights the plugin: it compares the installed
+  `collector_version` with its own and asks the user to reinstall whenever upstream bumps it.
+- Alerts go through `noctalia.notify`/`notifyError`, so they are the 6 s, no-history,
+  DND-dropped kind described above. The only lasting signal is its bar widget, if placed.
+- All health logic is Luau inside the desktop session; the root unit only collects raw
+  JSON (`StandardOutput=null`), so nothing reaches the journal when nobody is logged in.
 
 ## Bluefin's Bazaar curated list
 
