@@ -2024,3 +2024,23 @@ repo needs a `/var/tmp` that supports `O_TMPFILE`. Check with:
 ```bash
 podman info --format '{{.Store.GraphDriverName}}'
 ```
+
+## `awk … /proc/[0-9]*/status` dies when a process exits mid-read
+
+A glob over `/proc/<pid>/` is a snapshot. Any process that exits before awk reaches its
+file, including the short-lived children of the task's own command substitutions, leaves
+a path that cannot be opened. gawk (`/usr/bin/awk` on krytis) treats an unopenable
+command-line file as **fatal**: it prints `fatal: cannot open file`, exits 2 and never
+runs `END`. `2>/dev/null` hides the message but not the exit. Under `set -euo pipefail`,
+the `$(…)` that runs it then kills the whole task.
+
+The race is timing-dependent. `swap-eval sample` (#510) passed in the foreground and
+then died on its first row when run as a `systemd-run --user` unit. Skip such files
+explicitly:
+
+```bash
+gawk 'BEGINFILE { if (ERRNO != "") nextfile } … END { … }' /proc/[0-9]*/status
+```
+
+`BEGINFILE` is gawk-only, so call `gawk` by name. Appending `|| true` is not a fix,
+because the missing `END` output is lost either way.
