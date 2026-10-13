@@ -87,8 +87,7 @@ Checked against `main` at writing:
 
 - [x] The operator ordered the move on 2026-10-09 ("migrate to one.com runner"). Applied as
       recommended: M1, M2, M3 (`ssh:BenchOnecomL` stays installed until step 7), M6, and M7
-      in part (below). **Not applied yet:** M4 (quota stays 100G; L's CAS was 63G at
-      cutover, so it fits) and M5 (beszel and materia are not on L).
+      in part (below). M4 and M5 followed later: M4 in #1159, M5 on 2026-10-12 (#1154).
 
 ### 2. Code (one PR, before the cutover)
 
@@ -129,8 +128,10 @@ Checked against `main` at writing:
       login. Verified a KrytisBuild login with `RUNNER_VPS_HOST=root@<L>` set explicitly.
 - [x] ~~`RUNNER_VPS_HOST=root@<L> mise run runner-vps:install`.~~ Not re-run. It ran on
       2026-10-07 for #1126, and `provision.sh` has not changed since.
-- [ ] M5: materia + beszel on L (paired `kitten-lily/materia` PR), or recorded as dropped.
-      Tracked as #1154. L runs neither on 2026-10-09.
+- [x] M5: materia + beszel on L (paired `kitten-lily/materia` PR), or recorded as dropped.
+      Done 2026-10-12 (#1154, kitten-lily/materia#144): L is materia server `krytis-runner`
+      with `beszel-agent` only. Its OS hostname was changed to match. The **Krytis Build
+      VPS** vault item's Beszel token and `Hostname` now belong to L.
 
 ### 4. Cutover (minutes; pick a time with no job on `krytis-vps`)
 
@@ -199,7 +200,7 @@ the gap queue (for up to 24h) rather than fail.
 ### 6. Docs
 
 - [x] docs/skills/ci-runner.md § Always-on VPS Runner (issue #794): the host, specs,
-      provider, and the co-resident services as of M5 (none yet on L; #1154).
+      provider, and the co-resident services as of M5 (both on L since #1154).
 - [x] docs/skills/ci-runner.md § Build concurrency is `builders` x `max-jobs`: current sizing
       2 × 4 on 15 GiB. Keep the Contabo OOM history as history.
 - [x] docs/skills/ci-runner.md § casd quota and § The box ships with no swap. The swap
@@ -213,7 +214,11 @@ the gap queue (for up to 24h) rather than fail.
 
 ### 7. Decommission (after the M6 window)
 
-- [ ] Cancel the Contabo VPS. Remove it from beszel/materia if M5 moved them.
+- [ ] Cancel the Contabo VPS. In `kitten-lily/materia`, remove `[Hosts.krytis-build]`,
+      `attributes/krytis-build.yml` and `provisioning/servers/krytis-build/`. In the beszel
+      hub, delete the system **Krytis Build VPS**. L's system is **Krytis Runner**. Both
+      belong to the `lily@kittenlily.net` hub account, which is the one the dashboard shows;
+      the `ririi@` account in the Personal vault does not see them.
 - [ ] Delete `ssh:BenchOnecomL` from the YubiKey (`fido2-token -L -k ssh:BenchOnecomL`, then
       `-D -i <id>`), its handle and `.pub` files, and the **Krytis Bench VPS** vault item
       (after M7's merge).
