@@ -239,9 +239,10 @@ the gap queue (for up to 24h) rather than fail.
         decision M7 deferred to this step needs fields `pass-cli item update` cannot add or
         remove. **Krytis Build VPS** still carries the stale "Previous host (Contabo…)"
         field, and its `Password` is Contabo's root password, beside `Username: root`.
-        Merge by hand in the Pass app: move the bench `administrator` password and SSH
-        details into Krytis Build VPS, drop the two Contabo fields, then delete the bench
-        item.
+        Merge by hand in the Pass app: copy the bench `administrator` password into Krytis
+        Build VPS, drop the two Contabo fields, then delete the bench item. Its SSH fields
+        (public key, credential handle, fingerprint `SHA256:2gaVEluC…`) all describe the
+        retired `ssh:BenchOnecomL` and go with it.
 - [x] Drop the old host from `~/.ssh/known_hosts` (`ssh-keygen -R 185.214.135.35`: three
       entries removed).
 - [x] `git mv` this plan to `docs/plans/done/`.
