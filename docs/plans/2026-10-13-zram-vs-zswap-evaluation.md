@@ -1,7 +1,8 @@
 # Evaluate zram vs zswap
 
-**Issue:** #510 · **Status (2026-10-13): planned.** The laptop baseline is below. Nothing
-has been sampled on the desktop yet.
+**Issue:** #510 · **Status (2026-10-13): step 1 running.** Step 0 is done on both machines,
+which both run image `26.08.202610131212`, and the snapshots are in #510. Natural-demand
+sampling started on both the same day.
 
 #510 asks whether krytis should keep zram or move to zswap, decided from measurements on the
 desktop and the laptop. This plan sets out how to measure, adds the tool that measures
@@ -65,9 +66,16 @@ the ArchWiki and CachyOS tell users to avoid.**
 ### 2. `vm.swappiness=100` and `vm.page-cluster=0` come from the kernel
 
 No file in `/usr/lib/sysctl.d`, `/etc/sysctl.d`, udev or tmpfiles sets either value. Stock
-Linux defaults are 60 and 3. [INFERENCE] The values are compiled into the CachyOS kernel
-(`CONFIG_CACHY=y`). Step 0 confirms this against the kernel patch source. That matters
-because a future kernel bump could change these values without any krytis commit.
+Linux defaults are 60 and 3. Both values are compiled into the CachyOS kernel (confirmed in
+step 0 against the `cachyos-7.2.9-2` source tree):
+
+- `vm_swappiness = 100` sits under `#ifdef CONFIG_CACHY` in `mm/vmscan.c`.
+- `page_cluster = 0` is set **unconditionally** in `swap_setup()` in `mm/swap.c`.
+- MGLRU `min_ttl_ms = 100` (mainline: 0) also sits under `CONFIG_CACHY`. When the working
+  set of the last 100 ms can't be kept in memory, it invokes the OOM killer.
+
+A future kernel bump could change any of these without a krytis commit, so the decision PR
+must pin whatever the chosen arm relies on.
 
 ### 3. systemd-oomd does nothing
 
@@ -189,12 +197,18 @@ as a per-host override in `/etc`. For `zram`, that override is
 
 ## Steps
 
-- [ ] **0. Pre-flight** (on both machines)
+- [x] **0. Pre-flight** (on both machines). Done 2026-10-13, with both machines on
+  `26.08.202610131212`.
   - Put both machines on the same image. Capture
     `mise run swap-eval snapshot > /tmp/<host>-snapshot.txt` and attach the output to #510.
+    Result: identical swap configuration on both machines; only the hardware and
+    `mem_sleep` differ.
   - Confirm the source of `swappiness=100` / `page-cluster=0` (finding 2) in the CachyOS
-    kernel patch set, and note what you find in #510.
-  - Record each machine's swap-candidate drive (model and rated TBW) for rule 4.
+    kernel patch set, and note what you find in #510. Result: see finding 2.
+  - Record each machine's swap-candidate drive (model and rated TBW) for rule 4. Result:
+    `melog` has a 970 EVO 1 TB rated 600 TB. `adora` has a PM981a 512 GB with no published
+    rating, so the 970 EVO Plus 500 GB (300 TB) stands in for it. On both machines the
+    10 GiB/day cap is the limit that applies.
 - [ ] **1. Natural demand, `shipped`**: at least 5 working days per machine.
   - After every boot, run `mise run swap-eval sample --detach`.
   - The workload is whatever you normally do, but include the heaviest regular tasks: the
