@@ -116,14 +116,19 @@ arm() {
 
 # Largest VmSwap per command name, as "comm:KiB". /proc/<pid>/status is what smem reads
 # too; smem is not in the image.
+#
+# A process can exit between the glob and gawk opening its status file. gawk treats an
+# unopenable command-line file as fatal: it exits 2 and never runs END, so the sample row
+# loses its top_swap column and set -e plus pipefail kill the sampler. BEGINFILE with
+# ERRNO set is gawk's documented way to skip such a file instead.
 top_swap_procs() {
     local n="${1:-1}"
-    awk '
-        FNR == 1 { name = "" }
+    gawk '
+        BEGINFILE { if (ERRNO != "") nextfile; name = "" }
         /^Name:/ { name = $2 }
         /^VmSwap:/ && $2 > 0 { kib[name] += $2 }
         END { for (c in kib) print kib[c], c }
-    ' /proc/[0-9]*/status 2>/dev/null | sort -rn | head -n "${n}"
+    ' /proc/[0-9]*/status | sort -rn | head -n "${n}"
 }
 
 # Populated cgroups (cgroup v2 keeps processes in leaves only), largest swap first.
