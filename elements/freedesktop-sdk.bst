@@ -35,6 +35,11 @@ config:
     components/graphene.bst: gnome-build-meta.bst:sdk/graphene.bst
     components/gsettings-desktop-schemas.bst: gnome-build-meta.bst:sdk/gsettings-desktop-schemas.bst
     components/gtk3.bst: gnome-build-meta.bst:sdk/gtk+-3.bst
+    # Added by gnome-build-meta eaa10b21 to its own freedesktop-sdk.bst. That list never
+    # applies here (gnome-build-meta.bst overrides its fdsdk junction with this one), so
+    # without the mirror both krb5 builds stage together: gvfs.bst fails with
+    # "Non-whitelisted overlaps" on /usr/bin/kinit and the gssapi headers.
+    components/krb5.bst: gnome-build-meta.bst:sdk/krb5.bst
     components/libibus.bst: gnome-build-meta.bst:sdk/libibus.bst
     components/json-glib.bst: gnome-build-meta.bst:sdk/json-glib.bst
     components/libnotify.bst: gnome-build-meta.bst:sdk/libnotify.bst

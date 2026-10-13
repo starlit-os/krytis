@@ -32,7 +32,7 @@ mise lint                     # bootc container lint (squash-all)
 mise umbriel-config-validate  # umbriel validate on the shipped /etc/xdg config (#980)
 mise cracklib-dict-check      # pwscore must reject a dictionary word in the built image (#1001)
 mise portal-routing-check     # which portal backend serves each interface under niri/Umbriel (#1027)
-mise generate-fakecap-manifest # regenerate files/fakecap-manifest.tsv (only when elements change)
+mise generate-fakecap-manifest --pull # regenerate files/fakecap-manifest.tsv (only when elements change; --pull fetches artifacts the build never downloaded)
 mise chunkify                 # rechunk into composefs-ready component layers
 mise load-image-root          # copy krytis:latest into the ROOT podman store (sudo)
 mise generate-disk            # bootc install to-disk → bootable.raw
