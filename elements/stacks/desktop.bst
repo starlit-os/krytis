@@ -162,7 +162,8 @@ depends:
   # vm/config/pipewire: installs the user-preset that enables pipewire.socket
   #   and pipewire-pulse.socket on first login.
   # Note: v4l2loopback (virtual V4L2 device kernel module) is out-of-tree and
-  #   requires a prebuilt CachyOS package vendor (see issue #86).
+  #   CachyOS ships no prebuilt package for it; see docs/skills/desktop.md
+  #   § Camera Stack.
   - freedesktop-sdk.bst:components/libcamera.bst
   - freedesktop-sdk.bst:components/pipewire-daemon.bst
   - freedesktop-sdk.bst:components/wireplumber.bst
