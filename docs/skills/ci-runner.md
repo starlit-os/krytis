@@ -1760,7 +1760,10 @@ bb-storage specifics it has to work around: `GetTree` answers `UNIMPLEMENTED`
 ("does not support downloading directory trees"), so it walks Directory protos with
 `BatchReadBlobs`; and the artifact name's project part is each project's
 `project.conf` `name:`, not the junction's name (gnome-build-meta's elements are
-`gnome/…`). A resize that wipes only the CAS creates an index-without-storage state for
+`gnome/…`). For a nested junction it is the *innermost* project's: an element named
+`gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/toolbox.bst` is
+`freedesktop-sdk-extra/components-toolbox/<key>`, so the script keys `PROJECTS` on the last
+junction in the name. A resize that wipes only the CAS creates an index-without-storage state for
 everything at once. materia's plan for #137 wipes the CAS, AC, FSAC and bb-asset's
 index together for that reason.
 

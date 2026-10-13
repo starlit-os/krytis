@@ -1140,8 +1140,105 @@ If the package already exists in `gnome-build-meta.bst`, no new `.bst` file is n
 - `core-deps/` — libraries and runtime deps (xdg-desktop-portal-gtk, libportal, etc.)
 - `sdk/` — developer/toolchain elements (adwaita-fonts, blueprint-compiler, etc.)
 - `gnomeos-deps/` — OS-level config (flathub-config, etc.)
+- `freedesktop-sdk-extra.bst:components/` — a **nested junction**, not a directory. Since
+  gnome-build-meta `eaa10b21` ("Use elements from freedesktop-sdk-extra", MR !5085, Oct 2026)
+  the generic OS packages gnome-build-meta used to carry itself live in
+  [freedesktop-sdk-extra](https://gitlab.com/freedesktop-sdk/freedesktop-sdk-extra): distrobox,
+  toolbox, zram-generator, android-udev-rules, accountsservice, qemu, fish, nss-mdns: 50
+  elements deleted in that one commit. Reference them through both junctions:
+  `gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/<name>.bst`. No junction of our
+  own is needed: gnome-build-meta's `freedesktop-sdk-extra.bst` overrides `freedesktop-sdk.bst`
+  with gnome-build-meta's, which `elements/gnome-build-meta.bst` already overrides with ours, so
+  the nested elements build against krytis's fdsdk (`mise run validate` resolves it cleanly).
+  Its ref moves with gnome-build-meta's, so `track-core-junctions` still covers it.
 
 Check presence: `find .bst/staged-junctions/gnome-build-meta.bst/ -name "<name>.bst"`
+
+### A junction bump that deletes an element surfaces in the vuln scan first
+
+`mise run build-changed` classifies `elements/gnome-build-meta.bst` and
+`elements/freedesktop-sdk.bst` as `graph-wide` and skips them ("Only publish builds this
+change"). On a `track-core-junctions` PR, the first job that loads the element graph is
+therefore `vuln-diff.yml`'s `mise run vuln-scan` (buildstream-sbom runs `bst show`). When
+upstream deletes or moves an element krytis names, *Scan head* fails with
+`Could not find element '<path>' in project referred to by junction element
+'gnome-build-meta.bst'` before Grype ever runs. *Scan base* then shows as cancelled
+(`fail-fast: true`), and *Diff vulnerabilities vs base* fails with "no diff to report". That is
+a broken graph, not a vulnerability finding: do not read it as a security result.
+
+Reproduce locally with `mise run validate` on the PR head. Find where an element went with
+GitLab's compare API, which flags deleted files per commit:
+`curl -s "https://gitlab.gnome.org/api/v4/projects/GNOME%2Fgnome-build-meta/repository/compare?from=<old-sha>&to=<new-sha>" | jq '.diffs[] | select(.deleted_file) | .old_path'`.
+Fix the references in a PR stacked on the tracking PR (PR #1211's fix was the first). The
+tracking bot recreates its branch from `main` on every run, so a stacked fix needs a local
+`gh stack rebase` whenever that branch moves (`docs/skills/workflow.md` § Two things stacking
+still costs).
+
+### A moved element is a different recipe: check its files against the shipped image
+
+Repointing a reference to an element's new home makes the graph load, but the new element
+is somebody else's recipe and need not install the same files. gnome-build-meta's
+`gnomeos-deps/zram-generator.bst` wrote `/usr/lib/systemd/zram-generator.conf` (`[zram0]`,
+`ram / 2`, zstd) from its install-commands. freedesktop-sdk-extra's
+`components/zram-generator.bst` builds only the generator, and zram-generator creates no
+device without a config. The image built, linted and passed `boot-test` with **no swap at
+all**; `elements/config/zram-generator.bst` now ships the file. Nothing but a file
+comparison catches this. List what the committed `files/fakecap-manifest.tsv` credits to the
+old element names, then test each path in the new image:
+
+```shell
+grep -P '\t(gnomeos-deps/zram-generator|core-deps/accountsservice)\.bst\t' files/fakecap-manifest.tsv \
+  | cut -f1 | sed 's#^/\./#/#' \
+  | podman run --rm -i localhost/krytis:latest sh -c 'while read p; do [ -e "$p" ] || [ -L "$p" ] || echo "MISSING $p"; done'
+```
+
+Expect noise from two renames that are harmless: licenses move to
+`/usr/share/licenses/<new project name>/`, and debug paths are keyed on the element name.
+Read everything else. The same pass found that freedesktop-sdk-extra's accountsservice
+ships no headers or `.pc` file (runtime library and daemon unchanged), which matters only
+to something building against the image.
+
+**Versions can go backwards too, and vuln-diff will not say so.** The new home pins its own
+versions. freedesktop-sdk-extra-26.08.2 is older than gnome-build-meta's copies for five
+packages, including two security releases: ppp 2.5.4 → 2.5.3 (CVE-2026-75883,
+CVE-2026-85495) and libpcap 1.10.7 → 1.10.6 (seven CVEs in the BPF interpreter,
+`pcap_offline_filter()` and rpcapd). Grype matches both by bare name and flagged neither:
+`vuln-diff` reported "New: 0". Diff `name@version` between the two SBOMs and read each
+downgrade's release notes:
+
+```shell
+v(){ jq -r '.packages[] | "\(.name)@\(.versionInfo)"' "$1" | sort -u; }
+LC_ALL=C comm -3 <(v <base>/krytis.enriched.spdx.json) <(v <head>/krytis.enriched.spdx.json)
+```
+
+This is why #1211 (the bump that brought the split) was held rather than merged. As of
+2026-10-13, freedesktop-sdk-extra `main` already has libpcap 1.11.0, but ppp is still at
+2.5.3 on `main` with no open merge request. Whoever re-checks the hold needs both packages
+fixed in a *tag*, since gnome-build-meta pins `freedesktop-sdk-extra-26.08*` tags.
+
+### gnome-build-meta's fdsdk `overrides:` list is mirrored by hand — diff it on every bump
+
+`elements/gnome-build-meta.bst` overrides gnome-build-meta's `freedesktop-sdk.bst` with ours,
+so gnome-build-meta's own junction `config.overrides` (`components/glib.bst: sdk/glib.bst`, …)
+never applies. `elements/freedesktop-sdk.bst` carries a hand copy of that list, rewritten to
+`gnome-build-meta.bst:sdk/…` targets. When gnome-build-meta adds an entry, nothing fails until a
+real build stages both copies of the package together. gnome-build-meta `eaa10b21` added
+`components/krb5.bst: sdk/krb5.bst`. `mise run validate` and the vuln scan both passed, and
+`gnome-build-meta.bst:sdk-deps/gvfs.bst` then failed after 1h27m of building with
+`[overlaps]: Non-whitelisted overlaps detected` (`/usr/bin/kinit`, `gssapi/*.h`: "order
+gnome-build-meta.bst:sdk/krb5.bst above freedesktop-sdk.bst:components/krb5.bst"). Diff the list
+before building any gnome-build-meta bump:
+
+```shell
+B=https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw
+diff <(curl -s $B/<old-sha>/elements/freedesktop-sdk.bst | sed -n '/overrides:/,$p') \
+     <(curl -s $B/<new-sha>/elements/freedesktop-sdk.bst | sed -n '/overrides:/,$p')
+```
+
+krytis's copy already differs from upstream's: it has no entry for glycin, libglycin,
+xdg-desktop-portal(-base), flatpak or libical, and gtk-doc was dropped because the override was
+harmful (`docs/skills/dakota.md`). So mirror new *additions* and decide removals one by one.
+Don't resync the whole list.
 
 ### Survey the reverse-dep set before assuming a junction library is "already there"
 
@@ -4440,7 +4537,7 @@ tooling `mise/tasks/{boot-vm,boot-test,generate-ovmf-vars}` expect
 (`qemu-system-x86_64`, secure-boot-capable OVMF firmware, `virt-fw-vars`).
 Three non-obvious build issues surfaced writing them:
 
-**Don't depend on `gnome-build-meta.bst:core-deps/qemu.bst`.** It's GNOME's
+**Don't depend on gnome-build-meta's qemu** (`gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/qemu.bst` since gnome-build-meta `eaa10b21`; formerly `core-deps/qemu.bst`). It's GNOME's
 own interactive-desktop-VM recipe — GTK+SDL+spice+virglrenderer+usbredir+
 smartcard+pipewire, none of which `-nographic`/monitor-socket/user-netdev
 headless testing uses. Build against freedesktop-sdk's own components
@@ -4453,14 +4550,13 @@ of `--target-list`; omitting `freedesktop-sdk.bst:components/dtc.bst` from
 `depends` fails with `ERROR: Subproject dtc is buildable: NO` followed by a
 git-fetch attempt against the sandbox's offline network.
 
-**Pin QEMU to a version that predates the `qemu.qmp` PyPI build dependency.**
+**Hold QEMU to a version that predates the `qemu.qmp` PyPI build dependency.**
 Some QEMU 11.x releases' configure/meson step tries to `pip install
 qemu.qmp==0.0.5` at configure time for QAPI codegen tooling, which fails
 outright in BST's offline sandbox (`Could not provide build dependency
 'qemu.qmp==0.0.5'`) — no `python3-qemu-qmp` freedesktop-sdk component exists
-to satisfy it locally. `10.1.3` (the exact version
-`gnome-build-meta.bst:core-deps/qemu.bst` already pins) predates this and
-builds cleanly. The `qemu-update` mise task deliberately restricts its
+to satisfy it locally. The 10.x series predates this and builds cleanly.
+The `qemu-update` mise task deliberately restricts its
 version-track glob to the `10.x` series for this reason — widening it will
 silently reintroduce the build failure. Revisit once a freedesktop-sdk
 `python3-qemu-qmp` component exists.
