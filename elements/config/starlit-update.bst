@@ -3,6 +3,11 @@
 # needs a reboot to take effect (bootc, some fwupd firmware) applies on the
 # user's next natural reboot — no auto-reboot logic here. Closes #173.
 #
+# bootc-upgrade.sh stages at most one update per reboot: re-staging over a
+# pending update trips bootc-dev/bootc#2422 and the reboot keeps the old
+# image. See docs/skills/bootc-vm.md § A second staged update breaks bootc
+# until the orphan is removed.
+#
 # Gated on ConditionACPower= (native) plus a busctl check-conditions.sh
 # script for power-profile and metered-network state. NetworkManager and
 # UPower/power-profiles-daemon are already present transitively on this
@@ -23,6 +28,8 @@ config:
   - |
     install -Dm755 check-conditions.sh \
       "%{install-root}/usr/libexec/starlit-update/check-conditions.sh"
+    install -Dm755 bootc-upgrade.sh \
+      "%{install-root}/usr/libexec/starlit-update/bootc-upgrade.sh"
 
     install -Dm644 starlit-update.service \
       "%{install-root}%{indep-libdir}/systemd/system/starlit-update.service"

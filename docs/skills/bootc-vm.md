@@ -931,6 +931,64 @@ image rather than the live system) and seals first (`mise run seal-uki` →
 `localhost/krytis:sealed`, itself UKI-only) before switching, instead of switching to
 `:latest` directly. A non-UKI-booted system switches to `:latest` unchanged.
 
+## A second staged update breaks bootc until the orphan is removed
+
+**Hit on real hardware, 2026-10-13, bootc 1.17.1, composefs backend, sealed UKI.**
+Upstream bug [bootc-dev/bootc#2422](https://github.com/bootc-dev/bootc/issues/2422),
+open as of 2026-10-13. A comment there from 2026-10-09 reports the same trigger on
+bootc 1.17.1.
+
+**Trigger:** staging an update while another one is still staged (not yet rebooted
+into). On 2026-10-13, `starlit-update.service` staged `5d1be652…` at 08:40, and a
+manual `sudo bootc update` staged a newer `:sealed` (`f9e6862c…`) at 10:25. The second
+run's GC deleted the first deployment's `streams/oci-manifest-sha256:…` but left
+`/sysroot/state/deploy/5d1be652…` in place, and a boot entry kept pointing at it.
+
+**Symptom:** every later `bootc status`/`upgrade`/`switch` fails with:
+
+```
+error: Status: Getting composefs deployment status: … Reading image info for deployment
+5d1be652…: Opening OCI image for manifest sha256:26d6bea6…: Opening stream
+'oci-manifest-sha256:26d6bea6…': Opening ref 'streams/oci-manifest-sha256:26d6bea6…':
+No such file or directory (os error 2)
+```
+
+The damaging case is `bootc-finalize-staged.service` at shutdown, which runs the same
+status code: it failed at 10:33:49 (`journalctl -b -1 -u bootc-finalize-staged`), so
+the staged boot entry was never written, and the reboot came back up on the **old**
+deployment with no error on screen. Seeing an image older than the one you upgraded to
+(compare `KRYTIS_COMMIT` in `/usr/lib/os-release` with what you expected) is how this
+usually surfaces.
+
+**Recovery:** move the orphaned state dir aside. bootc 1.17.1's composefs status
+(`crates/lib/src/bootc_composefs/status.rs`) skips a boot entry whose origin file is
+missing, logging "No origin file for deployment" instead of failing. The #2422
+maintainer's suggested fix is the same, using `rm`:
+
+```bash
+sudo unshare -m -- sh -c 'mount -o remount,rw /sysroot && \
+  mv /sysroot/state/deploy/<orphan-verity> /var/tmp/orphan-<short>'
+sudo bootc status    # works again
+sudo bootc upgrade   # re-stage, then reboot
+```
+
+The orphan is the deployment named in the error. **Check before you reboot:**
+`systemctl is-active bootc-finalize-staged.service` must report `active`. The staged
+marker lives in `/run/composefs/staged-deployment` (tmpfs), so a deployment that
+failed to finalize is no longer "staged" after the reboot. Re-run `bootc upgrade` to
+stage it again.
+
+**Prevention in krytis:** `files/starlit-update/bootc-upgrade.sh`, the `ExecStart=`
+of `starlit-update.service`, exits without upgrading when `bootc status --format=json`
+reports a non-null `.status.staged`, so the daily timer stages at most one update per
+reboot. Without it, any machine left up through two image publishes hit the trigger by
+itself. A manual `bootc upgrade` on top of a timer-staged update is still unguarded:
+before running one, check `bootc status` for a staged entry, and reboot first if there
+is one. The #2422 reporter's alternative, `bootc delete-deployment <staged-verity>`
+before re-staging, was rejected for the timer. It removes the pending update before
+pulling, so a failed pull leaves nothing staged, and it runs more code from the same
+buggy release.
+
 ## dracut files belong in the bootc element, not initramfs element
 
 *Source: zirconium-hawaii `928fdf8` — `fix(initramfs): put dracut files into bootc element`*

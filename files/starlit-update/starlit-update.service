@@ -8,7 +8,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecCondition=/usr/libexec/starlit-update/check-conditions.sh
-ExecStart=-/usr/bin/bootc upgrade
+ExecStart=-/usr/libexec/starlit-update/bootc-upgrade.sh
 ExecStart=-/usr/bin/flatpak update --system --noninteractive --assumeyes
 ExecStart=-/usr/bin/fwupdmgr refresh --force
 ExecStart=-/usr/bin/fwupdmgr update --assume-yes
