@@ -70,7 +70,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/presence-bridge.git
   track: v*
-  ref: v0.2.0-0-ge446bdcdca816cb8eb712a49da7f4cc756aa6290
+  ref: v0.2.1-0-gf137190ad9b067447edb3d33fe8d13c3dab5dc6d
 - kind: cargo2
   url: crates:crates
   ref:
@@ -184,8 +184,8 @@ sources:
     sha: e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348
   - kind: registry
     name: serde_json
-    version: 1.0.151
-    sha: c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14
+    version: 1.0.152
+    sha: 1741ab7a6cc54a03a89b5d563ed60075c277d9e3cfa73ad0c1f23f23974703c6
   - kind: registry
     name: shlex
     version: 2.0.1
