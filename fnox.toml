@@ -1,3 +1,12 @@
+# Never inject these into a shell. Every krytis caller reads a secret explicitly
+# with `fnox get NAME`, which ignores this setting; the only consumer of the
+# default `env = true` is the `fnox activate` prompt hook, and that hook paid for
+# it on every prompt inside the checkout: ten concurrent pass-cli calls, which
+# corrupt a logged-out pass-cli state (#987), and the UEFI private keys exported
+# into the interactive shell. See
+# docs/skills/mise.md § Switching the backend under a live session
+env = false
+
 [providers.protonpass]
 type = "proton-pass"
 vault = "Krytis"

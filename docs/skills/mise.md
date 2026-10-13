@@ -1481,6 +1481,7 @@ Secrets that must never enter the repo (e.g. signing keys) are retrieved with [`
 - `fnox.toml` at the repo root maps logical secret names to `pass://`-style vault references (`{ provider = "protonpass", value = "<item>/<field>" }`). It is committed — it contains only references, never secret values.
 - One-time setup on a dev machine: `pass-cli login` (browser-based). After that, `fnox get SECRET_NAME` resolves the reference and prints the value to stdout.
 - Tasks that consume secrets (e.g. `mise/tasks/pull-keys`, #311) loop over the `fnox.toml` secret names, redirect `fnox get` output to the destination file, and validate the result (`openssl x509 -noout`, `openssl rsa -check`) — a fnox misconfiguration or an empty vault field fails loudly instead of writing a garbage key file.
+- **`fnox.toml` sets top-level `env = false`, so the `fnox activate` shell hook injects nothing.** Consume a secret with `fnox get NAME` in the task that needs it — env var first, then `fnox get`, as `mise/tasks/bst` does for the bow tokens. Never opt a `protonpass` secret back in with a per-secret `env = true` to save a task that call: it puts a `pass-cli` process back on every prompt inside the checkout, the setup behind #987. See § *Switching the backend under a live session*.
 - Retrieved secrets land in a gitignored path (e.g. `files/boot-keys/`), never committed.
 - `pass-cli` has no aqua/asdf mise backend, so it's declared via `[tool_alias]` (`pass-cli = "github:protonpass/pass-cli"`) plus `[tools]` (pinned to an exact version, never `latest` — see § `mise which X` for why the exact version matters) in the project `mise.toml` — same dev-host-tooling pattern as `oras` and `grype`. `fnox` is pinned there too; it was globally-installed-only until #448, so CI failed with `fnox: command not found` on its first sealed publish. `mise install` then provisions both automatically; no manual download step. Read the current pins out of `mise.toml` rather than from here — Renovate moves them.
 
@@ -1603,7 +1604,7 @@ The encrypted state is intact. Its key is simply in the keyring you just stopped
   mismatched pair. Recovery has to clear all three, which is what actually worked:
 
   ```shell
-  bash                                    # NOT fish — see the fnox prompt hook below
+  bash                                    # NOT fish — see "What env = false does not cover" below
   export PROTON_PASS_LINUX_KEYRING=dbus
   tar czf ~/pass-cli-broken-state.tar.gz -C ~/.local/share proton-pass-cli   # reversible
   rm -rf ~/.local/share/proton-pass-cli/.session
@@ -1614,7 +1615,7 @@ The encrypted state is intact. Its key is simply in the keyring you just stopped
   ```
 
   Two details the first two attempts at this got wrong. The whole sequence must run in a
-  shell with **no fnox prompt hook**, or the reset is undone between commands. And
+  shell with **no fnox prompt hook resolving secrets**, or the reset is undone between commands. And
   `rm -rf` the `.session` directory rather than just `pass-cli.db` — leaving the directory
   with a stale `.last_update_check` is harmless, but deleting only the db while a key
   survives in either keyring reproduces the same mismatch on the next run.
@@ -1659,19 +1660,50 @@ initialisation loses the race.** An established session survives concurrency fin
 why fish worked for months and only became unusable once a logged-out state had to be
 recovered.
 
-**Recovering from a logged-out state inside fish is impossible, not merely awkward.**
-`fnox activate fish` hooks **every prompt**, and `PWD` on top of it:
+**Before `fnox.toml` set `env = false`, recovering from a logged-out state inside fish was
+impossible, not merely awkward.** `fnox activate fish` hooks **every prompt**, and `PWD` on
+top of it:
 
 ```fish
 function __fnox_env_eval --on-event fish_prompt
 function __fnox_cd_hook --on-variable PWD
 ```
 
-so each Enter keypress re-runs the ten-way resolution and re-breaks the database before
-the next command executes. You cannot type `pass-cli login` without first running the thing
-that corrupts it; the login then fails with the same `hmac check failed`. **Log in from
-`bash` instead** — it carries no fnox hook, and it is the only thing that reliably worked
-on 2026-09-28:
+and the hook resolves every secret whose `env` mode allows shell injection — on krytis, then, all ten.
+Each Enter keypress re-ran the ten-way resolution and re-broke the database before the next
+command executed. You could not type `pass-cli login` without first running the thing that
+corrupted it; the login then failed with the same `hmac check failed`.
+
+**`fnox.toml` now sets top-level `env = false`, so the hook makes no `pass-cli` calls at
+all** (#987's krytis-side mitigation, 2026-10-13). fnox filters on the env mode *before*
+resolving, not just before exporting — `resolve_batch_with_context` in fnox v1.38.1
+`src/daemon.rs` does it on both the direct and the daemon path — and `fnox get NAME`
+ignores the mode entirely. Measured 2026-10-13 on fnox 1.38.1 with a logging `pass-cli`
+shim first on `PATH`:
+
+| Invocation, from the checkout | `pass-cli` calls before | after |
+|---|---|---|
+| `fnox --no-daemon hook-env -s fish` | 10 | 0 |
+| `fnox hook-env -s fish` (fresh daemon) | 10 | 0 |
+| `fnox --no-daemon get BUILDBARN_PULL_TOKEN` | — | 1 (`item view pass://Krytis/Buildbarn/pull-token`) |
+
+It also stops the hook exporting the six UEFI keys and both bow tokens into every
+interactive shell in the checkout.
+
+**What `env = false` does not cover:**
+
+- **A checkout whose branch predates it.** The hook reads whichever `fnox.toml` it finds
+  walking up from `$PWD`, so a fish prompt inside an old worktree runs the ten-way
+  resolution again. That is why the recovery recipes above and below still say `bash`: it
+  carries no hook whatever `fnox.toml` is in scope.
+- **The race itself.** Anything that resolves several `protonpass` secrets at once still
+  loses it against a logged-out state: `fnox export --all`, `fnox exec` with secrets opted
+  back in, two tasks calling `fnox get` in parallel. The in-repo callers are serial —
+  `pull-keys` and `generate-keys` loop, `scripts/runner-vps-host.sh` makes two sequential
+  calls.
+
+**Log in from `bash`** — the only thing that reliably worked on 2026-09-28, and still the
+safe choice when you cannot be sure which `fnox.toml` a fish prompt is reading:
 
 ```shell
 bash
@@ -1681,9 +1713,9 @@ pass-cli login
 pass-cli info                           # Username / Email / "Session has lock: no"
 ```
 
-Once `info` reports a session, fish is safe again — go back to it. Tracked for upstream
-filing in #987; the fix belongs in `fnox` (serialise, or batch one `pass-cli` call per
-resolution) or in `pass-cli` (lock first-time init), and neither repo is ours.
+Once `info` reports a session, fish is safe again — go back to it. The race is tracked for
+upstream filing in #987; the fix belongs in `fnox` (serialise, or batch one `pass-cli` call
+per resolution) or in `pass-cli` (lock first-time init), and neither repo is ours.
 
 Note the asymmetry when it does break: under `kernel` the next run finds no key at all,
 force-logs-out and self-heals; under `dbus` the mismatched key persists in the collection,
@@ -1708,9 +1740,9 @@ the two image drop-ins do not exist at all** — `/usr/lib/environment.d/50-prot
 and `/etc/profile.d/50-proton-pass-cli.sh` are simply absent, so only the chezmoi
 `fish/conf.d` copy is in play. That leaves every non-fish context on the kernel default:
 bash, anything the systemd user manager started before `~/.config/environment.d` existed,
-and any coding-agent shell. Mixing is then the *normal* state, not an accident — the fish
-prompt writes the key to the Secret Service while a bash invocation of the same `fnox`
-writes it to keyutils. Bridge the running session until the image is deployed:
+and any coding-agent shell. Mixing is then the *normal* state, not an accident — `fnox get`
+from fish writes the key to the Secret Service while the same call from bash writes it to
+keyutils. Bridge the running session until the image is deployed:
 
 ```shell
 systemctl --user set-environment PROTON_PASS_LINUX_KEYRING=dbus
