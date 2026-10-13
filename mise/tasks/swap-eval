@@ -1,0 +1,496 @@
+#!/usr/bin/env bash
+#MISE description="Measure this host's swap and memory pressure for the zram-vs-zswap evaluation (#510)"
+#USAGE arg "<action>" help="snapshot | sample | summary | arm | pressure"
+#USAGE arg "[args]" var=#true help="arm: shipped, zram, zswap or hybrid. pressure: the command to run. summary: sample logs (default: all of this host's)"
+#USAGE flag "--interval <seconds>" default="30" help="sample: seconds between rows"
+#USAGE flag "--detach" help="sample: run as the transient user unit swap-eval-sample instead of in the foreground"
+#USAGE flag "--days <n>" default="60" help="snapshot: how far back to read the journal"
+#USAGE flag "--high <size>" default="4G" help="pressure: MemoryHigh= of the scope the command runs in"
+#USAGE flag "--size <size>" help="arm zswap|hybrid: swapfile size in MiB when creating it (default: half of RAM)"
+#USAGE flag "--remove-swapfile" help="arm shipped|zram: also delete the evaluation swapfile"
+#USAGE flag "--dry-run" help="arm: print the privileged commands instead of running them"
+
+# Tooling for docs/plans/2026-10-13-zram-vs-zswap-evaluation.md. Runs on a booted krytis
+# host, not against the image: every number comes from the live kernel.
+#
+#   snapshot  hardware, kernel defaults, the active swap stack, top swap users by process
+#             and cgroup, and the journal's OOM / oomd / suspend history.
+#   sample    appends one row every --interval seconds to
+#             $XDG_STATE_HOME/krytis/swap-eval/<host>-<date>-<boot>.tsv until stopped.
+#   summary   reduces sample logs to one row per arm (markdown, for the issue).
+#   arm       switches the swap stack at runtime (sudo). Nothing persists: a reboot
+#             returns to the shipped stack. The swapfile stays on disk until
+#             --remove-swapfile.
+#   pressure  runs a real command in a user scope with MemoryHigh=--high, which makes the
+#             kernel reclaim and swap that cgroup only, and records what it cost.
+#
+# The arm of every row is read from the kernel, never from a state file:
+#   shipped  zswap on, zram0 on, no disk swap   (what the image boots into)
+#   zram     zswap off, zram0 on, no disk swap
+#   zswap    zswap on, zram0 off, disk swapfile
+#   hybrid   zswap off, zram0 on, disk swapfile at lower priority
+
+set -euo pipefail
+
+ACTION=""
+ARGS=()
+INTERVAL=30
+DETACH=false
+DAYS=60
+HIGH=4G
+SIZE_MIB=""
+REMOVE_SWAPFILE=false
+DRY_RUN=false
+
+# Flags are parsed from "$@" rather than usage_*: --detach re-executes this script under
+# systemd-run, where no usage_* variables exist.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --interval) INTERVAL="$2"; shift 2 ;;
+        --interval=*) INTERVAL="${1#*=}"; shift ;;
+        --detach) DETACH=true; shift ;;
+        --days) DAYS="$2"; shift 2 ;;
+        --days=*) DAYS="${1#*=}"; shift ;;
+        --high) HIGH="$2"; shift 2 ;;
+        --high=*) HIGH="${1#*=}"; shift ;;
+        --size) SIZE_MIB="$2"; shift 2 ;;
+        --size=*) SIZE_MIB="${1#*=}"; shift ;;
+        --remove-swapfile) REMOVE_SWAPFILE=true; shift ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --) shift; ARGS+=("$@"); break ;;
+        *)
+            if [ -z "${ACTION}" ]; then
+                ACTION="$1"
+            else
+                # Everything after pressure's first positional is the command, flags
+                # included.
+                [ "${ACTION}" = "pressure" ] && { ARGS+=("$@"); break; }
+                ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+die() { echo "swap-eval: $*" >&2; exit 1; }
+
+HOST="$(cat /proc/sys/kernel/hostname)"
+BOOT="$(tr -d - </proc/sys/kernel/random/boot_id)"
+LOGDIR="${XDG_STATE_HOME:-${HOME}/.local/state}/krytis/swap-eval"
+SWAPDIR=/var/swap
+SWAPFILE="${SWAPDIR}/swapfile"
+ZRAM=/sys/block/zram0
+
+meminfo() { awk -v k="$1:" '$1 == k { print $2; exit }' /proc/meminfo; }
+vmstat() { awk -v k="$1" '$1 == k { print $2; exit }' /proc/vmstat; }
+zswap_param() { cat "/sys/module/zswap/parameters/$1" 2>/dev/null || echo "-"; }
+
+# zram0 mm_stat: orig_data_size compr_data_size mem_used_total ... (bytes)
+zram_stats() {
+    if [ -r "${ZRAM}/mm_stat" ] && [ "$(cat "${ZRAM}/disksize")" != 0 ]; then
+        read -r orig compr used _ <"${ZRAM}/mm_stat"
+        echo "$(cat "${ZRAM}/disksize") ${orig} ${compr} ${used}"
+    else
+        echo "0 0 0 0"
+    fi
+}
+
+arm() {
+    local zs zram=n disk=n
+    zs="$(zswap_param enabled)"
+    while read -r name _; do
+        case "${name}" in
+            Filename) ;;
+            /dev/zram*) zram=y ;;
+            *) disk=y ;;
+        esac
+    done </proc/swaps
+    case "${zs}${zram}${disk}" in
+        Yyn) echo shipped ;;
+        Nyn) echo zram ;;
+        Yny) echo zswap ;;
+        Nyy) echo hybrid ;;
+        *) echo "other:zswap=${zs},zram=${zram},disk=${disk}" ;;
+    esac
+}
+
+# Largest VmSwap per command name, as "comm:KiB". /proc/<pid>/status is what smem reads
+# too; smem is not in the image.
+top_swap_procs() {
+    local n="${1:-1}"
+    awk '
+        FNR == 1 { name = "" }
+        /^Name:/ { name = $2 }
+        /^VmSwap:/ && $2 > 0 { kib[name] += $2 }
+        END { for (c in kib) print kib[c], c }
+    ' /proc/[0-9]*/status 2>/dev/null | sort -rn | head -n "${n}"
+}
+
+# Populated cgroups (cgroup v2 keeps processes in leaves only), largest swap first.
+top_swap_cgroups() {
+    local f dir sw zs
+    find /sys/fs/cgroup -name memory.swap.current 2>/dev/null | while read -r f; do
+        dir="${f%/memory.swap.current}"
+        # cgroupfs reports every file as size 0, so test -s cannot see processes.
+        read -r _ <"${dir}/cgroup.procs" 2>/dev/null || continue
+        sw="$(cat "${f}")"
+        [ "${sw}" -gt 0 ] || continue
+        zs="$(cat "${dir}/memory.zswap.current" 2>/dev/null || echo 0)"
+        echo "$((sw / 1024)) $((zs / 1024)) ${dir#/sys/fs/cgroup}"
+    done | sort -rn | head -n 15
+}
+
+kib_h() { awk -v k="$1" 'BEGIN { printf "%.1f GiB", k / 1048576 }'; }
+
+do_snapshot() {
+    local total avail st sf disksize orig compr used
+    total="$(meminfo MemTotal)"; avail="$(meminfo MemAvailable)"
+    st="$(meminfo SwapTotal)"; sf="$(meminfo SwapFree)"
+    read -r disksize orig compr used <<<"$(zram_stats)"
+
+    echo "## Host"
+    echo "host:      ${HOST} ($(hostnamectl chassis 2>/dev/null || echo unknown)," \
+        "$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null) $(cat /sys/class/dmi/id/product_version 2>/dev/null))"
+    # shellcheck disable=SC1091
+    echo "image:     $(. /etc/os-release && echo "${IMAGE_VERSION:-${VERSION_ID:-unknown}}")"
+    echo "kernel:    $(uname -r)"
+    echo "uptime:    $(awk '{ printf "%.1f h", $1 / 3600 }' /proc/uptime)"
+    echo "RAM:       $(kib_h "${total}") total, $(kib_h "${avail}") available"
+    echo "disks:"
+    lsblk -d -n -o NAME,TYPE,ROTA,TRAN,SIZE,MODEL | awk '$2 == "disk" && $1 !~ /^zram/ { print "  " $0 }'
+    echo "/var:      $(findmnt -n -o FSTYPE,SOURCE --target /var)"
+    echo
+
+    echo "## Kernel defaults (/proc/config.gz)"
+    if [ -r /proc/config.gz ]; then
+        zcat /proc/config.gz | grep -E '^CONFIG_(ZSWAP(_DEFAULT_ON|_SHRINKER_DEFAULT_ON|_COMPRESSOR_DEFAULT)?|ZRAM|ZRAM_WRITEBACK|LRU_GEN_ENABLED|HIBERNATION|CACHY)=' || true
+    else
+        echo "/proc/config.gz not available"
+    fi
+    echo
+
+    echo "## Active swap stack: $(arm)"
+    cat /proc/swaps
+    zramctl 2>/dev/null || true
+    local zgc=/usr/lib/systemd/zram-generator.conf
+    [ -e /etc/systemd/zram-generator.conf ] && zgc=/etc/systemd/zram-generator.conf
+    echo "zram-generator config (${zgc}):"
+    sed 's/^/  /' "${zgc}" 2>/dev/null || echo "  (none)"
+    printf 'zswap: enabled=%s compressor=%s max_pool_percent=%s shrinker_enabled=%s accept_threshold_percent=%s\n' \
+        "$(zswap_param enabled)" "$(zswap_param compressor)" "$(zswap_param max_pool_percent)" \
+        "$(zswap_param shrinker_enabled)" "$(zswap_param accept_threshold_percent)"
+    for s in vm.swappiness vm.page-cluster vm.watermark_scale_factor vm.min_free_kbytes vm.vfs_cache_pressure; do
+        printf '%s = %s\n' "${s}" "$(sysctl -n "${s}")"
+    done
+    echo "MGLRU: enabled=$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null) min_ttl_ms=$(cat /sys/kernel/mm/lru_gen/min_ttl_ms 2>/dev/null)"
+    echo "sleep: $(cat /sys/power/mem_sleep 2>/dev/null); hibernate: $(cat /sys/power/disk 2>/dev/null); lockdown: $(cat /sys/kernel/security/lockdown 2>/dev/null)"
+    echo
+
+    echo "## Counters since boot"
+    echo "swap used:  $(kib_h "$((st - sf))") of $(kib_h "${st}") ($(awk -v u="$((st - sf))" -v r="${total}" 'BEGIN { printf "%.1f", 100 * u / r }')% of RAM)"
+    echo "zswap pool: $(meminfo Zswap) KiB holding $(meminfo Zswapped) KiB"
+    awk -v d="${disksize}" -v o="${orig}" -v c="${compr}" -v u="${used}" 'BEGIN {
+        if (d == 0) { print "zram0:      not initialised"; exit }
+        printf "zram0:      %.0f MiB stored in %.0f MiB (ratio %.2f), fill %.1f%% of %.1f GiB\n",
+            o / 1048576, u / 1048576, (c > 0 ? o / c : 0), 100 * o / d, d / 1073741824 }'
+    for c in pswpin pswpout zswpin zswpout zswpwb; do printf '%s=%s ' "${c}" "$(vmstat "${c}")"; done
+    echo
+    sed 's/^/PSI memory /' /proc/pressure/memory
+    echo
+
+    echo "## Top swap users by process (KiB, /proc/<pid>/status VmSwap)"
+    top_swap_procs 15 | sed 's/^/  /'
+    echo
+    echo "## Top swap users by cgroup (swap KiB, of which zswap KiB, cgroup)"
+    top_swap_cgroups | sed 's/^/  /'
+    echo
+
+    echo "## systemd-oomd"
+    oomctl 2>&1 | sed -n '1,4p;/Monitored CGroups/,$p'
+    journalctl -q -b -u systemd-oomd -g 'Unknown section|Unknown key|Failed to parse' -o cat 2>/dev/null | sed 's/^/config warning: /' || true
+    echo "oomd kills, last ${DAYS}d:       $(journalctl -q --since "-${DAYS}d" -u systemd-oomd -g 'Killed' -o cat 2>/dev/null | wc -l)"
+    echo "kernel OOM kills, last ${DAYS}d: $(journalctl -q -k --since "-${DAYS}d" -g 'Out of memory: Killed process' -o cat 2>/dev/null | wc -l)"
+    echo
+
+    echo "## Suspend history, last ${DAYS}d (systemd-sleep)"
+    # A boot whose last sleep message is "Performing" never came back from that sleep:
+    # a resume hang, or a battery that ran out while suspended.
+    journalctl -q -t systemd-sleep --since "-${DAYS}d" -o json --output-fields=MESSAGE 2>/dev/null | gawk -v cur="${BOOT}" '
+        {
+            match($0, /"_BOOT_ID":"([0-9a-f]+)"/, b); match($0, /"MESSAGE":"([^"]*)"/, m)
+            match($0, /"__REALTIME_TIMESTAMP":"([0-9]+)"/, t)
+            if (m[1] ~ /^Performing sleep/) { att++; last[b[1]] = "p"; lt[b[1]] = t[1] }
+            else if (m[1] ~ /^System returned/) { ok++; last[b[1]] = "r" }
+            else if (m[1] ~ /^Failed to put system to sleep/) { fail++; last[b[1]] = "f"; fday[strftime("%F", t[1] / 1e6)]++ }
+        }
+        END {
+            printf "attempts=%d returned=%d failed=%d\n", att, ok, fail
+            for (d in fday) printf "  failed on %s: %d\n", d, fday[d]
+            for (id in last) if (last[id] == "p" && id != cur) printf "  never returned: %s (boot %s)\n", strftime("%F %T", lt[id] / 1e6), substr(id, 1, 8)
+        }'
+}
+
+header() {
+    printf 'epoch\tarm\tmem_total_k\tmem_avail_k\tswap_total_k\tswap_free_k\tzswap_k\tzswapped_k\t'
+    printf 'zram_disksize_b\tzram_orig_b\tzram_compr_b\tzram_used_b\tpswpin\tpswpout\tzswpin\tzswpout\tzswpwb\t'
+    printf 'psi_some_avg10\tpsi_full_avg10\tpsi_some_total_us\tpsi_full_total_us\ttop_swap\n'
+}
+
+row() {
+    local disksize orig compr used some full top
+    read -r disksize orig compr used <<<"$(zram_stats)"
+    some="$(awk '$1 == "some" { split($2, a, "="); split($5, b, "="); print a[2], b[2] }' /proc/pressure/memory)"
+    full="$(awk '$1 == "full" { split($2, a, "="); split($5, b, "="); print a[2], b[2] }' /proc/pressure/memory)"
+    top="$(top_swap_procs 1 | awk '{ print $2 ":" $1 }')"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${EPOCHSECONDS}" "$(arm)" "$(meminfo MemTotal)" "$(meminfo MemAvailable)" \
+        "$(meminfo SwapTotal)" "$(meminfo SwapFree)" "$(meminfo Zswap)" "$(meminfo Zswapped)" \
+        "${disksize}" "${orig}" "${compr}" "${used}" \
+        "$(vmstat pswpin)" "$(vmstat pswpout)" "$(vmstat zswpin)" "$(vmstat zswpout)" "$(vmstat zswpwb)" \
+        "${some% *}" "${full% *}" "${some#* }" "${full#* }" "${top:--}"
+}
+
+do_sample() {
+    if [ "${DETACH}" = true ]; then
+        systemd-run --user --quiet --collect --unit swap-eval-sample \
+            -- "$(readlink -f "$0")" sample --interval "${INTERVAL}"
+        echo "sampling every ${INTERVAL}s as swap-eval-sample.service; stop with: systemctl --user stop swap-eval-sample"
+        return
+    fi
+    mkdir -p "${LOGDIR}"
+    # One file per boot; a restart in the same boot appends to it.
+    local log existing
+    existing=("${LOGDIR}/${HOST}"-*-"${BOOT:0:8}".tsv)
+    log="${existing[0]}"
+    [ -e "${log}" ] || { log="${LOGDIR}/${HOST}-$(date +%Y%m%d)-${BOOT:0:8}.tsv"; header >"${log}"; }
+    echo "sampling every ${INTERVAL}s into ${log}" >&2
+    while :; do
+        row >>"${log}"
+        sleep "${INTERVAL}"
+    done
+}
+
+do_summary() {
+    local files=("${ARGS[@]}")
+    if [ ${#files[@]} -eq 0 ]; then
+        shopt -s nullglob
+        files=("${LOGDIR}/${HOST}"-*-*.tsv)
+        shopt -u nullglob
+    fi
+    [ ${#files[@]} -gt 0 ] || die "no sample logs in ${LOGDIR} for ${HOST}; run: mise run swap-eval sample"
+    mapfile -t files < <(printf '%s\n' "${files[@]}" | grep -v -- '-pressure.tsv$' | sort)
+
+    local first last
+    first="$(awk -F'\t' 'FNR > 1 { print $1; exit }' "${files[0]}")"
+    last="$(tail -qn 1 "${files[@]}" | sort -n | tail -n 1 | cut -f1)"
+    # Global, not local: the EXIT trap runs after this function has returned.
+    EVENTS="$(mktemp)"
+    trap 'rm -f "${EVENTS}"' EXIT
+    journalctl -q -t systemd-sleep --since "@${first}" --until "@$((last + 60))" -o short-unix 2>/dev/null \
+        | awk '/Performing sleep|Failed to put system to sleep/ { print int($1), ($0 ~ /Failed/ ? "failed" : "attempt") }' >"${EVENTS}" || true
+
+    echo "Host ${HOST}, ${#files[@]} log(s), $(date -d "@${first}" +%F) to $(date -d "@${last}" +%F)"
+    echo
+    # Counters are differenced only between consecutive rows of the same file and arm, and
+    # only across gaps of at most 10 minutes: a longer gap is a suspend, and a new file
+    # is a new boot with reset counters.
+    gawk -F'\t' -v evfile="${EVENTS}" '
+        FILENAME == evfile { split($0, x, " "); ev_t[++nev] = x[1]; ev_k[nev] = x[2]; next }
+        FNR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; have = 0; next }
+        {
+            a = $col["arm"]; t = $col["epoch"]; ram = $col["mem_total_k"]
+            used = $col["swap_total_k"] - $col["swap_free_k"]; pct = 100 * used / ram
+            n[a]++; v[a][n[a]] = pct
+            if (pct > peak[a]) { peak[a] = pct; peakk[a] = used }
+            st[++ns] = t; sp[ns] = pct
+            d = $col["zram_disksize_b"]
+            if (d > 0 && $col["zram_orig_b"] >= 0.8 * d) zfull[a]++
+            if ($col["zswap_k"] > zsp[a]) zsp[a] = $col["zswap_k"]
+            if ($col["zram_compr_b"] > 0) { zro[a] += $col["zram_orig_b"]; zrc[a] += $col["zram_compr_b"] }
+            if ($col["zswap_k"] > 0) { zso[a] += $col["zswapped_k"]; zsc[a] += $col["zswap_k"] }
+            if ($col["psi_full_avg10"] > pmax[a]) pmax[a] = $col["psi_full_avg10"]
+            if (have && pa == a) {
+                dt = t - pt
+                if (dt <= 600) {
+                    secs[a] += dt
+                    split("pswpout pswpin zswpwb psi_full_total_us psi_some_total_us", cs, " ")
+                    for (k in cs) { c = cs[k]; dd = $col[c] - prev[c]; if (dd > 0) sum[a, c] += dd }
+                } else gaps[a]++
+            }
+            have = 1; pa = a; pt = t
+            split("pswpout pswpin zswpwb psi_full_total_us psi_some_total_us", cs, " ")
+            for (k in cs) prev[cs[k]] = $col[cs[k]]
+        }
+        END {
+            print "| arm | hours | peak swap | p95 swap | zram >=80% full | peak zswap pool | ratio zram / zswap | swap-out to backing dev | zswap writeback | PSI full stall | max PSI full avg10 | sleeps |"
+            print "|---|---|---|---|---|---|---|---|---|---|---|---|"
+            for (a in n) {
+                m = asort(v[a], s); p95 = s[int(0.95 * m + 0.999)]
+                h = secs[a] / 3600; hh = (h > 0 ? h : 1)
+                printf "| %s | %.1f | %.1f GiB (%.1f%% RAM) | %.1f%% RAM | %d samples | %.0f MiB | %s / %s | %.1f MiB/h | %.1f MiB/h | %.1f s/h | %.2f | %d |\n",
+                    a, h, peakk[a] / 1048576, peak[a], p95, zfull[a], zsp[a] / 1024,
+                    (zrc[a] > 0 ? sprintf("%.2f", zro[a] / zrc[a]) : "-"), (zsc[a] > 0 ? sprintf("%.2f", zso[a] / zsc[a]) : "-"),
+                    sum[a, "pswpout"] * 4 / 1024 / hh, sum[a, "zswpwb"] * 4 / 1024 / hh,
+                    sum[a, "psi_full_total_us"] / 1e6 / hh, pmax[a], gaps[a]
+            }
+            if (nev) {
+                # Swap use at each sleep attempt, from the last sample before it.
+                print ""
+                print "| sleep event | count | max swap at event |"
+                print "|---|---|---|"
+                j = 1
+                for (e = 1; e <= nev; e++) {
+                    while (j < ns && st[j + 1] <= ev_t[e]) j++
+                    if (st[j] > ev_t[e]) continue
+                    cnt[ev_k[e]]++; if (sp[j] > mx[ev_k[e]]) mx[ev_k[e]] = sp[j]
+                }
+                for (k in cnt) printf "| %s | %d | %.1f%% RAM |\n", k, cnt[k], mx[k]
+            }
+        }' "${EVENTS}" "${files[@]}"
+}
+
+run() {
+    if [ "${DRY_RUN}" = true ]; then echo "+ $*"; else "$@"; fi
+}
+
+ensure_swapfile() {
+    [ -e "${SWAPFILE}" ] && return
+    local size="${SIZE_MIB:-$(($(meminfo MemTotal) / 2048))}" fstype free
+    fstype="$(stat -f -c %T /var)"
+    free=$(($(stat -f -c '%a' /var) * $(stat -f -c '%S' /var) / 1048576))
+    [ "${free}" -gt $((size + 4096)) ] || die "/var has ${free} MiB free, need $((size + 4096)) MiB for a ${size} MiB swapfile"
+    echo "creating ${size} MiB swapfile at ${SWAPFILE} (${fstype})"
+    case "${fstype}" in
+        btrfs)
+            # Own subvolume: btrfs refuses to snapshot a subvolume holding an active
+            # swapfile, so the swapfile must not live in /var's.
+            [ -d "${SWAPDIR}" ] || run sudo btrfs subvolume create "${SWAPDIR}"
+            # mkswapfile sets NOCOW and writes real extents; fallocate'd extents fail swapon.
+            run sudo btrfs filesystem mkswapfile --size "${size}m" "${SWAPFILE}"
+            ;;
+        xfs|ext2/ext3)
+            run sudo install -d -m 0700 "${SWAPDIR}"
+            run sudo dd if=/dev/zero of="${SWAPFILE}" bs=1M count="${size}" conv=fsync status=none
+            run sudo chmod 0600 "${SWAPFILE}"
+            run sudo mkswap "${SWAPFILE}"
+            ;;
+        *) die "${fstype} cannot back a swapfile" ;;
+    esac
+}
+
+do_arm() {
+    local target="${ARGS[0]:-}"
+    case "${target}" in
+        shipped|zram|zswap|hybrid) ;;
+        *) die "arm takes one of: shipped zram zswap hybrid (currently: $(arm))" ;;
+    esac
+    case "${target}" in zswap|hybrid) ensure_swapfile ;; esac
+
+    # Every switch drains all swap back into RAM first, so no arm inherits pages the
+    # previous one compressed.
+    local used avail
+    used=$(($(meminfo SwapTotal) - $(meminfo SwapFree)))
+    avail="$(meminfo MemAvailable)"
+    [ $((used + 1048576)) -lt "${avail}" ] \
+        || die "draining $((used / 1024)) MiB of swap needs it plus 1 GiB free; only $((avail / 1024)) MiB available"
+    local dev
+    awk 'NR > 1 { print $1 }' /proc/swaps | while read -r dev; do run sudo swapoff "${dev}"; done
+
+    local zs=N
+    case "${target}" in shipped|zswap) zs=Y ;; esac
+    if [ "${DRY_RUN}" = true ]; then
+        echo "+ echo ${zs} | sudo tee /sys/module/zswap/parameters/enabled"
+    else
+        echo "${zs}" | sudo tee /sys/module/zswap/parameters/enabled >/dev/null
+    fi
+
+    case "${target}" in
+        shipped|zram|hybrid)
+            [ -b /dev/zram0 ] || run sudo systemctl start systemd-zram-setup@zram0.service
+            run sudo swapon -p 100 /dev/zram0
+            ;;
+    esac
+    case "${target}" in
+        zswap|hybrid) run sudo swapon -p 10 "${SWAPFILE}" ;;
+    esac
+
+    if [ "${REMOVE_SWAPFILE}" = true ]; then
+        case "${target}" in
+            zswap|hybrid) die "--remove-swapfile only applies to shipped and zram" ;;
+        esac
+        if [ "$(stat -f -c %T /var)" = btrfs ] && [ -d "${SWAPDIR}" ]; then
+            run sudo btrfs subvolume delete "${SWAPDIR}"
+        else
+            run sudo rm -f "${SWAPFILE}"
+        fi
+    fi
+    [ "${DRY_RUN}" = true ] || echo "arm: $(arm) (until reboot)"
+}
+
+do_pressure() {
+    [ ${#ARGS[@]} -gt 0 ] || die "pressure needs a command: mise run swap-eval pressure --high 4G -- <command>"
+    local unit="swap-eval-pressure-$$" before=() after=() c
+    for c in pswpin pswpout zswpout zswpwb; do before+=("$(vmstat "${c}")"); done
+    local t0="${EPOCHREALTIME}"
+    systemd-run --user --scope --quiet --unit "${unit}" -p MemoryHigh="${HIGH}" -- "${ARGS[@]}" &
+    local pid=$!
+
+    # The scope's cgroup is gone once the command exits, so a background poller reads its
+    # counters while it runs. Peaks are monotonic; the stall totals are at most a second
+    # stale. Polling in the background keeps the poll interval out of the wall time.
+    # Global for the same reason as do_summary's EVENTS.
+    POLLED="$(mktemp)"
+    trap 'rm -f "${POLLED}"' EXIT
+    (
+        cg="" mem=0 swap=0 zsmax=0 some=0 full=0 high=0
+        while kill -0 "${pid}" 2>/dev/null; do
+            [ -n "${cg}" ] || cg="$(systemctl --user show -P ControlGroup "${unit}.scope" 2>/dev/null || true)"
+            d="/sys/fs/cgroup${cg}"
+            if [ -n "${cg}" ] && [ -d "${d}" ]; then
+                mem="$(cat "${d}/memory.peak" 2>/dev/null || echo "${mem}")"
+                swap="$(cat "${d}/memory.swap.peak" 2>/dev/null || echo "${swap}")"
+                zsw="$(cat "${d}/memory.zswap.current" 2>/dev/null || echo 0)"
+                [ "${zsw}" -gt "${zsmax}" ] && zsmax="${zsw}"
+                v="$(awk '$1 == "some" { split($5, a, "="); print a[2] }' "${d}/memory.pressure" 2>/dev/null)" && some="${v:-${some}}"
+                v="$(awk '$1 == "full" { split($5, a, "="); print a[2] }' "${d}/memory.pressure" 2>/dev/null)" && full="${v:-${full}}"
+                v="$(awk '$1 == "high" { print $2 }' "${d}/memory.events" 2>/dev/null)" && high="${v:-${high}}"
+                echo "${mem} ${swap} ${zsmax} ${some} ${full} ${high}" >"${POLLED}"
+            fi
+            sleep 1
+        done
+    ) &
+    local poller=$!
+    local rc=0
+    wait "${pid}" || rc=$?
+    local t1="${EPOCHREALTIME}"
+    wait "${poller}" || true
+    local mem=0 swap=0 zsmax=0 some=0 full=0 high=0
+    [ -s "${POLLED}" ] && read -r mem swap zsmax some full high <"${POLLED}"
+    for c in pswpin pswpout zswpout zswpwb; do after+=("$(vmstat "${c}")"); done
+
+    mkdir -p "${LOGDIR}"
+    local log="${LOGDIR}/${HOST}-pressure.tsv"
+    [ -e "${log}" ] || printf 'epoch\tarm\thigh\trc\twall_s\tmem_peak_mib\tswap_peak_mib\tzswap_peak_mib\tsome_stall_s\tfull_stall_s\thigh_events\tpswpin_mib\tpswpout_mib\tzswpout_mib\tzswpwb_mib\tcommand\n' >"${log}"
+    awk -v OFS='\t' -v e="${EPOCHSECONDS}" -v a="$(arm)" -v h="${HIGH}" -v rc="${rc}" -v t0="${t0}" -v t1="${t1}" \
+        -v m="${mem}" -v s="${swap}" -v z="${zsmax}" -v so="${some}" -v fu="${full}" -v hi="${high}" \
+        -v b="${before[*]}" -v f="${after[*]}" -v cmd="${ARGS[*]}" 'BEGIN {
+            split(b, B, " "); split(f, F, " ")
+            print e, a, h, rc, sprintf("%.1f", t1 - t0), int(m / 1048576), int(s / 1048576), int(z / 1048576),
+                sprintf("%.1f", so / 1e6), sprintf("%.1f", fu / 1e6), hi,
+                int((F[1] - B[1]) / 256), int((F[2] - B[2]) / 256), int((F[3] - B[3]) / 256), int((F[4] - B[4]) / 256), cmd
+        }' | tee -a "${log}" | awk -F'\t' '{
+            printf "arm=%s high=%s rc=%s wall=%ss mem_peak=%sMiB swap_peak=%sMiB zswap_peak=%sMiB stall some=%ss full=%ss high_events=%s\n", $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+            printf "system-wide during run: pswpin=%sMiB pswpout=%sMiB zswpout=%sMiB zswpwb=%sMiB\n", $12, $13, $14, $15
+        }'
+    echo "logged to ${log}"
+    return "${rc}"
+}
+
+case "${ACTION}" in
+    snapshot) do_snapshot ;;
+    sample) do_sample ;;
+    summary) do_summary ;;
+    arm) do_arm ;;
+    pressure) do_pressure ;;
+    *) die "unknown action '${ACTION}': snapshot | sample | summary | arm | pressure" ;;
+esac
