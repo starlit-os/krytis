@@ -33,9 +33,11 @@ on:
       runner:
         description: 'Runner to benchmark'
         type: choice
+        # Add a bench box's own runner label here for the length of its
+        # benchmark, and remove it when the box goes. #1126's box,
+        # bench-onecom-l, became krytis-vps (#1145).
         options:
           - krytis-vps
-          - bench-onecom-l
       phase:
         description: 'toolchain: wipe the cache and build the toolchain closure; full: continue to oci/krytis/image.bst'
         type: choice

@@ -236,6 +236,22 @@ Diagnostic order that separates all three, cheapest first, before spending touch
 2. Listed but `caps` shows `nocbor` → CTAP2-dead; replug.
 3. Listed with `cbor`, and only the *agent* path fails → gcr-agent problem; use `env -u SSH_AUTH_SOCK`.
 
+### Retiring a per-host key: unauthorize it first, then delete the credential
+
+Order matters, because deleting the resident credential first leaves its public key
+authorized on hosts you can no longer prove you cleaned. Done this way for `ssh:BenchOnecomL`
+on 2026-10-13 (#1145):
+
+1. On every host that took it, drop the line whose key blob matches the `.pub`
+   (`grep -vF "$(awk '{print $2}' <key>.pub)"`), over a login with a *different* key.
+2. `fido2-token -L -k ssh:<HostName> /dev/hidrawN` lists the credentials under that
+   application, by ID (PIN prompt). It is usually one.
+3. `fido2-token -D -i <credential ID> /dev/hidrawN` (PIN prompt again). An agent can run
+   both in a PTY, and the human types the PIN in that console (§ An agent cannot type the
+   FIDO2 PIN for you).
+4. Delete the local handle and `.pub` (`~/.ssh/id_ed25519_sk_rk_<HostName>*`), then the
+   host's `known_hosts` entries (`ssh-keygen -R <address>`).
+
 ## enroll-luks task: fresh bootc installs have no /etc/crypttab
 
 A freshly installed bootc system with encrypted root has **no `/etc/crypttab`**. The encrypted block device is configured via the bootloader/initrd, not crypttab. The task must fall back to a `blkid` scan when crypttab is absent or yields nothing:

@@ -214,18 +214,39 @@ the gap queue (for up to 24h) rather than fail.
 
 ### 7. Decommission (after the M6 window)
 
-- [ ] Cancel the Contabo VPS. In `kitten-lily/materia`, remove `[Hosts.krytis-build]`,
+- [x] Cancel the Contabo VPS. In `kitten-lily/materia`, remove `[Hosts.krytis-build]`,
       `attributes/krytis-build.yml` and `provisioning/servers/krytis-build/`. In the beszel
       hub, delete the system **Krytis Build VPS**. L's system is **Krytis Runner**. Both
       belong to the `lily@kittenlily.net` hub account, which is the one the dashboard shows;
       the `ririi@` account in the Personal vault does not see them.
-- [ ] Delete `ssh:BenchOnecomL` from the YubiKey (`fido2-token -L -k ssh:BenchOnecomL`, then
+      - The operator retired Contabo on 2026-10-13. Its old address still answers on :22,
+        but with a different ED25519 host key (`SWyFl9cn…`, was `FjEWABrC…`), so it is
+        no longer our box.
+      - The materia removal is kitten-lily/materia branch `chore/remove-krytis-build`.
+      - The operator deleted the beszel system **Krytis Build VPS** and the healthchecks
+        check `materia-update-krytis-build` on 2026-10-13.
+      - Checked on L the same day: hostname `krytis-runner`; `beszel-agent`,
+        `materia-update.timer` and `podman.socket` active; the last `materia-update` run
+        finished `success` at 05:00:13 UTC (#1154, #1209).
+- [x] Delete `ssh:BenchOnecomL` from the YubiKey (`fido2-token -L -k ssh:BenchOnecomL`, then
       `-D -i <id>`), its handle and `.pub` files, and the **Krytis Bench VPS** vault item
       (after M7's merge).
-- [ ] Drop the old host from `~/.ssh/known_hosts`.
-- [ ] `git mv` this plan to `docs/plans/done/`.
+      - 2026-10-13: its one resident credential was deleted from the YubiKey, and its
+        line was removed from L's `/root/.ssh/authorized_keys`, which now holds only
+        `ssh:KrytisBuild`. The local handle and `.pub` were deleted.
+      - **Not done: the vault.** The **Krytis Bench VPS** item was kept, because it holds
+        L's only recorded password (one.com's `administrator` account), and the merge
+        decision M7 deferred to this step needs fields `pass-cli item update` cannot add or
+        remove. **Krytis Build VPS** still carries the stale "Previous host (Contabo…)"
+        field, and its `Password` is Contabo's root password, beside `Username: root`.
+        Merge by hand in the Pass app: move the bench `administrator` password and SSH
+        details into Krytis Build VPS, drop the two Contabo fields, then delete the bench
+        item.
+- [x] Drop the old host from `~/.ssh/known_hosts` (`ssh-keygen -R 185.214.135.35`: three
+      entries removed).
+- [x] `git mv` this plan to `docs/plans/done/`.
 
-## Rollback (inside the M6 window)
+## Rollback (inside the M6 window; closed 2026-10-13 when Contabo was retired)
 
 1. `mise run runner-vps:deregister` (the vault points at L).
 2. Restore the **Krytis Build VPS** item's `IP Address`, `Hostname` and `Operating System`

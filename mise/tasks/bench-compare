@@ -6,7 +6,7 @@
 # directories to scripts/bench-compare.py, which prints one Markdown table per
 # comparison (#1126, docs/plans/done/2026-10-07-vps-cold-build-benchmark.md).
 #
-#   mise run bench-compare 111 222          # krytis-vps vs bench-onecom-l
+#   mise run bench-compare 111 222          # krytis-vps vs a bench box
 #   mise run bench-compare 111+333 222      # first column: a resumed run
 
 set -euo pipefail
