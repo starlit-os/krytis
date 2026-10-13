@@ -1616,9 +1616,10 @@ libcamera + PipeWire + WirePlumber are wired in `stacks/desktop.bst`. Key facts:
   no separate portal element needed.
 - **v4l2loopback** (virtual V4L2 device kernel module) is not packaged and is not tracked by
   an open issue: #86 ("Add camera support stack") shipped the libcamera/PipeWire half and
-  closed 2026-06-23 without it. It is out-of-tree, so adding it means vendoring a prebuilt
-  CachyOS package the way `core/linux-cachyos.bst` does — file a fresh issue rather than
-  reopening #86.
+  closed 2026-06-23 without it. It is out-of-tree, and CachyOS publishes no prebuilt package
+  for it: as of 2026-10-13, `cachyos-v3.db` carries prebuilt modules only for `nvidia-open`,
+  `r8125` and `zfs`. Adding it means building against the matching `linux-cachyos-headers`
+  package, the route #1224 plans for OpenRazer. File a fresh issue rather than reopening #86.
 
 Diagnostic:
 ```bash
