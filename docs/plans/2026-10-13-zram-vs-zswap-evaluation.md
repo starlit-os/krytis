@@ -30,7 +30,7 @@ Measured on `adora` on 2026-10-13. Hardware: ThinkPad T14 Gen 4, 31 GiB RAM, Sam
 | Layer | Setting | Source |
 |---|---|---|
 | zswap | `enabled=Y compressor=zstd max_pool_percent=20 shrinker_enabled=Y` | `CONFIG_ZSWAP_DEFAULT_ON=y`, `CONFIG_ZSWAP_SHRINKER_DEFAULT_ON=y`, built into the CachyOS kernel that `core/linux-cachyos.bst` repackages. No karg sets it. |
-| zram0 | `zram-size = ram / 2`, `zstd`, swap priority 100 | `/usr/lib/systemd/zram-generator.conf` from `gnome-build-meta.bst:gnomeos-deps/zram-generator.bst` |
+| zram0 | `zram-size = ram / 2`, `zstd`, swap priority 100 | `/usr/lib/systemd/zram-generator.conf` from `config/zram-generator.bst`; the generator itself is `gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/zram-generator.bst`. Until gnome-build-meta `eaa10b21`, both came from `gnomeos-deps/zram-generator.bst`; the moved element ships no config. |
 | disk swap | none | `/proc/swaps` lists only `/dev/zram0` |
 
 zswap is a cache in front of whatever swap device exists, and here that device is zram.
@@ -126,7 +126,7 @@ arm that was actually running.
 |---|---|---|---|---|
 | `shipped` | on | on (prio 100) | — | (today) |
 | `zram` | off | on (prio 100) | — | port the zswap half of CachyOS `30-zram.rules` into `config/desktop-udev.bst` |
-| `zswap` | on | off | on | remove `gnomeos-deps/zram-generator.bst` from `stacks/base-system.bst` (krytis lists it explicitly, so it needs no override and avoids dakota's staging race), then add a swapfile element on dakota's `swapfile.bst` pattern |
+| `zswap` | on | off | on | remove `config/zram-generator.bst` (and the generator, `gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/zram-generator.bst`) from `stacks/base-system.bst` (krytis lists both explicitly, so it needs no override and avoids dakota's staging race), then add a swapfile element on dakota's `swapfile.bst` pattern |
 | `hybrid` | off | on (prio 100) | on (prio 10) | the `zram` change plus the swapfile element |
 
 Whichever arm wins, the decision PR has to set zswap explicitly, with a karg or a udev rule.
