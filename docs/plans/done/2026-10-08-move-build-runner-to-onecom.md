@@ -1,9 +1,10 @@
 # Move the build runner to one.com Cloud server L
 
 **Issue:** #1145 · **Branch:** `1145-move-build-runner-to-one-com` · **Worktree:**
-`krytis.worktrees/chore/gh1145-move-build-runner-to-one-com` · **Status: cut over 2026-10-09
-07:17 UTC; verification (step 5) pending.** `krytis-vps` is now one.com L. The Contabo box is
-deregistered, with its runner service removed, and kept for rollback (M6).
+`krytis.worktrees/chore/gh1145-move-build-runner-to-one-com` · **Status: complete. Cut over
+2026-10-09 07:17 UTC, verified on L (step 5), Contabo decommissioned 2026-10-13 (step 7).**
+`krytis-vps` is one.com L, hostname `krytis-runner`. (Status line corrected after archiving,
+per #1056 item 33; nothing below it was changed.)
 
 Moves the always-on runner `krytis-vps` from the Contabo Cloud VPS 6 to the one.com Cloud
 server L that was set up for the cold-build benchmark. The name, labels and workflows stay

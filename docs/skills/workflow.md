@@ -653,6 +653,13 @@ listed.
 
 **`docs/plans/done/` is frozen.** Archived plans reproduce past `git commit -m` bodies, `grep` invocations and `**Result: PASS.** Present at <path>:<line>` evidence verbatim. Rewriting a path inside one — even a correct-looking rename — falsifies a record of what was true when the check ran. When a migration renames files, update references everywhere *except* there, and let the stale paths stand.
 
+**So fix the plan's header in the commit that moves it.** A plan's top-of-file `Status:` line
+is written while the work is in flight ("verification pending", "kept for rollback"), and it
+freezes with whatever it says at the moment of the `git mv`. Rewrite it to the final state in
+the same commit; the step evidence below stays as recorded. #1214 archived the #1145 plan with
+"verification (step 5) pending" still in its header. Correcting that afterwards needed an
+explicit exception, made only to the status line and noted inline (#1056 item 33).
+
 **Live plans quote content destined for other files.** A plan that says "add this row to `docs/SKILL.md`" embeds the row with a relative link target of `skills/foo.md` — correct in `docs/SKILL.md`'s frame, broken in the plan's. Do not "fix" these. `mise run docs-links` excludes `docs/plans/` from markdown-link checking for exactly this reason, while still checking its repo-root-relative `docs/…` paths.
 
 **Run `mise run docs-links` before opening any PR that touches docs.** It resolves five classes of reference: repo-root-relative `docs/….md` paths (including those in `.bst` files, mise tasks, and Containerfile comments — several exist), markdown inline links, backticked repo-relative paths under `elements/ files/ include/ live/ mise/ patches/ quadlet/ scripts/ .github/`, backticked `mise run <task>` names, and `<path>.md § <anchor>` section citations. The last three landed with the #860 rot audit; `.claude/skills/skill-rot-audit/` documents what each one can and cannot prove. It is standalone, not wired into `mise lint`: `lint` is a full `podman build` of the image, and a text check has no business behind a container build.
