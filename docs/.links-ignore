@@ -61,7 +61,15 @@ elements/gaming/                          # dakota's; docs/design/gaming-variant
 docs/build.md                             # dakota-iso's; cited by dakota-iso.md as the prose that failed to keep dakota/src/ in sync
 scripts/build-offline-store.sh            # dakota-iso's, deleted upstream in 7c9d6c6f; cited by dakota-iso.md for the overlay-vs-VFS reason it died
 patches/freedesktop-sdk/                  # gnome-build-meta's patch set; cited by dakota.md § nested-junction ref-consistency
-elements/gamerslop/linux-ogc.bst          # zirconium-hawaii's gaming-tree kernel; cited by zirconium-hawaii.md as the provenance of the /sys/fs/selinux lesson
+elements/gamerslop/linux-ogc.bst          # zirconium-hawaii's gaming-tree kernel, gone upstream by 2026-10-14; cited by zirconium-hawaii.md as the provenance of the /sys/fs/selinux lesson
+elements/core/linux.bst                   # zirconium-hawaii's OGC kernel element (since 20c1ff2); cited by zirconium-hawaii.md
+files/systemd-presets/system-preset/01-zirconium.preset  # zirconium-hawaii's (since 1ecc16d); cited by zirconium-hawaii.md
+scripts/update_sources.py                 # dakota's tracking script; cited by bst.md § A green track job does not prove patches apply
+elements/make.yaml                        # buildstream-plugins' make element defaults; cited by bst.md § Rootfs symlinks
+elements/vm/config/networkd.bst          # freedesktop-sdk's; cited by bst.md § NetworkManager Is Present and Running
+elements/vm/config/resolved.bst          # freedesktop-sdk's; cited by bst.md § resolv.conf and /etc/hosts Are Already Covered
+files/systemd-networkd/                   # freedesktop-sdk's; cited by bst.md § NetworkManager Is Present and Running
+files/systemd-resolved/                   # freedesktop-sdk's; cited by bst.md § resolv.conf and /etc/hosts Are Already Covered
 
 # Deliberately cited as absent — deleted on purpose, or proposed and never built
 scripts/fisherman-install.sh              # deleted in 0d0aa53 once tuna-os/fisherman#219 landed; krytis-live-config.md cites it as the record
@@ -72,6 +80,7 @@ files/sysext/make-layer.py                # exists only in PR #522's head commit
 mise/tasks/build-sysext-gaming            # same commit, same line; docs/design/gaming-variant.md
 elements/core/container-sigpolicy.bst     # unimplemented proposal tracked in #418; docs/design/cosign-keyless-signing.md
 elements/overrides/systemd-base.bst       # deleted in e629ce7 for gnome-build-meta's core-deps/systemd-base.bst; secure-boot.md cites it as the record of the EFI_DEBUG banner disappearing
+live/src/krytis/bootloader                # never created; dakota-iso.md § What It Is cites its absence (the reader always falls back to its default, #1247)
 task:cosign-sign                          # never built; superseded by mise/tasks/sign; docs/design/cosign-keyless-signing.md
 task:cosign-verify                        # never built; verification is inline in publish.yml; docs/design/cosign-keyless-signing.md
 task:cosign-generate-keys                 # never built; unnecessary without a static key; docs/design/cosign-keyless-signing.md
