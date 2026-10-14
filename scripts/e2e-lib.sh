@@ -84,20 +84,30 @@ e2e_ssh_auth_init() {
 # Never fails the caller: a monitor that has already gone away is normal at
 # teardown. sudo is used when the socket is not writable — QEMU runs under sudo
 # on hosts where the user cannot open /dev/kvm, and the socket is then root-owned.
+#
+# Tools are resolved to an absolute path *before* the sudo prefix is added:
+# `command -v` answers for the caller's PATH, but on a host whose sudoers sets
+# `secure_path` (Fedora/Debian/Ubuntu defaults; not krytis's sudo-rs) a socat or
+# python3 found only under $HOME or Linuxbrew does not exist under sudo, and the
+# swallowed error would silently drop the command (#1249,
+# docs/skills/dakota-iso.md § Resolve a binary before prefixing `sudo`).
 e2e_monitor() {
     local sock="$1"; shift
     local cmd="$*"
     [[ -S "${sock}" ]] || return 0
     local prefix=""
     if ! test -w "${sock}" 2>/dev/null; then prefix="sudo"; fi
-    if command -v socat >/dev/null 2>&1; then
-        echo "${cmd}" | $prefix socat - "UNIX-CONNECT:${sock}" 2>/dev/null || true
+    local socat
+    if socat=$(command -v socat 2>/dev/null); then
+        echo "${cmd}" | $prefix "${socat}" - "UNIX-CONNECT:${sock}" 2>/dev/null || true
         return 0
     fi
+    local python3
+    python3=$(command -v python3 2>/dev/null) || return 0
     # python3 fallback, copied from krytis mise/tasks/boot-test. The 0.3s settle
     # plus the discarded first recv are load-bearing: HMP writes a banner before
     # it will accept a command, and a command sent into that banner is dropped.
-    $prefix python3 - "${sock}" "${cmd}" <<'PY' 2>/dev/null || true
+    $prefix "${python3}" - "${sock}" "${cmd}" <<'PY' 2>/dev/null || true
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(5)

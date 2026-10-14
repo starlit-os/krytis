@@ -349,14 +349,19 @@ Upstream's `cosign` was installed by a setup action into `$GITHUB_PATH` and vani
 - **Fedora, Debian and Ubuntu default sudoers** set `Defaults secure_path=…`. There, a tool
   found only under `$HOME` or Linuxbrew is gone under sudo.
 
-krytis's exposure is `scripts/e2e-lib.sh` `e2e_monitor` on a non-krytis dev host (#1249). It
-sets `prefix=sudo` when the QEMU monitor socket is root-owned, checks `command -v socat` on
-the user's PATH, then runs `$prefix socat … 2>/dev/null || true`. A brew-only socat passes the
-check, fails under sudo, and the error is swallowed before the python3 fallback can run. The
-result is that `system_powerdown`/`quit` (`scripts/iso-install-fisherman.sh:121-123`) and
-`screendump` (`mise/tasks/iso-verify-boot:67,83`) are silently dropped, and only `_e2e_stop`'s
-SIGKILL fallback hides it. The fix is to resolve first, then prefix:
-`bin=$(command -v socat)` → `$prefix "$bin" …`.
+**Fixed in krytis for #1249.** `scripts/e2e-lib.sh` `e2e_monitor` was exposed on a non-krytis
+dev host. It set `prefix=sudo` when the QEMU monitor socket was root-owned, checked
+`command -v socat` on the user's PATH, then ran `$prefix socat … 2>/dev/null || true`. A
+brew-only socat passed the check, failed under sudo, and the error was swallowed before the
+python3 fallback could run, so `system_powerdown`/`quit` (`scripts/iso-install-fisherman.sh`)
+and `screendump` (`mise/tasks/iso-verify-boot`) were silently dropped. Only `_e2e_stop`'s
+SIGKILL fallback hid it.
+
+It now resolves first and then prefixes, for both socat and the python3 fallback:
+`socat=$(command -v socat)` → `$prefix "${socat}" …`. To reproduce without a
+`secure_path` host, put a stub `sudo` that runs `env PATH=/usr/bin:/bin "$@"` and a
+user-only stub `socat` first on `PATH`, then `chmod 555` the socket so the prefix is taken.
+The old code dropped the command and the new code delivered it.
 
 ### `images.json` `flatpak_var_path` is the target's var **root**
 
