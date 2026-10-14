@@ -1347,6 +1347,11 @@ confirmed by extracting the actual archive rather than assuming:
   policy, the icon-symlink approach, and the `zen`-vs-`zen-bin` launcher split were all
   confirmed this way) — the actual upstream sha256sums for a given tag are reproducible
   and make good independent verification against a value computed by hand.
+- **Native messaging works only because the browser is native.** The unsandboxed
+  tarball spawns extension hosts itself. A Flatpak build of the same browser cannot,
+  and needs `xdg-native-messaging-proxy` plus a per-app D-Bus grant and a pref:
+  `docs/design/native-messaging-proxy.md` has the deferred plan and its security
+  trade-off.
 
 ## Cursor Theme
 
