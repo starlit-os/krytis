@@ -1839,38 +1839,40 @@ Two non-obvious things found building it:
 
 ### Tracking cooldown: 24h from first sighting
 
-Renovate holds every update for 24h after its release (`minimumReleaseAge`, see [`renovate.md`](renovate.md)). The tracking jobs get the same protection, measured from the first run that saw the update, not from the upstream release.
+Renovate holds every update for 24h after its release (`minimumReleaseAge`, see [`renovate.md`](renovate.md)). The tracking jobs get similar protection, measured from the first run that found the branch's update pending, not from the upstream release.
 
 **Why first sighting.** A uniform clock is the only one available for every source: `bst source track` on a `git_repo`, GitHub releases, PyPI, GitLab tags, the zig index, CachyOS packages, container digests and Microsoft's dbx file. Upstream dates would need a lookup per source, and some sources don't have one that can be trusted: a lightweight tag only carries its commit's date, which can be months older than the tag.
 
 **Mechanism:**
 
-- `scripts/commit-tracking-update.sh` fingerprints the update: a sha256 of the `git diff -U0 --binary` lines that are not headers, so only the added and removed lines count. It writes the fingerprint and the first-sighting time as trailers on the commit:
+- `scripts/commit-tracking-update.sh` writes the first-sighting time as trailers on the commit:
 
   ```
-  Tracking-Fingerprint: <sha256>
   Tracking-First-Seen: 2026-10-11T12:49:16Z
   Tracking-Ready-At: 2026-10-12T12:49:16Z
   ```
 
-  Each run recreates the branch, so the previous head commit is the only state. If its fingerprint matches, `First-Seen` carries over. If upstream changed anything in the update, the clock restarts. An unrelated edit to the same element on `main` doesn't restart it, because context lines aren't in the fingerprint.
+  Each run recreates the branch, so the previous head commit is the only state. While that commit is the head of an open PR, its `First-Seen` carries over, whatever upstream has done since. A closed or merged PR's leftover branch is ignored and the clock starts fresh, as it does when the PR lookup fails.
+- **A newer release does not restart the clock.** Until 2026-10-14 the script also wrote a `Tracking-Fingerprint` (a sha256 of the update's added and removed lines) and restarted the clock whenever it changed. A newer upstream release changes the fingerprint, so an element that releases more often than the window never left draft. umbriel tracks upstream commits: #1203 opened 2026-10-12, was still a draft on 2026-10-14, and had been reset to `First-Seen: 2026-10-14T17:06:01Z`. mise #1228 opened for 2026.10.9 on 2026-10-13, then reset when 2026.10.10 replaced it.
+  - **The cost.** The PR head can now be a release that appeared minutes before `Ready-At`. So the window guarantees that *some* update to this element was visible for 24h, not that the exact one being merged was. Renovate's `minimumReleaseAge` is stricter: it measures each release from its own timestamp. Doing that here would mean holding back the branch to an older, already-cooled release, and the tracking jobs only ever produce the newest one.
+  - **Old branches still parse.** A head commit carrying a `Tracking-Fingerprint` trailer from before the change keeps its `First-Seen`, because only `Tracking-First-Seen` is read.
 - `scripts/tracking-pr.sh <branch> <title> <body-file>` replaces the 24 copies of the "create or edit the PR" block. It reads those trailers from the branch head:
   - Before `Ready-At`, it opens the PR as a draft, or converts an existing one back to draft, with a "Cooling until …" note at the top of the body.
   - From `Ready-At` on, it marks the PR ready for review.
   - A head commit with no trailers fails closed and counts as cooling.
 - **Effective delay is 24–36h.** The schedule runs twice a day (`13 0,12 * * *`, plus GitHub's drift). The run 24h after first sighting lands a few minutes either side of `Ready-At`, and when it falls short the PR leaves draft one run (12h) later. With the daily schedule this replaced, that miss cost a whole day, so 48h waits were common. Manual `workflow_dispatch` runs re-evaluate too. Every run also recommits each pending branch onto the current `origin/main`, so open tracking PRs get a `synchronize` twice a day. Each one re-runs their PR checks, including `build-changed.yml` on the single VPS runner.
 - **That re-push is avoidable; krytis pays for it by choice.** *Source: dakota `a3a32d8`, `track_bundle.py:bundle_changed()`. Mined 2026-10-14.*
-  - **The cooldown doesn't need it.** `tracking-pr.sh` reads the trailers from whatever head commit exists, and an unchanged fingerprint keeps `First-Seen`.
+  - **The cooldown doesn't need it.** `tracking-pr.sh` reads the trailers from whatever head commit exists, and an open PR's head keeps its `First-Seen`.
   - **How dakota skips it.** dakota doesn't push when the tracked paths are identical between the published branch and the freshly rebuilt result: "the branch merely sitting on an older base does not count as a change". The krytis equivalent is one check before calling `scripts/commit-tracking-update.sh`: `git diff --quiet "origin/$BRANCH" -- <tracked paths>`. The track jobs check out with `fetch-depth: 0`, so the remote branch is available.
   - **The cost of skipping.** The PR is no longer re-validated against a newer `main` for free, so a break caused by `main` moving shows up only when someone re-runs the checks or merges.
   - **The scale.** With 4 open tracking PRs on 2026-10-14, the re-push costs about 8 extra build-changed runs a day.
-  - **Bundling is not adopted.** The rest of `a3a32d8` bundles all tracking updates into one PR. dakota does that because each of its PRs triggers hours of serialized image builds. Krytis PR builds are changed-element only (`build-changed.yml`), so that cost doesn't exist here. A bundle would also share one 24h cooldown clock, so any one element changing upstream would restart it for all the others.
+  - **Bundling is not adopted.** The rest of `a3a32d8` bundles all tracking updates into one PR. dakota does that because each of its PRs triggers hours of serialized image builds. Krytis PR builds are changed-element only (`build-changed.yml`), so that cost doesn't exist here. A bundle would also share one 24h cooldown clock, so an element whose update joined an open bundle late would inherit the bundle's elapsed clock and get little or no cooling of its own.
 - **First-party sources are exempt.** The guard is against a hijacked third-party release. A changed file skips the cooldown only when it is a `.bst` whose first `url:` is under `kitten-lily/` or `starlit-os/` (today `desktop/noctalia.bst` and `desktop/presence-bridge.bst`). Every other changed file cools, including non-element files and noctalia-dev's `umbriel`/`noctalia-greeter`. The commit carries `Tracking-Cooldown: exempt (first-party source)`.
 - **Testing it:** `TRACKING_COOLDOWN_SECONDS` overrides the 86400s window. The 2026-10-11 smoke run on throwaway draft PR #1189 used 90s and passed five checks:
   1. A new update opened a draft.
   2. Re-running it kept `First-Seen`.
   3. After `Ready-At` the PR was marked ready.
-  4. A changed update went back to draft with a new `First-Seen`.
+  4. A changed update went back to draft with a new `First-Seen`. *This check no longer applies: since 2026-10-14 a changed update keeps `First-Seen` while its PR is open.*
   5. A change to `desktop/presence-bridge.bst` alone was exempt and marked ready at once.
 
 ### A green track job does not prove patches apply
