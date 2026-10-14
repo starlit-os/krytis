@@ -105,8 +105,12 @@
     },
     {
       // Some updates carry no release timestamp at the branch stage:
-      // `digest`/`pinDigest` (every SHA-pinned action) and the github-runner
-      // datasource (`runs-on: ubuntu-26.04`, a hardcoded list). Under the
+      // `digest` (a SHA pin moves while its version stays put: a re-pointed
+      // tag, a branch-tracking pin), `pinDigest` (a ref pinned to a SHA for
+      // the first time), and the github-runner datasource (`runs-on:
+      // ubuntu-26.04`, a hardcoded list). A patch/minor bump of a SHA-pinned
+      // action is not one of these: its update type is `patch`/`minor` and the
+      // tag's timestamp satisfies the default (#1231). Under the
       // default `minimumReleaseAgeBehaviour: "timestamp-required"` their
       // `renovate/stability-days` check would stay pending forever, so automerge
       // would silently never happen (renovatebot/renovate#45236, open as of
