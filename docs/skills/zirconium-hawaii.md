@@ -14,7 +14,7 @@ Zirconium Hawaii is the upstream inspiration for Krytis. Same foundation:
 | Desktop | Niri + Wayland | Niri + Wayland |
 | Output | bootc OCI image | bootc OCI image |
 | Task runner | `just` (via mise) | `mise` |
-| Kernel | Fedora kernel (`core/linux-fedora.bst`) | CachyOS kernel (`core/linux-cachyos.bst`) |
+| Kernel | OGC kernel from git (`core/linux.bst`, `track: "v*-ogc*"`, configured from Fedora's `kernel-core` RPM; since `20c1ff2`) | CachyOS kernel (`core/linux-cachyos.bst`) |
 | Secure Boot | Yes — `just generate-keys` | Yes — `mise run generate-keys` + `mise run seal-uki`/`sign` (see `secure-boot.md`, `signing.md`) |
 | composefs | Yes — `--composefs-backend` in install | Yes — `--composefs-backend` in install |
 | Gaming variant | `zirconium-hawaii-jackrabbit` | — |
@@ -138,7 +138,9 @@ file, kept in place until fcitx5 support is actually wired up, not a permanent f
 ## Disabling a Redundant Service via systemd Preset
 
 To drop avahi (redundant once systemd-resolved is in use), zirconium-hawaii doesn't remove
-an avahi element — it ships a systemd preset file (its own
+an avahi element — it ships a systemd preset file
+(`files/systemd-presets/system-preset/01-zirconium.preset`, installed by the `kind: import`
+element `config/systemd-presets.bst` since `1ecc16d`; previously
 `files/systemd-zirconium/10-zirconium.preset`)
 that disables `avahi-daemon.service` and `avahi-daemon.socket` by default. This is the right
 pattern when the package/element is still installed (e.g. as a transitive dependency you
@@ -185,6 +187,14 @@ today, not a version gate.
 The general move for an `upstream-lessons` pass: for each element krytis ported, diff it
 against upstream's current copy rather than only reading new commits. Drift accumulates
 in elements that never appear in a changed-file list you are looking at.
+
+**Second instance, 2026-10-14 (zirconium-hawaii `1ecc16d`):** zirconium turned its
+`config/bootc.bst` from `kind: manual` + `install -Dm644` lines into `kind: import`, after
+reshaping `files/bootc-config/` to mirror the target tree. krytis's
+`elements/config/bootc.bst` is the pre-change port: five `install -Dm644` lines over a flat
+`files/bootc-config/` (`prepare-root.conf`, `10-bootc.conf`, three `kargs.d` tomls). The
+pattern and its constraints are in `docs/skills/bst.md` § File-drop config elements:
+`kind: import`.
 
 ## ddcutil X11 Dependencies
 
@@ -283,9 +293,9 @@ waiting for krytis's own junction ref to advance past a known-bad upstream versi
 can drag in weeks of unrelated changes. Full writeup and the cache-key tradeoff (see the
 "Patch queues on junctions destroy upstream cache reuse" entry in `docs/skills/dakota.md`)
 in `docs/skills/bst.md` § `git_repo` tracking. The two specific bugs that motivated this
-upstream (mesa 26.1.6, ostree v2026.3) are already fixed in krytis's current fdsdk pin
-(`freedesktop-sdk-26.08.1`) — recorded as a technique for the next time this happens, not
-an action item today.
+upstream (mesa 26.1.6, ostree v2026.3) were already fixed in krytis's fdsdk pin when this
+was mined (`freedesktop-sdk-26.08.1`; `freedesktop-sdk-26.08.2` as of 2026-10-14) — recorded
+as a technique for the next time this happens, not an action item today.
 
 Also new upstream: a second junction, zirconium-hawaii's `elements/freedesktop-sdk-extra.bst`
 (`kind: junction`, tracks `freedesktop-sdk-extra.git`), added purely to reuse a
@@ -342,6 +352,11 @@ consume — merged commit, backportable patch, or tag — not against upstream c
 release. Krytis's surface for this is a tracking issue (#869 under #483), which is what
 actually got re-read when v0.8.3 appeared.
 
+**zirconium caught up at v0.8.3 too** (zirconium-hawaii `8d5bfd6`, 2026-09-24): it deleted
+both patches and the `kind: patch_queue` source. As of 2026-10-14 its
+`elements/desktop/xwayland-satellite.bst` carries no patch at all, and krytis differs from it
+only by the `time` GHSA patch.
+
 ## Arch-derived kernel configs don't create `/sys/fs/selinux`
 
 *Source: zirconium-hawaii `df54ad2` — "linux-ogc: Use fedora's kernel config as the base"*
@@ -359,9 +374,11 @@ the fdsdk config closes this without any explicit fix.
 and krytis ships toolbox (`gnome-build-meta.bst:gnomeos-deps/toolbox.bst` via
 `elements/stacks/base-system.bst:139`). Grep across `elements/`, `docs/` and
 `files/fakecap-manifest.tsv` for `fs/selinux` returns exactly one hit, a Rust source path
-inside bootc's debug split — nothing creates or expects the directory. Upstream's own
-element here is `elements/gamerslop/linux-ogc.bst`, in the gaming tree krytis deliberately
-does not port, but the config lineage and the failure are the same.
+inside bootc's debug split — nothing creates or expects the directory. Upstream's element
+when this was mined was `elements/gamerslop/linux-ogc.bst`. That file is gone as of
+2026-10-14: zirconium's kernel is now `elements/core/linux.bst`, built from Fedora's
+config, so the failure no longer exists upstream. krytis's exposure is unchanged, since the
+config lineage is the CachyOS package's.
 
 Worth knowing for its own sake: this lesson is four paragraphs into the body of a commit
 whose subject is only "use Fedora's kernel config as the base". **zirconium-hawaii has no
@@ -382,3 +399,28 @@ pullable because of it); and bootc's ostree backend breaks on a `"default"` of
 writeup, including the `integration-commands` fix and krytis's own inherited
 `/etc/containers` files, in `docs/skills/signing.md` § Where a `policy.json` has to live,
 and why the sketched path is wrong.
+
+## 2026-10-14 pass (`f251073..de67660`): lessons recorded in `bst.md`
+
+Each body lives in `docs/skills/bst.md`. This list is the record of where they came from.
+
+- **`kind: anitya` makes `bst source track` work on release tarballs** (`a446abd`, needs the
+  buildstream-plugins-community 2.4.0 bump `c64e802`, which krytis already has). zirconium
+  converted its tarball elements, and kept flat archives (nerd fonts) on `kind: tar`/`kind:
+  zip` because the source always strips the top-level directory. → `docs/skills/bst.md` §
+  `kind: anitya` tracks release tarballs.
+- **cargo ignores `max-jobs`** (`ea95a5a`). zirconium passes `MAXJOBS: '%{max-jobs}'` through
+  `environment:` + `environment-nocache:` into `cargo build --jobs`, on every Rust element. →
+  `docs/skills/bst.md` § Job Parallelism in `kind: manual`.
+- **File-drop config elements as `kind: import`** (`1ecc16d`; see § Ported-element drift
+  above for krytis's `config/bootc.bst`). → `docs/skills/bst.md` § File-drop config
+  elements: `kind: import`.
+- **Shell-completion directory variables** (`617ff7c`). zirconium's
+  `include/install-dirs.yml` defines bash/fish/zsh completion dirs once. Its own
+  `cli/chezmoi.bst` and `desktop/danksearch.bst` still pair file names with the wrong shell
+  directory, so the variables don't prevent that mistake. → `docs/skills/bst.md` § Shell
+  completion directories.
+- **Dropped fdsdk's `vm/config/networkd.bst` and `vm/config/resolved.bst`** (`f40096e`, "these
+  configs aren't useful to us"). Reading those elements showed that krytis's own description
+  of them was wrong. → `docs/skills/bst.md` § NetworkManager Is Present and Running, and §
+  resolv.conf and /etc/hosts Are Already Covered.

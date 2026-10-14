@@ -201,9 +201,10 @@ Non-compliance = automatic rejection.
 
 **Update path gate:** Before opening a PR that adds a new element, confirm one of:
 - (a) The source is `git_repo` with a `track:` glob **and** the element is listed in the `track` matrix in `.github/workflows/track-bst-sources.yml`.
-- (b) A `<name>-update` mise task exists **and** a corresponding CI job in `track-bst-sources.yml` follows the `track-mise` pattern.
+- (b) The element has a row in `TARGETS` in `mise/tasks/tarball-update` **and** is in the `track-tarball` matrix in `track-bst-sources.yml`; or, for an element no provider fits, a bespoke `<name>-update` mise task exists **and** a corresponding CI job in `track-bst-sources.yml` follows the `track-mise` pattern.
+- (c) The source is `kind: anitya` (buildstream-plugins-community 2.4.0+, already pinned) **and** the element is listed in the `track` matrix, the same as (a). `bst source track` resolves an anitya source from release-monitoring.org, so no task is needed. Prerequisite: `anitya` must be added to the `plugins/buildstream-plugins-community.bst` sources list in `project.conf`; it isn't there as of 2026-10-14. The source has limits (no `base-dir`, tar only, no version-series hold); see `docs/skills/bst.md` § `kind: anitya` tracks release tarballs.
 
-`bst source track` is a no-op on `kind: tar` and `kind: remote` sources — elements using these source kinds silently fall out of the automated update loop unless option (b) is in place. The same blind spot applies to a `kind: git_repo` source used with a manual `directory:` to check out what is really a git submodule (`.gitmodules` entry) — use `kind: git_module` for those instead, or `bst source track` will silently stop updating that submodule while the parent element's own ref keeps tracking fine. See `docs/skills/bst.md` § Element update path.
+`bst source track` is a no-op on `kind: tar` and `kind: remote` sources — elements using these source kinds silently fall out of the automated update loop unless option (b) is in place, or the source is converted to (c). The same blind spot applies to a `kind: git_repo` source used with a manual `directory:` to check out what is really a git submodule (`.gitmodules` entry) — use `kind: git_module` for those instead, or `bst source track` will silently stop updating that submodule while the parent element's own ref keeps tracking fine. See `docs/skills/bst.md` § Element update path.
 
 **Agents MUST NOT push directly to `main`.** All changes via PR from a feature branch.
 

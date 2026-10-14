@@ -435,9 +435,9 @@ Fix: use direct paths. BST's `kind: tar` source **strips the single top-level di
 ```yaml
 install-commands:
 - install -Dm755 binary "%{install-root}%{bindir}/binary"
-- install -Dm644 completions/tool.bash "%{install-root}%{sysconfdir}/bash_completion.d/tool"
+- install -Dm644 completions/tool.bash "%{install-root}%{datadir}/bash-completion/completions/tool"
 - install -Dm644 completions/tool.fish "%{install-root}%{datadir}/fish/vendor_completions.d/tool.fish"
-- install -Dm644 completions/tool.zsh  "%{install-root}%{datadir}/zsh/vendor-completions/_tool"
+- install -Dm644 completions/tool.zsh  "%{install-root}%{datadir}/zsh/site-functions/_tool"
 - "%{install-extra}"
 ```
 
@@ -471,13 +471,18 @@ config:
   - ':'
   install-commands:
   - install -Dm755 gum "%{install-root}%{bindir}/gum"
-  - install -Dm644 completions/gum.bash "%{install-root}%{sysconfdir}/bash_completion.d/gum"
+  - install -Dm644 completions/gum.bash "%{install-root}%{datadir}/bash-completion/completions/gum"
   - install -Dm644 completions/gum.fish "%{install-root}%{datadir}/fish/vendor_completions.d/gum.fish"
-  - install -Dm644 completions/gum.zsh  "%{install-root}%{datadir}/zsh/vendor-completions/_gum"
+  - install -Dm644 completions/gum.zsh  "%{install-root}%{datadir}/zsh/site-functions/_gum"
   - "%{install-extra}"
 ```
 
 `strip-binaries: ''` suppresses BST's default strip pass — gum is a pre-compiled Go binary, stripping it produces an unusable binary.
+
+The completion paths above are the canonical ones (§ Shell completion directories, below).
+As of 2026-10-14, `elements/core/gum.bst:31,33` still installs to the paths this pattern used
+to teach, `%{sysconfdir}/bash_completion.d/gum` and `%{datadir}/zsh/vendor-completions/_gum`.
+Moving them is an element change that hasn't been made yet, not a doc error.
 
 **`gum style` with flag-like arguments:** when the text argument starts with `-`, gum parses it as its own flag and errors. Use `--` to terminate flag parsing:
 
@@ -491,9 +496,45 @@ gum style --foreground 212 -- "${VAR}"
 
 **`gum choose` margin flags** are per-item-type (`--header.margin`, `--item.margin`, `--cursor.margin`), not a single `--margin`. All three must be set to get consistent padding.
 
+### Shell completion directories
+
+*Source: zirconium-hawaii `617ff7c`, which defines one variable per shell in its own
+`include/install-dirs.yml` (zirconium-hawaii's tree, not krytis's). Mined 2026-10-14.*
+
+| Shell | Directory | File name | When it loads |
+|---|---|---|---|
+| bash | `%{datadir}/bash-completion/completions/` | `<cmd>` | Lazily: bash-completion 2.x sources it the first time `<cmd>` is completed |
+| zsh | `%{datadir}/zsh/site-functions/` | `_<cmd>` | Upstream zsh's default `fpath` |
+| fish | `%{datadir}/fish/vendor_completions.d/` | `<cmd>.fish` | fish's vendor completion path |
+
+Two paths look right but aren't:
+
+- `%{sysconfdir}/bash_completion.d/` is bash-completion's **eager** compatibility
+  directory. Every file in it is sourced at every interactive shell start. On bootc it also
+  puts image content into `/etc`, which is mutable and 3-way merged on upgrade, so a copy
+  the user has edited or deleted stops receiving image updates.
+- `%{datadir}/zsh/vendor-completions/` is a Debian-only `fpath` entry that Debian's zsh
+  package adds. Upstream zsh doesn't search it.
+
+**Each file name has to match its shell.** zsh autoloads only `_<cmd>`, fish loads
+`<cmd>.fish` by command name, and bash-completion looks up `<cmd>`. A crossed pair installs
+cleanly and never completes anything. Shared directory variables don't prevent this. As of
+2026-10-14, after `617ff7c`, zirconium-hawaii's `cli/chezmoi.bst` writes its fish
+completion as `_chezmoi` into the fish directory and its zsh completion as `chezmoi.fish`
+into the zsh directory. Its `desktop/danksearch.bst` also swaps the fish and zsh output.
+
+**What matters in krytis today.** bash is the only shell in the image. `files/fakecap-manifest.tsv`
+(regenerated 2026-10-14) has `/usr/bin/bash` and neither `/usr/bin/zsh` nor `/usr/bin/fish`.
+`stacks/base-system.bst` pulls in `freedesktop-sdk.bst:components/bash-completion.bst`. The zsh
+and fish files are only used once one of those shells is added.
+`grep -rn 'bash_completion.d\|vendor-completions' elements` finds one element still on the
+wrong paths: `core/gum.bst`.
+
 ## Config-only Elements
 
-Elements that only drop config files (no binaries to build) should use `kind: manual` and suppress the default strip step:
+Elements that generate config files inline (heredocs, symlinks, anything computed) use
+`kind: manual` and suppress the default strip step. An element that only *copies* repo files
+into place should be `kind: import` instead (§ File-drop config elements: `kind: import`).
 
 ```yaml
 kind: manual
@@ -1263,6 +1304,86 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 |---|---|
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
 | `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps) and `falcond-update` are the standing examples |
+| `kind: anitya` (release tarball listed on release-monitoring.org) | Add a matrix entry to the `track` job, the same as `git_repo`. `bst source track` resolves it. `anitya` must be registered in `project.conf` first; see § `kind: anitya` tracks release tarballs |
+
+### `kind: anitya` tracks release tarballs
+
+*Source: zirconium-hawaii `a446abd`, which needs buildstream-plugins-community 2.4.0
+(zirconium-hawaii `c64e802`). Mined 2026-10-14. Behaviour below is read from
+`sources/anitya.py` and `sources/_utils.py` in the 2.4.0 sdist that
+`elements/plugins/buildstream-plugins-community.bst` already pins.*
+
+buildstream-plugins-community 2.4.0 adds an `anitya` source that makes `bst source track`
+work on a release tarball. That closes the `kind: tar` blind spot above in-band, without a
+`tarball-update` row:
+
+- **Track.** It queries release-monitoring.org (`<api-url>versions/?project_id=<project-id>`,
+  default `https://release-monitoring.org/api/v2/`) and takes `stable_versions[0]`.
+- **URL.** It renders the `url:` template with Python `str.format`: `{version}`, `{major}`,
+  `{minor}`, `{patch}`, `{prerelease}`, `{metadata}`. This is not BuildStream's `%{version}`,
+  so the element drops its own `version:` variable. Source aliases and `(?)` arch
+  conditionals still work.
+- **Ref.** It downloads the file and records `ref: {version: …, sha256sum: …}`.
+
+```yaml
+sources:
+- kind: anitya
+  project-id: 1234          # from the project's release-monitoring.org URL
+  url: github_files:owner/repo/releases/download/v{version}/repo-{version}.tar.gz
+  ref:
+    version: 1.2.3
+    sha256sum: <sha256>
+```
+
+Four limits, all visible in the plugin source:
+
+1. **It always strips the archive's top-level directory and has no `base-dir`.**
+   `TarStager` drops the first path component and every member that has only one. A flat
+   archive therefore stages nothing. That is the nerd-font failure in `a446abd`'s commit
+   body, and the reason zirconium-hawaii's `jetbrains-mono-nerd-font` and `maple-mono`
+   stayed on `kind: tar`/`kind: zip`.
+2. **Tar only.** `anitya.py` always stages through `TarStager`, with no zip path.
+3. **No version-series hold.** `track` always takes the newest stable version. Its
+   `exclude:` key filters *archive members* at stage time, not versions, which is easy to
+   misread as `git_repo`'s tag `exclude:`.
+4. **Track fails if the asset isn't uploaded yet.** If release-monitoring.org lists a
+   version before its release asset exists, the download 404s. The failure is loud (track
+   errors) rather than silent. Krytis's `tarball-update` providers can instead pick the newest
+   release that actually carries the asset (§ `releases/latest` is not "the latest source
+   release").
+
+**Prerequisite: register the plugin.** `project.conf` lists the
+`plugins/buildstream-plugins-community.bst` sources it loads (`cargo2`, `git_module`,
+`git_repo`, `go_module`, `patch_queue`, `zip`). `anitya` isn't among them, and
+`grep -rn anitya elements project.conf` finds nothing (2026-10-14). Add it in the same PR
+as the first `kind: anitya` element. Its `requests` import is already covered:
+`pyproject.toml` lists `requests` for `git_repo`.
+
+**The `track` job needs only a matrix entry**, because it runs plain `bst source track`.
+Two side effects:
+
+- The PR title's version comes from single-line `ref: <value>` lines (§ The track job's PR
+  title/version comes from parsing the git-describe `ref:`). An anitya ref is a two-key
+  mapping, so those PRs get the base title with no `old -> new`.
+- The step's "ref format normalized" skip doesn't apply, because there is no 40-hex SHA to
+  compare.
+
+**Which krytis elements fit** (checked 2026-10-14 against each element's source block):
+
+- **Fit:** single-top-directory release tarballs that `mise/tasks/tarball-update`'s
+  `TARGETS` or a bespoke track job handles today. Examples: `desktop/cage.bst`,
+  `desktop/greetd.bst`, `desktop/gtk4-layer-shell.bst`, `desktop/wlr-randr.bst`,
+  `desktop/sdbus-cpp.bst`, `desktop/wlroots.bst`, `core/gum.bst` (zirconium-hawaii
+  converted gum in `a446abd`), `desktop/libsodium.bst`, `desktop/libqalculate.bst`. Each
+  also needs a release-monitoring.org project that lists the right version stream.
+- **Don't fit:**
+  - flat archives with `base-dir: ""` (`desktop/adw-gtk3.bst`, `desktop/symbols-nerd-font.bst`)
+  - anything that needs a series hold (`desktop/zig-0.16.bst`, the qemu 10.x pin)
+  - PyPI's hashed download paths, which can't be templated
+  - the CachyOS kernel `.pkg.tar.zst`
+  - the generated Zig dependency sets
+- **Keep the scripts for the rest.** "Newest release that carries the asset" and series
+  holds are exactly what `tarball-update` can express and anitya can't.
 
 ### `git_repo` (dulwich) fetches can be blocked by Anubis, and abort the whole build
 
@@ -1736,7 +1857,13 @@ Renovate holds every update for 24h after its release (`minimumReleaseAge`, see 
   - Before `Ready-At`, it opens the PR as a draft, or converts an existing one back to draft, with a "Cooling until …" note at the top of the body.
   - From `Ready-At` on, it marks the PR ready for review.
   - A head commit with no trailers fails closed and counts as cooling.
-- **Effective delay is 24–36h.** The schedule runs twice a day (`13 0,12 * * *`, plus GitHub's drift). The run 24h after first sighting lands a few minutes either side of `Ready-At`, and when it falls short the PR leaves draft one run (12h) later. With the daily schedule this replaced, that miss cost a whole day, so 48h waits were common. Manual `workflow_dispatch` runs re-evaluate too. Every run also recommits each pending branch, so open tracking PRs get a `synchronize`, and their PR checks run, twice a day.
+- **Effective delay is 24–36h.** The schedule runs twice a day (`13 0,12 * * *`, plus GitHub's drift). The run 24h after first sighting lands a few minutes either side of `Ready-At`, and when it falls short the PR leaves draft one run (12h) later. With the daily schedule this replaced, that miss cost a whole day, so 48h waits were common. Manual `workflow_dispatch` runs re-evaluate too. Every run also recommits each pending branch onto the current `origin/main`, so open tracking PRs get a `synchronize` twice a day. Each one re-runs their PR checks, including `build-changed.yml` on the single VPS runner.
+- **That re-push is avoidable; krytis pays for it by choice.** *Source: dakota `a3a32d8`, `track_bundle.py:bundle_changed()`. Mined 2026-10-14.*
+  - **The cooldown doesn't need it.** `tracking-pr.sh` reads the trailers from whatever head commit exists, and an unchanged fingerprint keeps `First-Seen`.
+  - **How dakota skips it.** dakota doesn't push when the tracked paths are identical between the published branch and the freshly rebuilt result: "the branch merely sitting on an older base does not count as a change". The krytis equivalent is one check before calling `scripts/commit-tracking-update.sh`: `git diff --quiet "origin/$BRANCH" -- <tracked paths>`. The track jobs check out with `fetch-depth: 0`, so the remote branch is available.
+  - **The cost of skipping.** The PR is no longer re-validated against a newer `main` for free, so a break caused by `main` moving shows up only when someone re-runs the checks or merges.
+  - **The scale.** With 4 open tracking PRs on 2026-10-14, the re-push costs about 8 extra build-changed runs a day.
+  - **Bundling is not adopted.** The rest of `a3a32d8` bundles all tracking updates into one PR. dakota does that because each of its PRs triggers hours of serialized image builds. Krytis PR builds are changed-element only (`build-changed.yml`), so that cost doesn't exist here. A bundle would also share one 24h cooldown clock, so any one element changing upstream would restart it for all the others.
 - **First-party sources are exempt.** The guard is against a hijacked third-party release. A changed file skips the cooldown only when it is a `.bst` whose first `url:` is under `kitten-lily/` or `starlit-os/` (today `desktop/noctalia.bst` and `desktop/presence-bridge.bst`). Every other changed file cools, including non-element files and noctalia-dev's `umbriel`/`noctalia-greeter`. The commit carries `Tracking-Cooldown: exempt (first-party source)`.
 - **Testing it:** `TRACKING_COOLDOWN_SECONDS` overrides the 86400s window. The 2026-10-11 smoke run on throwaway draft PR #1189 used 90s and passed five checks:
   1. A new update opened a draft.
@@ -1744,6 +1871,48 @@ Renovate holds every update for 24h after its release (`minimumReleaseAge`, see 
   3. After `Ready-At` the PR was marked ready.
   4. A changed update went back to draft with a new `First-Seen`.
   5. A change to `desktop/presence-bridge.bst` alone was exempt and marked ready at once.
+
+### A green track job does not prove patches apply
+
+*Source: dakota `71b9fb7` (dakota PR #1740). It re-landed dakota `196e0ab` after dakota
+`3cb22d8` reverted it. Mined 2026-10-14.*
+
+`bst source track` only re-resolves each source's ref. It never runs the `kind: patch`
+sources that follow a `git_repo`; those apply when the element's sources are fetched and
+staged. So the track job goes green and opens a PR for a ref the patches may no longer apply
+to.
+
+dakota merged exactly that for its OGC kernel (`196e0ab`) and reverted it about 25 minutes
+later (`3cb22d8`), because the downstream patches failed to apply. It re-landed with
+`bst source fetch --deps none <element>` right after tracking, and rolls the element file
+back if the fetch or a patch fails (dakota's `scripts/update_sources.py`). The PR says the
+fetch reproduced and caught the failure. The mechanism is dakota's account and hasn't been
+re-checked on krytis: BuildStream 2 writes the element's combined, patched sources to its
+source cache during fetch.
+
+**Krytis exposure** (2026-10-14; `grep -rlE 'kind: (patch|patch_queue)$' elements` against
+the `track` matrix in `.github/workflows/track-bst-sources.yml`). Five tracked elements
+carry `kind: patch` sources:
+
+- `core/efitools.bst`: two patches and `track: master`, so every upstream commit is a
+  candidate. It is the most exposed.
+- `desktop/ananicy-cpp.bst`
+- `desktop/oo7.bst`
+- `desktop/xwayland-satellite.bst`
+- `overrides/vim.bst`
+
+The same holds for patched elements that a task updates instead of `bst source track`:
+`desktop/greetd.bst` (`tarball-update`) and `desktop/ghostty.bst` (`ghostty-update`).
+`docs/design/carried-patches.md` is the inventory.
+
+**The effective gate is `build-changed.yml`.** It builds the changed element on the
+tracking PR, so a patch that no longer applies turns that check red. It is not a required
+check (its header says so), though, and nothing on the PR says the red check is a patch
+failure rather than a build break.
+
+**Optional cheap pre-check (not implemented in krytis).** After the track step, run
+`bst source fetch --deps none <element>` for elements that carry `kind: patch`. If it fails,
+fail the job or skip the PR.
 
 ### GitHub App token for opening tracking PRs
 
@@ -2002,7 +2171,7 @@ mesa under `%{libdir}/GL/default/lib`; what resolves it is the `ld.so.conf.d` en
 ### A prebuilt binary's RUNPATH into `/usr/local` is dead on bootc
 
 Same trap as `/opt` below, reached through `RUNPATH` instead of through payload paths.
-bootc's `/usr/lib/tmpfiles.d/10-bootc.conf` makes `/usr/local` a symlink to `/var/usrlocal`
+`oci/krytis/stack.bst` replaces `/usr/local` with a symlink to `/var/usrlocal` (krytis's own `/usr/lib/tmpfiles.d/10-bootc.conf`, from `config/bootc.bst`, only creates the target at boot)
 — runtime state, empty on every fresh boot — so a baked `RUNPATH: /usr/local/lib/<app>`
 can never resolve in a krytis image. The binary builds, composes, and lints cleanly; it
 fails at exec time with a missing `.so`.
@@ -2039,7 +2208,7 @@ a plausible-looking RUNPATH is not a working one.
 
 ### Never install payload content under `/opt` — it's silently discarded
 
-bootc's `/usr/lib/tmpfiles.d/10-bootc.conf` makes `/opt` a symlink to `/var/opt` (the traditional ostree convention: `/usr/local -> /var/usrlocal`, `/opt -> /var/opt`), and `/var` is runtime state, not part of the immutable composefs image — it's empty on every fresh boot. A `.bst` element that does `cp -a opt "%{install-root}/"` builds and composes cleanly, and the license-harvest step even preserves a copy of the tree under `/usr/share/licenses/krytis/<element>/opt/...` (making it look installed at a glance) — but the actual payload never reaches the booted rootfs. `/usr/bin/<app>` ends up a symlink pointing at a target under `/opt/...` that doesn't exist. This is invisible until you actually run the binary; `bst build` and `mise lint` don't catch it.
+`oci/krytis/stack.bst` deletes any staged `/opt` and replaces it with a symlink to `var/opt` (the traditional ostree convention: `/usr/local -> /var/usrlocal`, `/opt -> /var/opt`; krytis's own `/usr/lib/tmpfiles.d/10-bootc.conf`, from `config/bootc.bst`, only creates the targets at boot), and `/var` is runtime state, not part of the immutable composefs image — it's empty on every fresh boot. A `.bst` element that does `cp -a opt "%{install-root}/"` builds and composes cleanly, and the license-harvest step even preserves a copy of the tree under `/usr/share/licenses/krytis/<element>/opt/...` (making it look installed at a glance) — but the actual payload never reaches the booted rootfs. `/usr/bin/<app>` ends up a symlink pointing at a target under `/opt/...` that doesn't exist. This is invisible until you actually run the binary; `bst build` and `mise lint` don't catch it.
 
 Some `.deb`s (Warp's did — see § Vendor apt/yum repos above) ship their payload under `opt/<vendor>/<app>/` because that's the Debian FHS convention for vendor-bundled apps. Don't `cp -a opt` verbatim — relocate to `%{indep-libdir}/<app>/` (`/usr/lib/<app>/`) instead, same as the Zed pattern above:
 
@@ -2055,6 +2224,42 @@ install-commands:
 Before relocating, verify the binary doesn't hardcode the `/opt/...` path: `readelf -d <binary> | grep -i rpath` (should be empty for a self-relative app) and `strings <binary> | grep '/opt/<vendor>'` (should be empty). If either finds hits, the app can't be relocated without patching and the safer fix is a `postinst`-style symlink under `/var/opt` accepted as ephemeral (regenerated by a systemd unit at boot) rather than assuming `%{indep-libdir}` works unconditionally.
 
 **Diagnosing this on a live system:** `stat /opt` shows `-> var/opt`; `ls -la /opt/<vendor>/` reports "No such file or directory" even though the element is listed in `/usr/manifest.json`; the payload is recoverable for inspection via `/usr/share/licenses/krytis/<element>/opt/...` (license-harvest copy) or by re-extracting the pinned `.deb`/`.tar` directly — the live rootfs itself no longer has it.
+
+### Content installed under `/var` never ships
+
+*Source: dakota `45f097b` (dakota PR #1777), mined 2026-10-14.*
+
+`oci/krytis/stack.bst` runs `rm --verbose --recursive --force /root /home /opt /mnt /var`
+after every element is staged. It then recreates only the few `/var` directories it links
+to. Anything an element's install step put under `/var` is deleted, along with the mode
+and owner it was created with.
+
+Build, compose and lint all stay green. The loss shows up only at runtime, when the first
+writer isn't the daemon that would have created the directory itself. dakota hit this with
+libvirt:
+
+- meson installs `/var/lib/libvirt/secrets` with mode 0700.
+- The stack deleted it.
+- `virt-secret-init-encryption.service` then failed writing its key there, before
+  `virtsecretd` could create the directory lazily.
+
+Fix: declare the directory in the element with a tmpfiles.d `d` line in
+`%{indep-libdir}/tmpfiles.d/<name>.conf`, using the mode and owner upstream's install used:
+
+```
+d /var/lib/<name> 0700 root root -
+```
+
+Krytis elements that already do this: `config/greetd-config.bst` (`/var/lib/greetd`),
+`desktop/ananicy-cpp.bst` (`/var/lib/ananicy-cpp`), `desktop/falcond.bst` (`/var/lib/falcond`).
+
+To check a new element, list its artifact. The output is tab-indented, root-relative paths:
+
+```shell
+mise run bst -- artifact list-contents <element>.bst | grep -E '^\s+var(/|$)'
+```
+
+Every hit needs a tmpfiles line, or a stated reason it can be lost.
 
 ### Relative symlinks in the image root: count the `..`s
 
@@ -2095,6 +2300,51 @@ env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 A fixture root of a dozen `mkdir`s and the symlinks under test is enough. Note the checked-
 out binary is the *new* bootc, so this also works when the version that added the lint has
 never been in a booted image.
+
+### Rootfs symlinks: remove the path first, then `ln -sT`
+
+*Source: dakota `1a1a7f4` (dakota PR #1661, fixing projectbluefin/dakota#1591), mined
+2026-10-14. The krytis fix is tracked in #1246.*
+
+`ln -s <target> <dest>` creates `<dest>/<basename of target>` when `<dest>` already exists
+as a directory. It neither replaces it nor fails. dakota's stack ran
+`ln -s ../../var/usrlocal usr/local` while `/usr/local` existed. The image shipped
+`/usr/local` as a read-only directory, with a stray `/usr/local/usrlocal` link inside it.
+
+`/usr/local` existed because gnome-build-meta's `dnsmasq.bst` had installed its man page
+there. The cause is a separate trap:
+
+- buildstream-plugins' `make` element defaults to `make-args: PREFIX="%{prefix}"` (its
+  `elements/make.yaml`).
+- An element that sets its own `make-args` **replaces** that default rather than adding to
+  it.
+- dnsmasq's element set `make-args: BINDIR=%{sbindir}`, so dnsmasq's Makefile fell back to
+  its own `PREFIX=/usr/local`.
+
+Krytis has two `kind: make` elements that override `make-args`:
+
+- `desktop/xdg-terminal-exec.bst` sets lowercase `prefix=` itself.
+- `core/efibootmgr.bst` sets `make-args: EFIDIR=krytis sbindir=%{bindir}`. It is safe only
+  because efibootmgr's `Make.defaults` (rhboot/efibootmgr tag 18) has `prefix ?= /usr`.
+  That Makefile reads lowercase `prefix`, so the plugin's `PREFIX` never reached it anyway.
+
+When overriding `make-args`, restate the prefix in whatever case the Makefile reads.
+
+`oci/krytis/stack.bst` has the same exposure (#1246). Its `rm` covers
+`/root /home /opt /mnt /var`, but it also links `/ostree`, `/srv` and `/usr/local` with plain
+`ln -s` and never removes those paths first. On a running krytis image `/usr/local` is
+currently a symlink (`/usr/local -> ../var/usrlocal`). That only shows no element has
+installed anything there yet. The guard dakota adopted:
+
+```yaml
+- rm --verbose --recursive --force /root /home /opt /mnt /srv /ostree /usr/local /var
+# …
+- ln -sT ../var/usrlocal usr/local
+```
+
+`ln -sT` (`--no-target-directory`) always treats `<dest>` as the link name. A leftover
+directory then fails the build instead of nesting the link inside it. Use both: the `rm`
+makes the normal case work, and `-T` makes a path missing from the `rm` fail loudly.
 
 ### Raw binary elements (`kind: remote` + `filename`)
 
@@ -2231,7 +2481,59 @@ Rules go in `/usr/lib/udev/rules.d/` (not `/etc/udev/rules.d/` — the latter is
 
 **Codeberg tarball sources:** Codeberg serves release tarballs at `https://codeberg.org/<user>/<repo>/archive/<tag>.tar.gz`. Add `codeberg_files: https://codeberg.org/` to `include/aliases.yml` file aliases (distinct from the `codeberg:` git alias which already exists) and use `codeberg_files:<user>/<repo>/archive/<tag>.tar.gz` in `kind: tar` sources. Update path via mise task + CI job (`track-mise` pattern) — `bst source track` is a no-op on `kind: tar`.
 
-**Desktop performance config element pattern (`config/desktop-udev.bst`):** A single `kind: manual` element with a `kind: local` source can install across multiple `/usr/lib/` subdirectories (udev/rules.d, modprobe.d, modules-load.d, tmpfiles.d) using a glob loop in `install-commands`. Use `strip-binaries: ""` since no binaries. Keep files under `files/<element-name>/` mirroring the target subdirectory structure. CachyOS-Settings (`github.com/CachyOS/CachyOS-Settings`) is a reference for performance udev rules: IO schedulers, audio PM, SATA link power, THP tmpfiles, amdgpu modprobe, ntsync modules-load. Omit: `30-zram.rules` (conflicts with `zram-generator`), `85-iw-regulatory.rules` (needs extra service), `69-hdparm.rules` (hdparm not in fdsdk), NVIDIA rules.
+**Desktop performance config element pattern (`config/desktop-udev.bst`):** A single element with a `kind: local` source can install across multiple `/usr/lib/` subdirectories (udev/rules.d, modprobe.d, modules-load.d, tmpfiles.d, sysctl.d). `config/desktop-udev.bst` does it as `kind: manual`, with `install -Dm644` lines and glob loops over `files/desktop-tweaks/`. That is pure copying, so a new element of this shape should be `kind: import`, with the files directory mirroring the target layout (§ File-drop config elements: `kind: import`, below). desktop-udev itself would only need `udev/` renamed to `udev/rules.d/`. CachyOS-Settings (`github.com/CachyOS/CachyOS-Settings`) is a reference for performance udev rules: IO schedulers, audio PM, SATA link power, THP tmpfiles, amdgpu modprobe, ntsync modules-load. Omit: `30-zram.rules` (conflicts with `zram-generator`), `85-iw-regulatory.rules` (needs extra service), `69-hdparm.rules` (hdparm not in fdsdk), NVIDIA rules.
+
+### File-drop config elements: `kind: import`
+
+*Source: zirconium-hawaii `1ecc16d`, mined 2026-10-14.*
+
+An element whose whole job is copying repo files into place doesn't need `kind: manual`.
+BuildStream's `import` element (`buildstream/plugins/elements/import.py`,
+`BST_RUN_COMMANDS = False`) runs no commands, so it needs none of these:
+
+- a build sandbox
+- a `runtime-gnu.bst` build dependency
+- a strip pass to suppress
+- `%{install-extra}`
+
+It copies the staged sources' `source:` subtree to `target:` in the artifact:
+
+```yaml
+kind: import
+
+sources:
+- kind: local
+  path: files/<name>
+
+config:
+  source: /
+  target: '%{indep-libdir}'
+```
+
+**The catch: nothing can be renamed or chmodded in the element.** `files/<name>/` has to
+mirror the target layout exactly. zirconium-hawaii had to restructure for this:
+
+- `files/bootc-config/` became `ostree/prepare-root.conf` and `tmpfiles.d/10-bootc.conf`.
+- `adwaita.theme` was renamed to `index.theme`.
+- Presets were split into `system-preset/` and `user-preset/`.
+
+Everything in the directory ships, including a stray README. Modes come from the repo
+file's executable bit (§ `install -Dm###` modes are clamped to 644/755). `depends:` and
+`runtime-depends:` still work: the import plugin forbids neither, and zirconium-hawaii's
+plymouth element keeps one.
+
+**Krytis has no `kind: import` element today** (`grep -rn 'kind: import' elements`,
+2026-10-14), and 35 of the 36 `elements/config/*.bst` are `kind: manual`.
+
+- **Candidates:**
+  - `config/bootc.bst` is the exact zirconium-hawaii case: a `kind: local` source
+    (`files/bootc-config`) and five `install -Dm644 -t` lines (`prepare-root.conf`,
+    `10-bootc.conf`, three `kargs.d` tomls). Moving the files into `ostree/`, `tmpfiles.d/`
+    and `bootc/kargs.d/` makes it an import with `target: '%{indep-libdir}'`.
+  - `config/desktop-udev.bst`, per the pattern note above.
+- **Not candidates:** elements that write files from heredocs (`config/gtk-settings.bst`),
+  make symlinks (`config/networkd-mask.bst`, `config/kmscon.bst`) or compute anything. Those
+  stay `kind: manual` (§ Config-only Elements).
 
 ### Vulkan ICD discovery with fdsdk mesa
 
@@ -2319,15 +2621,70 @@ library owns a string before treating `grep -c` → `0` as a finding.
 
 ## Job Parallelism in `kind: manual`
 
-`kind: manual` build sandboxes do NOT have the `JOBS` environment variable set. Only BST's meson/cmake buildsystem plugins inject `JOBS`. Use `$(nproc)` instead.
+*Corrected 2026-10-14 from dakota `1a1a7f4`/`b0c2874` and zirconium-hawaii `ea95a5a`. This
+section used to say "use `$(nproc)`; do not use `${JOBS}`, `%{max-jobs}`, or `$JOBS`". The
+`%{max-jobs}` ban had the wrong reason, and `$(nproc)` bypasses the CI RAM budget.*
+
+- **`${JOBS}` is unset in a `kind: manual` sandbox.** `JOBS` comes from the `environment:`
+  defaults of buildstream-plugins' `meson` and `cmake` elements; `autotools` and `make` set
+  `MAKEFLAGS` instead. So `ninja -j${JOBS}` becomes `ninja -j` and exits with "invalid -j
+  parameter".
+- **`%{max-jobs}` is always defined.** BuildStream sets it as a protected base variable for
+  every element kind (`_project.py`, `element.py` in the installed `buildstream`), so it is
+  never empty.
+- **The real hazard of `%{max-jobs}` is the cache key.** Written straight into a command,
+  it is expanded into the command text, and the command text is part of the cache key. Only
+  `environment:` entries re-listed under `environment-nocache:` stay out of it.
+  - dakota hit exactly this. Its `boost.bst` ran `./b2 -j%{max-jobs}`. dakota builds at
+    `max-jobs: 8` and exports at `max-jobs: 1`, so boost and everything above it, up to the
+    final OCI element, got different keys at the two stages. Every publish then failed with
+    `No artifacts to stage`.
+  - Krytis is exposed the same way, because cache-warm and publish run different `max-jobs`
+    values (`docs/skills/ci-runner.md` § `max-jobs` does NOT affect cache keys).
+- **`$(nproc)` is cache-safe but ignores the budget.** The shell evaluates it, so the key
+  doesn't change. But it uses every core regardless of `max-jobs`, and CI sizes
+  `builders` × `max-jobs` against RAM (`docs/skills/ci-runner.md` § Build concurrency is
+  `builders` x `max-jobs`).
+
+The pattern that is both cache-safe and inside the budget is the one fdsdk uses for
+`LTOJOBS` and krytis already uses in `overrides/libdecor.bst`:
 
 ```yaml
-build-commands:
-- ninja -v -j$(nproc) -C _build   # correct
-# ninja -v -j${JOBS} -C _build    # WRONG — ${JOBS} is empty, ninja exits with "invalid -j parameter"
+environment:
+  MAXJOBS: '%{max-jobs}'
+environment-nocache:
+- MAXJOBS
+
+config:
+  build-commands:
+  - ninja -v -j"${MAXJOBS}" -C _build      # correct
+  # - ninja -v -j%{max-jobs} -C _build     # WRONG — inlines the value into the cache key
+  # - ninja -v -j${JOBS} -C _build         # WRONG — ${JOBS} is unset, ninja exits "invalid -j parameter"
 ```
 
-Do NOT use `${JOBS}`, `%{max-jobs}`, or `$JOBS` in `kind: manual` elements.
+For cargo, use `cargo build … --jobs "${MAXJOBS}"`. Alternatively, set
+`CARGO_BUILD_JOBS: '%{max-jobs}'` the same way (listed under `environment-nocache:`) and
+leave the commands alone.
+
+**cargo ignores `max-jobs` entirely.** It doesn't read `JOBS`, `LTOJOBS` or the plugins'
+`MAKEFLAGS: -jN`, and without `--jobs` it runs one job per logical CPU.
+
+- **No job limit.** As of 2026-10-14, nine elements call `cargo build` with no `--jobs`
+  and no `CARGO_BUILD_JOBS` (`grep -rl 'cargo build' elements`;
+  `grep -rn 'MAXJOBS\|CARGO_BUILD_JOBS' elements` is empty):
+  - `core/sudo-rs.bst`
+  - `core/uutils-coreutils.bst`
+  - `desktop/niri.bst`
+  - `desktop/greetd.bst`
+  - `desktop/scx-loader.bst`
+  - `desktop/scx-scheds.bst`
+  - `desktop/xwayland-satellite.bst`
+  - `desktop/presence-bridge.bst`
+  - `overrides/rust-bindgen.bst`
+- **`$(nproc)`.** `desktop/oo7.bst` (`ninja -v -j$(nproc)`) and `dev/qemu.bst`
+  (`make-args: -j$(nproc)`).
+- **Inline `%{max-jobs}`.** None: `grep -rn 'max-jobs' elements` finds only libdecor's
+  nocache `LTOJOBS`.
 
 ## Zig Projects
 
@@ -3550,13 +3907,22 @@ names = {m['name'] for m in mods}
 
 This is ground truth for "is X in the image" — the source-tree dependency graph is not, since transitive `depends:` chains inside `freedesktop-sdk`/`gnome-build-meta` junctions are not always obvious from krytis's own files.
 
-**Consequence discovered 2026-09-16, now fixed by `config/networkd-mask.bst`:** because NetworkManager claims every physical interface before `systemd-networkd`'s own `.network` matching ever runs (confirmed live — `networkctl status <iface>` stays `Network File: n/a` / `(unmanaged)` even with an explicit `Unmanaged=yes` override and a full `systemd-networkd` restart), networkd never manages anything and its aggregate online state (`/run/systemd/netif/state`'s `ONLINE_STATE=`) is permanently `offline`. Two real breakages traced back to that one wrong signal: `systemd-timesyncd` never attempts a sync (registers NTP servers, then does nothing — verified with `SYSTEMD_LOG_LEVEL=debug`, on two different networks, with DNS bypassed via a literal server IP, and after a forced NetworkManager reconnect — nothing ever triggers it), and `network-online.target`'s static `Requires=systemd-networkd-wait-online.service` burns its full ~2 minute internal timeout on every single boot before failing, delaying everything else gated on that target (`starlit-update.service`, `podman-restart.service`, `flatpak-preinstall.service`, `fwupd-refresh.service`, `systemd-sysupdate.service`) even though `NetworkManager-wait-online.service` itself succeeds in ~5s. `config/networkd-mask.bst` masks `systemd-networkd.service` and `systemd-networkd-wait-online.service` (symlink to `/dev/null`, not a preset `disable` — a required-but-disabled unit is still resolvable and still blocks; only a real mask makes systemd's dependency resolution treat it as absent) while leaving `vm/config/networkd.bst` itself in place for its `.link` file MAC/naming policy, which is udev-driven and doesn't need the daemon running. The "networkd-only stack" framing in this section's title is aspirational, not current reality — NetworkManager is the only thing actually managing interfaces on a real krytis boot today.
+**Consequence discovered 2026-09-16, now fixed by `config/networkd-mask.bst`:** because NetworkManager claims every physical interface before `systemd-networkd`'s own `.network` matching ever runs (confirmed live — `networkctl status <iface>` stays `Network File: n/a` / `(unmanaged)` even with an explicit `Unmanaged=yes` override and a full `systemd-networkd` restart), networkd never manages anything and its aggregate online state (`/run/systemd/netif/state`'s `ONLINE_STATE=`) is permanently `offline`. Two real breakages traced back to that one wrong signal: `systemd-timesyncd` never attempts a sync (registers NTP servers, then does nothing — verified with `SYSTEMD_LOG_LEVEL=debug`, on two different networks, with DNS bypassed via a literal server IP, and after a forced NetworkManager reconnect — nothing ever triggers it), and `network-online.target`'s static `Requires=systemd-networkd-wait-online.service` burns its full ~2 minute internal timeout on every single boot before failing, delaying everything else gated on that target (`starlit-update.service`, `podman-restart.service`, `flatpak-preinstall.service`, `fwupd-refresh.service`, `systemd-sysupdate.service`) even though `NetworkManager-wait-online.service` itself succeeds in ~5s. `config/networkd-mask.bst` masks `systemd-networkd.service` and `systemd-networkd-wait-online.service` (symlink to `/dev/null`, not a preset `disable` — a required-but-disabled unit is still resolvable and still blocks; only a real mask makes systemd's dependency resolution treat it as absent). The "networkd-only stack" framing in this section's title is aspirational, not current reality — NetworkManager is the only thing actually managing interfaces on a real krytis boot today.
+
+**What `vm/config/networkd.bst` actually ships** (corrected 2026-10-14; this section and the mask's header used to say it supplies the default `.link` files' MAC/naming policy, which is false):
+
+- **No `.link` files.** `99-default.link` comes from systemd itself: `files/fakecap-manifest.tsv` attributes it to `core-deps/systemd-base.bst`/`core-deps/systemd.bst`.
+- **`20-wired.network`** (`Name=e*`, `DHCP=ipv4`) and a `networkd.preset` that reads `enable systemd-networkd.preset`. That names a unit that doesn't exist, so the preset is inert.
+
+Sources: fdsdk's `elements/vm/config/networkd.bst` and `files/systemd-networkd/`, identical in every staged fdsdk tree under `.bst/staged-junctions/`; zirconium-hawaii `f40096e`, which dropped both `networkd.bst` and `resolved.bst` from its image.
+
+The `.network` file is dormant only because networkd is masked. If the mask is lifted while NetworkManager is still present, it comes back as a second DHCP configuration on every `e*` interface. The mask stays either way.
 
 ## resolv.conf and /etc/hosts Are Already Covered — No network.bst Needed
 
 dakota ships `elements/bluefin/network.bst`, doing two things: (1) a tmpfiles.d rule symlinking `/etc/resolv.conf` to systemd-resolved's stub resolver, (2) a static `/etc/hosts` with `localhost` entries. Porting this to krytis (#176) looked plausible but both are already transitively covered — verified via `grep`ping the staged fdsdk junction (`.bst/staged-junctions/freedesktop-sdk.bst/<hash>/`) and confirming live on a booted image:
 
-1. `/etc/resolv.conf` symlink: systemd itself ships `/usr/lib/tmpfiles.d/systemd-resolve.conf` (`L! /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf`) as part of the systemd package — this arrives for free once anything depends on `freedesktop-sdk.bst:vm/config/resolved.bst` (already the case via `elements/stacks/base-system.bst`). Dakota's version is redundant, not a gap-filler.
+1. `/etc/resolv.conf` symlink: systemd itself ships `/usr/lib/tmpfiles.d/systemd-resolve.conf` (`L! /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf`) as part of the systemd package. `files/fakecap-manifest.tsv` attributes it to `core-deps/systemd-base.bst`/`core-deps/systemd.bst`. It does not come from `freedesktop-sdk.bst:vm/config/resolved.bst`. That element (in `elements/stacks/base-system.bst`) adds only `/etc/systemd/resolved.conf` with `DNSSEC=no`, plus a `resolved.preset` that reads `enable systemd-resolved.preset`: a nonexistent unit, so the preset is inert (fdsdk `elements/vm/config/resolved.bst` and `files/systemd-resolved/`; corrected 2026-10-14). Keep that element for `DNSSEC=no` if you want that behaviour; the stub symlink doesn't depend on it. Dakota's version is redundant, not a gap-filler.
 2. `/etc/hosts`: fdsdk's `components/hosts.bst` ships the identical two-line file, pulled in transitively as a runtime-minimal dep — no krytis element needed.
 
 **Caveat — "covered" is not "unimportant".** Because the image's `nsswitch.conf` hosts line
@@ -4053,6 +4419,10 @@ variables:
   make-args: EFIDIR=krytis sbindir=%{bindir}
 ```
 
+Setting `make-args` replaces the make plugin's default `PREFIX="%{prefix}"`. That is
+harmless here only because efibootmgr's Makefile reads lowercase `prefix` and defaults it
+to `/usr` (§ Rootfs symlinks: remove the path first, then `ln -sT`).
+
 efibootmgr bakes this into the binary as the default `--loader` path (`\EFI\krytis\grub.efi`, verify with `--help`). Krytis boots via UKI (see `docs/design/secure-boot-uki.md`), not grub, so this default loader path is currently unused at boot time — but keep it consistent for any future element that needs a reserved ESP dirname, so they don't disagree with each other.
 
 ## Building a headless QEMU + OVMF + virt-firmware toolchain for `mise run boot-test`/`boot-vm`
@@ -4096,7 +4466,10 @@ process, ~10-20x slower than available cores). Fix: override the `make-args`
 variable explicitly with `-j$(nproc)` (shell-evaluated at command-execution
 time inside the sandbox, not a BST variable substitution) — check `ps aux |
 grep cc1` mid-build to confirm parallelism actually kicked in rather than
-trusting the default.
+trusting the default. `-j$(nproc)` is cache-safe, because the shell expands it, so it never
+enters the key. But it ignores `max-jobs` and therefore the CI RAM budget.
+`make-args: -j"${MAXJOBS}"` with the `environment-nocache` pattern in § Job Parallelism in
+`kind: manual` respects both.
 
 **`freedesktop-sdk.bst:components/ovmf-maybe.bst` always builds with
 `-D SECURE_BOOT_ENABLE`.** Unlike Fedora's `edk2-ovmf` package, which ships

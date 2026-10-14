@@ -59,9 +59,30 @@ If `bootc install to-disk` defaults to xfs but the image lacks `xfsprogs`, `mkfs
 
 *Source: dakota `dbb9f6d`, `ac100d7`, `1b48630` — `fix(bluefin): remove gnome-build-meta patch queue for 100% cache reuse` + the paired skill docs*
 
-A local `patch_queue` source applied to a junction (`gnome-build-meta.bst`, `freedesktop-sdk.bst`) changes that junction's cryptographic source hash and cache key. BST derives every downstream element's strong cache key from its build-dependencies' keys recursively — so a patch on the junction invalidates the cache key of *everything* the junction provides, not just the patched piece. Dakota carried one small patch (`disable-lorry-mirrors.patch`) on `gnome-build-meta.bst` and it silently forced local compiles of WebKit and other large components instead of pulling from the public `gbm.gnome.org` cache. Removing the patch queue immediately restored 1053/1090 cached elements (96% hit rate).
+A local `patch_queue` source applied to a junction (`gnome-build-meta.bst`, `freedesktop-sdk.bst`) changes that junction's cryptographic source hash and cache key. BST derives every downstream element's strong cache key from its build-dependencies' keys recursively — so a patch on the junction invalidates the cache key of *everything* the junction provides, not just the patched piece. Dakota carried one small patch (`disable-lorry-mirrors.patch`) on `gnome-build-meta.bst` and it silently forced local compiles of WebKit and other large components instead of pulling from the public `gbm.gnome.org` cache. Removing the patch queue (2026-07-10) immediately restored 1053/1090 cached elements (96% hit rate).
 
-Krytis has no `patch_queue` source on a junction today, but it does junction both `freedesktop-sdk.bst` and `gnome-build-meta.bst` — and consumes the gbm one heavily (`elements/stacks/base-system.bst` alone pulls seven `gnome-build-meta.bst:gnomeos-deps/*` elements), so this is a live failure mode here, not a hypothetical. If a junction-level patch is ever needed: submit it upstream first, or bump the junction ref instead of patching locally. Element-level overrides (the junction's own `config.overrides:` map in `elements/freedesktop-sdk.bst`, redirecting a `components/*.bst` at a krytis element — `overrides/frei0r.bst`, `core/sudo-rs.bst`) don't have this problem — only patches applied directly to a junction's own source do.
+**Dakota no longer follows this (as of 2026-10-14, dakota `45f097b`).** The removal was not
+its end state:
+
+- `787bf4d` (2026-09-20) put a `patch_queue` back on `gnome-build-meta.bst`, and it now
+  holds three patches, including `0002-dnsmasq-install-under-prefix.patch` (`1a1a7f4`) and
+  `0003-initramfs-boot-modules.patch` (`bd5d913`).
+- `freedesktop-sdk.bst` carries **two** queues: the `freedesktop-sdk` one that
+  `just patch-sync` rewrites from gnome-build-meta, and a dakota-owned `freedesktop-sdk-dakota`
+  queue (ghostscript, ffmpeg, libcupsfilters — `adab815`, `2d69f9e`, `02e801c`), kept apart
+  so the sync cannot overwrite it.
+- dakota's `AGENTS.md:73` now reads "Patch junctions through `patch_queue`; do not edit
+  staged junction contents."
+
+Two days *before* the removal, dakota's `724b63a` had restored both queues with the opposite
+cache argument: gnome-build-meta 50.2 builds freedesktop-sdk with its own patch set, and
+without the same patches "every cache key below platform.bst diverges from gbm.gnome.org"
+(commit body). So dakota has recorded both directions: a patch the cache publisher didn't
+apply cost reuse, and dropping one the publisher *did* apply cost it too. Neither commit
+measures how far a single-element patch reaches. Before relying on "invalidates
+everything", compare `bst show --format '%{full-key}'` before and after the patch.
+
+Krytis has no `patch_queue` source on a junction today: each of `elements/freedesktop-sdk.bst` and `elements/gnome-build-meta.bst` has a single `kind: git_repo` source. It does junction both, though, and consumes the gbm one heavily (`elements/stacks/base-system.bst` alone pulls seven `gnome-build-meta.bst:gnomeos-deps/*` elements), so cache reuse is at stake here too. If a junction-level patch is ever needed, the cheap options are still to submit it upstream first or bump the junction ref. If neither works, measure the key change as above rather than citing either dakota position. Element-level overrides (the junction's own `config.overrides:` map in `elements/freedesktop-sdk.bst`, redirecting a `components/*.bst` at a krytis element — `overrides/frei0r.bst`, `core/sudo-rs.bst`) don't change the junction's own source at all.
 
 ### Verify nested-junction ref consistency before merging a bump
 
@@ -74,7 +95,7 @@ curl -fsSL "https://gitlab.gnome.org/GNOME/gnome-build-meta/-/raw/<gbm-sha>/elem
 grep -m1 ref: elements/freedesktop-sdk.bst   # must match
 ```
 
-Krytis DOES junction `gnome-build-meta` today (`elements/gnome-build-meta.bst`, tracking branch `gnome-51`). This check applies now. It was first run on 2026-07-21 against the then-current `gnome-50`/fdsdk-25.08.14 pair and found no drift; the 26.08 bump it flagged as the next thing to re-check landed in #305 (closed), and krytis now pins `freedesktop-sdk-26.08.1` alongside gbm `gnome-51`. Re-run the two-line comparison before merging any future junction bump — `track-core-junctions` (§ Automating the nested-junction ref-consistency check, below) makes the two refs land together but does not make them agree.
+Krytis DOES junction `gnome-build-meta` today (`elements/gnome-build-meta.bst`, tracking branch `gnome-51`). This check applies now. It was first run on 2026-07-21 against the then-current `gnome-50`/fdsdk-25.08.14 pair and found no drift; the 26.08 bump it flagged as the next thing to re-check landed in #305 (closed). **Re-run on 2026-10-14, it finds drift:** krytis pins `freedesktop-sdk-26.08.2-0-g32c5fea…` while its gbm ref `51.0-10-g1808f094…` expects `freedesktop-sdk-26.08.1-0-gb02b59ff…` (the curl above at that sha). dakota sits on the same gbm ref with 26.08.1, because it derives the pin. Re-run the two-line comparison before merging any future junction bump — `track-core-junctions` (§ Automating the nested-junction ref-consistency check, below) makes the two refs land together but does not make them agree, and this drift is exactly that gap.
 
 ### Drop stale `gtk-doc` override — RESOLVED, dropped (2026-08-12, #305)
 
@@ -172,33 +193,37 @@ now has a `track-core-junctions` job that runs `bst source track` on
 `gnome-build-meta.bst` and `freedesktop-sdk.bst` in the same step and commits both refs
 in one `auto/track-core-junctions` PR, so the two can no longer land separately — but
 it tracks fdsdk independently rather than deriving it
-(`.github/workflows/track-bst-sources.yml:1157-1158` is two back-to-back `bst source
-track` calls, one per junction, and `elements/freedesktop-sdk.bst` still carries
+(`.github/workflows/track-bst-sources.yml:1177-1178` is two back-to-back
+`bst source track` calls, one per junction, and `elements/freedesktop-sdk.bst` still carries
 `track: freedesktop-sdk-26.08*`), so fdsdk can still race ahead of what gbm expects
-*within* one atomic bump.
+*within* one atomic bump — which is the drift the entry above found on 2026-10-14.
 
-`5005f85` is the mechanism that closes that. Dakota's `track-core-junctions` now tracks
+`5005f85` is the mechanism that closes that. Dakota's `track-core-junctions` tracks
 `gnome-build-meta.bst` **only** and derives the fdsdk pin from whatever that track
-resolved:
+resolved. Since `196e0ab`/`71b9fb7` (2026-10) the logic lives in dakota's
+`update_sources.py` `update_core()`, called as `just update-sources --group core-junctions`
+from both its `track-bst-sources.yml` and `track-next-junctions.yml`. It replaced the
+workflow-inline `awk`/`BASH_REMATCH`/`sed -i` with Python regexes; the steps are unchanged
+(as of 2026-10-14, dakota `45f097b`):
 
-1. `awk '/^[[:space:]]*ref: / { print $2; exit }' elements/gnome-build-meta.bst` reads
-   back the git-describe ref, and a `BASH_REMATCH` on its `-g<sha>` suffix yields the
-   resolved GBM commit.
-2. `curl` fetches *that commit's own* `elements/freedesktop-sdk.bst` from the GitLab
-   files API —
+1. Read back the tracked git-describe `ref:` from `elements/gnome-build-meta.bst`; its
+   `-g<40-hex>` suffix is the resolved GBM commit.
+2. Fetch *that commit's own* `elements/freedesktop-sdk.bst` from the GitLab files API —
    `https://gitlab.gnome.org/api/v4/projects/GNOME%2Fgnome-build-meta/repository/files/elements%2Ffreedesktop-sdk.bst/raw?ref=<sha>`
-   — and `awk`s the `ref:` under `url: gitlab:freedesktop-sdk`. Pinning the API read to
-   the sha, not to a branch, is the whole point: a branch read reintroduces the race.
-3. `sed -i` rewrites the local `elements/freedesktop-sdk.bst` ref to match.
+   — and take the `ref:` of the `url: gitlab:freedesktop-sdk/…` source. Pinning the API
+   read to the sha, not to a branch, is the whole point: a branch read reintroduces the
+   race.
+3. Rewrite the first `ref:` in the local `elements/freedesktop-sdk.bst` to match, then run
+   `just patch-sync` and `just patch-drift-check`.
 
-Either extraction coming back empty is `exit 1`, never a skip — a silent no-op here
-leaves exactly the drift the job exists to prevent, and looks like a clean run. One
+Any extraction that comes back empty raises (`ValueError`), never a skip — a silent no-op
+here leaves exactly the drift the job exists to prevent, and looks like a clean run. One
 detail worth copying on its own: the commit step `git add`s first and then tests
-`git diff --cached --quiet`, because a derived sync can *remove* files (dakota also syncs
-`patches/freedesktop-sdk/`) and a worktree-only `git diff --quiet` reports "no changes"
-for a pure deletion. Krytis's gate is the worktree-only form
-(`.github/workflows/track-bst-sources.yml:1165`); harmless while the job only rewrites
-two `ref:` lines, wrong the moment it starts syncing a directory.
+`git diff --cached --quiet` (dakota `track-bst-sources.yml:218-220`), because a derived
+sync can *remove* files (dakota also syncs its `freedesktop-sdk` patch directory) and a
+worktree-only `git diff --quiet` reports "no changes" for a pure deletion. Krytis's gate is
+the worktree-only form (`.github/workflows/track-bst-sources.yml:1184`); harmless while the
+job only rewrites two `ref:` lines, wrong the moment it starts syncing a directory.
 
 ### Documentation discipline: "Docs Are the Model" and "Scoped Documentation"
 
@@ -278,24 +303,109 @@ which is why this passes every quiet-repo test and only misfires under load.
 
 The rule that outlives the `head_sha` specifics: **a downstream workflow must take
 artifact identity from a receipt the producer wrote, never re-derive it from event context
-and never re-resolve a mutable tag.** Dakota's consumer now downloads the producer's
-`digest-default` artifact, validates its `.sha` against `^[0-9a-f]{40}$`, fails loudly when
-it is absent instead of falling back to the event sha, and emits a `::notice::` when
-receipt and event sha disagree — so the divergence is visible rather than assumed away.
+and never re-resolve a mutable tag.** Dakota's consumer — its `publish-smoke.yml` — downloaded
+the producer's `digest-default` artifact, validated its `.sha` against `^[0-9a-f]{40}$`,
+failed loudly when it was absent instead of falling back to the event sha, and emitted a
+`::notice::` when receipt and event sha disagreed — so the divergence was visible rather
+than assumed away. dakota deleted that workflow in `474fd09` (2026-09-26, a libvirt PR
+whose body gives no reason), so as of 2026-10-14 the lesson has no live example upstream;
+the rule stands on its own.
 
 **Krytis exposure.** `.github/workflows/verify-sealed.yml:22-24` triggers on
 `workflow_run` off `"Publish krytis image"`, and then at `:71`/`:74` runs
 `podman pull ghcr.io/starlit-os/krytis:sealed` and hands the same **mutable tag** to
 `mise run enroll-test` — re-resolved at pull time, with nothing tying it to the run that
-triggered it. The producer already computes the receipt: `publish.yml:284-286` pushes the
+triggered it. The producer already computes the receipt: `publish.yml:351-353` pushes the
 sealed image via `mise run push --sealed --digest-file krytis-sealed-digests.env`, and
-`publish.yml:295` feeds that same file to `mise run sign`, with the verify step resolving
+`publish.yml:362` feeds that same file to `mise run sign`, with the verify step resolving
 `ghcr.io/starlit-os/krytis@${image_digest}` from it. It is just never uploaded (`publish.yml`
 has no `upload-artifact` step at all), so the consumer cannot read it. Two publishes in
 quick succession and `verify-sealed` gates on an image the triggering run did not produce
 — and reports green against that run. The narrower multi-hop `head_sha` trap does not bite
-today, because `publish.yml` is `workflow_dispatch`-triggered and `verify-sealed` is
-therefore a first hop; the mutable-tag half is live now.
+today, because `publish.yml` is triggered by its own weekday `schedule:` cron plus
+`workflow_dispatch` (`publish.yml:4-27`), never by `workflow_run`, so `verify-sealed` is a
+first hop; the mutable-tag half is live now.
+
+### `ln -s` into an existing directory nests the link; a `make-args` override drops `PREFIX`
+
+*Source: dakota `1a1a7f4` — `fix(image): make /usr/local a real link to /var/usrlocal (#1661)`*
+
+dakota's `oci/layers/bluefin-stack.bst` ran `ln -s ../../var/usrlocal usr/local` while
+`/usr/local` already existed as a directory. `ln` then puts the link *inside* the
+destination, so `/usr/local` shipped read-only, with a stray `usrlocal` link in it
+(projectbluefin/dakota#1591). The directory existed because gnome-build-meta's
+`core-deps/dnsmasq.bst` sets `make-args: BINDIR=%{sbindir}`, which replaces the make
+plugin's default `PREFIX="%{prefix}"`; dnsmasq's Makefile then fell back to `/usr/local`
+for its man page. dakota's fix removes every link path in the same `rm` as `/var` and
+creates the links with `ln -sT`, so a leftover directory fails the build instead of
+nesting. It also carries a gnome-build-meta patch that passes `PREFIX` to dnsmasq.
+
+krytis's `elements/oci/krytis/stack.bst:23` removes `/root /home /opt /mnt /var` only, then
+links `/ostree`, `/srv` and `/usr/local` with plain `ln -s` (`:21`, `:37`, `:43`). That works
+today only because nothing stages there first (#1246). Full writeup in
+`docs/skills/bst.md` § Rootfs symlinks: remove the path first, then `ln -sT`.
+
+### `%{max-jobs}` written into a command is part of the cache key
+
+*Sources: dakota `b0c2874` — `feat(bluefin): add user-configured IBus Rime with Lua support (#1662)`
+(added `boost.bst`); fixed in the boost hunk of `1a1a7f4` (projectbluefin/dakota#1661)*
+
+`boost.bst` built with `./b2 -j%{max-jobs}`. BuildStream expands the variable into the
+command text, and command text is keyed. dakota builds with `max-jobs: 8` and exports with
+`max-jobs: 1`, so boost and every element above it, up to the final images, got two
+different keys. The publish then looked for artifacts that were never built
+(`No artifacts to stage`; projectbluefin/dakota#1661 body). The fix routes the value
+through `environment: MAXJOBS: "%{max-jobs}"` plus `environment-nocache: [MAXJOBS]` and
+runs `-j"${MAXJOBS}"`. The same PR reports identical final-image keys at `max-jobs` 1 and
+8 afterwards.
+
+No krytis element inlines it today: `grep -rn max-jobs elements/` hits only
+`overrides/libdecor.bst`'s nocache `LTOJOBS` and a comment in `dev/qemu.bst`. Full writeups
+in `docs/skills/bst.md` § Job Parallelism in `kind: manual` (how to pass a job count) and
+`docs/skills/ci-runner.md` § `max-jobs` does NOT affect cache keys (the inline-expansion
+exception to that rule).
+
+### Content an element installs under `/var` never ships
+
+*Source: dakota `45f097b` — `fix(libvirt): create secrets directory at boot (#1777)`*
+
+dakota's stack wipes `/var`, so the `/var/lib/libvirt/secrets` (0700) that libvirt's meson
+install creates was never in the image. `virt-secret-init-encryption.service` writes its
+key there before `virtsecretd` would create the directory, so it failed. The fix is a
+tmpfiles.d line, `d %{localstatedir}/lib/libvirt/secrets 0700 root root -`. krytis's
+`elements/oci/krytis/stack.bst:23` runs the same `rm … /var`. Full writeup in
+`docs/skills/bst.md` § Content installed under `/var` never ships.
+
+### A green track job does not prove the element's patches still apply
+
+*Sources: dakota `196e0ab` (projectbluefin/dakota#1734), reverted the same day by `3cb22d8`
+(projectbluefin/dakota#1739); re-landed as `71b9fb7` —
+`feat(deps): restore source updates with patch checks (#1740)`*
+
+`bst source track` re-resolves the `git_repo` ref only; the `kind: patch` /
+`patch_queue` sources after it are not applied. projectbluefin/dakota#1734 landed a source
+updater together with the bumps it produced. The OGC kernel bump among them tracked
+cleanly, but its downstream patches no longer applied, so the whole PR was reverted
+(projectbluefin/dakota#1740 body: "failed to apply outdated downstream patches"). The
+re-land runs `bst source fetch --deps none <element>` inside a rollback guard right after
+tracking, so a patch failure restores the element and the bump is never recorded. As of
+2026-10-14 (dakota `45f097b`) its `update_sources.py` does that fetch only for its kernel
+elements. Full writeup and krytis's exposure in `docs/skills/bst.md` § A green track job does not prove patches apply.
+
+### One bundled tracking PR, re-pushed only when its tracked paths change
+
+*Source: dakota `a3a32d8` —
+`ci(track): bundle source bumps into one PR to cut build queue (#1722)`*
+
+dakota moved every non-junction bump into a single `auto/track-bundle` PR because its
+image builds serialize globally: each per-element PR cost a full PR build plus the build
+its merge triggers (projectbluefin/dakota#1722 body). Its `track_bundle.py` `bundle_changed()` skips the push
+when the paths the bundle touches are unchanged, so a branch that only sits on an older
+base is not rebuilt; the PR body is still refreshed. krytis does not bundle: its PR builds
+are changed-element only, and a bundle would reset the per-branch 24h cooldown whenever
+any member moved. The skip-the-no-op-push half does apply. krytis recommits every pending
+branch on every run, which costs a `synchronize` and a PR-check run twice a day. Full
+writeup in `docs/skills/bst.md` § Tracking cooldown: 24h from first sighting.
 
 ## Referencing This Project
 
