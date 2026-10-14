@@ -73,6 +73,12 @@ jobs:
         # Reads the checkout and PyYAML from `uv sync` above; no network.
         run: mise run patch-inventory-check
 
+      - name: Check image inventory
+        # Every krytis element reachable from oci/krytis/image.bst (and every junction
+        # override target) needs a described row in docs/design/image-inventory.md,
+        # and every row needs its element. Reads the checkout and PyYAML; no network.
+        run: mise run image-inventory --check
+
       - name: Shell syntax
         # Catches the class of typo that only surfaces when a task is invoked,
         # which for the boot-chain tasks can be 40 minutes into a QEMU run.
