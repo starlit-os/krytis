@@ -122,6 +122,52 @@ vendor's "Restore Secure Boot to factory defaults" or "Clear Secure Boot keys" o
 again. This returns the firmware to Setup Mode, from which you can either re-enroll
 or leave Secure Boot disabled.
 
+## Updating `dbx` on an already-enrolled machine
+
+Enrollment happens once. A machine keeps the `dbx` it was enrolled with, and revocations
+added to `files/microsoft-uefi-certs/dbx.esl` later never reach it (#1060). fwupd cannot
+deliver them either: LVFS dbx updates are signed by Microsoft's KEK, and enrollment
+replaced that with krytis's. `mise run dbx-append` appends the missing entries with a
+write signed by krytis's KEK. It only adds revocations; it never removes an entry or
+touches `db`/`KEK`/`PK`.
+
+```bash
+# 1. Desk side, with fnox access to the KEK. Diffs dbx.esl against this machine's live
+#    dbx and signs only the missing entries. Nothing to append → exits 0, nothing signed.
+mise run dbx-append sign
+#    For a different machine, copy its efivars over first (they are world-readable):
+#    /sys/firmware/efi/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f
+#    /sys/firmware/efi/efivars/KEK-8be4df61-93ca-11d2-aa0d-00e098032b8c
+mise run dbx-append sign --against ./dbx.efivar --kek-var ./KEK.efivar
+
+# 2. Optional, but do it before step 3 while entries are still missing: a write signed
+#    by a key the firmware does not trust must be refused, and dbx left untouched.
+mise run dbx-append sign --throwaway-key --out output/dbx-append-untrusted.auth
+mise run dbx-append apply output/dbx-append-untrusted.auth --expect-reject
+
+# 3. On the target (sudo). Checks the signature and signer against KEK, refuses if any
+#    .efi on the booted ESP would be newly revoked, writes, reads back.
+mise run dbx-append apply output/dbx-append.auth
+
+# 4. Verify. The efivar should hold every entry of dbx.esl (same counts). It will NOT be
+#    byte-identical: the firmware keeps the appended lists separate, which adds list headers.
+mise run dbx-check --dbx /sys/firmware/efi/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f <binary>
+
+# 5. Re-applying is a no-op ("already applied", nothing written). --force sends the same
+#    .auth anyway, which tests that the firmware dedupes: "byte-identical to before".
+mise run dbx-append apply output/dbx-append.auth --force
+```
+
+Each `apply` saves the efivar before and after under `output/dbx-append/<timestamp>/`.
+The firmware checks the signature whenever keys are enrolled, even with Secure Boot
+switched off in setup, so a machine with enforcement off can be updated and then
+switched on. After that, `bootctl status` should read `Secure Boot: enabled (user)`.
+
+If the machine will not boot after an update with Secure Boot on, switch Secure Boot off
+in firmware setup: the new entries are what refused it. An append cannot take entries
+back out. To return to the image's `dbx`, clear the keys and re-enroll as in
+§ Recovering from a bad enrollment.
+
 ---
 
 # T4: validating a sealed release on hardware

@@ -476,8 +476,22 @@ boot 2: same varstore, keys now enrolled    enrolled-this-boot=0   (no enrollmen
 So shipping new `.auth` files in a future image does nothing for existing installs —
 they keep trusting the old `db` forever, and a leaked `db.key` has no remedy short of
 a per-machine trip through firmware setup. Rotation would need the OS to write
-authenticated variable updates signed by the *current* KEK/PK; krytis ships no such
-tooling and bootc does not do it either.
+authenticated variable updates signed by the *current* KEK/PK. bootc does not do it,
+and krytis's only such write is for `dbx`. `mise run dbx-append` (#1060) signs an
+`APPEND_WRITE` of the entries a machine's live `dbx` lacks with the KEK, and applies it
+by hand (`docs/secure-boot-enrollment.md` § Updating `dbx` on an already-enrolled
+machine). An append can only add revocations, so it changes what is refused, never what
+is trusted. Replacing `db`/`KEK`/`PK` is still unbuilt.
+
+Measured on the #535 ThinkPad (UEFI N3QET52W 1.52), 2026-10-14. The writes ran with
+Secure Boot off in setup but keys enrolled; enforcement was switched on afterwards:
+
+```
+throwaway-key append      write() EACCES, dbx byte-identical           (KEK check holds in User Mode)
+KEK-signed append         443 → 445 sha256 + 2 x509, 21296 → 23336 bytes
+same .auth, --force       accepted, dbx byte-identical                 (firmware dedupes)
+Secure Boot on, reboot    boots; bootctl "enabled (user)", SecureBoot=1, dbx unchanged (23336 bytes)
+```
 
 A test needs a mechanism, so #447 asks the prior question: does krytis support
 rotation at all? "No, a compromise means reinstall" is a legitimate answer for a

@@ -30,6 +30,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Change what the first-boot wizard prompts for or creates (initial account, keymap, timezone) | [`docs/design/first-boot-setup.md`](design/first-boot-setup.md) |
 | Secure boot, signed UKI, TPM/PCR interaction with LUKS | [`docs/skills/secure-boot.md`](skills/secure-boot.md) |
 | Generate or debug the firmware key-enrollment `.auth` files, refresh the dbx revocation list, or check whether a binary is revoked (`mise run enroll-test`, `mise run fetch-microsoft-dbx`, `mise run dbx-check`, `scripts/parse-efi-auth.py`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Every shipped `.auth` enrolled an empty allow-list |
+| Bring an already-enrolled machine's dbx up to date (`mise run dbx-append`) | [`docs/skills/secure-boot.md`](skills/secure-boot.md) § Updating an enrolled machine's dbx is a KEK-signed append (#1060) |
 | Decide which boot-chain tests to run for a change, or find what is still untested | [`docs/design/secure-boot-testing.md`](design/secure-boot-testing.md) |
 | Debug an update that rebooted into the old image, or `bootc status` failing with `Opening ref 'streams/oci-manifest-sha256:…'`; change how `starlit-update` runs `bootc upgrade` | [`docs/skills/bootc-vm.md`](skills/bootc-vm.md) § A second staged update breaks bootc until the orphan is removed |
 | Work on gaming support, or wonder why there is no native Steam/gamescope/sysext | [`docs/design/gaming-variant.md`](design/gaming-variant.md) |

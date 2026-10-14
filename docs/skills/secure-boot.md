@@ -1090,9 +1090,83 @@ The CentOS hash is in every dbx krytis has shipped, from the first committed
 `dbx.esl` (2026-08-02, 443 hashes, no X509) onward. So a refusal proves the firmware
 *enforces* dbx; it does not prove the enrolled dbx is *current*. `enroll-test`'s
 byte-exact match (#757) covers currency. This matters on the #535 ThinkPad: its live dbx
-efivar, minus the 4-byte attribute prefix, is byte-identical to that first `dbx.esl`.
-Enrollment is one-shot, so neither #502's two certificate revocations nor #755's union
-ever reached it.
+efivar, minus the 4-byte attribute prefix, was byte-identical to that first `dbx.esl`
+when checked on 2026-10-01. Enrollment is one-shot, so neither #502's two certificate
+revocations nor #755's union reached it that way. `mise run dbx-append` (below) brought it
+to 445 hashes + 2 X509 on 2026-10-14.
+
+### Updating an enrolled machine's dbx is a KEK-signed append (#1060)
+
+`loader/keys/auto` is read only in Setup Mode (G-4 in `docs/design/secure-boot-testing.md`).
+fwupd cannot help either: LVFS dbx updates are signed by Microsoft's KEK, which enrollment
+replaced, and fwupd reports `UEFI dbx` with `Update Error: No vendor ID set`. What does
+work is the write fwupd makes, signed with our own KEK. The runbook is
+`docs/secure-boot-enrollment.md` § Updating `dbx` on an already-enrolled machine. These
+are the non-obvious parts, found while building `mise/tasks/dbx-append`. Each "measured"
+result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-14:
+
+- **What gates the write is User Mode, not enforcement.** The firmware checks the KEK
+  signature whenever PK is enrolled (`SetupMode=0`), whatever `SecureBoot` reads.
+  Measured with the machine at `SecureBoot=0 SetupMode=0`: a delta signed by a throwaway
+  key was refused with `EACCES` (the kernel's mapping of `EFI_SECURITY_VIOLATION`), and
+  dbx stayed byte-identical. The KEK-signed `.auth` was accepted. Applying with
+  enforcement off and turning it on afterwards keeps the dbx change and the
+  boot-under-enforcement check as separate steps.
+- **`sign-efi-sig-list -a` writes an all-zero `EFI_TIME` unless `-t` is given**
+  (`/* for append update timestamp should be zero */` in efitools' `sign-efi-sig-list.c`).
+  The UEFI spec (§8.2 `SetVariable()`) skips the newer-timestamp check for
+  `APPEND_WRITE`. Instead, `dbx-append` passes `-t "2010-03-06 19:17:21"`, which is the
+  `EFI_TIME` of Microsoft's own appends (`files/microsoft-uefi-certs/dbx.bin`) and so the
+  shape every OEM firmware already accepts from Windows Update. Measured: accepted, even
+  though the enrollment `.auth` (signed with the 2026 build time) set a later timestamp.
+- **`-g` sets the variable's *vendor* GUID, not the signature owner**, whatever its help
+  text says (`str_to_guid(argv[2], &vendor_guid)`). For `PK`/`KEK`/`db`/`dbx` the variable
+  name overrides it right after option parsing, so the Containerfile's `-g "$GUID"` has no
+  effect. Owner GUIDs come from the ESL (`sbsiglist --owner`).
+- **Signing is deterministic.** efitools signs with no authenticated attributes, so there
+  is no signing time, and the timestamp is fixed. The same delta signed twice gave the
+  same sha256. A re-signed `.auth` is identical, not merely equivalent.
+- **The `.auth`'s `CertData` is a bare PKCS#7 `SignedData`, with no `ContentInfo`
+  around it.** `openssl pkcs7`/`smime` refuse it with `wrong tag`. Wrap it in
+  `SEQUENCE { OID 1.2.840.113549.1.7.2, [0] EXPLICIT <SignedData> }` first. Then
+  `openssl smime -verify -binary -noverify -inform DER -content <bundle>` checks it, where
+  the bundle is `"dbx"` in UTF-16LE (no NUL) ‖ the `d719b2cb-…` GUID ‖ `u32 attributes
+  (0x67)` ‖ `EFI_TIME` ‖ payload. `dbx-append` runs this check before every write.
+- **efivarfs turns each `write()` into one `SetVariable()`**, so the 4-byte attribute
+  prefix and the whole `.auth` must go in a single write, on an fd opened without
+  `O_TRUNC`. `cat`/`tee` may split it. **Don't use `dd` on krytis either:**
+  `/usr/bin/dd` is uutils (0.12.0), which seeks the output even at offset 0. efivarfs
+  files cannot seek, so `dd bs=<size> count=1 conv=notrunc` dies with
+  `failed to seek in output file: Illegal seek` before writing anything. That is a local
+  error that looks like a refusal, and it would make a reject-test "pass" with the
+  firmware never asked. `dbx-append` does a single `os.write()` as root and separates a
+  failed `write()`, which is the firmware's answer, from any other failure. The `dbx` file
+  is `chattr +i` by default, and the task restores that afterwards.
+- **fwupd's `dbxtool -a` is a thin wrapper around the same write** (attributes `0x67`,
+  verified in `plugins/uefi-dbx/fu-dbxtool.c`). Its two guards are an already-applied
+  check and a scan of the ESP for binaries the update would revoke. The ESP is not
+  mounted on krytis, so in practice it needs `-f`, which turns both guards off.
+  `dbx-append apply` re-implements both. The ESP scan reads `EFI/` with `mcopy` straight
+  off the partition named by `LoaderDevicePartUUID`, so the ESP is never mounted, and it
+  refuses if any `.efi` there would be *newly* revoked.
+- **The append carries the delta, not the whole `dbx.esl`.** The spec says firmware drops
+  `EFI_SIGNATURE_DATA` already present on an append. Measured: re-sending the same
+  4-entry `.auth` with `--force` was accepted and left dbx byte-identical, so this firmware
+  dedupes. Sending the delta still bounds the cost on firmware that does not: ~2 KB
+  instead of doubling `dbx` with all 447 entries. The price is that a delta `.auth` is
+  specific to the dbx it was diffed against. `sign --against` takes a copied efivar, since
+  the dbx and KEK efivars are world-readable.
+- **An updated machine's dbx is entry-equal to `dbx.esl`, not byte-equal.** The firmware
+  stores each appended signature list as is, after the existing ones, and merges nothing.
+  The ThinkPad's lists are SHA256×443, SHA256×2, X509, X509: 23332 bytes of payload
+  against `dbx.esl`'s 23304, with the difference being the extra list header. The
+  original 21292 bytes are an unchanged prefix. `enroll-test`'s byte-exact match holds
+  only for a fresh enrollment. Compare an updated machine by entries (`dbx-check
+  --dbx <efivar>` counts, or `dbx-append sign` reporting nothing to append), not by
+  `cmp`.
+- **Append only adds entries.** Removing a bad entry needs a full replacement with a newer
+  timestamp, or clearing keys and re-enrolling, which writes the image's `dbx.auth`. Both
+  are #447's territory, not this task's.
 
 ## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
 
