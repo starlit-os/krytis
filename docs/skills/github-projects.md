@@ -16,15 +16,16 @@ token does not include it. Add it once:
 gh auth refresh -s project
 ```
 
-Without this, `createProjectV2` / `addProjectV2ItemById` / `addSubIssue` mutations fail
+Without this, `createProjectV2` / `addProjectV2ItemById` mutations fail
 with `INSUFFICIENT_SCOPES` — and so does *reading* the board: a plain
 `organization(login:"starlit-os"){ projectV2(number:1) }` query is rejected field-by-field
 with `requires one of the following scopes: ['read:project']`. Confirmed 2026-09-24 against
 a token holding `gist, read:org, repo, workflow`. Assume every field ID in § Krytis project
 field IDs is unverifiable until the scope is added.
 
-**Sub-issue linking is the exception** — the REST endpoint needs only `repo`.
-See § Link native sub-issues. Do not burn a scope refresh on parenting alone.
+**Sub-issue linking is the exception**: both the REST endpoint and the GraphQL
+`addSubIssue` mutation need only `repo`. See § Link native sub-issues. Do not burn a
+scope refresh on parenting alone.
 
 ---
 
@@ -102,8 +103,10 @@ gh api -X POST repos/starlit-os/krytis/issues/<parent>/sub_issues -F sub_issue_i
 `5304894712`), not the `number` and not the GraphQL node id. `-F` rather than
 `-f`, or it is sent as a string and rejected.
 
-The GraphQL mutation below does the same thing but drags in the `project` scope,
-so reach for it only when already authenticated for board work:
+The GraphQL mutation below does the same thing, and it also works with only the `repo`
+scope: on 2026-10-14 it linked #1232 under #483 with a token holding
+`gist, read:org, repo, workflow`, while `addProjectV2ItemById` on the same token failed
+with `INSUFFICIENT_SCOPES`. Only board operations need `project`:
 
 ```graphql
 mutation {

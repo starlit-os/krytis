@@ -935,8 +935,9 @@ image rather than the live system) and seals first (`mise run seal-uki` →
 
 **Hit on real hardware, 2026-10-13, bootc 1.17.1, composefs backend, sealed UKI.**
 Upstream bug [bootc-dev/bootc#2422](https://github.com/bootc-dev/bootc/issues/2422),
-open as of 2026-10-13. A comment there from 2026-10-09 reports the same trigger on
-bootc 1.17.1.
+open as of 2026-10-14. A comment there from 2026-10-09 reports the same trigger on
+bootc 1.17.1. Tracked in #1232 (sub-issue of #483), which holds the removal condition
+for krytis's workaround and the upstream issues to watch.
 
 **Trigger:** staging an update while another one is still staged (not yet rebooted
 into). On 2026-10-13, `starlit-update.service` staged `5d1be652…` at 08:40, and a
