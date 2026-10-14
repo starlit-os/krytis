@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+#MISE description="Assert a systemd-homed user gets a working SSH session over pubkey-only auth via systemd-home-fallback-shell (#422)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install and boot"
+#USAGE flag "--reuse-disk <path>" help="Boot a copy of this already-installed raw disk instead of running generate-disk (skips the only step that needs root)"
+#USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys, session transcript) and print its path"
+
+# What this proves, end to end, on a booted krytis VM (#422):
+#
+#   1. A homed user whose home is INACTIVE is served by nss_systemd with home
+#      `/` and shell /usr/bin/systemd-home-fallback-shell. Nothing in krytis
+#      wires that up; homed does it.
+#   2. sshd authenticates that user by PUBKEY ONLY — the key comes from the
+#      user record (`homectl --ssh-authorized-keys=`) through the image's
+#      `AuthorizedKeysCommand /usr/bin/userdbctl ssh-authorized-keys %u`, and
+#      sshd never asks for a password (KbdInteractiveAuthentication no, #410).
+#   3. pam_systemd_home cannot activate the home from sshd's session phase, so
+#      the session starts with XDG_SESSION_INCOMPLETE=1 and the fallback shell
+#      runs as the login shell. IT asks for the password, activates the home,
+#      and execs the record's real shell.
+#   4. The final shell has the real $HOME, the home is actually mounted, and
+#      XDG_SESSION_INCOMPLETE is gone.
+#   5. A command with no tty (`ssh host cmd`, scp, rsync) is refused while the
+#      home is inactive — the fallback shell has no terminal to prompt on —
+#      instead of running against HOME=/.
+#
+# Step 4 is the point. A shell prompt on its own proves nothing: the failure
+# mode of homed-without-activation is a session that WORKS with HOME=/ and
+# nothing mounted (docs/skills/pam.md § systemd-homed users), so every check
+# below reads the mount and the environment, never just "did ssh exit 0".
+#
+# The FIDO2 variant is deliberately absent. krytis stopped enrolling homed
+# FIDO2 login credentials in #759/#532 (`mise fido2:enroll` removes them), so
+# the fallback shell only ever has a password to ask for. QEMU's
+# u2f-emulated device is CTAP1-only with no hmac-secret, which homed's FIDO2
+# unlock requires, so the path cannot be emulated here anyway.
+#
+# Provisioning follows boot-test: everything is SMBIOS credentials, the
+# installed disk is never mutated, and only generate-disk needs root. Unlike
+# boot-test, sshd keeps the image's AuthorizedKeysCommand — that lookup is the
+# product path under test. Root's harness key is added as an extra
+# AuthorizedKeysFile, which sshd consults first.
+
+# shellcheck disable=SC2015  # pass() cannot fail, so `A && pass || fail` is a true if/else
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+CLI_IMAGE=""; CLI_REUSE_DISK=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)      CLI_IMAGE="$2"; shift 2 ;;
+        --reuse-disk) CLI_REUSE_DISK="$2"; shift 2 ;;
+        --keep)       CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+if [ -n "${REUSE_DISK}" ] && [ ! -f "${REUSE_DISK}" ]; then
+    echo "ERROR: --reuse-disk file not found: ${REUSE_DISK}" >&2
+    exit 1
+fi
+command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
+
+TEST_USER="sshfallbacktest"
+# Random per run, never printed. Long enough for pam_pwquality's defaults so
+# the account is created exactly as the first-boot wizard would create it.
+TEST_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')"
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-homed-ssh-test.XXXXXX)
+DISK="${WORKDIR}/test.raw"
+SSH_PORT=2322
+while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT + 1)); done
+
+QEMU_PID=""
+cleanup() {
+    [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
+    if [ -n "${KEEP}" ]; then
+        echo "==> WORKDIR kept at ${WORKDIR}"
+    else
+        rm -rf "${WORKDIR}"
+    fi
+}
+trap cleanup EXIT
+# set -e alone exits without a word; say which command it was.
+trap 'echo "==> ABORTED at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+ssh-keygen -t ed25519 -N '' -C 'krytis homed-ssh-test root' -f "${WORKDIR}/id_root" -q
+ssh-keygen -t ed25519 -N '' -C 'krytis homed-ssh-test user' -f "${WORKDIR}/id_user" -q
+
+if [ -n "${REUSE_DISK}" ]; then
+    echo "==> [1/7] Copying ${REUSE_DISK} (no install, no root)..."
+    cp --reflink=auto "${REUSE_DISK}" "${DISK}"
+else
+    echo "==> [1/7] Installing ${IMAGE} → ${DISK}..."
+    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size 15G
+fi
+
+echo "==> [2/7] Booting headless with sshd enabled for this boot only..."
+printf '[Unit]\nWants=sshd.service\n' > "${WORKDIR}/mu-dropin.conf"
+
+# Two AuthorizedKeysFile entries: the default per-user file, plus root's
+# harness key from the credential directory. AuthorizedKeysCommand is NOT
+# touched — the homed user's key can only arrive through it.
+cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
+[Service]
+ImportCredential=krytis.homedtest_root_keys
+ExecStart=
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile .ssh/authorized_keys ${CREDENTIALS_DIRECTORY}/krytis.homedtest_root_keys"
+DROPIN
+
+# Same reason as boot-test: no GPU here, and the greeter compositor free-spins
+# without one (#764).
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/true\nRestart=no\n' > "${WORKDIR}/greetd-dropin.conf"
+
+cred_b64() { base64 -w0 < "$1"; }
+. scripts/ovmf-paths.sh   # #458
+OVMF_CODE=$(ovmf_code_plain)
+cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"
+
+qemu-system-x86_64 \
+    -enable-kvm -m "${VM_RAM:-8192}" -cpu host -smp "${VM_CPUS:-4}" \
+    -machine q35 \
+    -drive "file=${DISK},format=raw,if=virtio" \
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+    -device virtio-net-pci,netdev=net0 \
+    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:krytis.homedtest_root_keys=$(cred_b64 "${WORKDIR}/id_root.pub")" \
+    -display none \
+    -serial "file:${WORKDIR}/serial.log" \
+    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+QEMU_PID=$(cat "${WORKDIR}/qemu.pid")
+
+SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5)
+ROOT() { timeout 120 ssh "${SSH_OPTS[@]}" -o LogLevel=ERROR -i "${WORKDIR}/id_root" root@localhost "$@"; }
+
+UP=false
+DEADLINE=$((SECONDS + 300))
+while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    # `timeout`: ConnectTimeout bounds only the TCP connect, and a stalled
+    # AuthorizedKeysCommand holds pre-auth open indefinitely
+    # (docs/skills/pam.md § `userdbctl` can wedge SSH pubkey auth).
+    if timeout 10 ssh "${SSH_OPTS[@]}" -i "${WORKDIR}/id_root" root@localhost true 2>/dev/null; then
+        UP=true; break
+    fi
+    sleep 3
+done
+if [ "${UP}" != true ]; then
+    echo "==> FAIL: root SSH never came up within 300s — nothing about homed was tested." >&2
+    tail -40 "${WORKDIR}/serial.log" >&2 || true
+    exit 1
+fi
+# No `is-system-running --wait`: on a freshly installed (first-boot) disk it
+# outlasted ROOT's 120s timeout and aborted the run, while sshd and homed were
+# already up. homectl reaches homed over D-Bus activation, so nothing here
+# needs the boot to have finished.
+ROOT 'systemctl --version | head -1; systemctl is-system-running' | sed 's/^/    /' || true
+
+echo "==> [3/7] Creating homed user ${TEST_USER} with the first-boot wizard's flags..."
+# The wizard's own flags (docs/design/first-boot-setup.md, initial-user row),
+# so the home under test has the storage a real first-boot account gets.
+# NEWPASSWORD is homectl's documented non-interactive password channel; the
+# key is passed as a user-record property, which is the only place sshd can
+# read it from while the home is inactive.
+ROOT "cat > /run/${TEST_USER}.pub" < "${WORKDIR}/id_user.pub"
+printf '%s' "${TEST_PASS}" | ROOT "NEWPASSWORD=\$(cat) homectl create ${TEST_USER} \
+    --member-of=wheel --auto-resize-mode=off --rebalance-weight=off --disk-size=35% \
+    --ssh-authorized-keys=@/run/${TEST_USER}.pub && rm -f /run/${TEST_USER}.pub" \
+    || { echo "==> FAIL: homectl create failed" >&2; exit 1; }
+
+FAILED=0
+pass() { echo "    PASS  $1"; }
+fail() { echo "    FAIL  $1" >&2; FAILED=1; }
+
+echo "==> [4/7] Pre-login state (home inactive)..."
+STATE=$(ROOT "homectl inspect ${TEST_USER} | sed -n 's/^ *State: //p'" || true)
+STORAGE=$(ROOT "homectl inspect ${TEST_USER} | sed -n 's/^ *Storage: //p'" || true)
+NSS=$(ROOT "getent passwd ${TEST_USER}" || true)
+RECORD_SHELL=$(ROOT "homectl inspect --json=short ${TEST_USER}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("shell","/bin/bash"))' || true)
+KEYS=$(ROOT "userdbctl ssh-authorized-keys ${TEST_USER}" || true)
+echo "    storage: ${STORAGE}   state: ${STATE}   record shell: ${RECORD_SHELL}"
+echo "    getent:  ${NSS}"
+[ "${STATE}" = inactive ] && pass "home is inactive before login" || fail "home is '${STATE}', want inactive"
+case "${NSS}" in
+    *":/:/usr/bin/systemd-home-fallback-shell") pass "NSS serves home=/ and the fallback shell" ;;
+    *) fail "NSS did not substitute the fallback shell: ${NSS}" ;;
+esac
+case "${KEYS}" in
+    *"$(cut -d' ' -f2 "${WORKDIR}/id_user.pub")"*) pass "userdbctl ssh-authorized-keys serves the record's key" ;;
+    *) fail "userdbctl ssh-authorized-keys does not return the user's key" ;;
+esac
+
+echo "==> [5/7] Non-interactive command as ${TEST_USER} must be refused, not run with HOME=/..."
+# `ssh host cmd` (and scp/rsync) gets no tty, so the fallback shell has nowhere
+# to ask for the password. It must refuse — exit non-zero, the command never
+# runs — rather than exec the command in an unmounted, HOME=/ session.
+NI_RC=0
+# shellcheck disable=SC2016  # $HOME is meant to expand in the guest, not here
+NI_OUT=$(timeout 60 ssh -T "${SSH_OPTS[@]}" -o LogLevel=ERROR -i "${WORKDIR}/id_user" "${TEST_USER}@localhost" \
+    'printf "ran HOME=%s\n" "$HOME"' 2>"${WORKDIR}/noninteractive.err") || NI_RC=$?
+echo "    exit ${NI_RC}; stderr: $(tr '\n' ' ' < "${WORKDIR}/noninteractive.err")"
+case "${NI_RC}:${NI_OUT}" in
+    0:*|*"ran HOME="*) fail "non-interactive command ran against an inactive home: '${NI_OUT}'" ;;
+    124:*)             fail "non-interactive command hung instead of failing" ;;
+    *)                 pass "non-interactive command refused (exit ${NI_RC}), nothing ran" ;;
+esac
+
+echo "==> [6/7] SSH in as ${TEST_USER} by pubkey (with a pty), answer the fallback shell..."
+# A pty is required: the fallback shell prompts on the terminal. BatchMode=yes
+# and PreferredAuthentications=publickey mean the CLIENT can never answer a
+# password prompt from sshd, so any password exchange that follows happens
+# inside the session — i.e. it is the fallback shell's.
+#
+# TERM=dumb: ssh -tt forwards the caller's TERM into the session, and with a
+# real terminal type readline wraps every line in escapes (`\e[?2004l`), which
+# made the marker parsing below miss — the run then depended on whether the
+# task was started from a terminal. dumb keeps the session identical either way.
+TERM=dumb TEST_PASS="${TEST_PASS}" python3 - "${WORKDIR}/transcript.log" \
+    timeout 180 ssh -tt "${SSH_OPTS[@]}" -o PreferredAuthentications=publickey \
+        -E "${WORKDIR}/ssh-client.log" -v -i "${WORKDIR}/id_user" "${TEST_USER}@localhost" <<'PY' || true
+import os, re, select, subprocess, sys, time
+
+log_path, cmd = sys.argv[1], sys.argv[2:]
+p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+buf = b""
+
+def pump(pattern, timeout):
+    global buf
+    deadline = time.monotonic() + timeout
+    while True:
+        m = re.search(pattern, buf)
+        if m:
+            return m
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        r, _, _ = select.select([p.stdout], [], [], left)
+        if not r:
+            return None
+        chunk = os.read(p.stdout.fileno(), 4096)
+        if not chunk:
+            return None
+        buf += chunk
+
+def send(data):
+    p.stdin.write(data)
+    p.stdin.flush()
+
+try:
+    if pump(rb"(?i)password[^\r\n]*:", 120) is None:
+        sys.exit(2)
+    buf += b"\n<<harness: password sent>>\n"
+    send(os.environ["TEST_PASS"].encode() + b"\n")
+    # The markers are built by shell concatenation, so the pty's echo of this
+    # command line can never match them — only real output can.
+    time.sleep(3)
+    send(b"printf '%s\\n' ==HOMEDTEST''-BEGIN==; "
+         b"printf 'home=%s\\n' \"$HOME\"; "
+         b"printf 'pwd=%s\\n' \"$PWD\"; "
+         b"printf 'incomplete=[%s]\\n' \"${XDG_SESSION_INCOMPLETE-}\"; "
+         b"printf 'shell=%s\\n' \"$(readlink /proc/$$/exe)\"; "
+         b"printf 'mount=%s\\n' \"$(findmnt -n -o SOURCE,FSTYPE --mountpoint \"$HOME\")\"; "
+         b"printf 'state=%s\\n' \"$(homectl inspect \"$USER\" | sed -n 's/^ *State: //p')\"; "
+         b"printf 'groups=%s\\n' \"$(id -nG)\"; "
+         b"touch \"$HOME/.homedtest\" && printf 'writable=yes\\n'; "
+         b"printf '%s\\n' ==HOMEDTEST''-END==; exit\n")
+    if pump(rb"==HOMEDTEST-END==", 60) is None:
+        sys.exit(3)
+    pump(rb"(?!)", 10)  # never matches: read on until ssh exits, at most 10s
+finally:
+    try:
+        p.kill()
+    except ProcessLookupError:
+        pass
+    with open(log_path, "wb") as f:
+        f.write(buf.replace(os.environ["TEST_PASS"].encode(), b"<redacted>"))
+PY
+
+# CSI escapes are stripped anyway, so a stray one can never hide a marker.
+TRANSCRIPT="$(tr -d '\r' < "${WORKDIR}/transcript.log" | sed 's/\x1b\[[0-9;?]*[[:alpha:]]//g')"
+echo "    --- session transcript ---"
+printf '%s\n' "${TRANSCRIPT}" | sed 's/^/    | /'
+echo "    --------------------------"
+field() { printf '%s\n' "${TRANSCRIPT}" | sed -n "/^==HOMEDTEST-BEGIN==\$/,/^==HOMEDTEST-END==\$/s/^$1=//p" | head -1; }
+
+echo "==> [7/7] Interactive session assertions..."
+if grep -q 'Authenticated to .* using "publickey"' "${WORKDIR}/ssh-client.log"; then
+    pass "sshd authenticated by publickey"
+else
+    fail "sshd did not authenticate by publickey:"
+    grep -E 'Authentications that can continue|Permission denied|Authenticated' "${WORKDIR}/ssh-client.log" | sed 's/^/      /' >&2
+fi
+if grep -q '<<harness: password sent>>' "${WORKDIR}/transcript.log"; then
+    pass "the session prompted for a password after sshd authentication (fallback shell)"
+else
+    fail "no in-session password prompt — the fallback shell never asked"
+fi
+if ! grep -q '^==HOMEDTEST-BEGIN==$' <<<"${TRANSCRIPT}"; then
+    fail "never reached a shell that ran the probe"
+else
+    HOME_SEEN=$(field home)
+    case "${HOME_SEEN}" in
+        ""|/) fail "HOME='${HOME_SEEN}' — the home was never activated" ;;
+        *)    pass "HOME=${HOME_SEEN}" ;;
+    esac
+    [ "$(field pwd)" = "${HOME_SEEN}" ] && pass "working directory is \$HOME" || fail "pwd=$(field pwd), want ${HOME_SEEN}"
+    [ "$(field incomplete)" = "[]" ] && pass "XDG_SESSION_INCOMPLETE unset in the final shell" || fail "XDG_SESSION_INCOMPLETE=$(field incomplete)"
+    [ -n "$(field mount)" ] && pass "\$HOME is a mountpoint: $(field mount)" || fail "\$HOME is not a mountpoint — nothing was mounted"
+    [ "$(field state)" = active ] && pass "homectl reports the home active" || fail "homectl state '$(field state)', want active"
+    SHELL_SEEN=$(field shell)
+    [ "$(readlink -m "${SHELL_SEEN}")" != /usr/bin/homectl ] && [ -n "${SHELL_SEEN}" ] \
+        && pass "final shell is ${SHELL_SEEN} (record shell ${RECORD_SHELL}), not the fallback" \
+        || fail "final shell is '${SHELL_SEEN}' — still the fallback shell"
+    case " $(field groups) " in *" wheel "*) pass "groups include wheel" ;; *) fail "groups '$(field groups)' lack wheel" ;; esac
+    [ "$(field writable)" = yes ] && pass "\$HOME is writable" || fail "could not write to \$HOME"
+fi
+
+if [ "${FAILED}" -ne 0 ]; then
+    echo "    --- guest journal: sshd + systemd-homed ---" >&2
+    ROOT "journalctl -b --no-pager -o short-monotonic -u sshd -u systemd-homed | tail -60" 2>/dev/null | sed 's/^/    | /' >&2 || true
+fi
+ROOT systemctl poweroff >/dev/null 2>&1 || true
+
+if [ "${FAILED}" -ne 0 ]; then
+    echo "==> homed-ssh-fallback-test FAILED"
+    exit 1
+fi
+echo "==> homed-ssh-fallback-test PASSED"

@@ -24,7 +24,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | PAM stack, keyring integration, FIDO2 auth flow | [`docs/skills/pam.md`](skills/pam.md) |
 | Understand why krytis runs oo7 rather than gnome-keyring, and what the cutover cost (#84, closed 2026-09-04) | [`docs/design/secrets-service.md`](design/secrets-service.md) |
 | Re-pin oo7, or check whether an upstream oo7 fix actually helps krytis (`mise run oo7-prompter-test`, `mise run oo7-login-race-test`) | [`docs/skills/pam.md`](skills/pam.md) § *oo7's prompter detection, and the patch krytis no longer needs*, § *Login auto-unlock is lost to a race* |
-| Change SSH config, sshd auth policy, or make SSH work for some account type | [`docs/skills/pam.md`](skills/pam.md) § `UsePAM yes` — **read the priority note first: SSH is opt-in and not a release blocker** |
+| Change SSH config, sshd auth policy, or make SSH work for some account type (`mise run homed-ssh-fallback-test` for systemd-homed users) | [`docs/skills/pam.md`](skills/pam.md) § `UsePAM yes` — **read the priority note first: SSH is opt-in and not a release blocker** |
 | Debug a login that fails right after a logout ("Login service stopped responding. Restart greetd." — greetd is not the cause), or size a systemd-homed home area | [`docs/skills/pam.md`](skills/pam.md) § A logout shrink blocks the next login |
 | Change or debug **lock screen** authentication — note it runs the `login` stack, so `greetd` decisions do not apply to it | [`docs/skills/pam.md`](skills/pam.md) § The lock screen authenticates through `login`, not `greetd` |
 | Change what the first-boot wizard prompts for or creates (initial account, keymap, timezone) | [`docs/design/first-boot-setup.md`](design/first-boot-setup.md) |
