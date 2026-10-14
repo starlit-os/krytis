@@ -1,8 +1,9 @@
 # Host requirements for the MX Control noctalia plugin
 
-**Issue:** #1220 · **Status (2026-10-14): steps 1 and 2 done, in one PR.** Step 3's hardware
-check is open; its skill write-back (`docs/skills/desktop.md`, `docs/skills/bst.md`) landed
-with steps 1–2.
+**Issue:** #1220 · **Status (2026-10-14): steps 1 and 2 shipped in #1244.** Step 3's hardware
+check is tracked in its own draft PR, which archives this plan once the results below are
+filled in. Step 3's skill write-back (`docs/skills/desktop.md`, `docs/skills/bst.md`) landed
+with #1244.
 
 | Plugin | Catalog id | What it executes |
 |---|---|---|
@@ -125,3 +126,15 @@ chain; the uaccess rule. Add a short Python-packaging section to `docs/skills/bs
 not resolved, so declare only what is actually imported).
 
 Archive this plan to `docs/plans/done/` in the same PR.
+
+## Step 3 results
+
+Image: _version under test_ (first build containing #1244). Hardware: G915 TKL on Lightspeed
+receiver `046d:c547`.
+
+| Check | Result |
+|---|---|
+| `/dev/hidraw*` for the receiver after a replug: `ls -l` shows `+`, `getfacl` has `user:<seat user>:rw-` | _pending_ |
+| `python3 <plugin dir>/backend/mxctl.py discover` → `"accessible": true`, device listed | _pending_ |
+| MX Control enabled in Settings → Plugins: bar capsule shows battery | _pending_ |
+| Panel shows DPI and device settings; a setting change applies | _pending_ |
