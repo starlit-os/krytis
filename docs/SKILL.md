@@ -32,6 +32,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Debug an update that rebooted into the old image, or `bootc status` failing with `Opening ref 'streams/oci-manifest-sha256:…'`; change how `starlit-update` runs `bootc upgrade` | [`docs/skills/bootc-vm.md`](skills/bootc-vm.md) § A second staged update breaks bootc until the orphan is removed |
 | Work on gaming support, or wonder why there is no native Steam/gamescope/sysext | [`docs/design/gaming-variant.md`](design/gaming-variant.md) |
 | Make Discord show games a flatpak Discord can't detect (WoW under Faugus), or package presence-bridge (kitten-lily/presence-bridge) | [`docs/design/presence-bridge.md`](design/presence-bridge.md), [`docs/skills/bst.md`](skills/bst.md) § Flatpak sandboxing: Discord RPC and game detection |
+| Make a browser extension reach its desktop app (KeePassXC, 1Password, Bitwarden) from a **Flatpak** browser, or wonder whether Proton Pass's `me.proton.pass.nm.json` does anything on Linux (it doesn't) | [`docs/design/native-messaging-proxy.md`](design/native-messaging-proxy.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Reference the upstream live-ISO/installer project krytis's ISO pipeline was forked out of | [`docs/skills/dakota-iso.md`](skills/dakota-iso.md) |
