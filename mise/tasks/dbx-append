@@ -1,0 +1,454 @@
+#!/usr/bin/env python3
+#MISE description="Append the dbx entries an enrolled machine is missing, signed with krytis's KEK (#1060)"
+#USAGE arg "<action>" help="sign | apply"
+#USAGE arg "[auth]" help="apply: the .auth that sign wrote"
+#USAGE flag "--against <path>" help="sign: the target machine's dbx efivar, a copy of it, or a bare .esl (default: this machine's)"
+#USAGE flag "--kek-var <path>" help="sign: the target machine's KEK efivar, to confirm krytis's KEK is enrolled there (default: this machine's)"
+#USAGE flag "--out <path>" default="output/dbx-append.auth" help="sign: where to write the signed append"
+#USAGE flag "--throwaway-key" help="sign: sign with a fresh self-signed key no firmware trusts, for the rejection test"
+#USAGE flag "--force" help="apply: write even when the live dbx already holds every entry (tests the firmware's dedupe)"
+#USAGE flag "--expect-reject" help="apply: succeed only if the firmware refuses the write and the efivar stays byte-identical"
+"""Bring an enrolled machine's dbx up to files/microsoft-uefi-certs/dbx.esl.
+
+systemd-boot enrols loader/keys/auto only in Setup Mode, so a machine keeps
+the dbx it was enrolled with (docs/design/secure-boot-testing.md G-4). In
+User Mode the firmware still accepts a dbx write signed by a key in KEK, and
+krytis holds its KEK. This is that write, done by hand:
+
+  sign   desk side. Diffs dbx.esl against the target's live dbx, builds a
+         signature list of only the missing entries, and signs it with the KEK
+         from fnox as an APPEND_WRITE (`sign-efi-sig-list -a`). The result is
+         specific to the dbx it was diffed against.
+  apply  target side, needs sudo. Checks the .auth's signature and signer,
+         refuses if the append would newly revoke any .efi on the booted ESP,
+         writes `0x67 attributes || .auth` to efivarfs, and reads it back.
+
+Append-only on purpose: entries are only ever added, never removed or
+replaced, so nothing trusted changes, only what is refused. Removing entries
+or touching db/KEK/PK is key rotation and belongs to #447.
+
+The EFI_TIME is fixed at Microsoft's, 2010-03-06 19:17:21, the value every
+published DBXUpdate carries (files/microsoft-uefi-certs/dbx.bin). The UEFI
+spec skips the newer-timestamp check for APPEND_WRITE, and an old non-zero
+timestamp on an append is the shape every OEM firmware already accepts from
+Windows Update. efitools' own default for -a is an all-zero EFI_TIME, which
+is less travelled.
+
+Exit status: 0 done (or nothing to do), 1 the firmware did not do what was
+asked, 2 error or a guard refused.
+"""
+
+import argparse
+import hashlib
+import importlib.machinery
+import importlib.util
+import os
+import pathlib
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+EFIVARS = pathlib.Path("/sys/firmware/efi/efivars")
+DBX_VAR = EFIVARS / "dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+KEK_VAR = EFIVARS / "KEK-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+ESP_PARTUUID_VAR = EFIVARS / "LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+SECURITY_DB_GUID = uuid.UUID("d719b2cb-3d3a-4596-a3bc-dad00e67656f")
+PKCS7_CERT_TYPE = uuid.UUID("4aafd29d-68df-49ee-8aa9-347d375665a7")
+WIN_CERT_TYPE_EFI_GUID = 0x0EF1
+# NV | BS | RT | TIME_BASED_AUTHENTICATED_WRITE_ACCESS | APPEND_WRITE
+APPEND_ATTRS = 0x01 | 0x02 | 0x04 | 0x20 | 0x40
+TIMESTAMP = "2010-03-06 19:17:21"
+TIMESTAMP_BYTES = struct.pack("<HBBBBBBIhBB", 2010, 3, 6, 19, 17, 21, 0, 0, 0, 0, 0)
+
+ROOT = pathlib.Path(os.environ.get("MISE_PROJECT_ROOT") or os.getcwd())
+SUDO = [] if os.geteuid() == 0 else ["sudo"]
+
+# Runs as root. efivarfs turns each write() into one SetVariable(), so the
+# attribute prefix and the whole .auth must go in a single write() on an fd
+# opened without O_TRUNC. Not dd: uutils dd (krytis's /usr/bin/dd) seeks the
+# output even at offset 0, and efivarfs files cannot seek, so it dies with
+# "Illegal seek" before writing anything. Exit 3 means the write() itself
+# failed, which is the firmware's answer (EACCES for a bad signature, EINVAL,
+# ENOSPC, ...); any other non-zero exit is a local failure.
+EFIVAR_WRITER = r"""
+import errno, os, sys
+data = open(sys.argv[2], "rb").read()
+fd = os.open(sys.argv[1], os.O_WRONLY)
+try:
+    n = os.write(fd, data)
+except OSError as e:
+    print(f"write(): {errno.errorcode.get(e.errno, e.errno)} ({e.strerror})")
+    sys.exit(3)
+print(f"write() took {n} of {len(data)} bytes")
+sys.exit(0 if n == len(data) else 4)
+"""
+
+
+def load_dbx_check():
+    """dbx-check's PE/Authenticode and signature-list code, reused rather than copied.
+    No bytecode cache: it would land in mise/tasks/__pycache__/."""
+    sys.dont_write_bytecode = True
+    path = str(ROOT / "mise/tasks/dbx-check")
+    loader = importlib.machinery.SourceFileLoader("dbx_check", path)
+    spec = importlib.util.spec_from_loader("dbx_check", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+dc = load_dbx_check()
+Fail = dc.Fail
+
+
+# ── signature lists ─────────────────────────────────────────────────────────
+
+def entries(data: bytes, pos: int = 0) -> list[tuple[uuid.UUID, int, bytes]]:
+    """(list type, SignatureSize, EFI_SIGNATURE_DATA) for every entry."""
+    out = []
+    while pos < len(data):
+        if pos + 28 > len(data):
+            raise Fail(f"truncated signature list at offset {pos}")
+        list_type = uuid.UUID(bytes_le=data[pos:pos + 16])
+        size, header, sig = struct.unpack_from("<III", data, pos + 16)
+        if size < 28 or pos + size > len(data) or sig <= 16 or (size - 28 - header) % sig:
+            raise Fail(f"malformed signature list at offset {pos} (size {size}, SignatureSize {sig})")
+        if header:
+            raise Fail(f"signature list at offset {pos} has a {header}-byte header; dbx lists carry none")
+        for e in range(pos + 28, pos + size, sig):
+            out.append((list_type, sig, data[e:e + sig]))
+        pos += size
+    return out
+
+
+def key(entry: tuple[uuid.UUID, int, bytes]) -> tuple[uuid.UUID, bytes]:
+    # What is revoked, ignoring the owner GUID: a hash already revoked under
+    # another owner needs no second copy.
+    return entry[0], entry[2][16:]
+
+
+def build_esl(items: list[tuple[uuid.UUID, int, bytes]]) -> bytes:
+    """One signature list per (type, SignatureSize), in first-seen order."""
+    groups: dict[tuple[uuid.UUID, int], list[bytes]] = {}
+    for list_type, sig, data in items:
+        groups.setdefault((list_type, sig), []).append(data)
+    return b"".join(
+        list_type.bytes_le + struct.pack("<III", 28 + sig * len(datas), 0, sig) + b"".join(datas)
+        for (list_type, sig), datas in groups.items()
+    )
+
+
+def read_list(path: pathlib.Path) -> list[tuple[uuid.UUID, int, bytes]]:
+    """A bare .esl, a .auth, or an efivarfs variable (4-byte attribute prefix)."""
+    data = path.read_bytes()
+    return entries(data, dc.esl_start(data))
+
+
+def describe(entry: tuple[uuid.UUID, int, bytes]) -> str:
+    list_type, _sig, data = entry
+    if list_type == dc.SHA256_GUID:
+        return f"sha256 {data[16:].hex().upper()}"
+    if list_type == dc.X509_GUID:
+        return f"x509   {dc.subject(data[16:])}"
+    return f"{list_type} ({len(data) - 16} bytes)"
+
+
+def counts(items) -> str:
+    hashes = sum(1 for t, _, _ in items if t == dc.SHA256_GUID)
+    certs = sum(1 for t, _, _ in items if t == dc.X509_GUID)
+    return f"{hashes} sha256 hash(es), {certs} x509 cert(s)"
+
+
+# ── .auth ───────────────────────────────────────────────────────────────────
+
+def split_auth(data: bytes) -> tuple[bytes, bytes, bytes]:
+    """EFI_VARIABLE_AUTHENTICATION_2 → (EFI_TIME, PKCS#7 SignedData, payload)."""
+    if len(data) < 16 + 24:
+        raise Fail("too short for an EFI_VARIABLE_AUTHENTICATION_2")
+    length, revision, cert_type = struct.unpack_from("<IHH", data, 16)
+    if revision != 0x0200 or cert_type != WIN_CERT_TYPE_EFI_GUID:
+        raise Fail(f"not an EFI_VARIABLE_AUTHENTICATION_2 (wRevision {revision:#x}, wCertificateType {cert_type:#x})")
+    if uuid.UUID(bytes_le=data[24:40]) != PKCS7_CERT_TYPE:
+        raise Fail("WIN_CERTIFICATE_UEFI_GUID is not EFI_CERT_TYPE_PKCS7_GUID")
+    if length < 24 or 16 + length > len(data):
+        raise Fail(f"WIN_CERTIFICATE dwLength {length} runs past the file")
+    return data[:16], data[40:16 + length], data[16 + length:]
+
+
+def der_len(n: int) -> bytes:
+    if n < 0x80:
+        return bytes([n])
+    b = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    return bytes([0x80 | len(b)]) + b
+
+
+def content_info(signed_data: bytes) -> bytes:
+    # UEFI carries a bare SignedData; openssl wants it inside a ContentInfo.
+    body = bytes.fromhex("06092a864886f70d010702") + b"\xa0" + der_len(len(signed_data)) + signed_data
+    return b"\x30" + der_len(len(body)) + body
+
+
+def verify_auth(auth: bytes, tmp: pathlib.Path) -> tuple[bytes, list[tuple[uuid.UUID, int, bytes]], list[bytes]]:
+    """Check the signature over exactly what the firmware will hash for an
+    append write to dbx. Returns (payload, its entries, embedded certs DER).
+    Says nothing about whether the firmware trusts the signer."""
+    timestamp, signed_data, payload = split_auth(auth)
+    items = entries(payload)
+    if not items:
+        raise Fail("the .auth carries no signature-list entries")
+    p7 = tmp / "sig.p7"
+    p7.write_bytes(content_info(signed_data))
+    bundle = tmp / "bundle"
+    bundle.write_bytes("dbx".encode("utf-16-le") + SECURITY_DB_GUID.bytes_le
+                       + struct.pack("<I", APPEND_ATTRS) + timestamp + payload)
+    r = subprocess.run(["openssl", "smime", "-verify", "-binary", "-noverify", "-inform", "DER",
+                        "-in", p7, "-content", bundle, "-out", "/dev/null"],
+                       capture_output=True, text=True)
+    if r.returncode:
+        raise Fail("signature does not verify as an APPEND_WRITE to dbx: " + r.stderr.strip())
+    der = p7.read_bytes()
+    # dc.signer_certs walks WIN_CERTIFICATE entries; give it one around our ContentInfo.
+    signers = dc.signer_certs(struct.pack("<IHH", 8 + len(der), 0x0200, 2) + der)
+    return payload, items, signers
+
+
+def kek_certs(path: pathlib.Path) -> list[bytes]:
+    return [data[16:] for t, _, data in read_list(path) if t == dc.X509_GUID]
+
+
+def private_tmpdir() -> pathlib.Path:
+    # Key material goes to tmpfs, never to disk.
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/dev/shm"
+    return pathlib.Path(tempfile.mkdtemp(prefix="dbx-append-", dir=base))
+
+
+# ── sign ────────────────────────────────────────────────────────────────────
+
+def do_sign(args) -> int:
+    against = pathlib.Path(args.against or DBX_VAR)
+    kek_var = pathlib.Path(args.kek_var or KEK_VAR)
+    esl_path = ROOT / "files/microsoft-uefi-certs/dbx.esl"
+
+    wanted = entries(esl_path.read_bytes())
+    have = read_list(against)
+    have_keys = {key(e) for e in have}
+    wanted_keys = {key(e) for e in wanted}
+    delta = [e for e in wanted if key(e) not in have_keys]
+    print(f"target  {against}: {counts(have)}")
+    print(f"repo    {esl_path.relative_to(ROOT)}: {counts(wanted)}")
+    extra = sum(1 for e in have if key(e) not in wanted_keys)
+    if extra:
+        print(f"note    the target revokes {extra} entr(ies) dbx.esl does not; an append leaves them alone")
+    if not delta:
+        print("\nnothing to append: the target already revokes everything in dbx.esl")
+        return 0
+    print(f"\nappending {len(delta)} entr(ies):")
+    for e in delta:
+        print(f"  {describe(e)}")
+
+    tmp = private_tmpdir()
+    try:
+        key_file, crt_file = tmp / "KEK.key", tmp / "KEK.crt"
+        if args.throwaway_key:
+            subprocess.run(["openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-nodes",
+                            "-subj", "/CN=dbx-append throwaway (untrusted)", "-days", "1",
+                            "-keyout", key_file, "-out", crt_file],
+                           check=True, capture_output=True)
+        else:
+            for secret, dest in (("KEK_KEY", key_file), ("KEK_CRT", crt_file)):
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
+                    subprocess.run(["fnox", "get", secret], stdout=f, check=True)
+        crt_der = subprocess.run(["openssl", "x509", "-in", crt_file, "-outform", "DER"],
+                                 check=True, capture_output=True).stdout
+
+        if kek_var.exists():
+            enrolled = crt_der in kek_certs(kek_var)
+            if args.throwaway_key and enrolled:
+                raise Fail("the throwaway certificate is somehow in the target's KEK")
+            if not args.throwaway_key and not enrolled:
+                raise Fail(f"krytis's KEK ({dc.subject(crt_der)}) is not enrolled in {kek_var}; "
+                           "the target's firmware would refuse this update")
+            print(f"\nsigner  {dc.subject(crt_der)}: {'enrolled' if enrolled else 'NOT enrolled'} in {kek_var}")
+        else:
+            print(f"\nsigner  {dc.subject(crt_der)}: cannot confirm it is enrolled, {kek_var} does not exist")
+
+        delta_esl = tmp / "delta.esl"
+        delta_esl.write_bytes(build_esl(delta))
+        out = pathlib.Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["sign-efi-sig-list", "-a", "-t", TIMESTAMP, "-k", key_file, "-c", crt_file,
+                            "dbx", delta_esl, out], capture_output=True, text=True)
+        if r.returncode:
+            raise Fail("sign-efi-sig-list failed:\n" + r.stdout + r.stderr)
+
+        auth = out.read_bytes()
+        payload, _items, signers = verify_auth(auth, tmp)
+        if auth[:16] != TIMESTAMP_BYTES:
+            raise Fail(f"sign-efi-sig-list wrote EFI_TIME {auth[:16].hex()}, not {TIMESTAMP}")
+        if payload != delta_esl.read_bytes():
+            raise Fail("the signed payload is not the delta signature list")
+        if crt_der not in signers:
+            raise Fail("the .auth is not signed by the certificate it was given")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    print(f"\nwrote   {out} ({len(auth)} bytes, sha256 {hashlib.sha256(auth).hexdigest()})")
+    print(f"        apply on the target with: mise run dbx-append apply {out}"
+          + (" --expect-reject" if args.throwaway_key else ""))
+    return 0
+
+
+# ── apply ───────────────────────────────────────────────────────────────────
+
+def sudo(*cmd, **kw) -> subprocess.CompletedProcess:
+    return subprocess.run([*SUDO, *map(str, cmd)], **kw)
+
+
+def esp_device() -> pathlib.Path:
+    if not ESP_PARTUUID_VAR.exists():
+        raise Fail(f"{ESP_PARTUUID_VAR.name} is not set; cannot find the ESP this machine booted from")
+    partuuid = ESP_PARTUUID_VAR.read_bytes()[4:].decode("utf-16-le").rstrip("\0").lower()
+    dev = pathlib.Path("/dev/disk/by-partuuid") / partuuid
+    if not dev.exists():
+        raise Fail(f"booted ESP {dev} does not exist")
+    return dev
+
+
+def check_boot_chain(live, after, tmp: pathlib.Path) -> None:
+    """Refuse if the append would newly revoke any .efi on the booted ESP: the
+    job dbxtool's ESP validation does, which a direct efivarfs write skips.
+    Read with mtools straight off the partition, so the ESP is never mounted."""
+    dev = esp_device()
+    esp = tmp / "esp"
+    esp.mkdir()
+    r = sudo("env", "MTOOLS_SKIP_CHECK=1", "mcopy", "-s", "-n", "-i", dev, "::/EFI", esp,
+             capture_output=True, text=True)
+    sudo("chown", "-R", f"{os.getuid()}:{os.getgid()}", esp, check=True)
+    if r.returncode:
+        raise Fail(f"could not read EFI/ from {dev}: {r.stderr.strip()}")
+    images = sorted(p for p in esp.rglob("*") if p.is_file() and p.suffix.lower() == ".efi")
+    if not images:
+        raise Fail(f"found no .efi files under EFI/ on {dev}; refusing to write blind")
+
+    def revoked(items, digest, chain):
+        hashes = {d[16:] for t, _, d in items if t == dc.SHA256_GUID}
+        certs = {d[16:] for t, _, d in items if t == dc.X509_GUID}
+        return digest in hashes or any(c in certs for c in chain)
+
+    newly = []
+    for img in images:
+        digest, table = dc.authenticode_sha256(img.read_bytes())
+        chain = dc.signer_certs(table)
+        if revoked(after, digest, chain) and not revoked(live, digest, chain):
+            newly.append(str(img.relative_to(esp)))
+    if newly:
+        raise Fail("this append would revoke images on the booted ESP; not writing:\n  "
+                   + "\n  ".join(newly))
+    print(f"esp     {dev}: none of {len(images)} .efi image(s) newly revoked")
+
+
+def do_apply(args) -> int:
+    if not args.auth:
+        raise Fail("apply needs the .auth that `mise run dbx-append sign` wrote")
+    auth = pathlib.Path(args.auth).read_bytes()
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="dbx-append-"))
+    try:
+        payload, items, signers = verify_auth(auth, tmp)
+        enrolled = kek_certs(KEK_VAR)
+        trusted = any(s in enrolled for s in signers)
+        names = ", ".join(dc.subject(s) for s in signers) or "<no certificate>"
+        print(f"auth    {args.auth}: {counts(items)}, signed by {names}"
+              f" ({'in' if trusted else 'NOT in'} this machine's KEK)")
+        if args.expect_reject and trusted:
+            raise Fail("--expect-reject, but the signer is enrolled in KEK: this write would really happen")
+        if not args.expect_reject and not trusted:
+            raise Fail("the signer is not in this machine's KEK, so the firmware will refuse it "
+                       "(use --expect-reject to test exactly that)")
+
+        before = DBX_VAR.read_bytes()
+        live = entries(before, 4)
+        live_keys = {key(e) for e in live}
+        missing = [e for e in items if key(e) not in live_keys]
+        print(f"live    {DBX_VAR}: {counts(live)}, {len(before)} bytes, "
+              f"sha256 {hashlib.sha256(before).hexdigest()}")
+        if not missing and not (args.force or args.expect_reject):
+            print("\nalready applied: the live dbx holds every entry, nothing written "
+                  "(--force writes anyway, to test the firmware's dedupe)")
+            return 0
+        print(f"        {len(missing)} of the .auth's {len(items)} entr(ies) are missing")
+
+        check_boot_chain(live, live + missing, tmp)
+
+        blob = tmp / "write"
+        blob.write_bytes(struct.pack("<I", APPEND_ATTRS) + auth)
+        immutable = "i" in subprocess.run(["lsattr", "-d", DBX_VAR], capture_output=True,
+                                          text=True, check=True).stdout.split()[0]
+        if immutable:
+            sudo("chattr", "-i", DBX_VAR, check=True)
+        try:
+            w = sudo(shutil.which("python3", path="/usr/bin:/bin") or sys.executable,
+                     "-c", EFIVAR_WRITER, DBX_VAR, blob, capture_output=True, text=True)
+        finally:
+            if immutable:
+                sudo("chattr", "+i", DBX_VAR, check=True)
+        if w.returncode not in (0, 3):
+            raise Fail(f"could not write {DBX_VAR} (not a firmware answer): "
+                       + (w.stderr or w.stdout).strip())
+        after = DBX_VAR.read_bytes()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    snap = ROOT / "output/dbx-append" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    snap.mkdir(parents=True, exist_ok=True)
+    (snap / "before.efivar").write_bytes(before)
+    (snap / "after.efivar").write_bytes(after)
+
+    rejected = w.returncode == 3
+    unchanged = after == before
+    after_items = entries(after, 4)
+    print(f"\nwrite   {'REFUSED by the firmware: ' if rejected else 'accepted: '}{w.stdout.strip()}")
+    print(f"after   {counts(after_items)}, {len(after)} bytes, sha256 {hashlib.sha256(after).hexdigest()}"
+          f"{' (byte-identical to before)' if unchanged else ''}")
+    print(f"        snapshots in {snap.relative_to(ROOT)}/")
+
+    if args.expect_reject:
+        if rejected and unchanged:
+            print("\nPASS: the firmware refused a dbx write not signed by its KEK, and dbx is unchanged")
+            return 0
+        print("\nFAIL: expected the firmware to refuse this write and leave dbx alone", file=sys.stderr)
+        return 1
+    if rejected:
+        print("\nFAIL: the firmware refused a write signed by an enrolled KEK", file=sys.stderr)
+        return 1
+    still = [e for e in items if key(e) not in {key(a) for a in after_items}]
+    if still:
+        print(f"\nFAIL: write accepted but {len(still)} entr(ies) are still missing", file=sys.stderr)
+        return 1
+    print("\nOK: every entry in the .auth is in the live dbx")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="mise run dbx-append")
+    ap.add_argument("action", choices=["sign", "apply"])
+    ap.add_argument("auth", nargs="?")
+    ap.add_argument("--against")
+    ap.add_argument("--kek-var")
+    ap.add_argument("--out", default="output/dbx-append.auth")
+    ap.add_argument("--throwaway-key", action="store_true")
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--expect-reject", action="store_true")
+    args = ap.parse_args()
+    try:
+        return do_sign(args) if args.action == "sign" else do_apply(args)
+    except (OSError, Fail, subprocess.CalledProcessError) as e:
+        print(f"dbx-append: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
