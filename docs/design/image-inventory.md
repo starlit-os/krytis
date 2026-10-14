@@ -102,6 +102,7 @@ element does, its row's text is a review question.
 | `desktop/niri.bst` | niri, the default Wayland compositor. |
 | `desktop/umbriel.bst` | Umbriel, the opt-in second Wayland compositor (#774). |
 | `desktop/noctalia.bst` | noctalia shell, built from the `kitten-lily/noctalia` fork. |
+| `config/noctalia-service.bst` | Runs noctalia as a user service in `session.slice`, out of systemd-oomd's reach (#1253). |
 | `config/battery-power-profile-hook.bst` | Battery/AC power-profile switch script for noctalia's hooks. Opt-in. |
 | `desktop/ghostty.bst` | Ghostty terminal. |
 | `desktop/seance.bst` | Séance, a GTK4 terminal multiplexer for AI coding agents, built on libghostty. |

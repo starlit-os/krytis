@@ -54,18 +54,19 @@ files = [
 ]
 
 [general]
-# noctalia: the shell (panel, launcher, lock screen, wallpaper). Without this,
-# none of #775's acceptance criteria can pass.
+# noctalia (panel, launcher, lock screen, wallpaper) is not listed here: it
+# runs as noctalia.service in session.slice, out of systemd-oomd's reach
+# (elements/config/noctalia-service.bst, #1253). Autostart would put it in an
+# app-umbriel-*.scope in app.slice.
 #
 # bazaar-daemon: D-Bus SearchProvider2 for noctalia's bazaarsearch launcher
 # plugin (`/bzr <query>`). Bazaar ships a D-Bus-activatable
 # io.github.kolunmi.Bazaar.SearchProvider.service, but upstream's plugin docs
 # call out explicit session startup as the supported way to guarantee it is
-# running rather than relying on that activation. Mirrors niri's second
+# running rather than relying on that activation. Mirrors niri's
 # spawn-at-startup in files/niri/startup.kdl. Bazaar itself is a --system
 # flatpak, not a BST element -- files/flatpak-preinstall/ (#66).
 autostart = [
-  "noctalia",
   "flatpak run --command=bazaar-daemon io.github.kolunmi.Bazaar --no-window",
 ]
 

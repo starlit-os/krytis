@@ -119,6 +119,16 @@ sources:
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
   ref: v5.2.1-4-g07c8bc7f9958c3c30ddadcc09ada53794fdadb55
+# launch_apps_as_systemd_services defaults to true (upstream: false). With
+# false, every app started from the launcher, dock or taskbar is a child of
+# noctalia and lives in its cgroup. config/noctalia-service.bst runs noctalia
+# in session.slice, so those apps would leave systemd-oomd's reach
+# (config/oomd.bst arms app.slice only) and die whenever noctalia restarts.
+# A struct default, not a settings.toml seed: /etc/skel only reaches new
+# accounts, and the schema loader keeps the struct default for a missing key.
+# An explicit `false` in a user's settings.toml still wins (#1253).
+- kind: patch
+  path: patches/noctalia/launch-apps-as-systemd-services-by-default.patch
 
 variables:
   # tests=disabled: noctalia's meson.build enables `tests: auto` unit test
