@@ -270,8 +270,8 @@ cat > "${WORKDIR}/probe.sh" <<'PROBESH'
 # This does not fully eliminate krytis-boot-probe.service occasionally
 # ending up in a failed state itself under host load -- reproduced live
 # even with this bound in place, cause not pinned down (host memory was
-# healthy at the time; not confirmed as systemd-oomd or anything else in
-# particular). The health assertion below does not trust this unit's own
+# healthy at the time; not systemd-oomd, which only ever watches users'
+# app.slice -- krytis#1216). The health assertion below does not trust this unit's own
 # outcome for exactly that reason -- see krytis#787.
 timeout 60 systemctl is-system-running --wait >/dev/null 2>&1 || true
 echo "===KRYTIS-BOOT-TEST-DIAGNOSTICS==="
@@ -651,8 +651,8 @@ echo "    system state: ${SYS_STATE:-<no output>}"
 # krytis-boot-probe.service is OUR OWN diagnostics unit (see [1b/5] above),
 # not part of the image under test. DefaultDependencies=no lets it dump
 # state even during a stalled boot, but that same lack of ordering means it
-# can occasionally be reaped (systemd-oomd, host scheduling contention under
-# load) before it ever exits cleanly. Its own failure says nothing about the
+# can occasionally be reaped (host scheduling contention under load; not
+# systemd-oomd, which never watches system units -- krytis#1216) before it ever exits cleanly. Its own failure says nothing about the
 # image's health, so it is filtered out of the verdict by name, not
 # tolerated by state: any OTHER failed unit still fails the run exactly as
 # #417 intended -- this is not a return to the blanket "degraded is fine"

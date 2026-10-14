@@ -2142,11 +2142,27 @@ command by default, so behaviour is unchanged until a user wires it up. See
 
 ### systemd-oomd
 
-Already compiled into our systemd build. Enable via a config element (`elements/config/oomd.bst`) that drops:
-- `/usr/lib/systemd/oomd.conf.d/krytis.conf` — SwapUsedLimit=90%, pressure limit 60%, duration 20s
-- `/usr/lib/systemd/system-preset/70-krytis-oomd.preset` — `enable systemd-oomd.service`
+`elements/config/oomd.bst`, pulled in by `stacks/base-system.bst`. The daemon is part of our systemd build; the element ships two files:
+- `/usr/lib/systemd/system-preset/70-krytis-oomd.preset`: `enable systemd-oomd.service`.
+- `/usr/lib/systemd/user/app.slice.d/10-krytis-oomd.conf`: `ManagedOOMMemoryPressure=kill`, `ManagedOOMMemoryPressureLimit=50%`, `ManagedOOMMemoryPressureDurationSec=20s` on the **user** manager's `app.slice`.
 
-Add to `stacks/base-system.bst` (system-level, not desktop-level). Pattern: `strip-commands: [':']` since no binaries.
+Check it on a booted image with `oomctl`. "Memory Pressure Monitored CGroups" should list `…/user@<uid>.service/app.slice` for each logged-in user, and nothing should be listed under swap.
+
+**An enabled oomd does nothing unless a unit opts in.** oomd only watches cgroups whose unit sets `ManagedOOMSwap=kill` or `ManagedOOMMemoryPressure=kill`. Fedora gets those from its `systemd-oomd-defaults` subpackage and Ubuntu from `debian/extra/systemd-oomd-defaults/`. Neither freedesktop-sdk nor gnome-build-meta ships an equivalent. From #219 to #1216, krytis enabled the service and armed nothing. Its `oomd.conf.d` drop-in also used an `[OOMPolicy]` section; `oomd.conf` only has `[OOM]`, and the journal says so (`Unknown section 'OOMPolicy'. Ignoring.`). Validate any oomd or unit drop-in with `systemd-analyze` before shipping it: put the file next to a copy of the unit, run `SYSTEMD_UNIT_PATH=<dir>: systemd-analyze --user verify <dir>/app.slice`, and add a bogus key as a control so you know the check can fail.
+
+**Why `app.slice` and not `user@.service`.** oomd chooses its victim by reclaim activity (`oomd_select_by_pgscan_rate` in `src/oom/oomd-util.c`), ignores `oom_score_adj`, and kills the whole cgroup it picks. If it monitors `user@.service`, `session.slice/niri.service` and `session.slice/umbriel.service` are candidates next to the apps. niri is `BindsTo=graphical-session.target` and umbriel is `PartOf=umbriel-session.target`, so killing either one ends the session. Ubuntu ran exactly that setting (`kill` at 50 %) and turned it off in 26.10, after a deterministic oomd trigger killed the session in 7/10 runs (ubuntu-settings 26.10.1, LP #2089800, 2026-09). `app.slice` holds what users launch: niri's `app-niri-*.scope`, umbriel's `app-umbriel-<pid>-<n>.scope`, noctalia's launcher services (`launch_apps_as_systemd_services = true` in `files/noctalia-skel/settings.toml`) and flatpak scopes. **noctalia itself is in `app.slice` too.** Both compositors autostart it into a scope, so it remains a candidate, and it is also the lock screen.
+
+A user manager may arm its own units. oomd accepts a ManagedOOM registration from a non-root peer when the cgroup's owner matches the peer's uid (`process_managed_oom_message` in `src/oom/oomd-manager.c`), and `user@<uid>.service` and everything below it are owned by that uid. `ManagedOOMPreference=avoid|omit` is disputed for user cgroups. `systemd.resource-control(5)` says it is honoured when the candidate and the monitored ancestor have the same owner, but Ubuntu's `52-oomd-relax.conf` reports it was ignored on the `user@` pressure path under systemd 259. Test it before relying on it.
+
+**Why no swap kill.** Ubuntu set `-.slice` to `ManagedOOMSwap=auto` in 2022, because the swap kill was killing browsers while the desktop still felt responsive (LP #1972159). Debian adopted the same default in `systemd 256~rc4-1`. `SwapUsedLimit` is also a percentage of total swap, so its meaning would change with #510's choice of swap backend.
+
+**Don't port Ubuntu 26.10's `OOMScoreAdjust` tiering as is.** Ubuntu lowers `user@.service` and about 39 session units to `-500` and leaves apps at `DefaultOOMScoreAdjust=100`. A child inherits `oom_score_adj` at fork, and a scope has no exec context, so it has no `OOMScoreAdjust=` to reset it. Scopes accept only `RuntimeMaxSec`, `TimeoutStopSec` and `OOMPolicy` beyond cgroup settings (`load-fragment-gperf.gperf.in`). A compositor at `-500` would therefore pass `-500` to everything it spawns into a scope: Mod+Return's seance, nautilus, noctalia, bazaar-daemon, and any spawn bind a user adds. A large build in that terminal would then outlive every app systemd started at `100`. Today every session process sits at `200` (the user manager's default), so the kernel kills the largest process, and niri (~100 MB) and noctalia (~200 MB) are rarely that. Tiering needs the spawner to reset the child's value first, the way niri already restores `RLIMIT_NOFILE` for its children. It was rejected for #1216 on these grounds.
+
+**Proof run:** `mise run oomd-test [--reuse-disk <raw>]` boots the image and checks the whole path. It starts a lingering user's manager, confirms every cgroup in `oomctl` is some user's `app.slice` and that nothing is swap-monitored, then runs a python3 hog under `MemoryHigh=128M` in `app.slice`. The hog must be killed by oomd itself: its journal line `Marked <hog> for killing due to memory pressure for <app.slice> …` must appear, and the kernel OOM killer must not run. An idle `app.slice` sibling and a `session.slice` canary must both survive. On the first passing run (2026-10-14, image `26.08.202610141308`), oomd marked the hog when `app.slice` `full` avg10 was 92.99 %, having stayed over the 50 % limit for more than 20 s. Four details that cost runs:
+- **Root's `app.slice` is listed too.** The harness's root SSH session starts `user@0.service`, and every user manager registers its own `app.slice`.
+- **The image has no `runuser`.** Use `setpriv --reuid= --regid= --init-groups`.
+- **`tail /dev/zero` is no hog here.** The image's `tail` is uutils, which does not buffer an endless line: it sat at 1.3 MiB with zero pressure for 180 s.
+- **`MemoryMax=` won't do.** It makes the kernel's memcg OOM killer act instead of oomd; `MemoryHigh=` throttling is counted as memory PSI and leaves the kill to oomd.
 
 ### amd-pstate EPP default
 

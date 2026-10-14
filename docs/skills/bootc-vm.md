@@ -563,9 +563,11 @@ fixed guess before dumping diagnostics) was replaced with
 host load in both directions. That did **not** eliminate the flake — reproduced twice more
 with the bounded wait in place. Investigated directly by booting the same disk under
 manual control (no auto-shutdown) and SSHing in while the VM was still up: memory was
-healthy (`free -h` showed 6.7Gi free of 7.7Gi) and `dmesg` had no OOM-killer entries, so
-`systemd-oomd` — the obvious first guess, since the unit is present in the image — is
-**not confirmed**. Don't repeat that guess as fact in future debugging; if it recurs, get
+healthy (`free -h` showed 6.7Gi free of 7.7Gi) and `dmesg` had no OOM-killer entries.
+**`systemd-oomd` is ruled out.** It only kills cgroups that a unit opts in with
+`ManagedOOM*=kill`. Until #1216 nothing did, and since #1216 only users' `app.slice` does.
+A system unit like `krytis-boot-probe.service` has never been a candidate (see
+[`desktop.md`](desktop.md) § systemd-oomd). If the flake recurs, get
 `journalctl -u krytis-boot-probe.service` and `dmesg` from *inside* the failing run (not a
 lucky-timing rerun) before attributing a cause.
 

@@ -74,7 +74,7 @@ element does, its row's text is a review question.
 | `config/fido2-root-unlock.bst` | Makes the root volume try FIDO2 unlock. In base-system because the initramfs reads it from there. |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
-| `config/oomd.bst` | Enables and tunes systemd-oomd. |
+| `config/oomd.bst` | Enables systemd-oomd and arms its memory-pressure kill on each user's `app.slice` (#1216). |
 
 #### `stacks/bootc.bst`
 

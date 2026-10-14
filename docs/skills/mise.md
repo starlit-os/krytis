@@ -1108,7 +1108,7 @@ fi
 groups them by purpose, because a hand-maintained copy of the tree rots: the list
 that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**25 of the 117 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**25 of the 119 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. Count from the
 **tree**, not the CLI: `find mise/tasks -type f | wc -l` and
 `grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
@@ -1123,7 +1123,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `portal-routing-check [--tag]` — resolve xdg-desktop-portal routing headlessly under `niri` and `Umbriel` and compare every interface's backend against the table in the task, run by `build`; it also fails on an unparsable `.portal` file, on a krytis `/etc/xdg` routing key whose removal changes nothing, and on an Umbriel `none` pin for an interface `umbriel.portal` now declares (#1027, #1028, #1029, see [`desktop.md`](desktop.md) § xdg-desktop-portal routing); `umbriel-portal-smoke [--image]` — run umbriel headlessly with xdg-desktop-portal and assert that Settings (color-scheme) reaches apps through xdp-gnome without gnome-shell, both the value and the `SettingChanged` signal (#1029); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon; `oo7-portal-test [--artifact] [--keep]` — drive oo7-portal's `RetrieveSecret` on a private bus across two daemon restarts and fail if an app's token ever changes or a locked Login gets a new one; run it on every oo7 re-pin (#1028, see `docs/design/secrets-service.md` § Secret portal (oo7-portal) — shipping since #1028) |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
-| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts; `homed-ssh-fallback-test [--reuse-disk <raw>]` — boot the image, create a homed user, and assert a pubkey-only SSH login reaches a mounted home through `systemd-home-fallback-shell` (see [`pam.md`](pam.md) § Two consequences of key-only SSH, #422) |
+| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts; `homed-ssh-fallback-test [--reuse-disk <raw>]` — boot the image, create a homed user, and assert a pubkey-only SSH login reaches a mounted home through `systemd-home-fallback-shell` (see [`pam.md`](pam.md) § Two consequences of key-only SSH, #422); `oomd-test [--reuse-disk <raw>]` — boot the image, start a lingering user's manager, and assert systemd-oomd monitors only users' `app.slice` cgroups, kills a `MemoryHigh=`-throttled hog there, and leaves an idle `app.slice` sibling and a `session.slice` canary alive (see [`desktop.md`](desktop.md) § systemd-oomd, #1216) |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
@@ -1310,6 +1310,25 @@ Do **not** hide a task merely because another task calls it. `bst` `validate` `b
 `pull-keys` `mise-lock` are all called internally *and* run directly by humans, so they
 stay visible. `load-image-root` in particular was split out of `generate-disk` in #588
 specifically to be run standalone.
+
+## Agents can run the sudo steps: use a pty
+
+`generate-disk`, and every task that calls it (`boot-test`, `homed-ssh-fallback-test`,
+`oomd-test` and others without `--reuse-disk`), runs `sudo`. `sudo -n true` fails with
+"interactive authentication is required", but that does **not** mean an agent is blocked
+or has to hand the command to the human. Run the task in a **pty** (the agent's `pty`
+option, not a pipe). sudo then prompts in the session for the FIDO2 PIN and a touch,
+and the human answers there. Seen 2026-10-14 (#1216): `generate-disk` ran end to end
+this way. Earlier sessions concluded "no sudo available" from the `sudo -n` failure
+and fell back to stale `--reuse-disk` images.
+
+Run the root step once, then iterate unprivileged: `generate-disk --disk /var/tmp/<name>.raw`
+followed by `--reuse-disk /var/tmp/<name>.raw` on each test. Each test copies the disk or
+boots it without installing, so one install serves `boot-test` and `oomd-test` alike.
+
+The same applies to commit signing: `env -u SSH_AUTH_SOCK git commit` in a pty, with the
+human touching the key when asked (see [`workflow.md`](workflow.md) § `agent refused
+operation` is a missed touch window, not a broken setup).
 
 ## `boot-test` provisions the guest with systemd credentials, not disk edits
 
