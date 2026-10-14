@@ -483,13 +483,14 @@ by hand (`docs/secure-boot-enrollment.md` § Updating `dbx` on an already-enroll
 machine). An append can only add revocations, so it changes what is refused, never what
 is trusted. Replacing `db`/`KEK`/`PK` is still unbuilt.
 
-Measured on the #535 ThinkPad (UEFI N3QET52W 1.52), 2026-10-14, with Secure Boot off in
-setup but keys enrolled:
+Measured on the #535 ThinkPad (UEFI N3QET52W 1.52), 2026-10-14. The writes ran with
+Secure Boot off in setup but keys enrolled; enforcement was switched on afterwards:
 
 ```
 throwaway-key append      write() EACCES, dbx byte-identical           (KEK check holds in User Mode)
 KEK-signed append         443 → 445 sha256 + 2 x509, 21296 → 23336 bytes
 same .auth, --force       accepted, dbx byte-identical                 (firmware dedupes)
+Secure Boot on, reboot    boots; bootctl "enabled (user)", SecureBoot=1, dbx unchanged (23336 bytes)
 ```
 
 A test needs a mechanism, so #447 asks the prior question: does krytis support
