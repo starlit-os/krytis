@@ -217,7 +217,12 @@ echo "==> [6/7] SSH in as ${TEST_USER} by pubkey (with a pty), answer the fallba
 # and PreferredAuthentications=publickey mean the CLIENT can never answer a
 # password prompt from sshd, so any password exchange that follows happens
 # inside the session — i.e. it is the fallback shell's.
-TEST_PASS="${TEST_PASS}" python3 - "${WORKDIR}/transcript.log" \
+#
+# TERM=dumb: ssh -tt forwards the caller's TERM into the session, and with a
+# real terminal type readline wraps every line in escapes (`\e[?2004l`), which
+# made the marker parsing below miss — the run then depended on whether the
+# task was started from a terminal. dumb keeps the session identical either way.
+TERM=dumb TEST_PASS="${TEST_PASS}" python3 - "${WORKDIR}/transcript.log" \
     timeout 180 ssh -tt "${SSH_OPTS[@]}" -o PreferredAuthentications=publickey \
         -E "${WORKDIR}/ssh-client.log" -v -i "${WORKDIR}/id_user" "${TEST_USER}@localhost" <<'PY' || true
 import os, re, select, subprocess, sys, time
@@ -278,7 +283,8 @@ finally:
         f.write(buf.replace(os.environ["TEST_PASS"].encode(), b"<redacted>"))
 PY
 
-TRANSCRIPT="$(tr -d '\r' < "${WORKDIR}/transcript.log")"
+# CSI escapes are stripped anyway, so a stray one can never hide a marker.
+TRANSCRIPT="$(tr -d '\r' < "${WORKDIR}/transcript.log" | sed 's/\x1b\[[0-9;?]*[[:alpha:]]//g')"
 echo "    --- session transcript ---"
 printf '%s\n' "${TRANSCRIPT}" | sed 's/^/    | /'
 echo "    --------------------------"
