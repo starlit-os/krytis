@@ -217,7 +217,7 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
 Notes embedded for the implementer:
 - `PK.auth` and `KEK.auth` are both signed with the **PK** key (self-signed initial enrollment — PK asserts the KEK list, and PK asserts itself). `db.auth` is signed with the **KEK** key (KEK asserts the db list). This is the standard UEFI PK→KEK→db signing chain, matching `docs/design/secure-boot-uki.md`.
 - `cert-to-efi-sig-list` takes **no type argument** — `<cert.der> <output.esl>` only (see `docs/skills/secure-boot.md`).
-- `sign-efi-sig-list` takes the variable name (`PK`/`KEK`/`db`) as its first positional arg, `-k`/`-c` for the signer's key/cert, `-g` for the (optional) signature owner GUID.
+- `sign-efi-sig-list` takes the variable name (`PK`/`KEK`/`db`) as its first positional arg, `-k`/`-c` for the signer's key/cert. Its `-g` is **not** the signature owner GUID, whatever its help says: it sets the variable's vendor GUID, which the name overrides for these variables, so it does nothing (#1242). Owner GUIDs come from `sbsiglist --owner`.
 - The subdirectory name `auto` is significant — it is the specific key-set name systemd-boot's `secure-boot-enroll=if-safe`/`manual` looks for (see systemd-boot.xml "loader/keys"), and matches the layout `bootc`'s `get_secureboot_keys()` expects: one directory per key set under `usr/lib/bootc/install/secureboot-keys/`, each holding arbitrarily-named `*.auth` files.
 
 - [ ] **Step 3: Verify unsigned build is unaffected**

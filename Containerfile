@@ -46,6 +46,9 @@ COPY files/microsoft-uefi-certs/ /tmp/microsoft-uefi-certs/
 #     stamped month 0 — not a valid EFI_TIME, and UEFI compares these timestamps
 #     for authenticated-variable rollback protection. Verified against the wall
 #     clock: sbvarsign 2026-07-02, sign-efi-sig-list 2026-08-02.
+#     No `-g`: despite its help text it sets the variable's *vendor* GUID, not
+#     the owner, and for PK/KEK/db/dbx the variable name overrides it anyway
+#     (#1242). Owner GUIDs are set by `sbsiglist --owner`.
 #
 # `assert_esl` is the build-time gate for the empty-list failure: one X509 entry
 # is 28 + 16 + len(DER) bytes, so the SignatureSize field at offset 24 is 16 for
@@ -88,14 +91,14 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
             cat /tmp/ms-entry.esl >> /tmp/db.esl && \
             rm /tmp/ms-entry.esl ; \
         done && \
-        sign-efi-sig-list -g "$GUID" -k /run/secrets/pk_key -c /run/secrets/pk_crt \
+        sign-efi-sig-list -k /run/secrets/pk_key -c /run/secrets/pk_crt \
             PK /tmp/PK.esl /usr/lib/bootc/install/secureboot-keys/auto/PK.auth && \
-        sign-efi-sig-list -g "$GUID" -k /run/secrets/pk_key -c /run/secrets/pk_crt \
+        sign-efi-sig-list -k /run/secrets/pk_key -c /run/secrets/pk_crt \
             KEK /tmp/KEK.esl /usr/lib/bootc/install/secureboot-keys/auto/KEK.auth && \
-        sign-efi-sig-list -g "$GUID" -k /run/secrets/kek_key -c /run/secrets/kek_crt \
+        sign-efi-sig-list -k /run/secrets/kek_key -c /run/secrets/kek_crt \
             db /tmp/db.esl /usr/lib/bootc/install/secureboot-keys/auto/db.auth && \
         assert_esl /tmp/microsoft-uefi-certs/dbx.esl && \
-        sign-efi-sig-list -g "$GUID" -k /run/secrets/kek_key -c /run/secrets/kek_crt \
+        sign-efi-sig-list -k /run/secrets/kek_key -c /run/secrets/kek_crt \
             dbx /tmp/microsoft-uefi-certs/dbx.esl \
             /usr/lib/bootc/install/secureboot-keys/auto/dbx.auth && \
         rm -f /tmp/PK.der /tmp/KEK.der /tmp/db.der /tmp/PK.esl /tmp/KEK.esl /tmp/db.esl \
