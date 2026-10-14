@@ -216,9 +216,12 @@ depends:
   # DualShock 4/5, Xbox, etc.) — udev rules granting user access.
   - freedesktop-sdk.bst:components/steam-devices.bst
   # game-devices-udev: broader set — Sony, Microsoft, Nintendo, 8BitDo, Razer,
-  # HTC (Vive), Logitech, Thrustmaster, VKB, and others. Coexists with
-  # steam-devices (no rule overlap). Closes #186.
+  # HTC (Vive), Logitech gamepads (F310/F710 only), Thrustmaster, VKB, and
+  # others. Coexists with steam-devices (no rule overlap). Closes #186.
   - desktop/game-devices-udev.bst
+  # solaar: Logitech HID++ library, CLI and the udev rule tagging Logitech
+  # hidraw nodes `uaccess`. Needed by the noctalia MX Control plugin (#1220).
+  - desktop/solaar.bst
 
   # ── System performance tuning ──────────────────────────────────────────
   # IO schedulers, audio PM, SATA link power, THP, amdgpu modprobe, ntsync,

@@ -54,6 +54,7 @@ ELEMENTS = {
     "desktop/zen-browser.bst": ("floor", "prebuilt Firefox build"),
     "desktop/proton-pass.bst": ("floor", "prebuilt Electron app"),
     "gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst": ("floor", "Inhibit/Notification/Email backend, #181"),
+    "desktop/solaar.bst": ("floor", "diversion.py imports Gdk 3.0 at load; no ELF, typelib only"),
     "desktop/gnome-disk-utility.bst": ("#1033", "46.1 is GTK3; 51 is GTK4"),
     "gnome-build-meta.bst:core-deps/libhandy.bst": ("#1033", "only consumer is gnome-disks 46.1"),
     "gnome-build-meta.bst:core-deps/libcanberra.bst": ("#1034", "gtk3 support; only gnome-disks 46.1 uses it"),

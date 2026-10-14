@@ -13,6 +13,11 @@ Steps 0–5 remove every other one, after which GTK3 ships *only* because of tho
 Step 6 investigates replacing xdg-desktop-portal-gtk, the only one of the three that krytis
 controls.
 
+Solaar (#1220) joined the floor on 2026-10-14 by a Design Gate decision, not because krytis
+can't change it. It has a known exit, a small carried patch, which is deliberately not taken
+while the other floor apps keep GTK3 in the image. See
+[Solaar: a floor consumer through GObject introspection](#solaar-a-floor-consumer-through-gobject-introspection).
+
 Each step is independently landable as its own PR, in the order given, and each has a
 sub-issue under #641. Steps 1–4 are cheap and self-contained. Step 5 is the expensive one.
 Step 6 is research that ends in a Design Gate decision.
@@ -481,9 +486,9 @@ gap was found later; #181's own table adds an Access column for each candidate.
 
 - Step 0's allowlist equals the floor:
   - **elements:** `desktop/zen-browser.bst`, `desktop/proton-pass.bst`,
-    `gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst`;
-  - **files:** those three apps' ELF files, plus gtk+-3's own (`libgtk-3`, `libgailutil-3`,
-    `immodules/*`, `printbackends/*`, `gtk-launch`, `gtk-query-*`,
+    `gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst`, `desktop/solaar.bst`;
+  - **files:** those apps' ELF files (Solaar has none), plus gtk+-3's own (`libgtk-3`,
+    `libgailutil-3`, `immodules/*`, `printbackends/*`, `gtk-launch`, `gtk-query-*`,
     `gtk-encode-symbolic-svg`, `broadwayd`).
 - `mise run build` and `mise boot-test` pass.
 - Update #641's checklist.
@@ -507,6 +512,52 @@ Routing in the built image, and live on a krytis host:
 Removing it needs a non-GTK3 backend for Inhibit and Notification that works under both
 sessions, plus one for parentless Access. Step 6 evaluates the options. Picking one is a
 Design Gate decision.
+
+## Solaar: a floor consumer through GObject introspection
+
+`desktop/solaar.bst` (#1220) is there for the noctalia MX Control plugin, whose backend imports
+Solaar's `logitech_receiver` and `solaar` packages. `logitech_receiver/diversion.py` runs
+`gi.require_version("Gdk", "3.0")` and `from gi.repository import Gdk, GLib` at import time, and
+`settings_templates` imports `diversion`. The element therefore declares
+`gnome-build-meta.bst:sdk/gtk+-3.bst` and has a `floor` row in `gtk3-audit`'s `ELEMENTS`.
+
+**The image half can't see it.** Solaar is pure Python and loads `Gdk-3.0.typelib` through
+PyGObject, so no ELF in the image names `libgtk-3`/`libgdk-3` for it. The declared edge is the
+only thing that puts it in the audit. Don't drop it to tidy the graph.
+
+**Why no patch now (Design Gate on #1220, 2026-10-14).** Making the Gdk import optional saves no
+bytes while zen-browser, Proton Pass and xdg-desktop-portal-gtk keep GTK3 in the image. Worse,
+with GTK3 installed the patched `try` still succeeds, so Solaar keeps loading Gdk while the
+audit stops counting it.
+
+**The exit, once GTK3 is otherwise leaving.** Sized against Solaar 1.1.20 on 2026-10-14: one
+file, `lib/logitech_receiver/diversion.py`, 12 lines added and 7 removed.
+
+- Import `GLib` on its own line (no GTK). Wrap `gi.require_version("Gdk", "3.0")` and
+  `from gi.repository import Gdk` in `try`, and set `Gdk = None` on `ValueError`/`ImportError`.
+- Line 101: `gdisplay = Gdk.Display.get_default() if Gdk else None`. Line 102 is already
+  guarded: `gkeymap = … if gdisplay else None`.
+- Lines 762-765, `MODIFIERS`: replace the `Gdk.ModifierType.*_MASK` values with the ABI values
+  `1 << 0` (Shift), `1 << 2` (Control), `1 << 3` (Mod1), `1 << 6` (Mod4).
+
+After that, every remaining Gdk use goes through `gkeymap`, which the code already checks
+(`if gkeymap:` at lines 789 and 1183, with a warning otherwise). The `require_version("Gdk")`
+calls in `base.py`, `hidapi/udev_impl.py` and `hidapi/hidapi_impl.py` are all under
+`if typing.TYPE_CHECKING:` and never run. Without Gdk, diversion rules that read modifier keys
+and the `KeyPress` action log a warning and do nothing. Battery, DPI and device settings don't
+use Gdk.
+
+Two things the patch does not cover:
+
+- **`/usr/bin/solaar` still needs GTK3.** Its entry point, `solaar/gtk.py`, imports
+  `solaar.listener` (`gi.require_version("Gtk", "3.0")`) and `solaar.ui` (imports `Gtk`) at
+  module level, before it even parses `solaar show`. The plugin never imports either. With GTK3
+  gone, either drop the CLI from the element or accept that it fails.
+- **The carry itself.** It needs a `patches/solaar/` entry, a `kind: patch` source and a row in
+  `docs/design/carried-patches.md`. Rebase risk is low: `diversion.py` had 1 commit between
+  1.1.18 and 1.1.20 and none on master through `e7304c4` (2026-10-14). Its Gdk import lines last
+  changed in `a6f08b9` (2022-07-26, "rules: require gtk 3.0"), apart from a 2024 reformat.
+  Proposing it upstream (pwr-Solaar/Solaar) is an Upstream Gate decision.
 
 ## Upstream candidates (propose only — Upstream Gate)
 

@@ -1054,6 +1054,13 @@ The scan misses something the graph sees too: an element that declares the edge 
 links nothing (fdsdk's `gstreamer-plugins-base`, examples disabled) still drags the
 library into the image. Use both.
 
+**A GObject-introspection consumer has no ELF to scan.** `desktop/solaar.bst` (#1220) is
+pure Python and loads `Gdk-3.0.typelib` through PyGObject (`gi.require_version("Gdk",
+"3.0")` at import), so nothing in the image names `libgtk-3`/`libgdk-3` on its behalf.
+For such an element, the declared `sdk/gtk+-3.bst` edge is the only thing the audit can
+see: always declare the typelib's element, and grep the Python for `require_version` when
+deciding.
+
 `gtk3-audit` is the template: graph half via `./mise/tasks/bst show --deps all --format
 '@@%{name}|%{runtime-deps}'`, with records keyed on the `@@` prefix because runtime deps
 print as a multi-line YAML list. Image half via `podman image mount` plus batched
@@ -2454,6 +2461,38 @@ outside it. seance's own `build.zig` links both `x11` and `wayland-client`; a so
 runs natively on Wayland. Verified on a live niri session: the AppImage's window reports
 `xwayland-satellite`'s pid to `niri msg --json windows`, the source build reports its own
 with `app_id=com.seance.app`. Generalises to any `linuxdeploy-plugin-gtk` AppImage.
+
+## Python Projects (`kind: pyproject`)
+
+*Source: `desktop/solaar.bst`, `deps/python3-evdev.bst`, `deps/python3-pyudev.bst` (#1220);
+`dev/virt-firmware.bst` is the older example.*
+
+The pattern is fdsdk's own (`components/python3-psutil.bst`): `kind: pyproject`,
+`build-depends: freedesktop-sdk.bst:public-stacks/buildsystem-python-setuptools.bst` (or
+`-flit`/`-hatchling`/`-poetry`/`-meson`, matching the project's `[build-system]`),
+`depends: freedesktop-sdk.bst:components/python3.bst`, and a `git_repo` source. The plugin
+builds a wheel without build isolation and installs it under `%{install-root}`.
+
+- **`install_requires` is not resolved.** Nothing reads it; the wheel installs whether its
+  requirements exist or not, and a missing one fails at import time in the image. Declare
+  what the code actually imports, not what `setup.py` lists. Solaar's list includes
+  `python-xlib`, `dbus-python` and `pycairo`, which its library path never imports, and
+  misses the GI typelib it does need (`gi.require_version("Gdk", "3.0")` →
+  `gnome-build-meta.bst:sdk/gtk+-3.bst`). Grep for top-level `import`s and
+  `require_version`, then follow the modules your consumer imports.
+- **A C extension needs no extra build deps for Linux UAPI headers.** python-evdev's
+  `setup.py` generates `ecodes.c` from `/usr/include/linux/input*.h`. Those come from
+  `bootstrap/linux-headers.bst`, which `bootstrap/glibc.bst` carries as a runtime dep, so
+  `buildsystem-python-setuptools.bst` (which includes `gcc.bst`) already stages them.
+- **Delete installed files by appending, not overriding.** `config: install-commands: (>):`
+  runs after the plugin's own install, so files from `setup.py` `data_files` (Solaar's
+  `.desktop` and metainfo) exist to `rm`. A plain `install-commands:` list replaces the
+  install; see § Overriding `install-commands` on a buildsystem element.
+- **A git tag in a pure-version scheme needs an `exclude:` for pre-releases.** Solaar tags
+  `1.1.20` and `1.1.20rc3` alike, so `track: '[0-9]*'` plus `exclude: ['*rc*']`.
+- **`bst shell <element>` can't run the import test.** A Python element's runtime closure has
+  no `sh` (`Staged artifacts do not provide command 'sh'`). Test imports in the loaded image:
+  `podman run --rm localhost/krytis:latest python3 -c 'import …'`.
 
 ## Rust / Cargo Projects
 

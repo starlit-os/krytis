@@ -936,6 +936,18 @@ jobs:
             element: desktop/scx-scheds.bst
             branch: auto/track-scx-scheds
             title: "chore(deps): update scx-scheds"
+          - group: manual-merge
+            element: desktop/solaar.bst
+            branch: auto/track-solaar
+            title: "chore(deps): update solaar"
+          - group: manual-merge
+            element: deps/python3-evdev.bst
+            branch: auto/track-python3-evdev
+            title: "chore(deps): update python3-evdev"
+          - group: manual-merge
+            element: deps/python3-pyudev.bst
+            branch: auto/track-python3-pyudev
+            title: "chore(deps): update python3-pyudev"
           - group: papirus-icon-theme
             element: desktop/papirus-icon-theme.bst
             branch: auto/track-papirus-icon-theme

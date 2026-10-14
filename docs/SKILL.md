@@ -14,6 +14,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
 | Package a Zig project, or regenerate a `build.zig.zon` dep list | [`docs/skills/bst.md`](skills/bst.md) § Zig Projects |
+| Package a Python project (`kind: pyproject`), including a C extension | [`docs/skills/bst.md`](skills/bst.md) § Python Projects (`kind: pyproject`) |
 | Package a prebuilt desktop app — choose `.deb` vs portable tarball, defuse an Electron self-updater | [`docs/skills/bst.md`](skills/bst.md) § Electron self-updaters on a read-only image |
 | Backport a patch onto a release pinned by a junction | [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
 | Add, drop or audit a carried patch or fork pin (`mise run patch-inventory-check`) | [`docs/design/carried-patches.md`](design/carried-patches.md), [`docs/skills/bst.md`](skills/bst.md) § Mirroring a junction element to patch its *source* |
