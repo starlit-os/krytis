@@ -480,9 +480,9 @@ config:
 `strip-binaries: ''` suppresses BST's default strip pass — gum is a pre-compiled Go binary, stripping it produces an unusable binary.
 
 The completion paths above are the canonical ones (§ Shell completion directories, below).
-As of 2026-10-14, `elements/core/gum.bst:31,33` still installs to the paths this pattern used
-to teach, `%{sysconfdir}/bash_completion.d/gum` and `%{datadir}/zsh/vendor-completions/_gum`.
-Moving them is an element change that hasn't been made yet, not a doc error.
+`elements/core/gum.bst` used the old paths this pattern once taught,
+`%{sysconfdir}/bash_completion.d/gum` and `%{datadir}/zsh/vendor-completions/_gum`, until
+#1256 moved it.
 
 **`gum style` with flag-like arguments:** when the text argument starts with `-`, gum parses it as its own flag and errors. Use `--` to terminate flag parsing:
 
@@ -527,8 +527,9 @@ into the zsh directory. Its `desktop/danksearch.bst` also swaps the fish and zsh
 (regenerated 2026-10-14) has `/usr/bin/bash` and neither `/usr/bin/zsh` nor `/usr/bin/fish`.
 `stacks/base-system.bst` pulls in `freedesktop-sdk.bst:components/bash-completion.bst`. The zsh
 and fish files are only used once one of those shells is added.
-`grep -rn 'bash_completion.d\|vendor-completions' elements` finds one element still on the
-wrong paths: `core/gum.bst`.
+`grep -rnE 'install .*(bash_completion\.d|vendor-completions)' elements` finds no element on
+the wrong paths since #1256 moved `core/gum.bst`, the last one. A bare
+`grep -rn 'bash_completion.d' elements` also matches gum's comment explaining the move.
 
 ## Config-only Elements
 
