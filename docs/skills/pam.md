@@ -1454,7 +1454,7 @@ screen, and vice versa.
 krytis ships no separate locker — no swaylock, gtklock, hyprlock or waylock is packaged or
 present on a live machine. **noctalia itself is the lock screen**, an `ext-session-lock-v1`
 client (`src/shell/lockscreen/lock_screen.cpp`), with niri/umbriel as the lock server.
-`files/umbriel/config.toml` autostarts noctalia, and `elements/config/logind-lid.bst` states
+`noctalia.service` starts it in both sessions (`elements/config/noctalia-service.bst`, #1253), and `elements/config/logind-lid.bst` states
 it outright: *"Krytis ships no swayidle/hypridle/swaylock and needs none."* There is no lock
 keybind at all — lock is reached from noctalia's own panel, `loginctl lock-session`, lid
 close, or an idle action.

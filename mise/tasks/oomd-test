@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Boot the image and assert systemd-oomd kills a memory hog in a user's app.slice, and nothing in session.slice (#1216)"
+#MISE description="Boot the image and assert systemd-oomd kills a memory hog in a user's app.slice, and nothing in session.slice, where noctalia.service runs (#1216, #1253)"
 #USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install and boot"
 #USAGE flag "--reuse-disk <path>" help="Boot a copy of this already-installed raw disk instead of running generate-disk (skips the only step that needs root)"
 #USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys) and print its path"
@@ -15,6 +15,10 @@
 #      cgroup, the unit's Result is oom-kill), not by the kernel OOM killer.
 #   4. An idle sibling in app.slice and a canary in session.slice, where
 #      niri/umbriel/dbus/the portals live, both survive.
+#   5. noctalia.service, the shell and lock screen, is enabled for
+#      graphical-session.target and placed in session.slice, so oomd can never
+#      pick it (#1253). Without a graphical session it doesn't start here; what
+#      is asserted is the placement every real session inherits.
 #
 # The user manager comes from `loginctl enable-linger`, not a login: oomd only
 # cares that user@<uid>.service is running and owns its cgroups. Units are
@@ -183,6 +187,16 @@ grep -qx "${APP_SLICE}" <<<"${PRESSURE_PATHS}" \
 # monitored path is SOME user's app.slice, never user@.service or a system unit.
 OTHER=$(grep -vxE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/app\.slice' <<<"${PRESSURE_PATHS}" || true)
 [ -z "${OTHER}" ] && pass "every pressure-monitored cgroup is a user's app.slice" || fail "unexpected pressure-monitored cgroups: ${OTHER}"
+NOCTALIA=$(U systemctl --user show -p Slice -p UnitFileState -p WantedBy noctalia.service | tr '\n' ' ')
+echo "    noctalia.service: ${NOCTALIA}"
+case "${NOCTALIA}" in
+    *Slice=session.slice*) pass "noctalia.service runs in session.slice, outside oomd's candidates" ;;
+    *) fail "noctalia.service is not in session.slice: ${NOCTALIA}" ;;
+esac
+case "${NOCTALIA}" in
+    *UnitFileState=enabled*) pass "noctalia.service is enabled" ;;
+    *) fail "noctalia.service is not enabled: ${NOCTALIA}" ;;
+esac
 
 echo "==> [5/6] Memory hog in app.slice (python3, MemoryHigh=128M), waiting up to 180s for oomd..."
 ROOT "cat > /run/oomdtest-hog.py && chmod 644 /run/oomdtest-hog.py" <<'PY'

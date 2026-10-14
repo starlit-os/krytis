@@ -1,6 +1,9 @@
 // ────────────── Startup Configuration ──────────────
 
-spawn-at-startup "noctalia"
+// noctalia is not spawned here: it runs as noctalia.service in session.slice,
+// out of systemd-oomd's reach (elements/config/noctalia-service.bst, #1253).
+// Accounts created before #1253 have their own copy of this file with
+// `spawn-at-startup "noctalia"`. Delete that line so the shell runs as the service.
 
 // Bazaar's D-Bus SearchProvider2 daemon, for noctalia's bazaarsearch launcher
 // plugin (`/bzr <query>`, settings.toml's [plugins].enabled). Bazaar ships a

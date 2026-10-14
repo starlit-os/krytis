@@ -42,7 +42,7 @@ source = "community"
 wallpaper_scheme = "m3-content"
 
     [theme.templates]
-    builtin_ids = [ "cava", "gtk3", "gtk4", "niri" ]
+    builtin_ids = [ "gtk3", "gtk4", "niri" ]
     community_ids = [ "zen-browser", "papirus-icons" ]
 
 [widget.bluetooth]
