@@ -2753,6 +2753,31 @@ Bazaar itself is a `--system` flatpak (`files/flatpak-preinstall/flatpak-preinst
 #66), not a BST element — nothing to add to the dependency graph for this class of plugin,
 just the settings.toml enable + the niri-side daemon spawn.
 
+### Hardware-backed plugins: read what the plugin executes, not `dependencies`
+
+*Source: #1220 (MX Control).*
+
+A plugin's `plugin.toml` `dependencies =` field is informational only, as mx-control's own
+comment says. To find what a plugin needs from the host, read its backend: what it `spawn`s,
+which interpreter, and what that imports.
+
+MX Control (`gamaraan/mx-control`) runs `python3 backend/mxctl.py serve` with the **system**
+interpreter, and `import_solaar()` imports Solaar's `logitech_receiver.{base,device,receiver,
+settings_templates,base_usb}` and `solaar.configuration`. Through `settings_templates` →
+`diversion`, that loads `pyudev`, `evdev`, `psutil`, `yaml`, `typing_extensions` and
+`gi.require_version("Gdk", "3.0")` at import time. Solaar's `install_requires` lists more
+(`python-xlib`, `dbus-python`, `pycairo`), but nothing on this path imports them. So
+`desktop/solaar.bst` declares exactly the imported set, plus `sdk/gtk+-3.bst` for the
+typelib (a `floor` row in `gtk3-audit`; see `docs/plans/2026-09-30-gtk3-realistic-floor.md`
+§ Solaar: a floor consumer through GObject introspection).
+
+Importable is not usable. With Solaar importable but no udev rule, `mxctl.py discover`
+returned `"installed": true, "accessible": false`: every `/dev/hidraw*` is
+`crw------- root root`. Solaar's `42-logitech-unify-permissions.rules` tags Logitech hidraw
+(`046d` over USB, `0005:046D:*` over Bluetooth) `uaccess`, so logind gives the seat user an
+ACL. `71-logitech-gdu.rules` from `desktop/game-devices-udev.bst` only covers the F310/F710
+gamepads. Check with `getfacl /dev/hidrawN` (a `user:<you>:rw-` entry) after a replug.
+
 ### Plugin notifications are toast-only: 6 s, no history, dropped under DND
 
 `noctalia.notify(title, body)` and `noctalia.notifyError(title, body)` (Luau) both end in

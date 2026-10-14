@@ -123,6 +123,7 @@ element does, its row's text is a review question.
 | `desktop/ddcutil.bst` | ddcutil, DDC/CI monitor control. |
 | `config/plymouth-theme.bst` | Plymouth spinner theme with the krytis watermark. |
 | `desktop/game-devices-udev.bst` | Game controller udev rules. |
+| `desktop/solaar.bst` | Solaar library, CLI and Logitech hidraw `uaccess` rule, for the noctalia MX Control plugin. |
 | `config/desktop-udev.bst` | Performance and hardware tuning ported from CachyOS-Settings. |
 | `desktop/falcond.bst` | falcond, PikaOS's gaming performance daemon, with its profile set. |
 | `desktop/scx-loader.bst` | scx_loader, the D-Bus loader for sched-ext schedulers. |
@@ -176,6 +177,8 @@ element does, its row's text is a review question.
 | `core/gum.bst` | `config/fido2-tasks.bst` | gum, the interactive prompt tool for the enrollment scripts. Prebuilt binary. |
 | `core/pam-u2f.bst` | `config/greetd-config.bst`, `config/u2f-config.bst` | The `pam_u2f.so` PAM module. |
 | `deps/i2c-tools.bst` | `desktop/ddcutil.bst` | i2c-tools, for I2C bus access. |
+| `deps/python3-evdev.bst` | `desktop/solaar.bst` | python-evdev, Linux input-device bindings. |
+| `deps/python3-pyudev.bst` | `desktop/solaar.bst` | pyudev, the libudev binding. |
 | `desktop/cage.bst` | `config/greetd-config.bst` | cage, the kiosk compositor that hosts the greeter. |
 | `desktop/greetd.bst` | `config/greetd-config.bst` | greetd, the login manager daemon. |
 | `desktop/gtk4-layer-shell.bst` | `desktop/ghostty.bst` | gtk4-layer-shell library. |

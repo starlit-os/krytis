@@ -1,7 +1,8 @@
 # Host requirements for the MX Control noctalia plugin
 
-**Issue:** #1220 · **Status (2026-10-13): planned, not started.** Step 2 waits on the Design
-Gate decision below.
+**Issue:** #1220 · **Status (2026-10-14): steps 1 and 2 done, in one PR.** Step 3's hardware
+check is open; its skill write-back (`docs/skills/desktop.md`, `docs/skills/bst.md`) landed
+with steps 1–2.
 
 | Plugin | Catalog id | What it executes |
 |---|---|---|
@@ -29,7 +30,11 @@ it. Each step below is one PR.
 
 ## Design Gate decision
 
-Record the answer on #1220 before starting step 2.
+**Decided 2026-10-14: Solaar is a declared `floor` consumer; no patch.** The carried patch was
+sized before deciding (one file, 12 lines added, 7 removed) and skipped because it saves no
+bytes while the other floor apps keep GTK3. Its contents, and what it would not cover (the
+`solaar` CLI imports Gtk 3 regardless), are in `docs/plans/2026-09-30-gtk3-realistic-floor.md`
+§ Solaar: a floor consumer through GObject introspection.
 
 | Decision | Recommendation |
 |---|---|
