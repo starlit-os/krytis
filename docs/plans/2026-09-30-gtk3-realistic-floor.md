@@ -6,10 +6,11 @@
 
 Step 3 (#1033) is on hold upstream: Disks 51 has only a beta, with open bugs. That keeps step 4's libcanberra half (#1034) blocked. Steps 5a plymouth (#1035, Breakage Gate), 5b (#1036) and 6 (#181) are open.
 
-GTK3 ships in the image for 15 different reasons (#641 has the full map). Four of them krytis
-cannot change today: zen-browser, Equibop, Proton Pass and `xdg-desktop-portal-gtk`.
-Steps 0–5 remove every other one, after which GTK3 ships *only* because of those four.
-Step 6 investigates replacing xdg-desktop-portal-gtk, the only one of the four that krytis
+GTK3 ships in the image for 15 different reasons (#641 has the full map). Three of them krytis
+cannot change today: zen-browser, Proton Pass and `xdg-desktop-portal-gtk`. Native Equibop
+was a fourth until #1194 replaced it with a flatpak.
+Steps 0–5 remove every other one, after which GTK3 ships *only* because of those three.
+Step 6 investigates replacing xdg-desktop-portal-gtk, the only one of the three that krytis
 controls.
 
 Each step is independently landable as its own PR, in the order given, and each has a
@@ -45,7 +46,7 @@ resolves to it through `elements/freedesktop-sdk.bst` `overrides:`):
 | Element | GTK3-linked ELF in the image | Removed by |
 |---|---|---|
 | `desktop/zen-browser.bst` | `/usr/lib/zen-browser/{libxul.so,libmozgtk.so,gfxtest,updater}` | floor |
-| `desktop/equibop.bst` | `/usr/lib/equibop/equibop` | floor |
+| `desktop/equibop.bst` | `/usr/lib/equibop/equibop` | floor; element removed in #1194 |
 | `gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst` | `/usr/libexec/xdg-desktop-portal-gtk` | floor (#181) |
 | `desktop/gnome-disk-utility.bst` | `/usr/bin/gnome-disks`, `/usr/bin/gnome-disk-image-mounter` | step 3 |
 | `gnome-build-meta.bst:core-deps/libhandy.bst` | `libhandy-1.so.0` | step 3 (only consumer is gnome-disks) |
@@ -179,14 +180,15 @@ libatk-bridge-2.0.so.0 libatspi.so.0 libcups.so.2 libxkbcommon.so.0 libasound.so
 libdbus-1.so.3 libudev.so.1 libgbm.so.1 libX11 … libxcb  (RPATH $ORIGIN → libffmpeg.so bundled)
 ```
 
-It is the same set as Equibop's. Copy `elements/desktop/equibop.bst`'s `depends:` block and
-its comments: gtk3, nss, at-spi2-core, libxkbcommon, alsa-lib, cups, dbus, systemd, and
+It was the same set as Equibop's. #1031 copied the then-native `desktop/equibop.bst`'s
+`depends:` block and its comments (that element was removed in #1194): gtk3, nss,
+at-spi2-core, libxkbcommon, alsa-lib, cups, dbus, systemd, and
 `extensions/mesa/mesa.bst` for `libgbm.so.1`. Then apply § Runtime deps: read the ELF, then
 add back the dlopens (`docs/skills/bst.md`) to *Proton Pass's* dlopens rather than copying
 Equibop's list blind.
 
-**Why now:** Proton Pass is part of the floor either way. Today it would break silently the
-day zen-browser and Equibop stop pulling in GTK3.
+**Why now:** Proton Pass is part of the floor either way. It would have broken silently the
+day zen-browser and Equibop stopped pulling in GTK3, and #1194 removed Equibop.
 
 **Verify:** `mise run bst -- show --deps run desktop/proton-pass.bst` lists the new deps;
 `mise run build`; launch Proton Pass on a booted image. Graph half now reports
@@ -478,9 +480,9 @@ gap was found later; #181's own table adds an Access column for each candidate.
 ## Step 7 — Floor reached
 
 - Step 0's allowlist equals the floor:
-  - **elements:** `desktop/zen-browser.bst`, `desktop/equibop.bst`, `desktop/proton-pass.bst`,
+  - **elements:** `desktop/zen-browser.bst`, `desktop/proton-pass.bst`,
     `gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst`;
-  - **files:** those four apps' ELF files, plus gtk+-3's own (`libgtk-3`, `libgailutil-3`,
+  - **files:** those three apps' ELF files, plus gtk+-3's own (`libgtk-3`, `libgailutil-3`,
     `immodules/*`, `printbackends/*`, `gtk-launch`, `gtk-query-*`,
     `gtk-encode-symbolic-svg`, `broadwayd`).
 - `mise run build` and `mise boot-test` pass.

@@ -39,9 +39,19 @@ flatpak Discord has the same gap — and a separate repo gives it its own releas
 for krytis to track.
 
 **Why not the alternatives:** a native Discord element was rejected in #595 by the
-same reasoning as native Steam in `docs/design/gaming-variant.md`. Krytis's native
-Equibop (`desktop/equibop.bst`) already detects games itself, which is why the
-bridge skips the canonical `$XDG_RUNTIME_DIR/discord-ipc-N` by default.
+same reasoning as native Steam in `docs/design/gaming-variant.md`. Krytis shipped
+native Equibop (`desktop/equibop.bst`) from #609 until #1194 removed it in favour of
+the `org.equicord.equibop` flatpak, which this bridge covers.
+
+**The canonical `$XDG_RUNTIME_DIR/discord-ipc-N` stays skipped by default** (the
+bridge's `--include-host` flag is off; the unit passes no flags). Native Equibop
+was the original reason: it held that path and detected games itself. Since #1194
+the image puts nothing there, so the skip costs nothing on a stock install, and the
+upstream rule still holds for a native client a user adds: anything listening at the
+canonical path shares the host PID namespace and detects games itself, so reporting
+to it doubles the activity (presence-bridge
+[`ipc.md` § Finding clients](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md#finding-clients)).
+Decided in #1194: no change upstream or in the unit.
 
 ## Packaging
 

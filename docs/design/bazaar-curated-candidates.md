@@ -44,8 +44,17 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
 - **Discord clients.** `com.discordapp.Discord` is dropped as proprietary and blocked.
   The Equibop Flatpak (`org.equicord.equibop`) is on the Gaming section instead, decided
   in [this comment](https://github.com/starlit-os/krytis/issues/245#issuecomment-6111480315)
-  when #1194 planned to replace the native `elements/desktop/equibop.bst` with the
-  Flatpak plus `elements/desktop/presence-bridge.bst`.
+  when #1194 planned to replace the native element with the Flatpak plus
+  `elements/desktop/presence-bridge.bst`. #1194 then removed `desktop/equibop.bst`, so
+  this row is the only Equibop krytis points to.
+  **Moving off the native client:** native Equibop kept its state, login included, in
+  `~/.config/equibop`. The Flatpak reads `~/.var/app/org.equicord.equibop/config/equibop`
+  instead and gets no `~/.config` access, so a user who copies nothing logs in again. To
+  keep it, copy the directory before the Flatpak's first launch:
+  `mkdir -p ~/.var/app/org.equicord.equibop/config && cp -a ~/.config/equibop ~/.var/app/org.equicord.equibop/config/`.
+  The path is derived, not observed: the `flathub/org.equicord.equibop` manifest grants no
+  `~/.config` access, and Equibop's `src/main/constants.ts` keeps its data in Electron's
+  `userData` (`$XDG_CONFIG_HOME/equibop`), which flatpak points into `~/.var/app/<id>/`.
 - **GNOME Shell-only apps don't fit.** Anything that assumes a GNOME session
   (a plain GTK app is fine; a shell-extension manager wouldn't be) needs a check
   under niri.

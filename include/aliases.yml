@@ -12,7 +12,9 @@ aliases:
   codeberg_files: https://codeberg.org/
   github_files: https://github.com/
   # raw file blobs pinned at a commit (github_files serves these only via a
-  # redirect to this host) — see elements/desktop/equibop.bst.
+  # redirect to this host). No element uses it today; mise/lib/zig_zon.py's
+  # URL_ALIASES emits it for Zig dependencies hosted there, so keep the two in
+  # sync.
   github_raw: https://raw.githubusercontent.com/
   gitlab_files: https://gitlab.com/
   gnome_downloads: https://download.gnome.org/sources/

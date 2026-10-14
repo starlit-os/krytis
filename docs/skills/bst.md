@@ -40,8 +40,8 @@ The `bst`, `validate`, `load-image` and `sbom` tasks fall back to `BST_CONTAINER
 | Full image build | `mise build` |
 
 **Element names are relative to `element-path: elements` (project.conf), not to the repo
-root.** `mise bst build elements/desktop/equibop.bst` fails with `Could not find element
-… Did you mean 'desktop/equibop.bst'?` — pass `desktop/equibop.bst`. The element
+root.** `mise bst build elements/desktop/zed.bst` fails with `Could not find element
+… Did you mean 'desktop/zed.bst'?` — pass `desktop/zed.bst`. The element
 directories are exactly `core/`, `desktop/`, `config/`, `stacks/`, `oci/`,
 `overrides/`, `deps/`, `dev/`, `plugins/`. There is no per-distro top-level element
 directory here — a `krytis/` one has never existed, and neither has the `components/`
@@ -1044,8 +1044,8 @@ caught:
 
 - **`desktop/proton-pass.bst`**: a prebuilt Electron app whose `depends:` was only
   `runtime-gnu.bst`, yet `Proton Pass` has `libgtk-3.so.0` in DT_NEEDED. It worked only
-  because zen-browser and Equibop happened to pull GTK3 in. #1031 declared its deps, so
-  the graph half now lists it too.
+  because zen-browser and the native Equibop element (removed in #1194) happened to
+  pull GTK3 in. #1031 declared its deps, so the graph half now lists it too.
 - **`components/gstreamer-plugins-bad.bst`**: declares no GTK3 dependency, but builds
   `libgstgtkwayland.so` because plugins-base's runtime edge stages GTK3 into its sandbox
   (see the auto-features section above).
@@ -1421,6 +1421,31 @@ Then, for each hit, grep `mise/tasks/` for the element path and
 element and a name-based check reports them as false gaps: `core/linux-cachyos.bst` is updated
 by `kernel-update`, and `desktop/zig.bst` by `ghostty-update` (which bumps Zig when ghostty's
 `minimum_zig_version` moves). A naive name match over-reported 12 gaps where there were 9.
+
+### Removing an element touches more than the element (#1194)
+
+An element with its own update path is wired into about seven files, and only the first two
+are obvious. Removing native Equibop (#1194) touched:
+
+| What | Where |
+|---|---|
+| the element and its stack entry | `elements/desktop/<name>.bst`, `elements/stacks/desktop-apps.bst` |
+| its updater | `mise/tasks/<name>-update`, or its `TARGETS` row in `mise/tasks/tarball-update` |
+| its tracker | `.github/workflows/track-bst-sources.yml`: the `workflow_dispatch` `group` option **and** the `track-<name>` job |
+| attribution | `files/fakecap-manifest.tsv`: drop every row whose element column is the element (`grep -vP '\t<element>\t'`), and check the file is still `LC_ALL=C sort -c` clean. Don't regenerate the whole TSV for a removal; see `chunkah.md` § fakecap-manifest.tsv generation |
+| ratchets | `mise/tasks/gtk3-audit` `ELEMENTS`/`FILES` rows. A leftover row fails the audit as *stale* |
+| aliases | `include/aliases.yml`: before dropping an alias, grep `mise/` as well as `elements/`. `github_raw` had no element user left, but `mise/lib/zig_zon.py` emits it |
+| prose | every skill, design doc, live plan and element comment that names it. Re-scope the lessons to past tense; don't delete them |
+
+`mise run docs-links` fails on a backticked `elements/…` path or `mise run <task>` that no
+longer exists, in any markdown file. So cite a removed element as `desktop/<name>.bst`
+(no `elements/` prefix) and its task by bare name, as the Warp (#1005) and Equibop (#1194)
+write-ups do. Verified by probing a scratch `.md` on 2026-10-14: the full `elements/` path
+of the deleted Equibop element and a `mise run` of its deleted task were both reported; the
+bare `desktop/equibop.bst` was not.
+
+Then grep the open issues too (`gh issue list --state open --search '<name> in:body'`).
+AGENTS.md § What the first sweep learned about *how* rot gets in explains why.
 
 ### `releases/latest` is not "the latest source release"
 
@@ -1842,7 +1867,12 @@ sources:
 
 ### Electron self-updaters on a read-only image — pick the artifact, not a patch
 
-*Source: `elements/desktop/equibop.bst` (#609).*
+*Source: the native Equibop element, `desktop/equibop.bst` (#609), shipped until #1194
+replaced it with the `org.equicord.equibop` flatpak. That element and its `equibop-update`
+task no longer exist (`git log --diff-filter=D -- elements/desktop/equibop.bst` finds the
+removal). Everything below is about `electron-builder` apps in general and applies to the
+next prebuilt Electron element as-is; `desktop/proton-pass.bst` is the live example for
+`chrome-sandbox` and the runtime-deps method.*
 
 Every `electron-builder` app that depends on `electron-updater` ships a live self-updater,
 and on a bootc image every install path it knows is wrong. **Which** updater it instantiates
@@ -1869,7 +1899,7 @@ switch (readFileSync(identity).toString().trim()) {
   `AppUpdater.checkForUpdates()` short-circuits to `null`: no request, no prompt, nothing to
   fail. This is the Electron equivalent of `zen-browser.bst`'s `DisableAppUpdate` policy.
 - **Verify at runtime, one command, no display needed:**
-  `env -u WAYLAND_DISPLAY -u DISPLAY HOME=$(mktemp -d) ./equibop` prints
+  `env -u WAYLAND_DISPLAY -u DISPLAY HOME=$(mktemp -d) ./<app-binary>` prints
   `APPIMAGE env is not defined, current application is not an AppImage` — that is
   electron-updater's own `isUpdaterActive()` log, and its presence *is* the proof the
   updater is off. Reading the source is not enough; check for this line. If it is missing
@@ -1882,8 +1912,9 @@ So **prefer the portable tarball over the `.deb` for any `electron-updater` app*
 hand-maintained deletion that fails *silently* if a version bump drops it.
 
 Do not assume the app guards the updater behind a setting or an env var: Equibop's
-`src/main/startup.ts` begins `import "./updater"`, and `updater.ts` calls
-`autoUpdater.checkForUpdates()` at module load. There is nothing to switch off.
+`src/main/startup.ts` (at v3.3.1, the last release krytis shipped natively) begins
+`import "./updater"`, and `updater.ts` calls `autoUpdater.checkForUpdates()` at module
+load. There was nothing to switch off.
 
 **What the `.deb` actually buys you, for an app whose two artifacts are byte-identical**
 (verify: compare `app.asar`, the main binary and any sidecars by size/md5 across both):
@@ -1903,7 +1934,7 @@ under either artifact and the `.deb`'s only remaining gift is the icon file.
 
 **Getting the icon without the `.deb`:** take upstream's own source icon as a second
 `kind: remote` source, pinned at a **commit**, not at the release tag — then version bumps
-leave it alone:
+leave it alone. This is what `desktop/equibop.bst` carried:
 
 ```yaml
 sources:
@@ -1919,16 +1950,19 @@ sources:
   ref: <sha256>
 ```
 
-- `github_raw` (`https://raw.githubusercontent.com/`) exists in `include/aliases.yml` for
-  exactly this. `github_files` reaches raw blobs only via a redirect — pin the real host.
-- Equibop's `build/icon.svg` is byte-identical to the SVG `electron-builder` generates into
-  the `.deb`, so nothing is lost. Check this before assuming the source icon is equivalent.
+- `github_raw` (`https://raw.githubusercontent.com/`) was added to `include/aliases.yml`
+  for exactly this. `github_files` reaches raw blobs only via a redirect — pin the real
+  host. No element uses it since #1194; the alias stays because `mise/lib/zig_zon.py`
+  emits it for Zig dependencies hosted there.
+- Equibop's `build/icon.svg` was byte-identical to the SVG `electron-builder` generates into
+  the `.deb`, so nothing was lost. Check this before assuming the source icon is equivalent.
 - A commit pin can silently go stale when upstream redraws the icon. Have the update task
-  compare the tag's `build/icon.svg` hash against the pinned `ref` and warn — see
-  `mise/tasks/equibop-update`.
+  compare the tag's `build/icon.svg` hash against the pinned `ref` and warn; the removed
+  `equibop-update` task did this with a `curl -fsSL … | sha256sum` that only warned on
+  failure.
 - Upstream's `linux.desktop.entry` block in `package.json` is the authoritative source for
   the hand-written `.desktop` (it is richer than the generated one — Equibop's `.deb` entry
-  loses `Categories=…;InstantMessaging;Chat;`).
+  lost `Categories=…;InstantMessaging;Chat;`).
 
 **`chrome-sandbox` needs no setuid here.** It ships `0755`; upstream's `postinst` chmods it
 `4755` *only* when user namespaces are unavailable. krytis re-enables
@@ -1936,7 +1970,7 @@ sources:
 Chromium takes the namespace sandbox. Do not add setuid handling for an Electron app.
 
 **Runtime deps: read the ELF, then add back the dlopens.** `readelf -d <app-binary>` gives
-the direct set (for Equibop: gtk3, nss, at-spi2-core, libxkbcommon, alsa-lib, cups, dbus,
+the direct set (Equibop's was gtk3, nss, at-spi2-core, libxkbcommon, alsa-lib, cups, dbus,
 systemd/libudev — plus `RPATH: $ORIGIN`, which is what forces the private-directory layout
 above). It will *not* show `libsecret` (`safeStorage`), `libnotify`, `pipewire`
 (screen share, `@vencord/venmic`), `libXtst`/`libXss`. Cross-check against the `.deb`'s
@@ -1955,7 +1989,7 @@ catches the dlopened libraries. Then check both against the bundle itself:
 element's closure is complete, but that alone does not make it loadable. fdsdk installs
 mesa under `%{libdir}/GL/default/lib`; what resolves it is the `ld.so.conf.d` entry that
 `freedesktop-sdk.bst:vm/mesa-default.bst` in `stacks/desktop.bst` installs image-wide.
-`desktop/equibop.bst` and `desktop/proton-pass.bst` carry the comment to copy.
+`desktop/proton-pass.bst` carries the comment to copy.
 
 ### A prebuilt binary's RUNPATH into `/usr/local` is dead on bootc
 
@@ -3365,12 +3399,13 @@ Key points:
 
 Two separate mechanisms, two separate verdicts. Do not conflate them.
 
-**Resolved for Equibop by leaving the sandbox.** `elements/desktop/equibop.bst`
-(#609) installs Equibop natively, so it holds `discord-ipc-0` in the real
-`$XDG_RUNTIME_DIR` and shares the host PID namespace — both mechanisms below
-work with no bridging and no overrides. Everything that follows still applies to
-every Discord client that stays a flatpak, and to any future consumer probing
-for a socket. Prefer a native element over bridging when the choice is open.
+**Equibop left the sandbox from #609 to #1194, then went back in.** The native
+element `desktop/equibop.bst` held `discord-ipc-0` in the real `$XDG_RUNTIME_DIR`
+and shared the host PID namespace, so both mechanisms below worked with no bridging
+and no overrides. #1194 removed it once `desktop/presence-bridge.bst` (#1152) gave
+flatpak clients host-side game detection. Equibop is now the `org.equicord.equibop`
+flatpak on the Bazaar curated page, krytis ships no native Discord client, and
+everything that follows applies to every client a user can install.
 
 **`$XDG_RUNTIME_DIR/discord-ipc-N` is namespaced per app.** Inside any sandbox
 that path is backed by `$XDG_RUNTIME_DIR/.flatpak/<app-id>/xdg-run/discord-ipc-N`
@@ -3389,8 +3424,11 @@ Consequences that cost real time to rediscover:
   and Vesktop each create a real socket at `$XDG_RUNTIME_DIR/discord-ipc-0`
   inside their sandbox; a host-side object bound over it makes launch fail with
   `bwrap: Can't make symlink at …: destination exists and is not a symlink`.
-  Equibop does not claim the path and is unaffected. So the obvious
-  user-tmpfiles `L %t/discord-ipc-0 → …` fix is not safe by itself.
+  The native Equibop element was unaffected because it had no sandbox; the
+  `org.equicord.equibop` flatpak runs its RPC server (`arrpc-bun`, per the
+  `flathub/org.equicord.equibop` manifest) inside its sandbox, so assume it
+  behaves like Vesktop (not tested). So the obvious user-tmpfiles
+  `L %t/discord-ipc-0 → …` fix is not safe by itself.
 - **flatpak leaves a stub at every granted `xdg-run/` path** in
   `.flatpak/<app-id>/xdg-run/`, and it outlives the host original. If something
   occupied the host path when the app started, the stub is that (a symlink, in the
@@ -3401,10 +3439,14 @@ Consequences that cost real time to rediscover:
   `stat -c '%F %y %n' $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0`). Clear
   them between experiments, keeping real sockets:
   `for f in $XDG_RUNTIME_DIR/.flatpak/*/xdg-run/discord-ipc-0; do [ -S "$f" ] || rm -f "$f"; done`
-- **`rpc-bridge` has no Equibop entry and needs none.** Wine/Proton games under
-  Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`, which
-  probes the canonical path first, and the native element puts Equibop's socket
-  there. Its full search order is in presence-bridge
+- **`rpc-bridge` has no entry for the Equibop flatpak.** Wine/Proton games under
+  Faugus get RPC via `c:\windows\system32\discord\bridge.exe --service`, whose
+  fixed search order covers the canonical path, Discord's `app/` relay and the
+  Vesktop and Discord flatpaks, but not `.flatpak/org.equicord.equibop/`. While the
+  native element existed its socket sat at the canonical path, which rpc-bridge
+  probes first. Since #1194, a game's own RPC has no route to Equibop, and a game
+  shows only if presence-bridge detects it (inferred from the search order, not
+  tested live). The full order is in presence-bridge
   [`ipc.md` § Finding clients](https://github.com/kitten-lily/presence-bridge/blob/main/docs/skills/ipc.md#finding-clients).
 
 **Game detection can never work in flatpak.** Discord matches running processes
@@ -3419,7 +3461,8 @@ sockets) shows **no presence at all** under a flatpak Discord, and the same
 combination works natively. That is expected behaviour, not a regression to
 chase. The fix is a host process that detects games on the client's behalf:
 [kitten-lily/presence-bridge](https://github.com/kitten-lily/presence-bridge)
-(#595 option 2, `docs/design/presence-bridge.md`). What a host-side detector has to
+(#595 option 2, `docs/design/presence-bridge.md`), which krytis installs disabled;
+users opt in with `mise presence-bridge:enable`. What a host-side detector has to
 know is recorded there, not here. That covers matching on argv0, the size of
 Discord's detectable list, finding client sockets, and treating the socket peer as
 untrusted. See presence-bridge's
