@@ -334,8 +334,9 @@ time `.github/workflows/` held only `publish.yml`, `track-bst-sources.yml` and
   `ghcr.io/starlit-os/krytis:sealed` after every successful `publish.yml` run,
   installing QEMU/OVMF/virt-firmware and `chmod`ing `/dev/kvm` exactly as the
   KVM probe below predicted.
-- `build-iso.yml` runs `mise run build-iso` + `mise run verify-iso-payload` on the
-  always-on VPS runner, on `workflow_dispatch`.
+- `build-iso.yml` runs `mise run build-iso` on the always-on VPS runner, on
+  `workflow_dispatch`. `build-iso` ends with `verify-iso-payload` itself (ID + recipe-name
+  check when sealed, `--names-only` when unsealed, #1261).
 
 **Still human-remembered:** every root-requiring boot gate — `boot-test` (and its
 `--secure`/`--expect-fail` arms), `iso-install-test`, `selfenroll-test`,

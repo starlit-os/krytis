@@ -138,6 +138,11 @@ jobs:
         run: df -h -x fuse || true
 
       - name: Build ISO
+        # build-iso ends with verify-iso-payload in both modes: the image-ID
+        # digest gate plus the installer-recipe name check when sealed, the name
+        # check alone (--names-only) when unsealed. Unsealed payloads are
+        # re-committed by payload-prep.sh, so an ID check on them can only fail
+        # (#1261); there is no separate verify step.
         run: |
           if [[ "${{ inputs.sealed }}" == "true" ]]; then
             mise run build-iso --compression "${{ inputs.compression }}" \
@@ -145,14 +150,6 @@ jobs:
           else
             mise run build-iso --compression "${{ inputs.compression }}"
           fi
-
-      - name: Verify ISO payload
-        # Sealed builds only: `build-iso --sealed` already runs
-        # verify-iso-payload internally right after assembly (against the
-        # exact ref passed to --payload-image), so re-verifying here would
-        # be redundant. The unsealed path has no such internal check.
-        if: ${{ !inputs.sealed }}
-        run: mise run verify-iso-payload --iso output/krytis-live.iso --image localhost/krytis:latest
 
       - name: Publish sealed ISO to R2
         # Credentials arrive as RCLONE_CONFIG_* env vars scoped to this one

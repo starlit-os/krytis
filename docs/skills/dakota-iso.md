@@ -333,11 +333,13 @@ krytis has the same split:
 ID only (its `names` were printed, not asserted). It now also reads
 `etc/bootc-installer/recipe.json` from the same squashfs. It fails unless `local_imgref` is a
 `containers-storage:` ref, and unless every `containers-storage:` ref in the recipe
-(`local_imgref`, `image`), minus the prefix, is among the ID-matched entry's `names`.
+(`local_imgref`, `image`), minus the prefix, is among the matched store entry's `names`.
 `targetImgref` and the bare `imgref` are deliberately not checked: they name what the
-installed system tracks, which may legitimately be remote. Like the ID check, this runs only
-where `verify-iso-payload` runs: sealed builds (`build-iso --sealed`, `iso-install-test
---secure`).
+installed system tracks, which may legitimately be remote. `build-iso` runs it on every
+build. Sealed builds match the store entry by image ID first. Unsealed builds pass
+`--names-only` (#1261), because `payload-prep.sh` re-commits the payload and the ID can't
+match, so the entry is found by the recipe's own `local_imgref`. `iso-install-test
+--secure` also runs the sealed form.
 
 ### Resolve a binary before prefixing `sudo` — `command -v` answers for the caller's PATH
 

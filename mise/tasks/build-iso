@@ -158,6 +158,10 @@ if [[ "${SEALED}" -eq 1 ]]; then
         podman tag "${LOCAL_IMAGE}" "${PAYLOAD_REF}"
     fi
     ./mise/tasks/verify-iso-payload --iso "${OUTPUT_DIR}/${ISO_NAME}" --image "${LOCAL_IMAGE}"
+else
+    # payload-prep.sh re-commits an unsealed payload, so its image ID never
+    # equals ${LOCAL_IMAGE}'s; only the installer-recipe name check applies (#1261).
+    ./mise/tasks/verify-iso-payload --iso "${OUTPUT_DIR}/${ISO_NAME}" --names-only
 fi
 
 echo "==> ISO ready: ${OUTPUT_DIR}/${ISO_NAME}"
