@@ -1074,6 +1074,7 @@ BuildStream never runs as namespace-root against your user-owned cache.
 5. Run `mise bst build desktop/<name>.bst` — element names are relative to `elements/`, not the repo root (see § Quick Reference)
 6. Run `mise build` for a full image build
 7. **Wire up an update path** — see § Element update path below
+8. Run `mise run image-inventory --write` and describe the new row in [`docs/design/image-inventory.md`](../design/image-inventory.md). CI's `mise run image-inventory --check` fails until you do. The same applies when removing an element or moving it between stacks
 
 ### Adding a gnome-build-meta junction element
 
