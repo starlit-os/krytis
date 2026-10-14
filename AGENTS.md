@@ -197,6 +197,8 @@ Non-compliance = automatic rejection.
 
 **Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs. `mise run build` already ends with `mise run lint` plus the image gates `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check` (`generate-image-version` → `load-image` → `lint` → `umbriel-config-validate` → `cracklib-dict-check` → `portal-routing-check`) — running `mise run build` satisfies this gate on its own; a separate `mise run lint` afterward is redundant (it re-lints the same image) and running it *before* `mise run build` completes only lints stale content. See `docs/skills/mise.md`'s "Standard build workflow" section.
 
+**Sudo and commit signing are not blockers:** a failed `sudo -n true` ("interactive authentication is required") does not mean you can't run `generate-disk`, `boot-test` or other root steps. Run the command in a **pty** and the human enters the FIDO2 PIN and touches the key at the prompt. Commit the same way with `env -u SSH_AUTH_SOCK git commit` in a pty. Never hand these steps to the human, and never fall back to a stale `--reuse-disk` image for that reason. See `docs/skills/mise.md` § Agents can run the sudo steps: use a pty.
+
 **Mise task integrity:** All maintenance tasks must be `mise` tasks. No loose shell commands. If a task isn't covered by an existing task, add one alongside your change. Every agent action must be replicable by a human via `mise <task>`. Do not rename existing tasks without explicit human approval.
 
 **Update path gate:** Before opening a PR that adds a new element, confirm one of:
