@@ -65,7 +65,7 @@ T3 needs ~60 GB free on `/var/tmp`
 | `mise run docs-links` | every `docs/…` reference, markdown link, backticked repo-relative path and backticked `mise run <task>` resolves | nothing about behaviour |
 | `scripts/parse-efi-auth.py <f.auth>` | each signature list carries a parseable certificate, and prints its subject | that the firmware will *accept* the file (signature, timestamp ordering, variable name) |
 | `mise run generate-ovmf-vars` | the test varstore's db matches the sealed image's `db.auth` byte count, and refuses to finish when it does not | that either one is *correct* — only that they agree |
-| `mise run verify-iso-payload` | the ISO's embedded store holds the exact image ID expected | that the image boots |
+| `mise run verify-iso-payload` | the ISO's embedded store holds the exact image ID expected, under every `containers-storage:` name the baked installer recipe requests (#1248) | that the image boots |
 
 `parse-efi-auth.py` is the cheapest gate that would have caught #438: the shipped
 files reported `SignatureSize=16` on all five entries.

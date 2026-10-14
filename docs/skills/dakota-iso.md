@@ -316,7 +316,7 @@ containers-storage …`. The two names are configured in unrelated files and agr
 convention. Upstream now treats `<variant>/payload_ref` as the source of truth and tests the
 workflow embed, `configure-live.sh`'s default and the `images.json` catalogue against it.
 
-krytis has the same split, and no gate compares the two (#1248):
+krytis has the same split:
 
 - **Embed:** `scripts/iso-sd-boot.sh:45` uses `PAYLOAD_REF`, else `krytis/payload_ref`.
 - **Installer:** `live/src/configure-live-krytis.sh:249` bakes
@@ -325,14 +325,19 @@ krytis has the same split, and no gate compares the two (#1248):
 - `mise run build-iso` passes one `PAYLOAD_REF` to both. `mise run iso-container-build`
   without `--payload-ref` relies on two literals happening to match, and
   `.github/workflows/build-iso.yml` hardcodes a third copy.
-- **Why nothing catches it:** `mise/tasks/verify-iso-payload` matches the store entry by image
-  ID only (its `names` are printed, not asserted), and the E2E install
-  (`scripts/iso-install-fisherman.sh:34-46`) writes its own recipe from `payload_ref`. On a
-  miss it falls back to a `docker://` network pull, so an online E2E run passes even when the
-  offline GUI install would fail.
+- **The E2E install can't catch it:** `scripts/iso-install-fisherman.sh:34-46` writes its
+  own recipe from `payload_ref`, and on a miss falls back to a `docker://` network pull, so
+  an online E2E run passes even when the offline GUI install would fail.
 
-The check that closes it: read `etc/bootc-installer/recipe.json` from the built squashfs and
-assert that `local_imgref`, minus `containers-storage:`, is among the matched entry's `names`.
+**Gated since #1248.** `mise/tasks/verify-iso-payload` used to match the store entry by image
+ID only (its `names` were printed, not asserted). It now also reads
+`etc/bootc-installer/recipe.json` from the same squashfs. It fails unless `local_imgref` is a
+`containers-storage:` ref, and unless every `containers-storage:` ref in the recipe
+(`local_imgref`, `image`), minus the prefix, is among the ID-matched entry's `names`.
+`targetImgref` and the bare `imgref` are deliberately not checked: they name what the
+installed system tracks, which may legitimately be remote. Like the ID check, this runs only
+where `verify-iso-payload` runs: sealed builds (`build-iso --sealed`, `iso-install-test
+--secure`).
 
 ### Resolve a binary before prefixing `sudo` — `command -v` answers for the caller's PATH
 

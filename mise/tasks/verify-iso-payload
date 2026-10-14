@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Assert an ISO's embedded offline payload is the exact image expected (sealed-payload digest gate)"
+#MISE description="Assert an ISO's embedded offline payload is the exact image expected, under the name its installer recipe requests (sealed-payload digest gate)"
 #USAGE flag "--iso <path>" default="output/krytis-live-sealed.iso" help="ISO to inspect"
 #USAGE flag "--image <tag>" default="localhost/krytis:sealed" help="Local image tag the payload must match"
 
@@ -20,6 +20,17 @@ set -euo pipefail
 # store's vfs-images/images.json records exactly that value as its `id`, and that
 # `podman save --format oci-archive` round-trips both the config digest and the
 # layer diff_id unchanged for krytis's (already OCI-format) images.
+#
+# Second invariant (#1248): every `containers-storage:` ref the installer recipe
+# baked into the same squashfs (etc/bootc-installer/recipe.json — `local_imgref`,
+# `image`) is one of that store entry's `names`. The embed side
+# (scripts/iso-sd-boot.sh, from PAYLOAD_REF or krytis/payload_ref) and the recipe
+# side (live/src/configure-live-krytis.sh, from PAYLOAD_REF or its own literal)
+# are configured independently; an ID-only check passes a drifted name, and so
+# does the E2E install, which writes its own recipe and falls back to a network
+# pull. Only a real offline GUI install would fail. dakota-iso shipped exactly
+# that (bd407ff); see docs/skills/dakota-iso.md § The ISO's embedded payload and
+# the installer's `local_imgref` are set independently.
 #
 # When this task is invoked as a plain script by another task (build-iso does),
 # mise does NOT parse these #USAGE annotations for the child call — it passes the
@@ -44,6 +55,7 @@ podman image exists "${IMAGE}" || { echo "ERROR: ${IMAGE} does not exist locally
 
 EXPECTED_ID="$(podman inspect "${IMAGE}" --format '{{.Id}}')"
 STORE_JSON="var/lib/containers/storage/vfs-images/images.json"
+RECIPE_JSON_PATH="etc/bootc-installer/recipe.json"
 
 echo "==> Verifying ${ISO} embeds ${IMAGE} (${EXPECTED_ID:0:12})..."
 
@@ -57,18 +69,47 @@ if ! IMAGES_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${STORE_JS
     echo "       The offline store is missing, or is not the composefs (VFS) layout." >&2
     exit 1
 fi
+if ! RECIPE_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${RECIPE_JSON_PATH}" 2>/dev/null)"; then
+    echo "ERROR: ${RECIPE_JSON_PATH} not present in the ISO's squashfs — no installer recipe to check." >&2
+    exit 1
+fi
 
-IMAGES_JSON="${IMAGES_JSON}" EXPECTED_ID="${EXPECTED_ID}" IMAGE="${IMAGE}" python3 <<'PY'
+IMAGES_JSON="${IMAGES_JSON}" RECIPE_JSON="${RECIPE_JSON}" EXPECTED_ID="${EXPECTED_ID}" IMAGE="${IMAGE}" python3 <<'PY'
 import json, os, sys
 
 expected = os.environ["EXPECTED_ID"].removeprefix("sha256:")
 entries = json.loads(os.environ["IMAGES_JSON"])
 found = [(e.get("id", ""), e.get("names") or []) for e in entries]
 
-for image_id, names in found:
-    if image_id == expected:
-        print(f"==> Payload verified: {image_id[:12]} {names}")
-        sys.exit(0)
+match = next(((i, n) for i, n in found if i == expected), None)
+
+if match:
+    image_id, names = match
+    recipe = json.loads(os.environ["RECIPE_JSON"])
+    prefix = "containers-storage:"
+    local_refs = {k: v for k, v in recipe.items()
+                  if isinstance(v, str) and v.startswith(prefix)}
+    err = sys.stderr
+    if "local_imgref" not in local_refs:
+        print(f"ERROR: recipe.json has no {prefix} local_imgref "
+              f"(got {recipe.get('local_imgref')!r}); the GUI installer has no offline source.",
+              file=err)
+        sys.exit(1)
+    unresolved = {k: v for k, v in local_refs.items() if v.removeprefix(prefix) not in names}
+    if unresolved:
+        print("ERROR: the payload is embedded, but the installer recipe asks for a name it does not carry.", file=err)
+        print(f"       store entry {image_id[:12]} names: {names}", file=err)
+        for key, ref in sorted(unresolved.items()):
+            print(f"       recipe.json {key}: {ref}", file=err)
+        print("", file=err)
+        print("An offline GUI install would fail with 'pull failed … containers-storage:…'.", file=err)
+        print("The embed name comes from PAYLOAD_REF / krytis/payload_ref (scripts/iso-sd-boot.sh),", file=err)
+        print("the recipe's from PAYLOAD_REF or configure-live-krytis.sh's default. Build both from", file=err)
+        print("one PAYLOAD_REF: mise run build-iso does; iso-container-build needs --payload-ref.", file=err)
+        sys.exit(1)
+    print(f"==> Payload verified: {image_id[:12]} {names}")
+    print(f"==> Installer recipe resolves to it: {', '.join(sorted(local_refs))}")
+    sys.exit(0)
 
 err = sys.stderr
 print(f"ERROR: the ISO's embedded store does not contain {os.environ['IMAGE']}.", file=err)
