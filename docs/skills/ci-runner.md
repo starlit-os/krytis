@@ -689,11 +689,17 @@ isn't. No Proton Pass authentication, no `pull-keys`, no UEFI key material
 ever touches this job — that machinery stays confined to `publish.yml`,
 which is what actually produces `:sealed` in the first place.
 
-`build-iso --sealed` already runs `verify-iso-payload` internally right
-after assembly (`mise/tasks/build-iso`'s own tail), so `build-iso.yml`'s
-separate "Verify ISO payload" step is gated `if: ${{ !inputs.sealed }}` —
-running it again for the sealed path would just re-check what the task
-itself already asserted, against the same local tag.
+`build-iso` ends with `verify-iso-payload` in both modes (`mise/tasks/build-iso`'s own
+tail), so `build-iso.yml` has no separate verify step. Sealed builds get the image-ID digest
+gate plus the installer-recipe name check. Unsealed builds get the name check alone
+(`--names-only`).
+
+**An ID check on an unsealed ISO can only fail.** `live/iso-tools/payload-prep.sh` injects
+two files into an unsealed payload and re-commits it with `buildah commit --squash`, which
+gives it a new image ID. The workflow used to run exactly that check, as an unsealed-only
+"Verify ISO payload" step against `localhost/krytis:latest`. Every dispatch through
+2026-10-10 was sealed, so the step was skipped every time and the bug never surfaced
+(#1261).
 
 ### R2 publish (`publish_r2`, issue #867)
 

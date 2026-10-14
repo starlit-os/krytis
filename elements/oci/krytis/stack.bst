@@ -13,14 +13,24 @@ public:
   bst:
     integration-commands:
       - mkdir /var/tmp
-      - rm -rfv /boot /run
+      # Every path below that becomes a symlink is removed first, and every link
+      # is made with `ln -sT`. Plain `ln -s target dest` with `dest` already a
+      # directory creates `dest/<basename>` inside it and exits 0 — an element
+      # that staged anything under /ostree, /srv or /usr/local would ship a real
+      # directory there with a stray link nested in it (dakota hit exactly this
+      # with /usr/local, dakota 1a1a7f4). The `rm` makes the normal case work;
+      # `-T` makes a link path missing from the `rm` fail the build instead of
+      # nesting (uutils ln: "File exists"). Anything removed here was unreachable
+      # on a booted system anyway — each path is a link into /var or /sysroot.
+      # docs/skills/bst.md § Rootfs symlinks: remove the path first, then `ln -sT`.
+      - rm -rfv /boot /run /ostree
       - mkdir /boot
       - mkdir /run
       - mkdir /sysroot
       - mkdir /sysroot/ostree
-      - ln -s sysroot/ostree ostree
+      - ln -sT sysroot/ostree ostree
 
-      - rm --verbose --recursive --force /root /home /opt /mnt /var
+      - rm --verbose --recursive --force /root /home /opt /mnt /srv /usr/local /var
 
       # These are also created by config/bootc.bst tmpfiles at runtime,
       # but must exist in the OCI image for container use.
@@ -30,17 +40,17 @@ public:
       - mkdir -p /var/mnt
       - mkdir -p /var/srv
 
-      - ln -s var/home /home
-      - ln -s var/roothome /root
-      - ln -s var/opt /opt
-      - ln -s var/mnt /mnt
-      - ln -s var/srv /srv
+      - ln -sT var/home /home
+      - ln -sT var/roothome /root
+      - ln -sT var/opt /opt
+      - ln -sT var/mnt /mnt
+      - ln -sT var/srv /srv
       # One `..`, not two: resolved from /usr it lands exactly on the root.
       # `../../var/usrlocal` resolves to the same place on a real filesystem
       # (because `/..` is `/`) but escapes the root under any sandboxed
       # traversal — bootc 1.16.11's new `runtime-deps` lint walks $PATH with
       # cap_std and died with "a path led outside of the filesystem" (#752).
-      - ln -s ../var/usrlocal usr/local
+      - ln -sT ../var/usrlocal usr/local
 
       # "uninitialized" triggers ConditionFirstBoot=yes for systemd-firstboot.service.
       # An empty file does not.

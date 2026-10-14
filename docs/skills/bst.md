@@ -480,9 +480,9 @@ config:
 `strip-binaries: ''` suppresses BST's default strip pass — gum is a pre-compiled Go binary, stripping it produces an unusable binary.
 
 The completion paths above are the canonical ones (§ Shell completion directories, below).
-As of 2026-10-14, `elements/core/gum.bst:31,33` still installs to the paths this pattern used
-to teach, `%{sysconfdir}/bash_completion.d/gum` and `%{datadir}/zsh/vendor-completions/_gum`.
-Moving them is an element change that hasn't been made yet, not a doc error.
+`elements/core/gum.bst` used the old paths this pattern once taught,
+`%{sysconfdir}/bash_completion.d/gum` and `%{datadir}/zsh/vendor-completions/_gum`, until
+#1256 moved it.
 
 **`gum style` with flag-like arguments:** when the text argument starts with `-`, gum parses it as its own flag and errors. Use `--` to terminate flag parsing:
 
@@ -527,8 +527,9 @@ into the zsh directory. Its `desktop/danksearch.bst` also swaps the fish and zsh
 (regenerated 2026-10-14) has `/usr/bin/bash` and neither `/usr/bin/zsh` nor `/usr/bin/fish`.
 `stacks/base-system.bst` pulls in `freedesktop-sdk.bst:components/bash-completion.bst`. The zsh
 and fish files are only used once one of those shells is added.
-`grep -rn 'bash_completion.d\|vendor-completions' elements` finds one element still on the
-wrong paths: `core/gum.bst`.
+`grep -rnE 'install .*(bash_completion\.d|vendor-completions)' elements` finds no element on
+the wrong paths since #1256 moved `core/gum.bst`, the last one. A bare
+`grep -rn 'bash_completion.d' elements` also matches gum's comment explaining the move.
 
 ## Config-only Elements
 
@@ -2229,7 +2230,7 @@ Before relocating, verify the binary doesn't hardcode the `/opt/...` path: `read
 
 *Source: dakota `45f097b` (dakota PR #1777), mined 2026-10-14.*
 
-`oci/krytis/stack.bst` runs `rm --verbose --recursive --force /root /home /opt /mnt /var`
+`oci/krytis/stack.bst` runs `rm --verbose --recursive --force /root /home /opt /mnt /srv /usr/local /var`
 after every element is staged. It then recreates only the few `/var` directories it links
 to. Anything an element's install step put under `/var` is deleted, along with the mode
 and owner it was created with.
@@ -2304,7 +2305,7 @@ never been in a booted image.
 ### Rootfs symlinks: remove the path first, then `ln -sT`
 
 *Source: dakota `1a1a7f4` (dakota PR #1661, fixing projectbluefin/dakota#1591), mined
-2026-10-14. The krytis fix is tracked in #1246.*
+2026-10-14. Applied to krytis in #1246.*
 
 `ln -s <target> <dest>` creates `<dest>/<basename of target>` when `<dest>` already exists
 as a directory. It neither replaces it nor fails. dakota's stack ran
@@ -2330,21 +2331,26 @@ Krytis has two `kind: make` elements that override `make-args`:
 
 When overriding `make-args`, restate the prefix in whatever case the Makefile reads.
 
-`oci/krytis/stack.bst` has the same exposure (#1246). Its `rm` covers
-`/root /home /opt /mnt /var`, but it also links `/ostree`, `/srv` and `/usr/local` with plain
-`ln -s` and never removes those paths first. On a running krytis image `/usr/local` is
-currently a symlink (`/usr/local -> ../var/usrlocal`). That only shows no element has
-installed anything there yet. The guard dakota adopted:
+`oci/krytis/stack.bst` had the same exposure until #1246. Its `rm` covered only
+`/root /home /opt /mnt /var`, and it linked `/ostree`, `/srv` and `/usr/local` with plain
+`ln -s` without removing those paths first. `/usr/local` was a symlink on a running image
+only because no element had installed anything there yet. It now uses dakota's guard:
 
 ```yaml
-- rm --verbose --recursive --force /root /home /opt /mnt /srv /ostree /usr/local /var
+- rm -rfv /boot /run /ostree
 # …
-- ln -sT ../var/usrlocal usr/local
+- rm --verbose --recursive --force /root /home /opt /mnt /srv /usr/local /var
+# …
+- ln -sT ../var/usrlocal usr/local     # and -sT for every other link
 ```
 
 `ln -sT` (`--no-target-directory`) always treats `<dest>` as the link name. A leftover
 directory then fails the build instead of nesting the link inside it. Use both: the `rm`
 makes the normal case work, and `-T` makes a path missing from the `rm` fail loudly.
+
+The image's `ln` is uutils (`core/uutils-coreutils.bst`), which behaves the same way.
+Checked with uutils `ln` 0.8.0: plain `-s` into an existing directory exits 0 with the link
+nested inside, and `-sT` exits 1 with `File exists`.
 
 ### Raw binary elements (`kind: remote` + `filename`)
 

@@ -45,10 +45,10 @@ else
     echo "Image not in local store — fisherman will pull from network."
 fi
 
-LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
-if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+# Constants, matching the GUI recipe baked by live/src/configure-live-krytis.sh
+# (bootloader "systemd", composeFsBackend true). The live_target/bootloader
+# file indirection inherited from dakota-iso was removed in #1247.
+BOOTLOADER="systemd"
 
 FILESYSTEM="btrfs"
 

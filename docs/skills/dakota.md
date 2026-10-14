@@ -340,9 +340,9 @@ for its man page. dakota's fix removes every link path in the same `rm` as `/var
 creates the links with `ln -sT`, so a leftover directory fails the build instead of
 nesting. It also carries a gnome-build-meta patch that passes `PREFIX` to dnsmasq.
 
-krytis's `elements/oci/krytis/stack.bst:23` removes `/root /home /opt /mnt /var` only, then
-links `/ostree`, `/srv` and `/usr/local` with plain `ln -s` (`:21`, `:37`, `:43`). That works
-today only because nothing stages there first (#1246). Full writeup in
+krytis's `elements/oci/krytis/stack.bst` had the same shape until #1246. It removed only
+`/root /home /opt /mnt /var` and then linked `/ostree`, `/srv` and `/usr/local` with plain
+`ln -s`. It now removes every link path first and uses `ln -sT`. Full writeup in
 `docs/skills/bst.md` § Rootfs symlinks: remove the path first, then `ln -sT`.
 
 ### `%{max-jobs}` written into a command is part of the cache key

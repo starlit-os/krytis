@@ -80,7 +80,7 @@ files/sysext/make-layer.py                # exists only in PR #522's head commit
 mise/tasks/build-sysext-gaming            # same commit, same line; docs/design/gaming-variant.md
 elements/core/container-sigpolicy.bst     # unimplemented proposal tracked in #418; docs/design/cosign-keyless-signing.md
 elements/overrides/systemd-base.bst       # deleted in e629ce7 for gnome-build-meta's core-deps/systemd-base.bst; secure-boot.md cites it as the record of the EFI_DEBUG banner disappearing
-live/src/krytis/bootloader                # never created; dakota-iso.md § What It Is cites its absence (the reader always falls back to its default, #1247)
+live/src/krytis/composefs                 # deleted in #1247 with the knob it set; dakota-iso.md and krytis-live-config.md cite it as the record
 task:cosign-sign                          # never built; superseded by mise/tasks/sign; docs/design/cosign-keyless-signing.md
 task:cosign-verify                        # never built; verification is inline in publish.yml; docs/design/cosign-keyless-signing.md
 task:cosign-generate-keys                 # never built; unnecessary without a static key; docs/design/cosign-keyless-signing.md

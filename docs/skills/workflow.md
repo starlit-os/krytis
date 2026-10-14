@@ -351,6 +351,34 @@ gh stack link <N> <next-pr>               # append a later layer to stack #N
 
 Also put `Stacked on #<parent>` in the child's body, so the order is readable without the stack map.
 
+**Stacking PRs that already exist against `main`** (stack 1264: five independent fix PRs
+turned into one stack, 2026-10-14). `gh stack link` only chains bases for PRs *it* creates.
+For existing PRs it links them as they are and rewrites nothing, so each branch has to
+contain its parent first, or merging the top would not land the layers below it. In order:
+
+1. **Re-chain locally.** Run `git rebase <parent-branch>` in each child's worktree, bottom to
+   top. A child that was branched off `main` needs `git rebase --onto <parent-branch>
+   origin/main`, so it doesn't replay commits that are already in the parent.
+2. **Re-sign the rewritten commits in one pass, from the top worktree.** First detach every
+   other rewritten layer's worktree (`git -C <wt> switch --detach`), then run
+   `git rebase --force-rebase --update-refs <bottom-branch>`. That re-signs every commit
+   above the bottom branch, one touch each, and moves each middle branch ref to its
+   rewritten commit. `--update-refs` silently skips a ref that another worktree has checked
+   out, which is why the detach comes first. Switch the worktrees back afterwards.
+3. `git push --force-with-lease` the rewritten branches, then
+   `gh pr edit <child> --base <parent-branch>` for each re-based PR, then `gh stack link`
+   with all PR numbers, bottom to top.
+
+**When the FIDO2 key can't be touched yet, build the chain unsigned and sign once at the
+end.** Run the step-1 rebases and any new commits with `git -c commit.gpgsign=false …`.
+Step 2 then signs everything in a single sitting.
+
+Retrying signed rebases one at a time goes wrong in a specific way. An untouched key makes
+the signer fail with `Couldn't sign message (signer): agent refused operation?` after about
+a minute. A rebase interrupted that way leaves the pick **applied and staged but not
+committed**, so `git rebase --continue` refuses with "you have staged changes". Recover
+with `git commit -C <original-sha>` and then `--continue`, or `git rebase --abort`.
+
 ### Merging a stack
 
 - **Merging a PR also merges every unmerged PR below it**, in one operation. Merging the top PR lands the whole stack, so approving the top PR approves every layer under it.

@@ -26,9 +26,14 @@ config:
   strip-commands:
   - ':'
 
+  # Canonical completion dirs (docs/skills/bst.md § Shell completion
+  # directories): bash-completion's lazy-loaded completions/, not the eager
+  # /etc/bash_completion.d compat dir (which also puts image content into
+  # bootc's 3-way-merged /etc); upstream zsh's site-functions, not Debian's
+  # vendor-completions fpath entry.
   install-commands:
   - install -Dm755 gum "%{install-root}%{bindir}/gum"
-  - install -Dm644 completions/gum.bash "%{install-root}%{sysconfdir}/bash_completion.d/gum"
+  - install -Dm644 completions/gum.bash "%{install-root}%{datadir}/bash-completion/completions/gum"
   - install -Dm644 completions/gum.fish "%{install-root}%{datadir}/fish/vendor_completions.d/gum.fish"
-  - install -Dm644 completions/gum.zsh  "%{install-root}%{datadir}/zsh/vendor-completions/_gum"
+  - install -Dm644 completions/gum.zsh  "%{install-root}%{datadir}/zsh/site-functions/_gum"
   - "%{install-extra}"

@@ -198,14 +198,12 @@ live/
     flatpaks                 # Flathub app IDs to pre-install
     build-iso.sh             # xorriso/mtools ESP assembly
     krytis/
-      composefs              # "true" — tells iso-sd-boot.sh to use VFS storage
       images/
         krytis-logo.png      # tour image for the installer UI
     etc/bootc-installer/
       recipe.json            # shared template; configure-live-krytis.sh overwrites with krytis branding
 krytis/
   payload_ref                # ghcr.io/starlit-os/krytis:latest
-  live_target                # krytis
   live_title                 # Krytis Live
   live_label                 # KRYTIS_LIVE
   tag                        # latest
@@ -257,11 +255,12 @@ tuna-os/fisherman#219 landed — see the installer-source note below):
 | `mise/tasks/iso-install-test` | Top-level gate: calls `iso-e2e-test --install-only`, then `boot-test` |
 
 **Composefs-only simplification:** upstream dakota-iso's `plain-install-qemu.sh` had two
-branches, composefs (VFS) and ostree/bootcDirect. Krytis is always composefs
-(`live/src/krytis/composefs` = `true`), so only the composefs branch was ported into
-`scripts/iso-install-fisherman.sh`, which therefore takes just
-`<target> <ssh_port> <monitor_live_socket>` — no `<fisher_repo>` argument, because there
-is no go binary to build.
+branches, composefs (VFS) and ostree/bootcDirect. Krytis is always composefs, so only the
+composefs branch was ported into `scripts/iso-install-fisherman.sh`, which therefore takes
+just `<target> <ssh_port> <monitor_live_socket>` — no `<fisher_repo>` argument, because
+there is no go binary to build. #1247 finished the job on the build side: the
+`live/src/krytis/composefs` and `krytis/live_target` files and every branch they selected
+are gone, and composefs plus the systemd-boot bootloader are constants.
 
 **INSTALL_ONLY=1 pattern for sealed systems:** sealed UKIs have frozen cmdlines, so
 `console=ttyS0` cannot be injected — `iso-verify-boot`'s serial grep can never match.
