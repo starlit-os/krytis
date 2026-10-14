@@ -8,7 +8,7 @@
 # Run it right after scripts/commit-tracking-update.sh has moved <branch>. The
 # cooldown state is read from the trailers that script writes on the branch
 # head commit:
-#   Tracking-First-Seen: <UTC>  when this exact update was first committed
+#   Tracking-First-Seen: <UTC>  when this PR's update was first committed
 #   Tracking-Ready-At:   <UTC>  First-Seen + 24h
 #   Tracking-Cooldown: exempt   source is first-party (kitten-lily/, starlit-os/)
 #
@@ -50,7 +50,7 @@ elif [ -n "$READY_AT" ] && [ "$(date -u +%s)" -ge "$(date -u -d "$READY_AT" +%s)
 elif [ -n "$READY_AT" ]; then
   READY=0
   NOTE="> [!IMPORTANT]
-> **Cooling until ${READY_AT}.** This update was first seen ${FIRST_SEEN}, and the PR stays a draft for 24h after that. If upstream changes the update in the meantime, the clock restarts. See \`docs/skills/bst.md\` § Tracking cooldown: 24h from first sighting."
+> **Cooling until ${READY_AT}.** This update was first seen ${FIRST_SEEN}, and the PR stays a draft for 24h after that. A newer upstream release in the meantime keeps the clock; closing the PR restarts it. See \`docs/skills/bst.md\` § Tracking cooldown: 24h from first sighting."
 else
   READY=0
   NOTE="> [!WARNING]
@@ -71,7 +71,7 @@ if [ -n "$EXISTING" ]; then
     echo "Cooled or exempt: marking PR #$PR_NUMBER ready for review"
     gh pr ready "$PR_NUMBER" -R "$REPO" >/dev/null
   elif [ "$READY" -eq 0 ] && [ "$IS_DRAFT" = "false" ]; then
-    echo "Update changed or has not cooled: converting PR #$PR_NUMBER back to draft"
+    echo "Not cooled: converting PR #$PR_NUMBER back to draft"
     gh pr ready --undo "$PR_NUMBER" -R "$REPO" >/dev/null
   fi
 else

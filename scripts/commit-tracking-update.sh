@@ -19,9 +19,9 @@
 # of the block this replaces; a directory picks up every file that
 # actually changed under it, not just the expected one).
 #
-# The commit body carries the cooldown trailers (Tracking-Fingerprint,
-# Tracking-First-Seen, then Tracking-Ready-At or Tracking-Cooldown: exempt)
-# that scripts/tracking-pr.sh reads to decide draft vs ready.
+# The commit body carries the cooldown trailers (Tracking-First-Seen, then
+# Tracking-Ready-At or Tracking-Cooldown: exempt) that scripts/tracking-pr.sh
+# reads to decide draft vs ready.
 #
 # Requires: gh (authenticated, contents:write on the target repo), jq.
 
@@ -49,28 +49,32 @@ if [ "${#CHANGED[@]}" -eq 0 ]; then
 fi
 
 # Cooldown: an update must be seen for 24h before its PR leaves draft
-# (scripts/tracking-pr.sh). The clock is the first run that committed *this*
-# update, identified by a fingerprint of its added and removed lines. Hunk
-# headers and context are left out, so an unrelated edit to the same element
-# on main doesn't restart it, but any change upstream does. The fingerprint and
-# the first-seen time ride along as commit trailers. The branch is recreated
-# on every run, so the previous head commit is the only state there is. See
+# (scripts/tracking-pr.sh). The clock starts at the first run that found the
+# branch's update pending, and runs until that PR merges or closes. A newer
+# upstream release superseding the pending one does not restart it: when it
+# did, the clock restarted on every run that saw a new release, so umbriel
+# (#1203, a new upstream commit most days) and mise (#1228, 2026.10.9 then
+# .10) stayed drafts indefinitely. The first-seen time rides along as a commit
+# trailer. The branch is recreated on every run, so the previous head commit
+# is the only state there is, and it is trusted only while it is the head of
+# an open PR: a closed or merged PR's leftover branch starts a fresh clock. See
 # docs/skills/bst.md § Tracking cooldown: 24h from first sighting.
 COOLDOWN_SECONDS="${TRACKING_COOLDOWN_SECONDS:-86400}"
-FINGERPRINT=$(git diff -U0 --binary HEAD -- "$@" \
-  | { grep -vE '^(diff --git |index |@@ |--- |\+\+\+ )' || true; } \
-  | sha256sum | cut -d' ' -f1)
 FIRST_SEEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # `git/ref/` (singular) is an exact match. `git/refs/heads/<name>` lists every
 # ref under that prefix when <name> itself is missing, and on a 404 `gh api`
 # still prints the error body, so only a successful call may set PREV_SHA.
 PREV_SHA=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq '.object.sha' 2>/dev/null) || PREV_SHA=""
 if [ -n "$PREV_SHA" ]; then
-  PREV_MESSAGE=$(gh api "repos/$REPO/git/commits/$PREV_SHA" --jq '.message')
-  prev_fp=$(sed -n 's/^Tracking-Fingerprint: //p' <<<"$PREV_MESSAGE" | tail -n 1)
-  prev_seen=$(sed -n 's/^Tracking-First-Seen: //p' <<<"$PREV_MESSAGE" | tail -n 1)
-  if [ "$prev_fp" = "$FINGERPRINT" ] && [ -n "$prev_seen" ]; then
-    FIRST_SEEN="$prev_seen"
+  # A failed lookup reads as "no open PR": the clock restarts, never skips.
+  OPEN_HEAD=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json headRefOid \
+    --jq '.[0].headRefOid // empty' 2>/dev/null) || OPEN_HEAD=""
+  if [ "$OPEN_HEAD" = "$PREV_SHA" ]; then
+    PREV_MESSAGE=$(gh api "repos/$REPO/git/commits/$PREV_SHA" --jq '.message')
+    prev_seen=$(sed -n 's/^Tracking-First-Seen: //p' <<<"$PREV_MESSAGE" | tail -n 1)
+    if [ -n "$prev_seen" ]; then
+      FIRST_SEEN="$prev_seen"
+    fi
   fi
 fi
 
@@ -86,8 +90,7 @@ for f in "${CHANGED[@]}"; do
   if ! [[ "$primary_url" =~ (^|[:/])(kitten-lily|starlit-os)/ ]]; then FIRST_PARTY=0; break; fi
 done
 
-BODY="Tracking-Fingerprint: ${FINGERPRINT}
-Tracking-First-Seen: ${FIRST_SEEN}"
+BODY="Tracking-First-Seen: ${FIRST_SEEN}"
 if [ "$FIRST_PARTY" -eq 1 ]; then
   BODY="${BODY}
 Tracking-Cooldown: exempt (first-party source)"
