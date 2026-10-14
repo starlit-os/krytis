@@ -109,9 +109,9 @@ sbsiglist --owner "$GUID" --type x509 --output db.esl db.der
 for ms in /ms-certs/*.der; do
     sbsiglist --owner "$GUID" --type x509 --output ms.esl "$ms" && cat ms.esl >> db.esl && rm ms.esl
 done
-sign-efi-sig-list -g "$GUID" -k /keys/PK.key -c /keys/PK.crt PK PK.esl auto/PK.auth
-sign-efi-sig-list -g "$GUID" -k /keys/PK.key -c /keys/PK.crt KEK KEK.esl auto/KEK.auth
-sign-efi-sig-list -g "$GUID" -k /keys/KEK.key -c /keys/KEK.crt db db.esl auto/db.auth
+sign-efi-sig-list -k /keys/PK.key -c /keys/PK.crt PK PK.esl auto/PK.auth
+sign-efi-sig-list -k /keys/PK.key -c /keys/PK.crt KEK KEK.esl auto/KEK.auth
+sign-efi-sig-list -k /keys/KEK.key -c /keys/KEK.crt db db.esl auto/db.auth
 SCRIPT
 ```
 
@@ -1121,8 +1121,10 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   though the enrollment `.auth` (signed with the 2026 build time) set a later timestamp.
 - **`-g` sets the variable's *vendor* GUID, not the signature owner**, whatever its help
   text says (`str_to_guid(argv[2], &vendor_guid)`). For `PK`/`KEK`/`db`/`dbx` the variable
-  name overrides it right after option parsing, so the Containerfile's `-g "$GUID"` has no
-  effect. Owner GUIDs come from the ESL (`sbsiglist --owner`).
+  name overrides it right after option parsing, so it has no effect. Signing all four with
+  and without `-g` at a fixed `-t` gives byte-identical `.auth` files, while a
+  non-special name does change. The Containerfile stopped passing it in #1242. Owner GUIDs
+  come from the ESL (`sbsiglist --owner`).
 - **Signing is deterministic.** efitools signs with no authenticated attributes, so there
   is no signing time, and the timestamp is fixed. The same delta signed twice gave the
   same sha256. A re-signed `.auth` is identical, not merely equivalent.
