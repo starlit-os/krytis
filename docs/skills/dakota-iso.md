@@ -26,14 +26,15 @@ path in this file belongs to before acting on it.
 
 Krytis's installer ISO was built by this project until #838/#839 ported the whole call
 graph in-tree ([#519](https://github.com/starlit-os/krytis/issues/519) has the file-by-file
-BOM and the exclusion list). Krytis is single-target, always composefs + systemd-boot, but
-the port did **not** collapse the per-variant indirections to constants.
-`scripts/iso-sd-boot.sh:81-83` and `scripts/iso-install-fisherman.sh:48-50` still read
-`krytis/live_target`, strip an `-nvidia`/`-nvidia-open` suffix krytis never has, and read
-`live/src/<variant>/{composefs,bootloader}`. `live/src/krytis/bootloader` does not exist,
-so the bootloader always comes from the reader's default. The composefs knob is worse than
-dead weight: three places disagree about it (§ `cat f | tr -d … || echo default` loses its
-default without pipefail, below; #1247).
+BOM and the exclusion list). Krytis is single-target, always composefs + systemd-boot. The
+port initially kept the per-variant indirections anyway: `scripts/iso-sd-boot.sh` and
+`scripts/iso-install-fisherman.sh` read `krytis/live_target`, stripped an
+`-nvidia`/`-nvidia-open` suffix krytis never has, and read
+`live/src/<variant>/{composefs,bootloader}` (the bootloader file never existed, so the
+reader's default always won). #1247 collapsed all of it to constants and deleted
+`krytis/live_target` and `live/src/krytis/composefs`, after the composefs knob turned out to
+be read three different ways (§ `cat f | tr -d … || echo default` loses its default without
+pipefail, below).
 
 ## Fork State — there is no fork any more
 
@@ -158,10 +159,10 @@ strings at lines 2-3 and 80-82, option documentation at 20-22 and 38 — which n
 hit for `superiso` outside an archived plan — `STORE_SFS=""` at 48, the `--store)` case arm
 at 53, and the copy block at 326-329. Nothing ever passed it: no `mise/tasks/iso-*` call
 site and no `scripts/iso-sd-boot.sh` one. Krytis embeds its payload the same VFS way —
-`scripts/iso-sd-boot.sh:170-174` writes a `driver = "vfs"` store into
+`scripts/iso-sd-boot.sh:175-187` writes a `driver = "vfs"` store into
 `${CS_STAGING}/var/lib/containers/storage` and copies it to
-`${SQUASHFS_ROOT}/var/lib/containers/storage` at 224-226, the branch krytis always takes
-because `live/src/krytis/composefs` is `true`, and the live image's own
+`${SQUASHFS_ROOT}/var/lib/containers/storage` at 211-213 (the only path since #1247 removed
+the overlay branch), and the live image's own
 `/etc/containers/storage.conf` names exactly that path as its `additionalimagestores`
 (`live/src/configure-live-krytis.sh:222-230`). Dead here for the same reason it was dead
 upstream.
@@ -255,26 +256,28 @@ status is `tr`'s, which is 0 even when `cat` failed, the `||` never fires, and t
 gets `""` where it expected `true` / `systemd` / a label — a boot-critical default failing
 open as the empty string.
 
-**krytis has five**, all in scope and therefore correct today: `scripts/iso-sd-boot.sh:81`
-(`live_target`), `:83` (`composefs`), `:267` (`live_label`), and
-`scripts/iso-install-fisherman.sh:48` (`live_target`), `:50` (`bootloader`). Both scripts set
-`set -euo pipefail` at the top (`iso-sd-boot.sh:31`, `iso-install-fisherman.sh:18`).
+**krytis had five; one is left.** Before #1247 the five were `scripts/iso-sd-boot.sh`
+(`live_target`, `composefs`, `live_label`) and `scripts/iso-install-fisherman.sh`
+(`live_target`, `bootloader`), all correct only because both scripts set
+`set -euo pipefail` at the top (`iso-sd-boot.sh:31`, `iso-install-fisherman.sh:18`). #1247
+replaced four with constants. The survivor, `LIVE_LABEL` at `iso-sd-boot.sh:246`, now fails
+loudly if it comes out empty: it is passed to `live/src/build-iso.sh --label`, whose
+`${2:?--label requires a string}` aborts the build.
 
-The hazard is that the correctness of those defaults is carried by a `set` line hundreds of
+The hazard is that the correctness of such defaults is carried by a `set` line hundreds of
 lines away, and this repo **already** crosses shell boundaries where that line does not
 survive: `iso-sd-boot.sh` `export -f`s `_ns_build_squashfs` and re-enters it via `podman
-unshare bash -c '_ns_build_squashfs'` (259), which is why the function re-asserts `set -euo
-pipefail` on its own first line (144); `iso-install-fisherman.sh` builds a `sudo bash -c "…"`
-string that re-asserts it too (96). Move any of the five reads into a helper, into that
-`podman unshare` sub-invocation or into an `sh -c`, and it fails mute — an empty
-`COMPOSEFS_BACKEND` fails the `== "true"` tests at `iso-sd-boot.sh:170,223`, so the payload
-is staged as an overlay store at `usr/lib/containers/storage`, which is neither the path nor
-the driver the live image's `storage.conf` looks for
-(`live/src/configure-live-krytis.sh:222-230`: `driver = "vfs"`,
+unshare bash -c '_ns_build_squashfs'` (238), which is why the function re-asserts `set -euo
+pipefail` on its own first line (150); `iso-install-fisherman.sh` builds a `sudo bash -c "…"`
+string that re-asserts it too (95). Move a read like this into a helper, into that `podman
+unshare` sub-invocation or into an `sh -c`, and it fails mute. Before #1247 the concrete
+case was an empty `COMPOSEFS_BACKEND`: it staged the payload as an overlay store at
+`usr/lib/containers/storage`, which is neither the path nor the driver the live image's
+`storage.conf` looks for (`live/src/configure-live-krytis.sh:222-230`: `driver = "vfs"`,
 `additionalimagestores = ["/var/lib/containers/storage"]`).
 
 Note the asymmetry one line up: `LIVE_TITLE=$(cat … || echo 'Krytis Live')`
-(`iso-sd-boot.sh:266`) has no pipe and is pipefail-independent — only the whitespace-stripped
+(`iso-sd-boot.sh:245`) has no pipe and is pipefail-independent — only the whitespace-stripped
 reads are fragile. Upstream's fix made the *reader* pipefail-independent rather than trusting
 every caller to have set it.
 
@@ -286,19 +289,21 @@ gets the empty string anyway. Upstream's reader now trims and then falls back wh
 is missing **or** blank (`read_variant_config` mirrors `_vc_read`), and each mode has one
 authority for composefs instead of three scripts deciding it separately.
 
-krytis has the pre-fix split, and a blank `live/src/krytis/composefs` would make one build
-run half of each path (#1247):
+krytis had the pre-fix split until #1247. A blank `live/src/krytis/composefs` would have made
+one build run half of each path:
 
-| Reader | Blank file means | Path taken |
+| Reader (before #1247) | Blank file meant | Path taken |
 |---|---|---|
-| `scripts/iso-sd-boot.sh:83` (`… \| tr -d … \|\| echo "true"`) | `""` | overlay store at `usr/lib/containers/storage` (the `== "true"` tests at `:170`, `:223` fail) |
-| `live/iso-tools/payload-prep.sh:28` (`${COMPOSEFS_BACKEND:-true}`, receives the exported value) | `true` | VFS/squash payload |
-| `live/src/configure-live-krytis.sh:279,301`, `scripts/iso-install-fisherman.sh:77` | ignored, hardcoded `true` | composefs install recipe |
+| `scripts/iso-sd-boot.sh` (`… \| tr -d … \|\| echo "true"`) | `""` | overlay store at `usr/lib/containers/storage` (its `== "true"` tests failed) |
+| `live/iso-tools/payload-prep.sh` (`${COMPOSEFS_BACKEND:-true}`, received the exported value) | `true` | VFS/squash payload |
+| `live/src/configure-live-krytis.sh` (`images.json` `"composefs": true`, `recipe["composeFsBackend"] = True`), `scripts/iso-install-fisherman.sh` | ignored, hardcoded `true` | composefs install recipe |
 
-Setting the file to `false` breaks it the other way: the overlay store is embedded, but the
-recipe and the live `storage.conf` (`driver = "vfs"`) still expect composefs. Krytis is
-single-target and always composefs, so the fix is to delete the knob, not port upstream's
-resolver.
+Setting the file to `false` broke it the other way: the overlay store was embedded, but the
+recipe and the live `storage.conf` (`driver = "vfs"`) still expected composefs. Krytis is
+single-target and always composefs, so #1247 deleted the knob instead of porting upstream's
+resolver. The overlay branches in `iso-sd-boot.sh` and the unsquashed branch in
+`payload-prep.sh` went with it, and the file, the `COMPOSEFS_BACKEND` variable and its
+exports no longer exist.
 
 ### The ISO's embedded payload and the installer's `local_imgref` are set independently
 

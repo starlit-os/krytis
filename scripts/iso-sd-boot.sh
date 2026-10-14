@@ -78,10 +78,16 @@ PAYLOAD_OCI="${OUTPUT_DIR}/${TARGET}-payload.oci.tar"
 
 trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${PAYLOAD_OCI}' 2>/dev/null || true" EXIT
 
-LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-BOOTLOADER_VARIANT=$(echo "${LIVE_TARGET}" | sed 's/-nvidia-open$//;s/-nvidia$//')
-COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
-echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
+# Krytis is single-target and always composefs: the payload is embedded as a
+# read-only VFS containers-storage at /var/lib/containers/storage, the layout
+# the live storage.conf (live/src/configure-live-krytis.sh), the installer
+# recipe and verify-iso-payload all assume. The per-variant composefs/
+# bootloader files and the live_target/-nvidia indirection dakota-iso uses to
+# choose between layouts were removed in #1247 — a blank file there used to
+# send this script down an overlay branch while payload-prep.sh took the VFS
+# one (docs/skills/dakota-iso.md § `cat f | tr -d … || echo default` loses its
+# default without pipefail).
+echo "=== Building offline VFS OCI store for ${PAYLOAD_IMAGE} ==="
 
 # Payload prep needs buildah + skopeo + python3. On hosts without buildah
 # (e.g. immutable Krytis) set ISO_TOOLS_IMAGE to run the step inside the
@@ -107,7 +113,7 @@ if [[ "${PAYLOAD_SEALED}" == "1" ]]; then
     echo "=== PAYLOAD_SEALED=1 — skipping payload prep, embedding ${PAYLOAD_IMAGE} as exported ==="
     PAYLOAD_OCI="${PAYLOAD_INPUT}"
 else
-    export PAYLOAD_IMAGE PAYLOAD_INPUT PAYLOAD_OCI OUTPUT_DIR COMPOSEFS_BACKEND PAYLOAD_SEALED
+    export PAYLOAD_IMAGE PAYLOAD_INPUT PAYLOAD_OCI OUTPUT_DIR PAYLOAD_SEALED
     if [[ -n "${ISO_TOOLS_IMAGE:-}" ]]; then
         echo "Running payload prep in iso-tools container: ${ISO_TOOLS_IMAGE}"
         # STORAGE_DRIVER=vfs: buildah's internal storage lives on the container's
@@ -118,7 +124,7 @@ else
         podman run --rm --privileged --net=host \
             -v "${OUTPUT_DIR}:${OUTPUT_DIR}" \
             -v "${REPO_ROOT}/live/iso-tools/payload-prep.sh:/payload-prep.sh:ro" \
-            -e PAYLOAD_IMAGE -e PAYLOAD_INPUT -e PAYLOAD_OCI -e OUTPUT_DIR -e COMPOSEFS_BACKEND \
+            -e PAYLOAD_IMAGE -e PAYLOAD_INPUT -e PAYLOAD_OCI -e OUTPUT_DIR \
             -e PAYLOAD_SEALED \
             -e STORAGE_DRIVER=vfs \
             "${ISO_TOOLS_IMAGE}" bash /payload-prep.sh
@@ -137,7 +143,7 @@ fi
 # All variables needed inside _ns are passed via the outer scope — no string
 # interpolation of shell vars into the bash -c argument. Instead we export them
 # and the inner bash inherits them directly.
-export OUTPUT_DIR WORKDIR TARGET PAYLOAD_IMAGE COMPOSEFS_BACKEND COMPRESSION
+export OUTPUT_DIR WORKDIR TARGET PAYLOAD_IMAGE COMPRESSION
 export CS_STAGING SQUASHFS_ROOT SQUASHFS BOOT_TAR PAYLOAD_OCI
 
 _ns_build_squashfs() {
@@ -152,7 +158,6 @@ _ns_build_squashfs() {
 
     ns_cleanup() {
         umount "${SQUASHFS_ROOT}/var/lib/containers/storage" 2>/dev/null || true
-        umount "${SQUASHFS_ROOT}/usr/lib/containers/storage" 2>/dev/null || true
         umount "${SQUASHFS_ROOT}" 2>/dev/null || true
         podman image unmount "localhost/${TARGET}-installer" 2>/dev/null || true
         rm -rf "${OVERLAY_UPPER}" "${OVERLAY_WORK}" 2>/dev/null || true
@@ -167,36 +172,19 @@ _ns_build_squashfs() {
     df -h "${OUTPUT_DIR}"
     [[ "${WORKDIR}" != "${OUTPUT_DIR}" ]] && df -h "${WORKDIR}"
 
-    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-        SQUASHFS_STORAGE="${CS_STAGING}/var/lib/containers/storage"
-        STORAGE_CONF=$(mktemp "${OUTPUT_DIR}/live-storage-XXXXXX.conf")
-        mkdir -p "${SQUASHFS_STORAGE}"
-        printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
-        echo 'Importing OCI image into squashfs VFS containers-storage...'
-        podman run --rm \
-            --privileged \
-            -v "${PAYLOAD_OCI}:/payload.oci.tar:ro" \
-            -v "${SQUASHFS_STORAGE}:/vfs-storage" \
-            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
-            "localhost/${TARGET}-installer" \
-            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
-        rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
-    else
-        # Non-composefs: embed into overlay containers-storage.
-        SQUASHFS_STORAGE="${CS_STAGING}/usr/lib/containers/storage"
-        STORAGE_CONF=$(mktemp "${OUTPUT_DIR}/live-storage-XXXXXX.conf")
-        mkdir -p "${SQUASHFS_STORAGE}"
-        printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
-        echo 'Importing OCI image into squashfs overlay containers-storage...'
-        podman run --rm \
-            --privileged \
-            -v "${PAYLOAD_OCI}:/payload.oci.tar:ro" \
-            -v "${SQUASHFS_STORAGE}:/vfs-storage" \
-            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
-            "localhost/${TARGET}-installer" \
-            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
-        rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
-    fi
+    SQUASHFS_STORAGE="${CS_STAGING}/var/lib/containers/storage"
+    STORAGE_CONF=$(mktemp "${OUTPUT_DIR}/live-storage-XXXXXX.conf")
+    mkdir -p "${SQUASHFS_STORAGE}"
+    printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
+    echo 'Importing OCI image into squashfs VFS containers-storage...'
+    podman run --rm \
+        --privileged \
+        -v "${PAYLOAD_OCI}:/payload.oci.tar:ro" \
+        -v "${SQUASHFS_STORAGE}:/vfs-storage" \
+        -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
+        "localhost/${TARGET}-installer" \
+        sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
+    rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
 
     echo "=== Disk space after OCI store embed ==="
     df -h "${OUTPUT_DIR}"
@@ -220,18 +208,9 @@ _ns_build_squashfs() {
         cp -a "${MOUNT}/." "${SQUASHFS_ROOT}/"
     fi
 
-    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-        mkdir -p "${SQUASHFS_ROOT}/var/lib/containers/storage"
-        echo "Copying VFS store into squashfs root..."
-        cp -a "${CS_STAGING}/var/lib/containers/storage/." "${SQUASHFS_ROOT}/var/lib/containers/storage/"
-    else
-        mkdir -p "${SQUASHFS_ROOT}/usr/lib/containers/storage"
-        echo "Copying overlay store into squashfs root..."
-        # Overlay containers-storage contains character-device whiteout files that
-        # cp -a cannot create without privileges.  Use rsync to skip them — they
-        # are write-layer artifacts not needed in the read-only additional store.
-        rsync -a --no-specials --no-devices "${CS_STAGING}/usr/lib/containers/storage/" "${SQUASHFS_ROOT}/usr/lib/containers/storage/"
-    fi
+    mkdir -p "${SQUASHFS_ROOT}/var/lib/containers/storage"
+    echo "Copying VFS store into squashfs root..."
+    cp -a "${CS_STAGING}/var/lib/containers/storage/." "${SQUASHFS_ROOT}/var/lib/containers/storage/"
 
     echo "=== Disk space after creation of squashfs root ==="
     df -h "${OUTPUT_DIR}"
