@@ -1434,9 +1434,11 @@ curl -sSfL --retry 3 … | cat   → "ok\n"                     exit 0
 attempt, but without `-f` a persistent error still exits 0 and the task hashes the
 error page as though it were the tarball. With `-f`, it exits 22.
 
-Where a fetch failure should only produce a warning (`equibop-update`'s icon-drift
-probe), catch it explicitly with `$(curl -f … | sha256sum …) || var="unfetchable"`.
-Dropping `-f` for this corrupts stdout on retry.
+Where a fetch failure should only produce a warning, catch it explicitly with
+`var=$(curl -f … | sha256sum …) || var="unfetchable"` (under `set -o pipefail`, so curl's
+exit status reaches the `||`). Dropping `-f` for this corrupts stdout on retry. No task
+does this today; the last one was `equibop-update`'s icon-drift probe, removed with the
+native Equibop element in #1194.
 
 Python trackers don't get this from curl, so they reimplement it. `mise/lib/zig_zon.py`'s
 `download()` is used by `ghostty-update`/`seance-update` for the source tarball and every

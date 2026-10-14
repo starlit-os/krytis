@@ -31,8 +31,7 @@ depends:
 # (%{libdir}/GL/default/lib), so this dep alone does not make it loadable — what
 # resolves it is the /etc/ld.so.conf.d/00_mesa.conf that
 # freedesktop-sdk.bst:vm/mesa-default.bst installs from stacks/desktop.bst.
-# Same mechanism as desktop/equibop.bst, and the same consequence: `bst shell`
-# on this element alone cannot exec the binary.
+# Consequence: `bst shell` on this element alone cannot exec the binary.
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 # Not in DT_NEEDED — dlopened at runtime (found with `strings` on the binary).
 # libsecret-1 backs Chromium's os_crypt key storage, libnotify Electron

@@ -16,13 +16,7 @@ depends:
   # Zen Browser: Firefox-based, privacy/customization-focused, x86_64 + aarch64. Closes #314.
   - desktop/zen-browser.bst
 
-  # ── Chat ───────────────────────────────────────────────────────────────────
-  # Equibop: Discord client (Vesktop/Equicord fork), portable tarball,
-  # x86_64 + aarch64. Native rather than flatpak so RPC sockets land in the
-  # real $XDG_RUNTIME_DIR and game detection sees host PIDs (#591, #595).
-  # Closes #609.
-  - desktop/equibop.bst
-
+  # ── Discord presence ───────────────────────────────────────────────────────
   # presence-bridge: host-side game detection reported to sandboxed (flatpak)
   # Discord clients, which cannot see host PIDs (#595). Built from source,
   # installed disabled; `mise presence-bridge:enable` opts in.

@@ -186,7 +186,7 @@ depends:
   #   1. At compose time — the fdsdk element's integration-command bakes
   #      /usr/share/applications/mimeinfo.cache, without which GIO sees zero
   #      registered apps for anything the image's own desktop files claim
-  #      (zen-browser's http/https, equibop's discord:).
+  #      (zen-browser's http/https).
   #   2. At runtime — /usr/share/flatpak/triggers/desktop-database.trigger is
   #      `command -v update-desktop-database`-gated, so with the binary absent
   #      it silently no-ops and no Flatpak's MIME/scheme claims (Steam's

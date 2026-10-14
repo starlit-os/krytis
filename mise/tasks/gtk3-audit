@@ -53,7 +53,6 @@ FLAGGED = re.compile(
 ELEMENTS = {
     "desktop/zen-browser.bst": ("floor", "prebuilt Firefox build"),
     "desktop/proton-pass.bst": ("floor", "prebuilt Electron app"),
-    "desktop/equibop.bst": ("floor", "prebuilt Electron app"),
     "gnome-build-meta.bst:core-deps/xdg-desktop-portal-gtk.bst": ("floor", "Inhibit/Notification/Email backend, #181"),
     "desktop/gnome-disk-utility.bst": ("#1033", "46.1 is GTK3; 51 is GTK4"),
     "gnome-build-meta.bst:core-deps/libhandy.bst": ("#1033", "only consumer is gnome-disks 46.1"),
@@ -76,7 +75,6 @@ FILES = {
     "/usr/bin/gtk-query-settings": ("floor", "gtk+-3"),
     # Prebuilt apps.
     "/usr/lib/zen-browser/*": ("floor", "zen-browser"),
-    "/usr/lib/equibop/equibop": ("floor", "equibop"),
     "/usr/lib/proton-pass/Proton Pass": ("floor", "proton-pass"),
     "/usr/libexec/xdg-desktop-portal-gtk": ("floor", "xdg-desktop-portal-gtk, #181"),
     # Removable.
