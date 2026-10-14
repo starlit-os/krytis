@@ -51,9 +51,12 @@ config:
     # keys are the intended SSH second factor here, not pam_u2f.
     #
     # Two accepted consequences, see docs/skills/pam.md:
-    #   * Incompatible with homed-managed homes — pam_systemd_home needs the
-    #     user's password to unlock the encrypted home, so pubkey-only SSH has
-    #     nothing to mount it with. Fine while accounts are created by useradd.
+    #   * systemd-homed users cannot have their home unlocked by sshd. They log
+    #     in by pubkey anyway (key in the user record, served by
+    #     20-systemd-userdb.conf) and land in systemd-home-fallback-shell,
+    #     which asks for the password and activates the home. Commands without
+    #     a tty are refused until the home is active. `mise run
+    #     homed-ssh-fallback-test` asserts this (#422).
     #   * No PAM-driven 2FA over SSH (pam_u2f). Use sk-* keys.
     #
     # Recovery from lockout is via console — krytis is a desktop, not a headless

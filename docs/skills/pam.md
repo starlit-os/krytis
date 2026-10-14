@@ -1106,15 +1106,17 @@ Consequences for how you triage:
 - **Lockout recovery is via console**, which is why key-only SSH is an acceptable default here at all. Same reasoning already recorded in `elements/config/ssh-auth-policy.bst`.
 - SSH still has to be *correct* when someone opts in — don't ship knowingly broken config, and don't delete SSH code paths as dead (see the `password-auth` note in `elements/config/u2f-config.bst`). Low priority means "do not let it set the agenda", not "do not care".
 
-#422 (homed SSH fallback shell) is filed under exactly this policy: a real gap, correctly diagnosed, deliberately not urgent.
+#422 (homed SSH fallback shell) was filed under exactly this policy: a real gap, correctly diagnosed, deliberately not urgent. It turned out to need no change at all — see *Verified end to end* below.
 
 ### Two consequences of key-only SSH
 
 **Constrains homed-managed homes, but does NOT require keyboard-interactive back.**
-`pam_systemd_home` cannot unlock the home from a pubkey-only login: `pam_sm_open_session`
-issues `RefHome`, which can only take a reference on an *already-active* home, never
-activate an inactive one — activation needs `AcquireHome` from the auth phase that
-pubkey-only SSH skips. So the session starts with no `$HOME` mounted. This is the
+`pam_systemd_home` cannot unlock the home from a pubkey-only login. sshd skips the
+auth phase for pubkey, but it does run *account*, and that is where the module tries:
+it asks homed to acquire the home with no secret, which fails, then tries to ask for
+the password through the PAM conversation, which sshd cannot service with
+keyboard-interactive off, and settles for "incomplete mode". So the session starts
+with no `$HOME` mounted. This is the
 *normal* case now, not a corner case: `docs/design/first-boot-setup.md` makes
 `krytis-firstboot.service` (which runs `homectl firstboot`) the default path for
 the initial account, so a fresh krytis install has a homed-managed user from boot
@@ -1146,10 +1148,56 @@ $ homectl list                     # the record's real shell, for contrast
 fido2test  ... inactive ... /bin/bash
 ```
 
-So the open question for #422 is not "how do we install it" but "does it actually work
-over pubkey-only SSH end to end, including the FIDO2 path" — which is a test, not an
-implementation. Verified against systemd v258 source plus the live observation above; see
-`## systemd-homed users` above and #422.
+**Verified end to end (#422): `mise run homed-ssh-fallback-test`.** It boots the image
+in a VM, creates a homed user with the first-boot wizard's own `homectl` flags (LUKS
+storage), puts its SSH key in the user record only
+(`homectl create --ssh-authorized-keys=@<file>`), and logs in by pubkey with a pty.
+Observed on systemd 261.3:
+
+```
+Please enter password for user sshfallbacktest: (press TAB for no echo)
+[sshfallbacktest@… ~]$ …
+home=/home/sshfallbacktest
+incomplete=[]
+shell=/usr/bin/bash
+mount=/dev/mapper/home-sshfallbacktest[/sshfallbacktest] btrfs
+state=active
+```
+
+The prompt is the fallback shell's, inside the session: the client runs with
+`BatchMode=yes -o PreferredAuthentications=publickey`, so it could not have answered
+one from sshd, and its log says `Authenticated to … using "publickey"`. A wrong password
+re-prompts (`Password incorrect or not sufficient, please try again.`) and never
+reaches a shell; the test's negative control relies on that.
+
+What a future reader needs from that run:
+
+- **The key goes in the user record, not `~/.ssh`.** The image's
+  `20-systemd-userdb.conf` (`AuthorizedKeysCommand /usr/bin/userdbctl
+  ssh-authorized-keys %u`) serves it while the home is inactive, so
+  `homectl update <user> --ssh-authorized-keys=@<file>` works without activating
+  anything. A key only in `~/.ssh/authorized_keys` sits inside the encrypted image
+  and is invisible until something else has activated the home.
+- **Commands without a tty are refused while the home is inactive** — `ssh host cmd`,
+  scp, rsync, git over ssh. The fallback shell has nowhere to prompt, prints
+  `Failed to acquire password: Permission denied` and exits 1; the command never runs
+  against `HOME=/`. Once the home is active (another session open, or
+  `homectl activate`), NSS serves the real home and shell and the same command runs
+  normally with the home mounted. Observed both ways.
+- **Three scary-looking journal lines appear on every such login and are expected.**
+  Before anyone has typed anything:
+  ```
+  systemd-homework: None of the supplied plaintext passwords unlock the user record's hashed passwords.
+  pam_systemd_home(sshd:account): Conversation function failed: Conversation error
+  pam_systemd_home(sshd:account): Home for user <user> acquired in incomplete mode, requires later activation.
+  ```
+  That is the account phase's no-secret attempt from the first paragraph, not a
+  failed password or a broken PAM stack.
+- **No FIDO2 variant.** #422 asked for one, but krytis stopped enrolling homed FIDO2
+  login credentials in #759/#532 (see § systemd-homed users above), so the fallback
+  shell only ever has a password to ask for. QEMU's `u2f-emulated` device is
+  U2F-only, with no CTAP2 `hmac-secret`, so the VM could not have exercised that
+  path anyway.
 
 **No PAM-driven 2FA over SSH.** `pam_u2f` runs in the keyboard-interactive path,
 so disabling it removes FIDO2-via-PAM for SSH specifically (console, sudo, polkit
