@@ -293,7 +293,7 @@ run half of each path (#1247):
 |---|---|---|
 | `scripts/iso-sd-boot.sh:83` (`… \| tr -d … \|\| echo "true"`) | `""` | overlay store at `usr/lib/containers/storage` (the `== "true"` tests at `:170`, `:223` fail) |
 | `live/iso-tools/payload-prep.sh:28` (`${COMPOSEFS_BACKEND:-true}`, receives the exported value) | `true` | VFS/squash payload |
-| `live/src/configure-live-krytis.sh:269,291`, `scripts/iso-install-fisherman.sh:77` | ignored, hardcoded `true` | composefs install recipe |
+| `live/src/configure-live-krytis.sh:279,301`, `scripts/iso-install-fisherman.sh:77` | ignored, hardcoded `true` | composefs install recipe |
 
 Setting the file to `false` breaks it the other way: the overlay store is embedded, but the
 recipe and the live `storage.conf` (`driver = "vfs"`) still expect composefs. Krytis is
@@ -368,13 +368,20 @@ The old code dropped the command and the new code delivered it.
 *Source: dakota-iso `0a349a9` — "fix(iso): installed ostree systems get their Flatpaks
 (#225)". Mined 2026-10-14.*
 
-fisherman appends `lib/flatpak` to `flatpak_var_path` itself. Upstream's ostree variants set
-it to `var/lib/flatpak`, so Flatpaks were copied to `/sysroot/var/lib/flatpak/lib/flatpak` and
-installed systems had none. Upstream's own comment described the key the wrong way too.
+fisherman appends `lib/flatpak` to `flatpak_var_path` itself
+(`filepath.Join(target, flatpakVarPath, "lib", "flatpak")` in tuna-os/fisherman
+`fisherman/internal/post/post.go` `CopyFlatpaks`, checked at `b0348d98` on 2026-10-14).
+Upstream's ostree variants set it to `var/lib/flatpak`, so Flatpaks were copied to
+`/sysroot/var/lib/flatpak/lib/flatpak` and installed systems had none. Upstream's own
+comment described the key the wrong way too.
 
-krytis's value is correct: `state/os/default/var` (`live/src/configure-live-krytis.sh:271`).
-The key name invites a "fix" to `…/var/lib/flatpak`, which would ship installed systems with
-no Flatpaks and no error (#1250 adds the comment at the assignment).
+krytis's value is correct: `state/os/default/var`, in the `images.json` heredoc in
+`live/src/configure-live-krytis.sh`, which now carries a comment saying so (#1250). The
+key name invites a "fix" to `…/var/lib/flatpak`, which would ship installed systems with no
+Flatpaks and no error. When the key is empty, fisherman auto-detects a composefs-native
+target and lands on the same `state/os/default/var/lib/flatpak`, so for krytis the
+explicit value only pins what auto-detection would choose. A wrong value is the only way
+to break it.
 
 ---
 

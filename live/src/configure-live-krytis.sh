@@ -255,6 +255,16 @@ mkdir -p /etc/bootc-installer /usr/share/bootc-installer/images
         /usr/share/bootc-installer/images/krytis-logo.png
 
 # images.json: single Krytis entry.
+#
+# flatpak_var_path is the target's writable /var ROOT, not a flatpak directory:
+# fisherman appends lib/flatpak itself (tuna-os/fisherman
+# fisherman/internal/post/post.go CopyFlatpaks, at b0348d98:
+# filepath.Join(target, flatpakVarPath, "lib", "flatpak")). Do not "fix" it to
+# state/os/default/var/lib/flatpak — dakota-iso shipped that shape (0a349a9)
+# and its installed systems got no Flatpaks, with no error. An empty value
+# would auto-detect composefs-native and land on the same path; the explicit
+# value just pins it. See docs/skills/dakota-iso.md § `images.json`
+# `flatpak_var_path` is the target's var **root**.
 cat > /etc/bootc-installer/images.json << IMGEOF
 {
   "default_image": "${KRYTIS_IMGREF}",
