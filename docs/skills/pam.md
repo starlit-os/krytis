@@ -1499,6 +1499,54 @@ PIN. [INFERENCE, from CTAP2's PIN rules; not hardware-tested] Each such unlock s
 key's PIN retries: three wrong in a row needs a replug, and eight blocks the PIN. The once-only
 answer makes that case fail visibly instead.
 
+### A FIDO2 unlock logs two account-phase errors; both are expected
+
+Every lock-screen unlock that `pam_u2f` grants (PIN + touch) logs, from noctalia's
+`pam-helper` child (#1268):
+
+```
+noctalia[…]: pam_systemd_home(login:account): Failed to acquire home for user lily: Access denied
+noctalia[…]: pam_unix(login:account): setuid failed: Operation not permitted
+```
+
+The unlock succeeds and `pam_acct_mgmt` returns `PAM_SUCCESS`. Reproduced by replaying the
+lock screen's account phase unprivileged (`pam_start("login", $USER)` then `pam_acct_mgmt`,
+no `pam_authenticate`): `rc=0`, same two lines. Neither line is a fault:
+
+- **`Access denied` is sd-bus, not polkit.** With no auth-phase home reference,
+  `pam_systemd_home`'s account phase calls `RefHome` (`pam_systemd_home.c` `acquire_home()`,
+  v261.3). `homed-manager-bus.c` registers `RefHome` with flags `0`, unlike `AcquireHome`
+  (`SD_BUS_VTABLE_UNPRIVILEGED`), so sd-bus `check_access()` demands `CAP_SYS_ADMIN` and
+  rejects the caller before homed sees it. `_bus_error_message()` turns any
+  `SD_BUS_ERROR_ACCESS_DENIED` into the literal string "Access denied", which is why homed
+  and polkitd log nothing alongside it. Reproduce with
+  `busctl call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager RefHome sb "$USER" false`
+  as the user: `Call failed: Access denied`, home `active`. The module returns
+  `PAM_SERVICE_ERR`, which `-account sufficient` ignores. This line is `LOG_ERR`, so it shows
+  in `journalctl -p err`.
+- **`setuid failed` is `LOG_DEBUG`.** `pam_unix`'s account phase forks to run
+  `unix_chkpwd <user> chkexpiry`. The child's `setuid(0)` fails for a non-root euid, and
+  linux-pam 1.7.2 logs it at debug priority in that case and carries on
+  (`modules/pam_unix/pam_unix_acct.c` `_unix_run_verify_binary()`; journal `PRIORITY=7`).
+  The setuid-root helper then does the expiry check and returns success.
+
+**A password unlock logs neither line.** There the auth phase's `AcquireHome` (unprivileged)
+stores `systemd-home-fd-<user>`, so the account phase short-circuits before `RefHome`, runs
+homed's record checks, and ends the stack as `sufficient`. `pam_unix` account never runs. In
+adora's journal, no `login:auth … successfully acquired` PID since 2026-09-01 is followed by an
+account-phase line, and the first `Access denied` is 2026-09-10, the day after c2eee9f (#784)
+moved `pam_u2f` ahead of `pam_systemd_home`.
+
+**Consequence: on a FIDO2 unlock, homed's own account checks don't run.**
+`pam_sm_acct_mgmt` returns at the failed `RefHome`, before `user_record_test_blocked()`, the
+rate limit, and the password-change checks. The account phase then rests on `pam_nologin` and
+`pam_unix` (expiry through nss_systemd's shadow view). [INFERENCE, untested: whether a homed
+`expireUSec` surfaces as `sp_expire` to `unix_chkpwd`.] Accepted on #1268: the session is
+already logged in, and a dedicated locker PAM service to drop one log line would need a
+`kitten-lily/noctalia` fork change, since the service name is hardcoded. Note also that
+noctalia's `PAM_AUTHINFO_UNAVAIL` allowance on `pam_acct_mgmt` (`src/auth/pam_authenticator.cpp`)
+is never exercised on krytis: the account phase succeeds outright.
+
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 
 **What:** krytis's sshd ships systemd's drop-in
