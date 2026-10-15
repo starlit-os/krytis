@@ -75,6 +75,11 @@ on:
 
 permissions: read-all
 
+# Every job sets BRANCH once, for both "Apply tracking cooldown" and "Create or
+# update PR". The cooldown step must run before anything reads the new
+# version: while the branch's open PR is pending, it puts that PR's update
+# back into the working tree, so the title and body describe what gets
+# committed (scripts/tracking-cooldown.sh, #1271).
 jobs:
   track-linux-cachyos:
     runs-on: ubuntu-26.04
@@ -85,6 +90,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'linux-cachyos' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-linux-cachyos
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -127,6 +134,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/linux-cachyos.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -143,7 +156,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-linux-cachyos"
           TITLE="chore(deps): update linux-cachyos ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -173,6 +185,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'mise' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-mise
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -214,6 +228,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/mise.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -227,7 +247,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-mise"
           TITLE="chore(deps): update mise ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -261,6 +280,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'microsoft-dbx' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-microsoft-dbx
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -300,6 +321,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" files/microsoft-uefi-certs/dbx.bin files/microsoft-uefi-certs/dbx.esl
+
       - name: Read new revocation count
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -313,7 +340,6 @@ jobs:
         run: |
           OLD_CNT="${{ steps.current.outputs.count }}"
           NEW_CNT="${{ steps.new.outputs.count }}"
-          BRANCH="auto/track-microsoft-dbx"
           TITLE="chore(deps): update Microsoft dbx ${OLD_CNT} -> ${NEW_CNT} revocations"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -352,6 +378,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'gum' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-gum
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -393,6 +421,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/gum.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -406,7 +440,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-gum"
           TITLE="chore(deps): update gum ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -436,6 +469,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'libsodium' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-libsodium
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -477,6 +512,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/libsodium.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -490,7 +531,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-libsodium"
           TITLE="chore(deps): update libsodium ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -520,6 +560,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'niri' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-niri
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -561,6 +603,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/niri.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -574,7 +622,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-niri"
           TITLE="chore(deps): update niri v${OLD_VER} -> v${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -604,6 +651,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'ghostty' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-ghostty
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -645,6 +694,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/ghostty.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -658,7 +713,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-ghostty"
           TITLE="chore(deps): update ghostty ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -690,6 +744,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'seance' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-seance
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -731,6 +787,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/seance.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -744,7 +806,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-seance"
           TITLE="chore(deps): update seance ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -776,6 +837,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'symbols-nerd-font' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-symbols-nerd-font
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -817,6 +880,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/symbols-nerd-font.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -830,7 +899,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-symbols-nerd-font"
           TITLE="chore(deps): update symbols-nerd-font ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1001,6 +1069,8 @@ jobs:
             branch: auto/track-spdlog
             title: "chore(deps): update spdlog"
 
+    env:
+      BRANCH: ${{ matrix.branch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1054,12 +1124,17 @@ jobs:
             fi
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH="${{ matrix.branch }}"
           BASE_TITLE="${{ matrix.title }}"
           BST_PATH="elements/${{ matrix.element }}"
 
@@ -1147,6 +1222,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'core-junctions' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-core-junctions
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1183,13 +1260,14 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git diff --quiet && { echo "No junction updates"; exit 0; }
+          bash scripts/tracking-cooldown.sh "$BRANCH" elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
 
           TITLE="chore(deps): update core junctions (gnome-build-meta + freedesktop-sdk)"
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
-          bash scripts/commit-tracking-update.sh auto/track-core-junctions /tmp/commit-msg.txt elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
 
           printf '%s\n' "Updates \`gnome-build-meta.bst\` and \`freedesktop-sdk.bst\` atomically. Manual review required — junction bumps can break downstream elements." > /tmp/pr-body.md
-          bash scripts/tracking-pr.sh auto/track-core-junctions "$TITLE" /tmp/pr-body.md
+          bash scripts/tracking-pr.sh "$BRANCH" "$TITLE" /tmp/pr-body.md
 
   track-pangolin:
     runs-on: ubuntu-26.04
@@ -1200,6 +1278,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'pangolin' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-pangolin
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1241,6 +1321,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/pangolin-cli.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1254,7 +1340,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-pangolin"
           TITLE="chore(deps): update pangolin-cli ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1284,6 +1369,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'game-devices-udev' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-game-devices-udev
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1323,6 +1410,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/game-devices-udev.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1336,7 +1429,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-game-devices-udev"
           TITLE="chore(deps): update game-devices-udev ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1366,6 +1458,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'proton-pass' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-proton-pass
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1405,6 +1499,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/proton-pass.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1418,7 +1518,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-proton-pass"
           TITLE="chore(deps): update proton-pass ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1448,6 +1547,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'falcond' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-falcond
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1489,6 +1590,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/falcond.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1502,7 +1609,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-falcond"
           TITLE="chore(deps): update falcond ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1535,6 +1641,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'libqalculate' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-libqalculate
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1576,6 +1684,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/libqalculate.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1589,7 +1703,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-libqalculate"
           TITLE="chore(deps): update libqalculate ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1622,6 +1735,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'falcond-profiles' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-falcond-profiles
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1665,6 +1780,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/falcond.bst
+
       - name: Read new commit
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1680,7 +1801,6 @@ jobs:
         run: |
           OLD_SHA="${{ steps.current.outputs.short }}"
           NEW_SHA="${{ steps.new.outputs.short }}"
-          BRANCH="auto/track-falcond-profiles"
           TITLE="chore(deps): update falcond-profiles ${OLD_SHA} -> ${NEW_SHA}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1710,6 +1830,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'scx-loader' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-scx-loader
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1756,6 +1878,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/scx-loader.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1769,7 +1897,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-scx-loader"
           TITLE="chore(deps): update scx-loader ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1799,6 +1926,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'zed' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-zed
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1840,6 +1969,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/zed.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1853,7 +1988,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-zed"
           TITLE="chore(deps): update zed ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1883,6 +2017,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'zen-browser' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-zen-browser
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1924,6 +2060,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/zen-browser.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1937,7 +2079,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-zen-browser"
           TITLE="chore(deps): update zen-browser ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1967,6 +2108,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'chunkah' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-chunkah
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2006,12 +2149,17 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" mise/tasks/chunkify
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH="auto/track-chunkah"
           TITLE="chore(deps): update chunkah digest"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -2036,6 +2184,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'qemu' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-qemu
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2077,6 +2227,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/dev/qemu.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -2090,7 +2246,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-qemu"
           TITLE="chore(deps): update qemu ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -2124,6 +2279,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'qemu-image' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-qemu-image
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2163,12 +2320,17 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" mise/tasks/boot-vm mise/tasks/convert-to-qcow2
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH="auto/track-qemu-image"
           TITLE="chore(deps): update qemus/qemu digest"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -2212,6 +2374,8 @@ jobs:
           - buildstream-plugins
           - buildstream-plugins-community
           - zig-0.16
+    env:
+      BRANCH: auto/track-${{ matrix.name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2253,13 +2417,18 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" "${{ steps.elem.outputs.path }}"
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           ELEMENT="${{ steps.elem.outputs.path }}"
-          BRANCH="auto/track-${{ matrix.name }}"
           TITLE="chore(deps): update ${{ matrix.name }}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt

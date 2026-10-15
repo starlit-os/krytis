@@ -1813,7 +1813,7 @@ gh workflow run track-bst-sources.yml --ref <branch> --field group=<name>
 gh run watch <run-id> --exit-status
 ```
 
-**This does not exercise the "Create or update PR" step.** That step's `if:` guard is `steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'` — deliberately, so a feature-branch dispatch can never open a stray PR or push a stray commit. Dispatching on `--ref <branch>` will only prove the task is idempotent and that `has_changes` resolves correctly; the job shows those steps `skipped`, not failed. To verify the commit/PR mechanism itself, either invoke `scripts/commit-tracking-update.sh` directly against a real `auto/track-<name>` branch (safe — it's exactly what the scheduled job would do, and idempotent against a branch that already has an open PR for the same content) or wait for the first real scheduled/merged run.
+**This does not exercise the "Apply tracking cooldown" or "Create or update PR" steps.** Their `if:` guard is `steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'` — deliberately, so a feature-branch dispatch can never open a stray PR or push a stray commit. Dispatching on `--ref <branch>` will only prove the task is idempotent and that `has_changes` resolves correctly; the job shows those steps `skipped`, not failed. To verify the commit/PR mechanism itself, either run the three scripts directly against a real `auto/track-<name>` branch, `scripts/tracking-cooldown.sh` first, then `scripts/commit-tracking-update.sh` (which refuses to run without the cooldown decision) and `scripts/tracking-pr.sh` (safe — it's exactly what the scheduled job would do), or wait for the first real scheduled/merged run.
 
 The job should either create/update a PR (if a new release exists) or print "Already up to date" and exit 0. Offer this verification step to the user when opening a PR that adds a new tracking task.
 
@@ -1837,43 +1837,65 @@ Two non-obvious things found building it:
   The script now creates the commit on a scratch branch (`tracking-scratch/<run_id>-<attempt>/<branch>`, made from `main`), moves the tracked branch onto it with one forced ref update, and deletes the scratch branch on exit. The PR's head goes straight from the old update commit to the new one and is never 0 ahead, so nothing closes it and there is no reopen step. A PR a person closed stays closed, and the caller opens a fresh one. The scratch branch sits outside `auto/`. Ruleset "Main" targets only `~DEFAULT_BRANCH`, and the only `push:`-triggered workflow (`checks.yml`) is filtered to `main`, so creating the scratch branch triggers nothing.
 - **Read a single ref with `git/ref/heads/<name>` (singular), not `git/refs/heads/<name>`.** The plural form is the namespace listing. GitHub documents that when `<name>` doesn't exist but other refs start with it, the call returns those refs as an array, so an existence check built on it can pass for a branch that isn't there. The failure actually observed is a different one, hit while building the cooldown: on a `404`, `gh api … --jq` still prints the error body to stdout. `X=$(gh api … || true)` therefore set `X` to `{"message":"Not Found",…}`, and the script tried to fetch that as a commit. Take the value only from a successful call: `X=$(gh api …) || X=""`. Writes still use the plural form (`PATCH git/refs/heads/<name>`, `POST git/refs`).
 
-### Tracking cooldown: 24h from first sighting
+### Tracking cooldown: 24h per update
 
-Renovate holds every update for 24h after its release (`minimumReleaseAge`, see [`renovate.md`](renovate.md)). The tracking jobs get similar protection, measured from the first run that found the branch's update pending, not from the upstream release.
+Renovate holds every update for 24h after its release (`minimumReleaseAge`, see [`renovate.md`](renovate.md)). The tracking jobs hold every update for 24h too. Each one is timed from the first run that saw that exact content, and a PR never merges content that hasn't itself been visible for 24h (#1271).
 
-**Why first sighting.** A uniform clock is the only one available for every source: `bst source track` on a `git_repo`, GitHub releases, PyPI, GitLab tags, the zig index, CachyOS packages, container digests and Microsoft's dbx file. Upstream dates would need a lookup per source, and some sources don't have one that can be trusted: a lightweight tag only carries its commit's date, which can be months older than the tag.
+**Why first sighting, not the release date.** A uniform clock is the only one available for every source: `bst source track` on a `git_repo`, GitHub releases, PyPI, GitLab tags, the zig index, CachyOS packages, container digests and Microsoft's dbx file. Upstream dates would need a lookup per source, and some sources don't have one that can be trusted: a lightweight tag only carries its commit's date, which can be months older than the tag.
 
-**Mechanism:**
+**Mechanism.** Every job runs three scripts in order. `BRANCH` is set once per job in its job-level `env:`, so the steps can't disagree on it:
 
-- `scripts/commit-tracking-update.sh` writes the first-sighting time as trailers on the commit:
+1. **`scripts/tracking-cooldown.sh "$BRANCH" <paths>`**, in the "Apply tracking cooldown" step, right after the update step. It decides what the branch carries and writes the trailers to `$RUNNER_TEMP/tracking-cooldown/<branch, / → _>.env`.
+2. **`scripts/commit-tracking-update.sh`** commits with those trailers. It refuses to run if the file is missing, or if the file was written for different paths than the ones it was given.
+3. **`scripts/tracking-pr.sh`** reads the trailers from the branch head and sets draft or ready.
 
-  ```
-  Tracking-First-Seen: 2026-10-11T12:49:16Z
-  Tracking-Ready-At: 2026-10-12T12:49:16Z
-  ```
+The only state is the newest PR for the branch and its head commit's trailers, because the branch is recreated on every run:
 
-  Each run recreates the branch, so the previous head commit is the only state. While that commit is the head of an open PR, its `First-Seen` carries over, whatever upstream has done since. A closed or merged PR's leftover branch is ignored and the clock starts fresh, as it does when the PR lookup fails.
-- **A newer release does not restart the clock.** Until 2026-10-14 the script also wrote a `Tracking-Fingerprint` (a sha256 of the update's added and removed lines) and restarted the clock whenever it changed. A newer upstream release changes the fingerprint, so an element that releases more often than the window never left draft. umbriel tracks upstream commits: #1203 opened 2026-10-12, was still a draft on 2026-10-14, and had been reset to `First-Seen: 2026-10-14T17:06:01Z`. mise #1228 opened for 2026.10.9 on 2026-10-13, then reset when 2026.10.10 replaced it.
-  - **The cost.** The PR head can now be a release that appeared minutes before `Ready-At`. So the window guarantees that *some* update to this element was visible for 24h, not that the exact one being merged was. Renovate's `minimumReleaseAge` is stricter: it measures each release from its own timestamp. Doing that here would mean holding back the branch to an older, already-cooled release, and the tracking jobs only ever produce the newest one.
-  - **Old branches still parse.** A head commit carrying a `Tracking-Fingerprint` trailer from before the change keeps its `First-Seen`, because only `Tracking-First-Seen` is read.
-- `scripts/tracking-pr.sh <branch> <title> <body-file>` replaces the 24 copies of the "create or edit the PR" block. It reads those trailers from the branch head:
+```
+Tracking-First-Seen: 2026-10-11T12:49:16Z
+Tracking-Ready-At: 2026-10-12T12:49:16Z
+Tracking-Next-Fingerprint: 3f2a…          # only while a newer update is held back
+Tracking-Next-First-Seen: 2026-10-11T20:13:02Z
+Tracking-Next-Ready-At: 2026-10-12T20:13:02Z
+```
+
+The cooldown script compares the newest candidate C (the working tree after the update step) with H, the update carried by the branch's open PR:
+
+| Situation | Branch carries | First-Seen |
+| --- | --- | --- |
+| No PR, closed PR, or the `gh pr list` lookup failed | C | now |
+| Newest PR merged | C | the merged head's `Next-First-Seen` if its `Next-Fingerprint` matches C, else now |
+| The open PR already carries C | C | H's |
+| C was recorded as Next ≥24h ago (it has cooled itself) | C | C's `Next-First-Seen` |
+| C is newer and hasn't cooled | **H**, replayed onto current `main`, with C recorded as `Next-*` | H's |
+| H no longer replays (merge conflict, or `main` already has it) | C | C's `Next-First-Seen` if recorded, else now |
+| Every changed file is a first-party `.bst` | C, never held | exempt |
+
+- **The hold has to happen before anything reads the new version.** Each job builds its title and body from the working tree: a "Read new version" step, or `git diff` in the `track` matrix. Restoring H after that would describe C on a PR that carries H.
+- **The fingerprint is over content, not the diff.** It is the sha256 of a `<blob id> <path>` line for each changed file. A diff-based fingerprint (the pre-#1270 `Tracking-Fingerprint`) changes when the held PR merges, because its `-` lines become H's lines. Then the recorded Next would never match again and would lose its first sighting. The price is that a `main` edit to *other* lines of the same element also changes the fingerprint and restarts Next's clock. That errs toward more cooling.
+- **H is replayed as a 3-way merge, not with `git apply`.** The script runs `git merge-tree --write-tree --merge-base=<head>^ HEAD <head>` (git ≥ 2.40), then `git restore --source=<tree> --worktree -- <paths>`. A plain `git apply` of the held diff refused any `main` edit within its 3 context lines. In the test harness, a comment edited two lines above `url:` released the hold. The merge fails only when `main` changed the update's own lines, for example a version bumped by hand. If H replays onto a `main` that changed other lines and comes out identical to C, no Next is recorded.
+- **Why not one clock per PR.** #1270 restarted nothing when a newer release superseded the pending one, so the clock belonged to the PR. A release published minutes before `Ready-At` could then merge almost uncooled. The clock before that restarted on every change, so fast movers never left draft. umbriel #1203 opened 2026-10-12 and was reset to `First-Seen: 2026-10-14T17:06:01Z`. mise #1228 reset when 2026.10.10 replaced 2026.10.9.
+- **How fast movers behave.** umbriel and mise still reach ready unattended. The first update is held, cools in 24h, and the PR goes ready. A newer release every few hours keeps restarting Next's clock, so the PR advances only when someone merges it, or when upstream pauses for 24h. After the merge, the next run proposes the newest candidate. If that candidate was the recorded Next, it keeps its first sighting and can be ready at once. The lag is at most one cooling cycle per merge.
+- **`scripts/tracking-pr.sh <branch> <title> <body-file>`** replaces the 24 copies of the "create or edit the PR" block:
   - Before `Ready-At`, it opens the PR as a draft, or converts an existing one back to draft, with a "Cooling until …" note at the top of the body.
   - From `Ready-At` on, it marks the PR ready for review.
+  - With `Next-*` trailers present, the note also says when the held-back update was first seen and when it cools.
   - A head commit with no trailers fails closed and counts as cooling.
 - **Effective delay is 24–36h.** The schedule runs twice a day (`13 0,12 * * *`, plus GitHub's drift). The run 24h after first sighting lands a few minutes either side of `Ready-At`, and when it falls short the PR leaves draft one run (12h) later. With the daily schedule this replaced, that miss cost a whole day, so 48h waits were common. Manual `workflow_dispatch` runs re-evaluate too. Every run also recommits each pending branch onto the current `origin/main`, so open tracking PRs get a `synchronize` twice a day. Each one re-runs their PR checks, including `build-changed.yml` on the single VPS runner.
 - **That re-push is avoidable; krytis pays for it by choice.** *Source: dakota `a3a32d8`, `track_bundle.py:bundle_changed()`. Mined 2026-10-14.*
   - **The cooldown doesn't need it.** `tracking-pr.sh` reads the trailers from whatever head commit exists, and an open PR's head keeps its `First-Seen`.
-  - **How dakota skips it.** dakota doesn't push when the tracked paths are identical between the published branch and the freshly rebuilt result: "the branch merely sitting on an older base does not count as a change". The krytis equivalent is one check before calling `scripts/commit-tracking-update.sh`: `git diff --quiet "origin/$BRANCH" -- <tracked paths>`. The track jobs check out with `fetch-depth: 0`, so the remote branch is available.
+  - **How dakota skips it.** dakota doesn't push when the tracked paths are identical between the published branch and the freshly rebuilt result: "the branch merely sitting on an older base does not count as a change". The krytis equivalent is one check before calling `scripts/commit-tracking-update.sh`: `git diff --quiet "origin/$BRANCH" -- <tracked paths>`. The track jobs check out with `fetch-depth: 0`, so the remote branch is available. Since #1271 that check alone is wrong. A held run restores the PR's own content, so the paths match even when the run has just recorded a new `Next-*`. Skipping that push would lose Next's first sighting, so the check must also compare the decided trailers with the head commit's.
   - **The cost of skipping.** The PR is no longer re-validated against a newer `main` for free, so a break caused by `main` moving shows up only when someone re-runs the checks or merges.
   - **The scale.** With 4 open tracking PRs on 2026-10-14, the re-push costs about 8 extra build-changed runs a day.
-  - **Bundling is not adopted.** The rest of `a3a32d8` bundles all tracking updates into one PR. dakota does that because each of its PRs triggers hours of serialized image builds. Krytis PR builds are changed-element only (`build-changed.yml`), so that cost doesn't exist here. A bundle would also share one 24h cooldown clock, so an element whose update joined an open bundle late would inherit the bundle's elapsed clock and get little or no cooling of its own.
-- **First-party sources are exempt.** The guard is against a hijacked third-party release. A changed file skips the cooldown only when it is a `.bst` whose first `url:` is under `kitten-lily/` or `starlit-os/` (today `desktop/noctalia.bst` and `desktop/presence-bridge.bst`). Every other changed file cools, including non-element files and noctalia-dev's `umbriel`/`noctalia-greeter`. The commit carries `Tracking-Cooldown: exempt (first-party source)`.
-- **Testing it:** `TRACKING_COOLDOWN_SECONDS` overrides the 86400s window. The 2026-10-11 smoke run on throwaway draft PR #1189 used 90s and passed five checks:
-  1. A new update opened a draft.
-  2. Re-running it kept `First-Seen`.
-  3. After `Ready-At` the PR was marked ready.
-  4. A changed update went back to draft with a new `First-Seen`. *This check no longer applies: since 2026-10-14 a changed update keeps `First-Seen` while its PR is open.*
-  5. A change to `desktop/presence-bridge.bst` alone was exempt and marked ready at once.
+  - **Bundling is not adopted.** The rest of `a3a32d8` bundles all tracking updates into one PR. dakota does that because each of its PRs triggers hours of serialized image builds. Krytis PR builds are changed-element only (`build-changed.yml`), so that cost doesn't exist here. A bundle would also have to cool as one unit: with updates held until they cool, every member's newer release would wait for the whole bundle to merge.
+- **First-party sources are exempt.** The guard is against a hijacked third-party release. A changed file skips the cooldown only when it is a `.bst` whose first `url:` is under `kitten-lily/` or `starlit-os/` (today `desktop/noctalia.bst` and `desktop/presence-bridge.bst`). Every other changed file cools, including non-element files and noctalia-dev's `umbriel`/`noctalia-greeter`. An exempt candidate is never held back. The commit carries `Tracking-Cooldown: exempt (first-party source)`.
+- **Testing it:** `TRACKING_COOLDOWN_SECONDS` overrides the 86400s window.
+  - **Live smoke.** On 2026-10-15, throwaway draft PR #1285 (branch `smoke/1271-cooldown`, outside `auto/`) changed only `README.md`, with a 90s window. It ran the three scripts against the real API and passed four checks:
+    1. A new update opened a draft.
+    2. A newer candidate left the commit, title and `First-Seen` on the first one and recorded `Next-*`.
+    3. After `Ready-At` the PR went ready while the newer one was still held.
+    4. Once the newer one had 90s of its own, it replaced the first, still ready, and `Next-*` was dropped.
+  - **Offline harness** for everything else. Use a bare repo as `origin` and a fake `gh` first on `PATH` that answers only `pr list --head <b> … --jq <filter>`, by running the real `jq` over a JSON file of `{number, head, state, headRefOid}`. Commit the decided trailers to the branch with plain git in place of `commit-tracking-update.sh`. On 2026-10-15 it covered these cases: merge carry-over of Next, a conflicting `main` edit releasing the hold, an unrelated `main` edit replaying cleanly, a closed PR, a failed lookup, and a first-party element.
 
 ### A green track job does not prove patches apply
 

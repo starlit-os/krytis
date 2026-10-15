@@ -6,17 +6,20 @@
 #   tracking-pr.sh <branch> <title> <body-file>
 #
 # Run it right after scripts/commit-tracking-update.sh has moved <branch>. The
-# cooldown state is read from the trailers that script writes on the branch
-# head commit:
-#   Tracking-First-Seen: <UTC>  when this PR's update was first committed
+# cooldown state is read from the trailers scripts/tracking-cooldown.sh
+# decided, on the branch head commit:
+#   Tracking-First-Seen: <UTC>  when this exact update was first seen
 #   Tracking-Ready-At:   <UTC>  First-Seen + 24h
 #   Tracking-Cooldown: exempt   source is first-party (kitten-lily/, starlit-os/)
+#   Tracking-Next-First-Seen / Tracking-Next-Ready-At: <UTC>
+#                               a newer update, held back until this one
+#                               merges or the newer one has cooled
 #
 # Before Ready-At, the PR is opened as a draft, or converted back to one, so
 # it cannot be merged by accident. From Ready-At on, it is marked ready for
 # review. A head commit with no trailers fails closed and counts as cooling.
 # This is the BST-tracking counterpart of Renovate's minimumReleaseAge (see
-# docs/skills/bst.md § Tracking cooldown: 24h from first sighting).
+# docs/skills/bst.md § Tracking cooldown: 24h per update).
 #
 # Requires: gh (authenticated, pull-requests:write), GITHUB_REPOSITORY.
 
@@ -39,6 +42,8 @@ trailer() { sed -n "s/^$1: //p" <<<"$MESSAGE" | tail -n 1; }
 FIRST_SEEN=$(trailer Tracking-First-Seen)
 READY_AT=$(trailer Tracking-Ready-At)
 EXEMPT=$(trailer Tracking-Cooldown)
+NEXT_SEEN=$(trailer Tracking-Next-First-Seen)
+NEXT_READY=$(trailer Tracking-Next-Ready-At)
 
 BODY=$(cat "$BODY_FILE")
 if [ -n "$EXEMPT" ]; then
@@ -50,11 +55,16 @@ elif [ -n "$READY_AT" ] && [ "$(date -u +%s)" -ge "$(date -u -d "$READY_AT" +%s)
 elif [ -n "$READY_AT" ]; then
   READY=0
   NOTE="> [!IMPORTANT]
-> **Cooling until ${READY_AT}.** This update was first seen ${FIRST_SEEN}, and the PR stays a draft for 24h after that. A newer upstream release in the meantime keeps the clock; closing the PR restarts it. See \`docs/skills/bst.md\` § Tracking cooldown: 24h from first sighting."
+> **Cooling until ${READY_AT}.** This update was first seen ${FIRST_SEEN}, and the PR stays a draft for 24h after that. A newer upstream release waits for this one instead of replacing it; closing the PR restarts the clock. See \`docs/skills/bst.md\` § Tracking cooldown: 24h per update."
 else
   READY=0
   NOTE="> [!WARNING]
 > **Cooling: the head commit carries no \`Tracking-Ready-At\` trailer**, so this PR stays a draft until a tracking run recommits it."
+fi
+if [ -n "$NEXT_SEEN" ]; then
+  NOTE="${NOTE}
+>
+> A newer update, first seen ${NEXT_SEEN}, is held back. A tracking run proposes it after this PR merges, or replaces this update with it once it has cooled (${NEXT_READY})."
 fi
 printf '%s\n\n%s\n' "$NOTE" "$BODY" >"$BODY_FILE.cooldown"
 
