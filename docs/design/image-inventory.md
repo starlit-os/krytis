@@ -72,6 +72,7 @@ element does, its row's text is a review question.
 | `config/mise-aliases.bst` | System-wide mise tool aliases (`/etc/mise/conf.d/aliases.toml`). |
 | `config/fido2-tasks.bst` | System-wide `mise fido2:*` enrollment and status tasks. |
 | `config/fido2-root-unlock.bst` | Makes the root volume try FIDO2 unlock. In base-system because the initramfs reads it from there. |
+| `config/fisherman-cleanup.bst` | Deletes the installer's leftover plain-text copy of the disk passphrase from the physical root, once (#1280). |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
 | `config/oomd.bst` | Enables systemd-oomd and arms its memory-pressure kill on each user's `app.slice` (#1216). |

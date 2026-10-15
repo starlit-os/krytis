@@ -1,0 +1,18 @@
+[Unit]
+Description=Remove the installer's leftover copy of the disk passphrase
+Documentation=https://github.com/starlit-os/krytis/blob/main/docs/disk-passphrase-leak.md
+# Present only on installs where the installer's TPM2 switch was on (its default
+# on TPM 2.0 hardware until #1276). Everywhere else this unit is skipped.
+ConditionPathExists=/sysroot/etc/fisherman/tpm2-enroll.key
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# The remount is confined to this unit's mount namespace and dies with it, so
+# the system's /sysroot never becomes writable.
+PrivateMounts=yes
+SyslogIdentifier=krytis-fisherman-cleanup
+ExecStart=/usr/libexec/krytis/fisherman-cleanup.sh
+
+[Install]
+WantedBy=multi-user.target

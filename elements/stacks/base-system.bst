@@ -94,6 +94,9 @@ depends:
   # image stack: core/initramfs.bst build-depends on this stack and names the file in
   # install_items+=, so dracut can only see it if this stack provides it.
   - config/fido2-root-unlock.bst
+  # Deletes the plain-text LUKS passphrase the installer's TPM2 staging leaves on
+  # the physical root (#1280). Skipped on machines without the file.
+  - config/fisherman-cleanup.bst
 
   # ── Core utilities ─────────────────────────────────────────────────
   - core/uutils-coreutils.bst
