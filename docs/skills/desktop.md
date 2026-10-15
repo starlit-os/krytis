@@ -1423,6 +1423,28 @@ boot-time oneshot.
 path (`~/.local/share/icons/<Theme>` is already covered by the override), the name in
 `cursor { }`, and the name in `90-krytis-session.conf`.
 
+## Sandboxed apps can't reach the clipboard through Xwayland without an X11 window in focus
+
+Password managers built on Electron (Proton Pass, Bitwarden) copy with the Rust `arboard`
+crate, not Electron's clipboard. On Wayland, arboard uses the `wlr`/`ext` data-control
+protocols. Compositors withhold those from clients flagged as sandboxed through
+`security-context-v1`, so a Flatpak build shows its "copied" toast and the clipboard keeps
+its old contents. Flathub's usual fix is to grant `--socket=x11` so arboard writes the X11
+clipboard instead, but that only reaches Wayland apps if the Xwayland bridge passes it
+on. Neither bridge krytis ships does that while a Wayland window has focus:
+
+- **niri / xwayland-satellite:** satellite calls `wl_data_device.set_selection` with its
+  last keyboard serial. smithay rejects it from a client without keyboard focus ("denying
+  setting selection by a non-focused client").
+- **Umbriel / wlroots Xwayland:** `xwayland/selection/incoming.c` returns early when no
+  Xwayland surface has focus. The primary selection isn't gated, so middle-click paste may
+  still work.
+
+So the X11-socket fix works only when the app's own window is on X11:
+`flatpak override --env=XDG_SESSION_TYPE=x11 <app-id>` for Electron ≥ 38.2. This is from
+reading the source on 2026-10-15, not from a run; `docs/design/proton-pass-flatpak.md` has
+the citations and the test matrix. It's why native `desktop/proton-pass.bst` stays.
+
 ## Validating niri Config Changes
 
 When editing anything under `files/niri/`, validate the top-level file before committing — since includes are relative, validate the file in place (not copied to `/tmp`, which would break the relative include paths):
