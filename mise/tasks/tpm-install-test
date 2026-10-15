@@ -1,0 +1,368 @@
+#!/usr/bin/env bash
+#MISE description="Install from the live ISO the way the GUI does on TPM hardware (tpm2-luks-passphrase), boot twice against an emulated TPM, and report what the TPM slot does (#1276)"
+#USAGE flag "--iso <path>" help="ISO to install from. Default: output/krytis-live-sealed.iso, falling back to output/krytis-live.iso"
+#USAGE flag "--passphrase <s>" default="testpassphrase" help="LUKS passphrase to install with; answered whenever a prompt appears"
+#USAGE flag "--payload-ref <ref>" help="Payload image ref for the fisherman recipe. Default: matches the ISO variant"
+#USAGE flag "--expect <outcome>" help="Fail unless the outcome is this one: not-staged, not-run, enroll-failed, slot-ignored or tpm-unlock. Without it the outcome is only reported"
+#USAGE flag "--keep" help="Keep the installed disk, swtpm state and serial logs for inspection"
+#USAGE flag "--reuse-disk <path>" help="Skip the install and boot this disk (a previous --keep run's /var/tmp/krytis-install.img). It is booted in place, so its TPM token state carries over, and it gets a fresh TPM"
+
+set -euo pipefail
+
+# Why this exists (#1276). The GUI installer krytis ships (tuna-os/bootc-installer)
+# turns its TPM2 switch ON by default whenever the machine has a TPM 2.0, which
+# makes the recipe `encryption.type = tpm2-luks-passphrase`. fisherman then stages
+# a first-boot unit, fisherman-tpm2-enroll.service, that runs
+# `systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7` against the root volume.
+# Nothing in krytis asked for that, and no gate ran it: luks-install-test writes
+# `luks-passphrase`, and no install gate attached a TPM. This one does both, then
+# boots the installed disk TWICE against the same TPM state:
+#
+#   boot 1  passphrase prompt expected (nothing enrolled yet); the unit should run
+#           and add a systemd-tpm2 token. Facts are read over SSH.
+#   boot 2  the token exists, so either the initrd uses it (no prompt) or ignores
+#           it (prompt again). The passphrase is answered whenever a prompt shows,
+#           so the boot completes either way and the prompt itself is the signal.
+#
+# The outcome is one of, in the order they are checked:
+#
+#   not-staged     systemd can't see fisherman-tpm2-enroll.service (the files may
+#                  still be on the physical root; see stray_key in the facts)
+#   not-run        the unit exists but never succeeded, and no token was added
+#   enroll-failed  the unit failed and no token was added
+#   slot-ignored   a systemd-tpm2 token exists, and boot 2 still prompted
+#   tpm-unlock     a systemd-tpm2 token exists, and boot 2 unlocked root unattended
+#
+# Which one is CORRECT is a Security + Breakage Gate decision on #1276, so by
+# default this only reports. --expect turns it into a gate once that is decided.
+#
+# What this does NOT cover:
+# - The GUI itself. The recipe is the GUI's TPM default written by hand
+#   (scripts/iso-install-fisherman.sh, LUKS_ENCRYPTION_TYPE); fisherman reads only
+#   `encryption.type` to decide, so the GUI's TPM probe adds nothing to test.
+# - A TPM in the LIVE session. fisherman stages enrollment for first boot and
+#   never touches a TPM at install time, so the live VM gets none.
+# - Secure Boot. Off, as in luks-install-test: answering the prompt needs
+#   console=ttyS0 through systemd-stub's cmdline-extra, which enforcement refuses.
+#   PCR 7 still measures (SB disabled is a stable value), so the binding is real;
+#   whether it survives a key-list change is a separate question (#1240).
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+PASSPHRASE="${usage_passphrase:-testpassphrase}"
+EXPECT="${usage_expect:-}"
+KEEP=$([[ "${usage_keep:-}" == "true" ]] && echo 1 || echo 0)
+
+case "${EXPECT}" in
+    ""|not-staged|not-run|enroll-failed|slot-ignored|tpm-unlock) ;;
+    *) echo "ERROR: --expect ${EXPECT}: want not-staged, not-run, enroll-failed, slot-ignored or tpm-unlock" >&2; exit 1 ;;
+esac
+
+if [[ -n "${usage_iso:-}" ]]; then
+    ISO="${usage_iso}"
+elif [[ -f "output/krytis-live-sealed.iso" ]]; then
+    ISO="output/krytis-live-sealed.iso"
+else
+    ISO="output/krytis-live.iso"
+fi
+if [[ "${ISO}" == *sealed* ]]; then
+    DEFAULT_REF="ghcr.io/starlit-os/krytis:sealed"
+else
+    DEFAULT_REF="ghcr.io/starlit-os/krytis:latest"
+fi
+PAYLOAD_REF="${usage_payload_ref:-${DEFAULT_REF}}"
+
+# ── Preflight: everything before the 15-minute install ──────────────────────
+if [[ ! -f "${ISO}" ]]; then
+    echo "ERROR: ISO not found: ${ISO}" >&2
+    echo "       Build it:  mise run build-iso$([[ "${ISO}" == *sealed* ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
+command -v qemu-system-x86_64 &>/dev/null || { echo "ERROR: needs qemu-system-x86_64 on the host." >&2; exit 1; }
+command -v podman &>/dev/null || { echo "ERROR: needs podman (swtpm runs in a container)." >&2; exit 1; }
+[[ -r /dev/kvm ]] || { echo "ERROR: /dev/kvm not readable — KVM is required." >&2; exit 1; }
+# Same --debug check as luks-install-test: the install is driven over SSH.
+DEBUG_DROPIN="etc/ssh/sshd_config.d/05-live-debug.conf"
+SFS_OFFSET="$(python3 scripts/iso-squashfs-offset.py "${ISO}")"
+if ! unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${DEBUG_DROPIN}" >/dev/null 2>&1; then
+    echo "ERROR: ${ISO} has no ${DEBUG_DROPIN} — it was built without --debug." >&2
+    echo "  Rebuild it:  mise run build-iso$([[ "${ISO}" == *sealed* ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
+
+ISO_ABS="$(realpath "${ISO}")"
+INSTALL_DISK="/var/tmp/krytis-install.img"   # fixed by iso-e2e-test
+WORKDIR=$(mktemp -d /var/tmp/krytis-tpm-install.XXXXXX)
+SWTPM_CTR="krytis-tpm-install-$$"
+mkdir -p "${WORKDIR}/tpm/state"
+
+REUSE_DISK="${usage_reuse_disk:-}"
+if [[ -n "${REUSE_DISK}" ]]; then
+    [[ -f "${REUSE_DISK}" ]] || { echo "ERROR: --reuse-disk ${REUSE_DISK} not found" >&2; exit 1; }
+    INSTALL_DISK="$(realpath "${REUSE_DISK}")"
+fi
+
+QEMU_PID=""
+cleanup() {
+    [[ -n "${QEMU_PID}" ]] && kill -9 "${QEMU_PID}" 2>/dev/null || true
+    podman rm -f "${SWTPM_CTR}" >/dev/null 2>&1 || true
+    if [[ "${KEEP}" -eq 1 ]]; then
+        echo "==> Kept ${WORKDIR} (swtpm state, serial logs, facts) and ${INSTALL_DISK}"
+    else
+        # swtpm wrote the state as the container's root, which is the host user
+        # under rootless podman, but `podman unshare` covers a remapped uid too.
+        podman unshare rm -rf "${WORKDIR}" 2>/dev/null || rm -rf "${WORKDIR}"
+        [[ -n "${REUSE_DISK}" ]] || rm -f "${INSTALL_DISK}"
+    fi
+}
+trap cleanup EXIT
+
+echo "==> Installing Krytis with the GUI's TPM default, then booting it twice against swtpm"
+echo "    iso:      ${ISO_ABS}"
+echo "    payload:  ${PAYLOAD_REF}"
+echo "    workdir:  ${WORKDIR}"
+
+# swtpm is not on the host (krytis doesn't ship it), so it runs in a container,
+# the way tpm-boot-test does it. The host's QEMU connects to its control socket
+# through the bind mount. One long-lived container, and one swtpm process per
+# boot: swtpm exits when QEMU disconnects, and its state directory carries the
+# TPM across boots, which is the whole point of booting twice.
+# label=disable: the socket is created by a container process and connected to
+# by an unconfined host one.
+RUNNER_IMAGE="${TPM_TEST_IMAGE:-docker.io/library/fedora:41}"
+echo "==> [0/4] Starting the swtpm container (${RUNNER_IMAGE}) in the background"
+podman run -d --rm --name "${SWTPM_CTR}" --security-opt label=disable \
+    -v "${WORKDIR}/tpm:/tpm" "${RUNNER_IMAGE}" bash -c \
+    'dnf install -y -q swtpm swtpm-tools procps-ng >/tpm/dnf.log 2>&1 && touch /tpm/ready; exec sleep infinity' >/dev/null
+
+start_swtpm() {
+    for _ in $(seq 1 120); do [[ -f "${WORKDIR}/tpm/ready" ]] && break; sleep 2; done
+    [[ -f "${WORKDIR}/tpm/ready" ]] || { echo "ERROR: swtpm never installed in the container:" >&2; cat "${WORKDIR}/tpm/dnf.log" >&2; return 1; }
+    # swtpm holds a .lock in the state dir; a previous boot's process that has
+    # not exited yet would make this one fail to open the same state.
+    podman exec "${SWTPM_CTR}" pkill -x swtpm >/dev/null 2>&1 || true
+    rm -f "${WORKDIR}/tpm/swtpm.sock"
+    podman exec -d "${SWTPM_CTR}" swtpm socket --tpm2 --tpmstate dir=/tpm/state \
+        --ctrl type=unixio,path=/tpm/swtpm.sock --log "file=/tpm/swtpm-$1.log,level=1"
+    for _ in $(seq 1 30); do [[ -S "${WORKDIR}/tpm/swtpm.sock" ]] && return 0; sleep 1; done
+    echo "ERROR: swtpm socket never appeared" >&2; return 1
+}
+
+# ── Install ──────────────────────────────────────────────────────────────────
+echo "==> [1/4] Live ISO boot + install with encryption.type=tpm2-luks-passphrase"
+if [[ -n "${REUSE_DISK}" ]]; then
+    echo "    skipped: --reuse-disk ${INSTALL_DISK}"
+else
+    set +e
+    LUKS_PASSPHRASE="${PASSPHRASE}" LUKS_ENCRYPTION_TYPE=tpm2-luks-passphrase \
+        "${REPO_ROOT}/mise/tasks/iso-e2e-test" \
+            --iso "${ISO_ABS}" \
+            --payload-ref "${PAYLOAD_REF}" \
+            --luks-passphrase "${PASSPHRASE}" \
+            --encryption-type tpm2-luks-passphrase \
+            --install-only
+    RESULT=$?
+    set -e
+    if [[ "${RESULT}" -ne 0 ]]; then
+        echo "==> FAILED during install (exit ${RESULT})." >&2
+        exit "${RESULT}"
+    fi
+    [[ -f "${INSTALL_DISK}" ]] || { echo "ERROR: installer reported success but ${INSTALL_DISK} is missing." >&2; exit 1; }
+fi
+
+# ── Boot harness ─────────────────────────────────────────────────────────────
+# Credentials, serial socket and passphrase delivery follow boot-test; read its
+# comments for why each piece is there. Differences: the SAME disk and varstore
+# are booted twice (boot-test copies the disk, which would discard the token
+# boot 1 enrolls), a prompt is answered but never required, and a TPM is attached.
+ssh-keygen -t ed25519 -N '' -C 'krytis-tpm-install-test ephemeral' -f "${WORKDIR}/id" -q
+printf '[Unit]\nWants=sshd.service\n' > "${WORKDIR}/mu-dropin.conf"
+cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
+[Service]
+ImportCredential=krytis.boottest_authorized_keys
+ExecStart=
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile ${CREDENTIALS_DIRECTORY}/krytis.boottest_authorized_keys" -o AuthorizedKeysCommand=none
+DROPIN
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/true\nRestart=no\n' > "${WORKDIR}/greetd-dropin.conf"
+cred() { echo "type=11,value=io.systemd.credential.binary:$1=$(base64 -w0 < "$2")"; }
+
+. scripts/ovmf-paths.sh
+OVMF_CODE=$(ovmf_code_plain)
+cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"   # one varstore for both boots, like one machine
+
+LUKS_PROMPT_RE='(Please enter passphrase|Enter passphrase|passphrase for)'
+
+send_passphrase() {
+    LUKS_PASS="${PASSPHRASE}" python3 - "$1" <<'PY'
+import os, socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(10)
+s.connect(sys.argv[1])
+for byte in os.environ["LUKS_PASS"].encode():
+    s.sendall(bytes([byte]))
+    time.sleep(0.05)
+s.sendall(b"\n")
+time.sleep(2)
+s.close()
+PY
+}
+
+# Facts, read once the system has settled. Key=value lines between markers, the
+# raw evidence after them. `is-system-running --wait` covers the enrollment unit:
+# it is WantedBy=multi-user.target, so it belongs to the initial transaction.
+cat > "${WORKDIR}/facts.sh" <<'FACTS'
+timeout 120 systemctl is-system-running --wait >/dev/null 2>&1 || true
+U=fisherman-tpm2-enroll.service
+DEV=$(lsblk -rno PATH,FSTYPE | awk '$2=="crypto_LUKS"{print $1; exit}')
+META=$(cryptsetup luksDump --dump-json-metadata "$DEV" 2>/dev/null)
+echo "===FACTS==="
+echo "luks_dev=${DEV}"
+echo "unit_load=$(systemctl show -P LoadState $U)"
+echo "unit_active=$(systemctl show -P ActiveState $U)"
+echo "unit_result=$(systemctl show -P Result $U)"
+echo "unit_status=$(systemctl show -P ExecMainStatus $U)"
+echo "unit_enabled=$(systemctl is-enabled $U 2>&1)"
+echo "key_file=$(test -e /etc/fisherman/tpm2-enroll.key && echo present || echo absent)"
+# fisherman writes the unit, key and wants-link under its install target mount.
+# On a composefs install that is the physical root, which the deployment never
+# mounts as /etc or /usr (seen 2026-10-15: all three under /sysroot, the unit
+# "not-found" at runtime). The key is the LUKS passphrase, and with the unit
+# never running nothing shreds it. Hash only; the host compares it.
+echo "stray_key=$(test -e /sysroot/etc/fisherman/tpm2-enroll.key && echo present || echo absent)"
+echo "stray_key_mode=$(stat -c '%a:%U' /sysroot/etc/fisherman/tpm2-enroll.key 2>/dev/null)"
+echo "stray_key_sha256=$(sha256sum /sysroot/etc/fisherman/tpm2-enroll.key 2>/dev/null | cut -d' ' -f1)"
+echo "tpm2_tokens=$(printf '%s' "$META" | jq '[.tokens[] | select(.type=="systemd-tpm2")] | length' 2>/dev/null || echo error)"
+echo "keyslots=$(printf '%s' "$META" | jq '.keyslots | length' 2>/dev/null || echo error)"
+echo "===END==="
+echo "--- systemd-cryptenroll $DEV ---";  systemd-cryptenroll "$DEV" 2>&1
+echo "--- tpm2 token(s) ---";             printf '%s' "$META" | jq -c '.tokens[] | select(.type=="systemd-tpm2") | {keyslots, "tpm2-pcrs", "tpm2-pin"}' 2>&1
+echo "--- $U ---";                        systemctl status $U --no-pager 2>&1 | head -12
+echo "--- journal: $U ---";               journalctl -b --no-pager -u $U 2>&1 | tail -20
+echo "--- journal: cryptsetup this boot (initrd included) ---"
+journalctl -b --no-pager -o short-monotonic 2>/dev/null | grep -E 'systemd-cryptsetup|cryptsetup@|tpm2|TPM2' | grep -v "$U" | head -30
+echo "--- PCR 7 ---";                     systemd-analyze pcrs 7 2>&1
+echo "--- cryptsetup token plugins (running system) ---"; ls /usr/lib/x86_64-linux-gnu/cryptsetup/ 2>&1
+echo "--- fisherman files anywhere on the root btrfs ---"
+find /sysroot -xdev \( -name 'fisherman-tpm2-enroll.service' -o -name 'tpm2-enroll.key' \) 2>/dev/null | head
+FACTS
+
+# boot <n>: boot the installed disk once; sets PROMPTED_<n> and SSH_UP_<n>, and
+# writes ${WORKDIR}/facts-<n>.txt.
+boot() {
+    local n="$1" port=2330 serial="${WORKDIR}/serial-$1.log" sock="${WORKDIR}/serial-$1.sock"
+    while ss -tunalp 2>/dev/null | grep -q ":${port}"; do port=$((port + 1)); done
+    start_swtpm "${n}"
+    qemu-system-x86_64 \
+        -enable-kvm -m 4096 -cpu host -smp 4 -machine q35 \
+        -drive "file=${INSTALL_DISK},format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+        -chardev "socket,id=chrtpm,path=${WORKDIR}/tpm/swtpm.sock" \
+        -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
+        -device virtio-net-pci,netdev=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22" \
+        -smbios "$(cred systemd.unit-dropin.multi-user.target "${WORKDIR}/mu-dropin.conf")" \
+        -smbios "$(cred systemd.unit-dropin.sshd.service "${WORKDIR}/sshd-dropin.conf")" \
+        -smbios "$(cred systemd.unit-dropin.greetd.service "${WORKDIR}/greetd-dropin.conf")" \
+        -smbios "$(cred krytis.boottest_authorized_keys "${WORKDIR}/id.pub")" \
+        -smbios "type=11,value=io.systemd.stub.kernel-cmdline-extra=console=ttyS0" \
+        -chardev "socket,id=ser,path=${sock},server=on,wait=off,logfile=${serial}" \
+        -serial chardev:ser \
+        -display none -daemonize -pidfile "${WORKDIR}/qemu-${n}.pid"
+    QEMU_PID=$(cat "${WORKDIR}/qemu-${n}.pid")
+
+    local ssh=(ssh -p "${port}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+               -o ConnectTimeout=2 -o BatchMode=yes -o IdentitiesOnly=yes -i "${WORKDIR}/id" root@localhost)
+    local prompted=false up=false attempts=0 last=0 deadline=$(( $(date +%s) + 360 ))
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
+        if [[ "${attempts}" -lt 3 && ( "${attempts}" -eq 0 || $(( $(date +%s) - last )) -ge 60 ) ]] \
+           && [[ -s "${serial}" ]] && grep -qaE "${LUKS_PROMPT_RE}" "${serial}"; then
+            prompted=true; attempts=$((attempts + 1)); last=$(date +%s)
+            echo "    boot ${n}: passphrase prompt seen, answering (attempt ${attempts}/3)"
+            send_passphrase "${sock}"
+        fi
+        if timeout 10 "${ssh[@]}" true 2>/dev/null; then up=true; break; fi
+        sleep 2
+    done
+    printf -v "PROMPTED_${n}" '%s' "${prompted}"
+    printf -v "SSH_UP_${n}" '%s' "${up}"
+
+    if [[ "${up}" == true ]]; then
+        echo "    boot ${n}: SSH up (prompted=${prompted}); reading facts"
+        # Retried: one run came back without the facts block (the first SSH that
+        # answers can still race the guest's settling), and a missing block makes
+        # the whole run INCONCLUSIVE.
+        for _ in 1 2 3; do
+            timeout 180 "${ssh[@]}" bash -s < "${WORKDIR}/facts.sh" > "${WORKDIR}/facts-${n}.txt" 2>&1 || true
+            grep -qx '===END===' "${WORKDIR}/facts-${n}.txt" && break
+            sleep 10
+        done
+        timeout 10 "${ssh[@]}" systemctl poweroff &>/dev/null || true
+    else
+        echo "    boot ${n}: SSH never came up in 360s (prompted=${prompted})" >&2
+    fi
+    # Wait for a clean poweroff: the next boot uses this disk and TPM state.
+    for _ in $(seq 1 60); do kill -0 "${QEMU_PID}" 2>/dev/null || break; sleep 1; done
+    kill -9 "${QEMU_PID}" 2>/dev/null || true
+    QEMU_PID=""
+}
+
+fact() { sed -n '/^===FACTS===$/,/^===END===$/p' "${WORKDIR}/facts-$1.txt" 2>/dev/null | sed -n "s/^$2=//p"; }
+
+echo "==> [2/4] Boot 1: nothing enrolled yet; the first-boot unit should add a TPM2 token"
+boot 1
+if [[ "${SSH_UP_1}" != true ]]; then
+    echo "==> INCONCLUSIVE: boot 1 never reached SSH, so nothing is known about the TPM slot." >&2
+    tail -60 "${WORKDIR}/serial-1.log" >&2 || true
+    exit 2
+fi
+sed 's/^/    /' "${WORKDIR}/facts-1.txt"
+
+echo "==> [3/4] Boot 2: same disk, same TPM state"
+boot 2
+[[ -f "${WORKDIR}/facts-2.txt" ]] && sed 's/^/    /' "${WORKDIR}/facts-2.txt"
+
+echo "==> [4/4] Outcome"
+UNIT_LOAD=$(fact 1 unit_load)
+UNIT_RESULT=$(fact 1 unit_result)
+TOKENS=$(fact 1 tpm2_tokens)
+OUTCOME=""
+if [[ -z "${UNIT_LOAD}" ]]; then
+    echo "==> INCONCLUSIVE: boot 1's facts are missing; see above." >&2
+    exit 2
+elif [[ "${UNIT_LOAD}" == not-found ]]; then
+    OUTCOME=not-staged
+elif [[ "${TOKENS}" == 0 && "${UNIT_RESULT}" != success ]]; then
+    OUTCOME=enroll-failed
+elif [[ "${TOKENS}" == 0 ]]; then
+    OUTCOME=not-run
+elif [[ "${TOKENS}" =~ ^[1-9] ]]; then
+    if [[ "${SSH_UP_2}" != true ]]; then
+        echo "==> INCONCLUSIVE: a TPM2 token was enrolled, but boot 2 never reached SSH." >&2
+        tail -60 "${WORKDIR}/serial-2.log" >&2 || true
+        exit 2
+    fi
+    [[ "${PROMPTED_2}" == true ]] && OUTCOME=slot-ignored || OUTCOME=tpm-unlock
+else
+    echo "==> INCONCLUSIVE: could not read the token list (tpm2_tokens=${TOKENS})." >&2
+    exit 2
+fi
+
+echo "    boot 1: prompted=${PROMPTED_1} unit=${UNIT_LOAD}/$(fact 1 unit_active)/${UNIT_RESULT} key_file=$(fact 1 key_file) tpm2_tokens=${TOKENS}"
+echo "    boot 2: prompted=${PROMPTED_2} ssh=${SSH_UP_2} tpm2_tokens=$(fact 2 tpm2_tokens)"
+echo "==> OUTCOME: ${OUTCOME}"
+# Reported whatever the outcome: a passphrase left on the physical root is its
+# own problem, and no --expect value makes it acceptable.
+if [[ "$(fact 2 stray_key)" == present || "$(fact 1 stray_key)" == present ]]; then
+    N=2; [[ "$(fact 2 stray_key)" == present ]] || N=1
+    if [[ "$(fact "${N}" stray_key_sha256)" == "$(printf '%s' "${PASSPHRASE}" | sha256sum | cut -d' ' -f1)" ]]; then
+        echo "==> WARNING: /sysroot/etc/fisherman/tpm2-enroll.key (mode $(fact "${N}" stray_key_mode)) still holds the LUKS passphrase after boot ${N}." >&2
+    else
+        echo "==> WARNING: /sysroot/etc/fisherman/tpm2-enroll.key (mode $(fact "${N}" stray_key_mode)) is still on the physical root after boot ${N}." >&2
+    fi
+fi
+if [[ -n "${EXPECT}" && "${EXPECT}" != "${OUTCOME}" ]]; then
+    echo "==> FAIL: expected ${EXPECT}" >&2
+    exit 1
+fi

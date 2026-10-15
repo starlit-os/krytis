@@ -6,6 +6,7 @@
 #USAGE flag "--secure" help="Boot the installed disk under Secure Boot enforcement (phase 3); requires OVMF_VARS_SECURE env"
 #USAGE flag "--expect-fail" help="Invert the phase-4 verdict: pass only when secure-boot rejection is logged"
 #USAGE flag "--luks-passphrase <s>" default="" help="Install to an encrypted root (LUKS2); passed through to iso-install-fisherman.sh"
+#USAGE flag "--encryption-type <type>" default="" help="With --luks-passphrase: luks-passphrase (default) or tpm2-luks-passphrase, the GUI's default on TPM 2.0 hardware (#1276)"
 #USAGE flag "--mem <mb>" default="8192" help="QEMU memory in MiB"
 #USAGE flag "--smp <n>" default="8" help="QEMU vCPU count"
 #USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Install target disk image"
@@ -20,7 +21,7 @@ source "${REPO_ROOT}/scripts/e2e-lib.sh"
 
 # argc-fallback: parse flags when invoked directly (not via mise run).
 CLI_ISO="" CLI_PAYLOAD_REF="" CLI_INSTALL_ONLY="" CLI_SECURE="" CLI_EXPECT_FAIL=""
-CLI_LUKS_PASSPHRASE="" CLI_MEM="" CLI_SMP="" CLI_DISK="" CLI_SCRATCH="" CLI_SSH_PORT=""
+CLI_LUKS_PASSPHRASE="" CLI_ENCRYPTION_TYPE="" CLI_MEM="" CLI_SMP="" CLI_DISK="" CLI_SCRATCH="" CLI_SSH_PORT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --iso)             CLI_ISO="$2";             shift 2 ;;
@@ -29,6 +30,7 @@ while [ $# -gt 0 ]; do
         --secure)          CLI_SECURE="true";        shift ;;
         --expect-fail)     CLI_EXPECT_FAIL="true";   shift ;;
         --luks-passphrase) CLI_LUKS_PASSPHRASE="$2"; shift 2 ;;
+        --encryption-type) CLI_ENCRYPTION_TYPE="$2"; shift 2 ;;
         --mem)             CLI_MEM="$2";             shift 2 ;;
         --smp)             CLI_SMP="$2";             shift 2 ;;
         --disk)            CLI_DISK="$2";            shift 2 ;;
@@ -49,6 +51,9 @@ EXPECT_FAIL=$([[ "${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}" == "true" ]] && ec
 # into a plain one — silently, because the recipe just gets
 # `"encryption": {"type": "none"}` and fisherman succeeds.
 LUKS_PASSPHRASE="${CLI_LUKS_PASSPHRASE:-${usage_luks_passphrase:-${LUKS_PASSPHRASE:-}}}"
+# Same env-last chain, for the same reason (docs/skills/mise.md § A `usage_*`
+# fallback chain silently clobbers an inherited env var).
+LUKS_ENCRYPTION_TYPE="${CLI_ENCRYPTION_TYPE:-${usage_encryption_type:-${LUKS_ENCRYPTION_TYPE:-}}}"
 QEMU_MEM="${CLI_MEM:-${usage_mem:-8192}}"
 QEMU_SMP="${CLI_SMP:-${usage_smp:-8}}"
 QEMU_DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"
@@ -118,6 +123,7 @@ echo "=== [1/4] Booting live ISO with PLAIN OVMF (the live ISO is unsigned by de
 echo "=== [2/4] Installing (PAYLOAD_REF=${PAYLOAD_REF:-<target>/payload_ref}) ==="
 PAYLOAD_REF="${PAYLOAD_REF}" \
 LUKS_PASSPHRASE="${LUKS_PASSPHRASE}" \
+LUKS_ENCRYPTION_TYPE="${LUKS_ENCRYPTION_TYPE}" \
     "${REPO_ROOT}/scripts/iso-install-fisherman.sh" \
         krytis "${SSH_PORT}" "${MONITOR_LIVE}"
 

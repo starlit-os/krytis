@@ -1028,6 +1028,7 @@ sends the installed system to the wrong upgrade stream.
 | `mise run iso-install-test --secure` | as above, installed disk under enforcement |
 | `mise run iso-install-test --secure --expect-fail` | enforcement refuses an unsigned install |
 | `mise run luks-install-test` | ISO → fisherman → **encrypted** disk, boot, answer the passphrase; asserts the root partition carries the Discoverable Partitions GUID |
+| `mise run tpm-install-test` | ISO → fisherman with the GUI's TPM default (`tpm2-luks-passphrase`) → encrypted disk, then **two** boots of the same disk against one swtpm state; reports whether fisherman's first-boot TPM2 enrollment ran and whether boot 2 unlocked without a prompt (#1276). Reports by default; `--expect <outcome>` makes it a gate, `--reuse-disk` skips the install |
 | `mise run luks-boot-test` | synthetic LUKS2 disk + real UKI — the boot half, no installer |
 
 Two things about the ISO variants that are easy to get wrong:
