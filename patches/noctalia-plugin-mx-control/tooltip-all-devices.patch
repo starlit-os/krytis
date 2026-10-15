@@ -1,0 +1,86 @@
+# krytis#1220: the MX Control bar tooltip shows only one device.
+#
+# widget.luau builds the tooltip from shared.pickDevice(), the first online
+# device, so with a mouse and a keyboard on one receiver only the mouse's
+# battery is shown. Add shared.tooltipRows(): one row per device in the
+# snapshot (battery, or "Offline"), then one connection row listing each
+# distinct connection once. With a single device the output is the same two
+# rows as before. The bar glyph still follows pickDevice().
+#
+# Covered by tests/shared_test.lua (`lua tests/shared_test.lua` from the
+# plugin root). Checked on a PRO X Wireless + G915 TKL on one Lightspeed
+# receiver: the tooltip lists both batteries and "lightspeed" once.
+#
+# Krytis feature request, not proposed upstream (Upstream Gate). Remove when
+# the plugin's own tooltip lists every device.
+diff --git a/mx-control/shared.luau b/mx-control/shared.luau
+index ee3fe38..5afc10e 100644
+--- a/mx-control/shared.luau
++++ b/mx-control/shared.luau
+@@ -316,6 +316,24 @@ function M.batteryText(device)
+     return "--"
+ end
+ 
++-- Bar tooltip: one row per device, then the distinct connections. With a
++-- single device this is the same two rows the widget always showed.
++function M.tooltipRows(status, offlineText, connectionLabel)
++    local rows, connections, seen = {}, {}, {}
++    for _, device in ipairs((type(status) == "table" and type(status.devices) == "table" and status.devices) or {}) do
++        rows[#rows + 1] = { key = device.name or "MX", value = device.online and M.batteryText(device) or offlineText }
++        local connection = tostring(device.connection or "")
++        if not seen[connection] then
++            seen[connection] = true
++            connections[#connections + 1] = connection
++        end
++    end
++    if #rows > 0 then
++        rows[#rows + 1] = { key = connectionLabel, value = table.concat(connections, ", ") }
++    end
++    return rows
++end
++
+ -- ── Shortcuts (mirrors mxactions.shortcut / sequence) ───────────────────────
+ 
+ local MODIFIERS = { CTRL = "CTRL", CONTROL = "CTRL", ALT = "ALT", SHIFT = "SHIFT", SUPER = "SUPER", META = "SUPER" }
+diff --git a/mx-control/tests/shared_test.lua b/mx-control/tests/shared_test.lua
+index b0d588a..723e003 100644
+--- a/mx-control/tests/shared_test.lua
++++ b/mx-control/tests/shared_test.lua
+@@ -202,6 +202,21 @@ check("healthy battery keeps the default colour", shared.levelRole(90) == nil)
+ check("batteryText prefers the level", shared.batteryText({ online = true, battery = { level = 90 } }) == "90%")
+ check("batteryText for an offline device", shared.batteryText({ online = false }) == "--")
+ 
++-- tooltipRows
++local pair = { devices = {
++    { name = "PRO X Wireless", online = true, battery = { level = 85 }, connection = "lightspeed" },
++    { name = "G915 TKL", online = false, connection = "lightspeed" },
++    { name = "MX Master 3S", online = true, battery = { level = 40 }, connection = "bluetooth" },
++} }
++local rows = shared.tooltipRows(pair, "Offline", "Connection")
++check("tooltipRows lists every device, then connections", #rows == 4)
++check("tooltipRows shows an online device's battery", rows[1].key == "PRO X Wireless" and rows[1].value == "85%")
++check("tooltipRows marks an offline device", rows[2].key == "G915 TKL" and rows[2].value == "Offline")
++check("tooltipRows lists each connection once, in order", rows[4].key == "Connection" and rows[4].value == "lightspeed, bluetooth")
++local one = shared.tooltipRows({ devices = { pair.devices[1] } }, "Offline", "Connection")
++check("tooltipRows for one device keeps the old two rows", #one == 2 and one[2].value == "lightspeed")
++check("tooltipRows without devices is empty", #shared.tooltipRows({ devices = {} }, "Offline", "Connection") == 0)
++
+ -- ── Phase 2 and 3 ──────────────────────────────────────────────────────────
+ 
+ check("profiles and shortcuts get their own tabs",
+diff --git a/mx-control/widget.luau b/mx-control/widget.luau
+index d2071e5..5041603 100644
+--- a/mx-control/widget.luau
++++ b/mx-control/widget.luau
+@@ -30,10 +30,7 @@ local function render()
+ 		barWidget.setTooltip(noctalia.tr("state." .. (code or "no_devices")))
+ 		return
+ 	end
+-	barWidget.setTooltip({
+-		{ key = device.name or "MX", value = online and shared.batteryText(device) or noctalia.tr("panel.offline") },
+-		{ key = noctalia.tr("panel.connection"), value = tostring(device.connection or "") },
+-	})
++	barWidget.setTooltip(shared.tooltipRows(status, noctalia.tr("panel.offline"), noctalia.tr("panel.connection")))
+ end
+ 
+ noctalia.state.watch(shared.STATUS_KEY, function(value)

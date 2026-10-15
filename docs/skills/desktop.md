@@ -2838,11 +2838,15 @@ msg plugins source add krytis path /usr/share/noctalia/plugins`, or add the TOML
 **Testing a plugin patch on real hardware before building an image.** Copy the plugin into
 the `local` dev source (`cp -a ~/.local/state/noctalia/plugins/materialized/community/<plugin>
 ~/.local/share/noctalia/plugins/`) and patch it there. `noctalia msg plugins list` should
-show the id as `[local]`. A plugin's running helper keeps the old code. For mx-control,
-killing `mxctl.py serve` does not respawn it, so reload the plugin with `noctalia msg
-plugins disable <id>` then `enable <id>`. That moves the id to the end of
-`[plugins].enabled`, which is harmless. Delete the local copy once the image carries the
-patch, or it keeps shadowing the image's copy.
+show the id as `[local]`. noctalia hot-reloads a path source's Luau files when they change
+(journal: `hot reload: reloaded service`), so UI patches show up at once. The plugin's
+Python helper does not reload. For mx-control, killing `mxctl.py serve` does not respawn
+it, so to pick up a backend change reload the plugin with `noctalia msg plugins disable
+<id>` then `enable <id>`. That moves the id to the end of `[plugins].enabled`, which is
+harmless. The `[plugins]` log then shows each scan loading the community copy first and the
+local copy overriding it; the local copy is the one that runs. mx-control's
+`tests/shared_test.lua` runs with plain `lua` (`/usr/bin/lua`) from the plugin root. Delete
+the local copy once the image carries the patch, or it keeps shadowing the image's copy.
 
 ### Plugin notifications are toast-only: 6 s, no history, dropped under DND
 

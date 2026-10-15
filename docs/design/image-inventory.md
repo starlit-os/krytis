@@ -124,7 +124,7 @@ element does, its row's text is a review question.
 | `config/plymouth-theme.bst` | Plymouth spinner theme with the krytis watermark. |
 | `desktop/game-devices-udev.bst` | Game controller udev rules. |
 | `desktop/solaar.bst` | Solaar library, CLI and Logitech hidraw `uaccess` rule, for the noctalia MX Control plugin. |
-| `desktop/noctalia-plugin-mx-control.bst` | noctalia MX Control plugin, patched so PRO-series mice show up. Served by the skel `krytis` path source; not enabled by default. |
+| `desktop/noctalia-plugin-mx-control.bst` | noctalia MX Control plugin, patched so PRO-series mice show up and the tooltip lists every device. Served by the skel `krytis` path source; not enabled by default. |
 | `config/desktop-udev.bst` | Performance and hardware tuning ported from CachyOS-Settings. |
 | `desktop/falcond.bst` | falcond, PikaOS's gaming performance daemon, with its profile set. |
 | `desktop/scx-loader.bst` | scx_loader, the D-Bus loader for sched-ext schedulers. |

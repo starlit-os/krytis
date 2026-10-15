@@ -12,9 +12,11 @@ kind: manual
 # still not enabled by default: it only does anything with Logitech HID++
 # hardware attached.
 #
-# The patch makes the backend's device-name filter accept Logitech's PRO-series
-# mice ("PRO X Wireless"). Without it the panel never lists them, and DPI never
-# shows. See patches/noctalia-plugin-mx-control/accept-pro-device-names.patch.
+# Two patches. accept-pro-device-names makes the backend's device-name filter
+# accept Logitech's PRO-series mice ("PRO X Wireless"). Without it the panel
+# never lists them, and DPI never shows. tooltip-all-devices makes the bar
+# tooltip list every device's battery, not only the first online one. Both
+# are under patches/noctalia-plugin-mx-control/.
 #
 # community-plugins has no tags, so this tracks main. Every commit to any
 # plugin there, including the bot's "update plugin catalog" commits, moves the
@@ -44,3 +46,5 @@ sources:
   ref: bd834815ee5da2ed744a9cbf1425342a4eecba6f
 - kind: patch
   path: patches/noctalia-plugin-mx-control/accept-pro-device-names.patch
+- kind: patch
+  path: patches/noctalia-plugin-mx-control/tooltip-all-devices.patch
