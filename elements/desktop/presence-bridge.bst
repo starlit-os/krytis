@@ -1,3 +1,4 @@
+# hourly-tracking smoke, do not merge
 # presence-bridge: host-side game detection for sandboxed (flatpak) Discord
 # clients, which cannot see host PIDs (#595). Design and rationale:
 # docs/design/presence-bridge.md.
