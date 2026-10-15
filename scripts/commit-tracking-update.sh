@@ -66,6 +66,27 @@ if [ "${TRACKING_PATHS:-}" != "$*" ]; then
 fi
 BODY="$TRACKING_TRAILERS"
 
+# Skip the push when the published branch already carries this exact commit:
+# the same update, the same headline and the same cooldown trailers. Only its
+# base is older. Recommitting it onto the newer main would be a synchronize
+# that re-runs every PR check and moves nothing forward, every hour, for every
+# open tracking PR. The trailers have to match as well as the files: a held
+# run restores the PR's own content but may just have recorded a new
+# Tracking-Next-*, and dropping that push would lose its first sighting. The
+# cost is that an open PR is no longer re-tested against every newer main.
+# See docs/skills/bst.md § Tracking cooldown: 24h per update.
+if git fetch -q --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null; then
+  PUBLISHED=$(git rev-parse "refs/remotes/origin/$BRANCH")
+  published_files=$(git diff --name-only "$PUBLISHED^" "$PUBLISHED" -- "$@" 2>/dev/null | sort)
+  wanted_message=$(printf '%s\n\n%s' "$(cat "$MESSAGE_FILE")" "$BODY")
+  if [ "$published_files" = "$(printf '%s\n' "${CHANGED[@]}" | sort)" ] &&
+    git diff --quiet "$PUBLISHED" -- "${CHANGED[@]}" &&
+    [ "$(git log -1 --format=%B "$PUBLISHED")" = "$wanted_message" ]; then
+    echo "commit-tracking-update: $BRANCH already carries this update and its trailers; not pushing"
+    exit 0
+  fi
+fi
+
 # The commit is built on a throwaway scratch branch, and only then is $BRANCH
 # moved onto it, in one ref update. $BRANCH must never point at main itself,
 # not even for the moment between a reset and a commit: GitHub auto-closes an

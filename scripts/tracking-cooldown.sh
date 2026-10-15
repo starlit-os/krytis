@@ -116,11 +116,6 @@ write_state() {
 
 CAND_FP=$(fingerprint "" "${CANDIDATE[@]}")
 
-if first_party "${CANDIDATE[@]}"; then
-  write_state "$NOW"
-  exit 0
-fi
-
 # The newest PR for the branch is the only state there is: the branch is
 # recreated on every run. An open PR's head is the held update. A merged PR's
 # head still says when the candidate after it was first seen. A closed PR
@@ -171,6 +166,15 @@ if [ -n "$HELD_SEEN_TRAILER" ]; then HELD_SEEN=$(epoch "$HELD_SEEN_TRAILER"); fi
 if [ "${#HELD[@]}" -gt 0 ] && [ "$(fingerprint "$HEAD_SHA" "${HELD[@]}")" = "$CAND_FP" ]; then
   log "PR #$PR_NUMBER already carries this update"
   write_state "$HELD_SEEN"
+  exit 0
+fi
+
+# Checked only now, after the carry-over above, so that an unchanged
+# first-party update keeps its First-Seen and an unchanged run commits
+# identical trailers (commit-tracking-update.sh then skips the push).
+if first_party "${CANDIDATE[@]}"; then
+  log "first-party update: never held back"
+  write_state "$CAND_SEEN"
   exit 0
 fi
 

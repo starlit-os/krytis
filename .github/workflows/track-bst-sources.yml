@@ -2,15 +2,15 @@ name: Track BuildStream Sources
 
 on:
   schedule:
-    # 00:13 UTC, not top-of-the-hour: GitHub's scheduler is documented to
-    # delay :00-triggered crons under load, and this repo's own history
-    # shows that delay growing from ~20min to ~4-5h over a few weeks (both
-    # this and cache-warm.yml were on '0 6' and drifted in lockstep every
-    # day — see docs/skills/ci-runner.md § *Scheduled Workflow Cron Delay*).
+    # :13, not top-of-the-hour: GitHub's scheduler is documented to delay
+    # :00-triggered crons under load, and this repo's own history shows that
+    # delay growing from ~20min to ~4-5h over a few weeks (both this and
+    # cache-warm.yml were on '0 6' and drifted in lockstep every day — see
+    # docs/skills/ci-runner.md § *Scheduled Workflow Cron Delay*).
     #
-    # This is the head of the daily chain, and the whole chain moved 5h
-    # earlier in #824 so that the scheduled publish it now feeds lands in
-    # the maintainer's morning rather than mid-afternoon:
+    # The 00:13 run is the head of the daily chain, and the whole chain
+    # moved 5h earlier in #824 so that the scheduled publish it now feeds
+    # lands in the maintainer's morning rather than mid-afternoon:
     #   00:13 track (here) -> 01:41 cache-warm -> 03:30 publish
     # The relative spacing is unchanged; only the start moved. Tracking
     # stays first because these jobs open PRs, cache-warm builds the image,
@@ -20,14 +20,15 @@ on:
     # cache-warm should build *after* today's tracked updates have had a
     # chance to land, not before.
     #
-    # 12:13 is a second pass, outside that chain: cache-warm and publish
-    # still run once, after 00:13. It exists for the 24h cooldown
-    # (scripts/tracking-pr.sh). With one run a day, the run after first
-    # sighting landed a few minutes either side of the 24h mark, so an
-    # update often waited 48h. With two, a PR leaves draft 24–36h after
-    # the bot first sees the update, and new upstream releases are
-    # noticed half a day sooner.
-    - cron: '13 0,12 * * *'
+    # Every other hour is outside that chain: cache-warm and publish still
+    # run once a day. The hourly passes exist for the 24h cooldown
+    # (scripts/tracking-cooldown.sh): a PR leaves draft within about an hour
+    # of Ready-At, and a new release is first seen within about an hour of
+    # publication. They are cheap because a run that finds nothing new
+    # pushes nothing and edits nothing (scripts/commit-tracking-update.sh,
+    # scripts/tracking-pr.sh), so open tracking PRs see no synchronize and
+    # their checks don't re-run.
+    - cron: '13 * * * *'
   workflow_dispatch:
     inputs:
       group:
@@ -74,6 +75,16 @@ on:
           - spdlog
 
 permissions: read-all
+
+# One run at a time. Scheduled runs start hours late under load, so hourly
+# crons can queue up; two overlapping runs would both rewrite the same
+# tracking branches and their cooldown trailers. Not cancelled: a run killed
+# between moving a branch and updating its PR leaves them disagreeing.
+# GitHub keeps one pending run per group and drops older pending ones,
+# which only loses a pass the next hour repeats.
+concurrency:
+  group: track-bst-sources
+  cancel-in-progress: false
 
 # Every job sets BRANCH once, for both "Apply tracking cooldown" and "Create or
 # update PR". The cooldown step must run before anything reads the new
