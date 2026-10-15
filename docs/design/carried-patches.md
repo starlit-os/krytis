@@ -30,6 +30,11 @@ When a change adds or removes a carry, add, edit or delete its row **in the same
 The check enforces that the row exists. It can't check that the row's *Why* or
 *Removal condition* is still true; that stays a review question.
 
+A new carry also needs its upstream's row in
+[`upstream-ai-policies.md`](upstream-ai-policies.md), which records whether that project
+accepts AI-assisted patches at all. `mise run upstream-policy-check` fails until the row
+exists.
+
 ## Inventory
 
 The check reads the first two columns, so keep their format:

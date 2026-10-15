@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+#MISE description="Fail if docs/design/upstream-ai-policies.md misses an upstream krytis carries a patch against or cites an open issue/PR in"
+#USAGE flag "--no-issues" help="Do not scan open krytis issue bodies for upstream references"
+"""Keeps the upstream AI-policy inventory in step with what krytis holds upstream.
+
+docs/design/upstream-ai-policies.md records, per upstream, whether that project
+has rules on AI/LLM-assisted contributions. A row is owed by every upstream that
+krytis is *holding something* against:
+
+  carry     an element in docs/design/carried-patches.md's Inventory (a patch
+            or a fork pin). Its element path must appear backticked in some
+            row's Stake cell. The carried-patches table is the source of truth
+            for carries; `mise run patch-inventory-check` keeps that one honest.
+  open ref  an OPEN issue or PR in another project, cited anywhere ref-status
+            scans: docs/ (minus docs/plans/done/), elements/**/*.bst,
+            mise/tasks/**, and open krytis issue bodies. Its repo, after
+            following renames and transfers (containers/podman ->
+            podman-container-tools/podman), must appear backticked as
+            `<host>/<owner>/<repo>` in some row's Repo cell.
+
+References are found and resolved by mise/tasks/ref-status's own code (loaded
+as a module, not copied), so both tasks agree on what counts as a reference.
+The policy doc itself is left out of the scan: it cites refs as evidence, and
+a row must not be able to justify itself.
+
+The check fails on:
+
+  MISSING   a carry or an open ref with no row;
+  STALE     a row whose repos have no open ref and whose Stake names no carried
+            element, so krytis holds nothing there any more (full scan only:
+            under --no-issues a row cited only in issue bodies would look
+            unheld); or a Stake element path that no longer exists;
+  BAD ROW   a row the parser can't read, or an AI policy cell that isn't one of
+            Yes / No / Partial.
+
+It does not re-check the policies themselves: whether a project has since
+adopted or changed rules is a human re-read, dated in the doc.
+
+Needs `gh auth status` logged in (GitHub GraphQL); GitLab is anonymous REST.
+Exit 1 on findings, 2 on a usage or API error.
+"""
+
+import importlib.machinery
+import importlib.util
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+DOC = "docs/design/upstream-ai-policies.md"
+CARRIES_DOC = "docs/design/carried-patches.md"
+SECTION = "## Inventory"
+COLUMNS = ["Upstream", "Repo", "Stake", "AI policy", "Rules in brief"]
+POLICY_VALUES = {"Yes", "No", "Partial"}
+OWNED_ORGS = ("starlit-os", "kitten-lily")
+BACKTICK_RE = re.compile(r"`([^`]+)`")
+ELEMENT_RE = re.compile(r"elements/.+\.bst")
+
+
+def load_ref_status():
+    path = "mise/tasks/ref-status"
+    loader = importlib.machinery.SourceFileLoader("ref_status", path)
+    spec = importlib.util.spec_from_loader("ref_status", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def split_row(line):
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+
+
+def table_rows(doc, problems):
+    """[(line number, cells)] for the table under SECTION in doc."""
+    lines = pathlib.Path(doc).read_text().splitlines()
+    try:
+        start = lines.index(SECTION) + 1
+    except ValueError:
+        problems.append(f"  BAD DOC  {doc}: no '{SECTION}' heading")
+        return []
+    rows = []
+    for lineno, line in enumerate(lines[start:], start + 1):
+        if line.startswith("## "):
+            break
+        if line.startswith("|"):
+            rows.append((lineno, split_row(line)))
+    return rows
+
+
+def carried_elements(problems):
+    rows = table_rows(CARRIES_DOC, problems)
+    elements = set()
+    for _, cells in rows[2:]:
+        elements.update(t for t in BACKTICK_RE.findall(cells[0]) if ELEMENT_RE.fullmatch(t))
+    if not elements:
+        problems.append(f"  BAD DOC  {CARRIES_DOC}: no element paths found in its {SECTION} table")
+    return elements
+
+
+def parse_doc(problems):
+    """[(line number, upstream, {repo}, {element}, where)] for every row."""
+    rows = table_rows(DOC, problems)
+    if not rows:
+        return []
+    if rows[0][1] != COLUMNS:
+        problems.append(f"  BAD DOC  {DOC}:{rows[0][0]}: table must have columns {' | '.join(COLUMNS)}")
+        return []
+    parsed = []
+    for lineno, cells in rows[2:]:
+        where = f"{DOC}:{lineno}"
+        if len(cells) != len(COLUMNS):
+            problems.append(f"  BAD ROW  {where}: {len(cells)} cells, expected {len(COLUMNS)}")
+            continue
+        repos = set(BACKTICK_RE.findall(cells[1]))
+        if not repos:
+            problems.append(f"  BAD ROW  {where}: Repo cell names no backticked <host>/<path>")
+            continue
+        policy = cells[3].strip("*")
+        if policy not in POLICY_VALUES:
+            problems.append(f"  BAD ROW  {where}: AI policy cell is {cells[3]!r}, expected one of {sorted(POLICY_VALUES)}")
+        elements = {t for t in BACKTICK_RE.findall(cells[2]) if ELEMENT_RE.fullmatch(t)}
+        parsed.append((lineno, cells[0], repos, elements, where))
+    return parsed
+
+
+def open_upstream_refs(rs, with_issues):
+    """{"<host>/<owner>/<repo>": [citation, ...]} for every OPEN external reference."""
+    sources = [s for s in rs.tree_sources("") if s.label != DOC]
+    if with_issues:
+        sources += list(rs.issue_sources())
+    for src in sources:
+        rs.segment(src)
+    gl = rs.gitlab_projects(sources)
+    names = rs.repo_names(sources, gl)
+    for src in sources:
+        rs.extract(src, gl, names, {})
+
+    def external(key):
+        return (key.host, key.repo) != rs.KRYTIS and key.repo.split("/", 1)[0].lower() not in OWNED_ORGS
+
+    keys = {r.key for s in sources for r in s.refs if external(r.key)}
+    gh_keys = {k for k in keys if k.host == "github.com"}
+    states, _ = rs.github_states(gh_keys)
+    states.update(rs.gitlab_states(keys - gh_keys))
+
+    held = {}
+    for src in sources:
+        for ref in src.refs:
+            st = states.get(ref.key)
+            if not st or st["state"] != "OPEN":
+                continue
+            repo = f"{ref.key.host}/{st['moved'] or ref.key.repo}"
+            held.setdefault(repo, []).append(f"{ref.key} at {src.cite(ref.line)}")
+    return held
+
+
+def main():
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+    os.chdir(root)
+    with_issues = os.environ.get("usage_no_issues") != "true"
+
+    print(f"==> Checking {DOC} against carried patches and open upstream references...")
+    problems = []
+    rs = load_ref_status()
+    carried = carried_elements(problems)
+    rows = parse_doc(problems)
+    held = open_upstream_refs(rs, with_issues)
+
+    row_repos = {repo for _, _, repos, _, _ in rows for repo in repos}
+    row_elements = {e for _, _, _, elements, _ in rows for e in elements}
+
+    for element in sorted(carried - row_elements):
+        problems.append(f"  MISSING  carry {element} ({CARRIES_DOC}) is in no row's Stake cell")
+    for repo in sorted(held.keys() - row_repos):
+        cites = held[repo]
+        more = f" (+{len(cites) - 3} more)" if len(cites) > 3 else ""
+        problems.append(f"  MISSING  {repo}: open upstream ref with no row: {'; '.join(cites[:3])}{more}")
+
+    for lineno, upstream, repos, elements, where in rows:
+        for element in sorted(elements):
+            if not pathlib.Path(element).is_file():
+                problems.append(f"  STALE    {where}: {upstream}: {element} no longer exists")
+        # Without issue bodies an upstream cited only there looks unheld; only
+        # the full scan can call a row stale.
+        if with_issues and not (repos & held.keys()) and not (elements & carried):
+            problems.append(f"  STALE    {where}: {upstream}: no open ref in {', '.join(sorted(repos))} "
+                            f"and no carried element in Stake, so krytis holds nothing there")
+
+    print(f"    {len(rows)} rows; {len(carried)} carried elements; "
+          f"{len(held)} upstream repos with an open ref"
+          f"{'' if with_issues else ' (krytis issue bodies skipped)'}")
+    if problems:
+        print(f"\n==> {len(problems)} problem(s):")
+        print("\n".join(problems))
+        print(f"\n    Add, re-scope or delete the row in {DOC}. A new row needs the policy researched "
+              f"and dated; see that file's 'Refreshing' section.")
+        sys.exit(1)
+    print("==> upstream-policy-check: OK")
+
+
+if __name__ == "__main__":
+    main()
