@@ -16,11 +16,13 @@
 # Upstream is unfixed as of 2026-10-15: zachwilke/omarchy-mxcontrol 0968d77
 # (the copy the plugin carries, see mx-control/UPSTREAM.md) and
 # noctalia-dev/community-plugins bd83481 (mx-control 0.2.2) both still have
-# `\bg ?pro\b`, from upstream's "G-series support" commit 93ee62c. Not proposed
-# upstream (Upstream Gate). With this patch, the sha256 list in UPSTREAM.md no
-# longer matches backend/mxctl.py.
+# `\bg ?pro\b`, from upstream's "G-series support" commit 93ee62c. Proposed
+# upstream as zachwilke/omarchy-mxcontrol#18 (issue
+# zachwilke/omarchy-mxcontrol#17), open as of 2026-10-15. With this patch, the
+# sha256 list in UPSTREAM.md no longer matches backend/mxctl.py.
 #
-# Remove when the plugin's backend accepts "PRO X Wireless".
+# Remove when the plugin's backend accepts "PRO X Wireless". That PR merging is
+# not enough: community-plugins' mx-control has to re-copy the backend too.
 diff --git a/mx-control/backend/mxctl.py b/mx-control/backend/mxctl.py
 index 2afc3c8..b9f775b 100755
 --- a/mx-control/backend/mxctl.py
