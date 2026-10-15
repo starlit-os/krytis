@@ -941,6 +941,10 @@ jobs:
             branch: auto/track-solaar
             title: "chore(deps): update solaar"
           - group: manual-merge
+            element: desktop/noctalia-plugin-mx-control.bst
+            branch: auto/track-noctalia-plugin-mx-control
+            title: "chore(deps): update noctalia-plugin-mx-control"
+          - group: manual-merge
             element: deps/python3-evdev.bst
             branch: auto/track-python3-evdev
             title: "chore(deps): update python3-evdev"
