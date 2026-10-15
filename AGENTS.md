@@ -262,6 +262,10 @@ Good: `Fix composefs boot failure` · `Add greetd service` · `Update mise to 2.
 
 Bad: `The composefs boot is broken and needs to be fixed` (too long) · `feat: add greetd` (conventional-commit prefixes belong in commits, not issue titles)
 
+### Effort label
+
+Every new issue gets **exactly one** `effort:XS`/`S`/`M`/`L` label at filing (umbrellas get `tracking` instead), plus one comment saying what the work is, what blocks it and the next step. Effort is hands-on work once unblocked; gates and upstream waits go in the comment, not the size. Rules and sizes: `docs/skills/github-projects.md` § Effort labels.
+
 ### Slug derivation
 
 Issue title → lowercase → spaces and non-alphanumeric chars → hyphens → consecutive hyphens collapsed → leading/trailing hyphens stripped. The ≤ 5-word title constraint means no truncation is needed.

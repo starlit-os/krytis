@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#MISE description="Create/update the effort and tracking issue labels; --check lists open issues that break the one-label rule"
+#USAGE flag "--check" help="Change nothing; list open issues with no effort label, more than one, or an effort label on a tracking issue, and exit 1 if any"
+
+# The label set lives here, not in the GitHub UI, so it is reproducible from the
+# repo (the same reason renovate.md gives for not using addLabels). Edit a row and
+# re-run: `gh label create --force` updates the colour and description in place.
+# The rules for choosing a label are in docs/skills/github-projects.md § Effort labels.
+
+set -euo pipefail
+
+REPO="starlit-os/krytis"
+CHECK="${usage_check:-}"
+
+# name|colour|description (GitHub caps descriptions at 100 characters)
+LABELS=(
+    "effort:XS|d4f4dd|Under an hour hands-on: a comment, decision write-up, doc fix or one-liner; no image build"
+    "effort:S|a6e3b8|About half a day: one element, task or doc section; at most one build and boot-test"
+    "effort:M|f9d0a8|One to three days: several elements or a new mechanism; repeated build and boot-test rounds"
+    "effort:L|f4a582|More than three days or more than one PR: design first, a large rebuild, or a PR stack"
+    "tracking|c5def5|Umbrella or watch list; the effort labels are on its sub-issues, not on it"
+)
+
+if [[ "$CHECK" != "true" ]]; then
+    for row in "${LABELS[@]}"; do
+        IFS='|' read -r name colour description <<<"$row"
+        gh label create "$name" --repo "$REPO" --color "$colour" \
+            --description "$description" --force
+    done
+    exit 0
+fi
+
+# One line per open issue that breaks the rule: exactly one effort:* label, or
+# `tracking` and none.
+BAD=$(gh issue list --repo "$REPO" --state open --limit 1000 --json number,title,labels --jq '
+    .[]
+    | ([.labels[].name | select(startswith("effort:"))]) as $effort
+    | ([.labels[].name] | index("tracking")) as $tracking
+    | select(
+        ($tracking == null and ($effort | length) != 1)
+        or ($tracking != null and ($effort | length) > 0))
+    | "#\(.number)\t[\($effort | join(","))\(if $tracking then " tracking" else "" end)]\t\(.title)"')
+
+if [[ -n "$BAD" ]]; then
+    echo "Open issues breaking the effort-label rule (docs/skills/github-projects.md § Effort labels):"
+    echo "$BAD"
+    exit 1
+fi
+echo "Every open issue has exactly one effort label, or is tracking."
