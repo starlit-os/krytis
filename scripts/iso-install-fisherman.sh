@@ -12,6 +12,11 @@
 # Callers that then want to BOOT the result need to answer a passphrase
 # prompt — see mise/tasks/luks-install-test.
 #
+# LUKS_ENCRYPTION_TYPE (env, optional, needs LUKS_PASSPHRASE) picks the
+# encryption type: luks-passphrase (default) or tpm2-luks-passphrase, which is
+# what the GUI installer writes on any machine with a TPM 2.0 (#1276) — see
+# mise/tasks/tpm-install-test.
+#
 # sshpass and socat are used when present and transparently substituted
 # when not — see scripts/e2e-lib.sh.
 
@@ -56,11 +61,19 @@ RECIPE_TMP=$(mktemp /tmp/krytis-recipe-XXXXXX.json)
 e2e_cleanup_add "${RECIPE_TMP}"
 
 # json-escape via python so a passphrase is safe regardless of content.
+ENCRYPTION_TYPE="${LUKS_ENCRYPTION_TYPE:-luks-passphrase}"
+case "${ENCRYPTION_TYPE}" in
+    luks-passphrase|tpm2-luks-passphrase) ;;
+    *) echo "ERROR: LUKS_ENCRYPTION_TYPE=${ENCRYPTION_TYPE}; want luks-passphrase or tpm2-luks-passphrase" >&2; exit 1 ;;
+esac
 if [[ -n "${LUKS_PASSPHRASE:-}" ]]; then
-    ENCRYPTION=$(LUKS_PASSPHRASE="${LUKS_PASSPHRASE}" python3 -c \
-        'import json,os; print(json.dumps({"type":"luks-passphrase","passphrase":os.environ["LUKS_PASSPHRASE"]}))')
+    ENCRYPTION=$(LUKS_PASSPHRASE="${LUKS_PASSPHRASE}" ENCRYPTION_TYPE="${ENCRYPTION_TYPE}" python3 -c \
+        'import json,os; print(json.dumps({"type":os.environ["ENCRYPTION_TYPE"],"passphrase":os.environ["LUKS_PASSPHRASE"]}))')
     HOSTNAME_KEY="krytis-luks-test"
-    echo "Encryption: LUKS passphrase (root will be a LUKS2 container)"
+    echo "Encryption: ${ENCRYPTION_TYPE} (root will be a LUKS2 container)"
+elif [[ -n "${LUKS_ENCRYPTION_TYPE:-}" ]]; then
+    echo "ERROR: LUKS_ENCRYPTION_TYPE=${LUKS_ENCRYPTION_TYPE} needs LUKS_PASSPHRASE" >&2
+    exit 1
 else
     ENCRYPTION='{"type": "none"}'
     HOSTNAME_KEY="krytis-plain-test"
