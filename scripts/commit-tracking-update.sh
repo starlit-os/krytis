@@ -19,9 +19,9 @@
 # of the block this replaces; a directory picks up every file that
 # actually changed under it, not just the expected one).
 #
-# The commit body carries the cooldown trailers (Tracking-First-Seen, then
-# Tracking-Ready-At or Tracking-Cooldown: exempt) that scripts/tracking-pr.sh
-# reads to decide draft vs ready.
+# The commit body carries the cooldown trailers that scripts/tracking-cooldown.sh
+# decided for this branch (it must run first, over the same paths) and that
+# scripts/tracking-pr.sh reads to decide draft vs ready.
 #
 # Requires: gh (authenticated, contents:write on the target repo), jq.
 
@@ -48,59 +48,23 @@ if [ "${#CHANGED[@]}" -eq 0 ]; then
   exit 1
 fi
 
-# Cooldown: an update must be seen for 24h before its PR leaves draft
-# (scripts/tracking-pr.sh). The clock starts at the first run that found the
-# branch's update pending, and runs until that PR merges or closes. A newer
-# upstream release superseding the pending one does not restart it: when it
-# did, the clock restarted on every run that saw a new release, so umbriel
-# (#1203, a new upstream commit most days) and mise (#1228, 2026.10.9 then
-# .10) stayed drafts indefinitely. The first-seen time rides along as a commit
-# trailer. The branch is recreated on every run, so the previous head commit
-# is the only state there is, and it is trusted only while it is the head of
-# an open PR: a closed or merged PR's leftover branch starts a fresh clock. See
-# docs/skills/bst.md § Tracking cooldown: 24h from first sighting.
-COOLDOWN_SECONDS="${TRACKING_COOLDOWN_SECONDS:-86400}"
-FIRST_SEEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-# `git/ref/` (singular) is an exact match. `git/refs/heads/<name>` lists every
-# ref under that prefix when <name> itself is missing, and on a 404 `gh api`
-# still prints the error body, so only a successful call may set PREV_SHA.
-PREV_SHA=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq '.object.sha' 2>/dev/null) || PREV_SHA=""
-if [ -n "$PREV_SHA" ]; then
-  # A failed lookup reads as "no open PR": the clock restarts, never skips.
-  OPEN_HEAD=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json headRefOid \
-    --jq '.[0].headRefOid // empty' 2>/dev/null) || OPEN_HEAD=""
-  if [ "$OPEN_HEAD" = "$PREV_SHA" ]; then
-    PREV_MESSAGE=$(gh api "repos/$REPO/git/commits/$PREV_SHA" --jq '.message')
-    prev_seen=$(sed -n 's/^Tracking-First-Seen: //p' <<<"$PREV_MESSAGE" | tail -n 1)
-    if [ -n "$prev_seen" ]; then
-      FIRST_SEEN="$prev_seen"
-    fi
-  fi
+# Cooldown trailers: scripts/tracking-cooldown.sh decided them before the job
+# read the new version, and may have held the working tree back to the open
+# PR's update. Refuse to commit without that decision, or with one made for
+# other paths: the trailers would describe content this commit doesn't carry.
+# See docs/skills/bst.md § Tracking cooldown: 24h per update.
+STATE_FILE="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tracking-cooldown/${BRANCH//\//_}.env"
+if [ ! -f "$STATE_FILE" ]; then
+  echo "commit-tracking-update: no cooldown decision for $BRANCH; run scripts/tracking-cooldown.sh first" >&2
+  exit 1
 fi
-
-# First-party sources skip the cooldown: the risk it guards against is a
-# hijacked third-party release, not our own. That holds only when every
-# changed file is an element whose primary (first) source lives under
-# kitten-lily/ or starlit-os/. Anything else (a .bin, a mise task, a
-# third-party element) cools.
-FIRST_PARTY=1
-for f in "${CHANGED[@]}"; do
-  if [[ "$f" != *.bst ]] || [ ! -f "$f" ]; then FIRST_PARTY=0; break; fi
-  primary_url=$(grep -oP '^\s*url:\s*\K\S+' "$f" | head -n 1 || true)
-  if ! [[ "$primary_url" =~ (^|[:/])(kitten-lily|starlit-os)/ ]]; then FIRST_PARTY=0; break; fi
-done
-
-BODY="Tracking-First-Seen: ${FIRST_SEEN}"
-if [ "$FIRST_PARTY" -eq 1 ]; then
-  BODY="${BODY}
-Tracking-Cooldown: exempt (first-party source)"
-  echo "commit-tracking-update: first-party source, no cooldown"
-else
-  READY_AT=$(date -u -d "@$(( $(date -u -d "$FIRST_SEEN" +%s) + COOLDOWN_SECONDS ))" +%Y-%m-%dT%H:%M:%SZ)
-  BODY="${BODY}
-Tracking-Ready-At: ${READY_AT}"
-  echo "commit-tracking-update: first seen ${FIRST_SEEN}, ready at ${READY_AT}"
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+if [ "${TRACKING_PATHS:-}" != "$*" ]; then
+  echo "commit-tracking-update: cooldown was decided for '${TRACKING_PATHS:-}', not '$*'" >&2
+  exit 1
 fi
+BODY="$TRACKING_TRAILERS"
 
 # The commit is built on a throwaway scratch branch, and only then is $BRANCH
 # moved onto it, in one ref update. $BRANCH must never point at main itself,
