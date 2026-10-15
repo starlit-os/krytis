@@ -1,10 +1,10 @@
 # Shrink GTK3 to its realistic floor
 
-**Issue:** #641 · **Status (2026-10-11): in progress.** Done:
+**Issue:** #641 · **Status (2026-10-15): in progress.** Done:
 - step 0 (#1030), step 1 (#1031) and step 2 (#1032), all on 2026-10-01;
 - step 4's libportal and gnome-desktop half (#1074) and step 5a's libdecor half (#1075), both on 2026-10-06 in #1115.
 
-Step 3 (#1033) is on hold upstream: Disks 51 has only a beta, with open bugs. That keeps step 4's libcanberra half (#1034) blocked. Steps 5a plymouth (#1035, Breakage Gate), 5b (#1036) and 6 (#181) are open.
+Step 3 (#1033) is deferred (decision 2026-10-15): no beta and no `main` snapshot. It waits for the first non-beta GTK4 release of Disks, or for gnome-build-meta to ship the GTK4 version, whichever comes first (§ Step 3). That keeps step 4's libcanberra half (#1034) blocked. Steps 5a plymouth (#1035, Breakage Gate), 5b (#1036) and 6 (#181) are open.
 
 GTK3 ships in the image for 15 different reasons (#641 has the full map). Three of them krytis
 cannot change today: zen-browser, Proton Pass and `xdg-desktop-portal-gtk`. Native Equibop
@@ -241,14 +241,27 @@ graph half.
 - `docs/skills/desktop.md`: the autostart § (~line 1060) lists
   `core-deps/xdg-user-dirs-gtk.bst` as shipping an autostart entry. Remove it.
 
-## Step 3 — gnome-disk-utility 51.beta · #1033
+## Step 3 — gnome-disk-utility GTK4 release · #1033
 
 No stable 51 exists: `download.gnome.org/sources/gnome-disk-utility/` has `46/` then `51/`,
-and `51/` has only `51.beta` (2026-07-30). gnome-build-meta's `gnome-51` stable arm keeps
-46.1 ("until there is a release, we ship the gtk3 version"). The mirror therefore runs
-**ahead** of the junction on purpose. The user asked for this explicitly.
+and `51/` has only `51.beta` (2026-07-30), still the newest as of 2026-10-15
+([gdu#505](https://gitlab.gnome.org/GNOME/gnome-disk-utility/-/work_items/505) asks whether
+the GTK4 port slipped to 52). gnome-build-meta's `gnome-51` stable arm keeps 46.1 ("until
+there is a release, we ship the gtk3 version").
 
-**Tarball facts (downloaded and inspected):**
+**Trigger (decision 2026-10-15).** The beta is not shipped, and neither is a `main`
+snapshot. This step starts at whichever comes first:
+
+- **A non-beta GTK4 release upstream** (51.0, or 52.x if the port slips). Do the step as
+  written below, with that release's tarball in place of the 51.beta facts. The mirror then
+  runs **ahead** of the junction until gnome-build-meta catches up.
+- **gnome-build-meta's stable arm ships the GTK4 version.** The mirror stays in lockstep:
+  take the junction element's source and deps on that re-track, and skip § Update path's
+  `gnome-downloads` provider and the `gnome-disk-utility-check` rework below. The existing
+  lockstep check already covers that case.
+
+**Tarball facts (51.beta, downloaded and inspected 2026-09-30; re-check every line against
+the release tarball):**
 
 - `gnome_downloads:gnome-disk-utility/51/gnome-disk-utility-51.beta.tar.xz`, sha256
   `f181d793f0684f399bf76d297c0e3716849c78fa67292b765dbd9ec3dfa5c800`.
@@ -303,9 +316,10 @@ holds.
   real dep) and `core-deps/libcanberra.bst` from `LOCAL_ADDITIONS`.
 - The exit condition (upstream loses `core/gnome-settings-daemon.bst`) is unchanged.
 
-**Beta risk.** This app partitions, formats and resizes disks. Before merging, read the 51.beta
-NEWS and the upstream issue tracker for open data-loss or destructive-operation bugs, and note
-the result in the PR.
+**Release risk.** This app partitions, formats and resizes disks. Before merging, read the
+release's NEWS and the upstream issue tracker for open data-loss or destructive-operation
+bugs, starting with the ones that held the beta back (gdu#504, gdu#501, gdu#500 and gdu!267,
+all open as of 2026-10-15), and note the result in the PR.
 
 **Verify:** `mise run build`, then `mise boot-test`. On the VM:
 
@@ -580,7 +594,7 @@ All are parented to #641; nested worktrees go under `gh641/<n>-<slug>`.
 | 0 | #1030 Add GTK3 audit task |
 | 1 | #1031 Declare Proton Pass dependencies |
 | 2 | #1032 Drop xdg-user-dirs-gtk |
-| 3 | #1033 Bump Disks to 51 beta |
+| 3 | #1033 Bump Disks to GTK4 release |
 | 4 | #1074 libportal + gnome-desktop (no dependency on #1033); #1034 libcanberra (needs #1033) |
 | 5a | #1075 libdecor (no gate); #1035 plymouth (Breakage Gate) |
 | 5b | #1036 Strip GTK3 from GStreamer plugins |
