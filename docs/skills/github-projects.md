@@ -72,6 +72,9 @@ getting to the hardware is a blocker, not effort.
 - **Split a cheap piece out of a large issue** as a sub-issue (§ Link native sub-issues)
   so it shows up in an XS/S query. #1074 and #1075 came out of #1034 and #1035 this way and
   shipped while their parents stayed blocked.
+- **Blocked by another krytis issue → set the native link** (§ Link blocking
+  dependencies), not only the sentence in the comment. GitHub then shows "Blocked by" on
+  the issue and in search (`is:blocked`), and the link survives the comment going stale.
 
 Sizing comment format, one comment per issue:
 
@@ -194,6 +197,25 @@ mutation {
 ```
 
 Run in parallel (background `&` + `wait`) for bulk linking.
+
+---
+
+## Link blocking dependencies
+
+Same shape as sub-issues: REST, numeric `id`, default `repo` scope is enough (verified
+2026-10-15 linking #1034 as blocked by #1033 with `gist, read:org, repo, workflow`):
+
+```bash
+blocker=$(gh api repos/starlit-os/krytis/issues/<blocker> --jq .id)   # numeric id, NOT the number
+gh api -X POST repos/starlit-os/krytis/issues/<blocked>/dependencies/blocked_by -F issue_id="$blocker"
+gh api repos/starlit-os/krytis/issues/<blocked>/dependencies/blocked_by --jq '.[].number'   # read back
+gh api repos/starlit-os/krytis/issues/<blocker>/dependencies/blocking --jq '.[].number'     # other side
+```
+
+One POST sets both directions. Remove with
+`gh api -X DELETE repos/starlit-os/krytis/issues/<blocked>/dependencies/blocked_by/<blocker-id>`.
+Use it only for krytis-to-krytis blocks; an upstream wait stays in the sizing comment with
+the `upstream` label.
 
 ---
 
