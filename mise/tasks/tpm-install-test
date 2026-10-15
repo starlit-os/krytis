@@ -5,7 +5,7 @@
 #USAGE flag "--payload-ref <ref>" help="Payload image ref for the fisherman recipe. Default: matches the ISO variant"
 #USAGE flag "--expect <outcome>" help="Fail unless the outcome is this one: not-staged, not-run, enroll-failed, slot-ignored or tpm-unlock. Without it the outcome is only reported"
 #USAGE flag "--keep" help="Keep the installed disk, swtpm state and serial logs for inspection"
-#USAGE flag "--reuse-disk <path>" help="Skip the install and boot this disk (a previous --keep run's /var/tmp/krytis-install.img). It is booted in place, so its TPM token state carries over, and it gets a fresh TPM"
+#USAGE flag "--reuse-disk <path>" help="Skip the install and boot this disk (a previous --keep run's /var/tmp/krytis-tpm-install-kept.img). It is booted in place, so its TPM token state carries over, and it gets a fresh TPM"
 
 set -euo pipefail
 
@@ -108,7 +108,15 @@ cleanup() {
     [[ -n "${QEMU_PID}" ]] && kill -9 "${QEMU_PID}" 2>/dev/null || true
     podman rm -f "${SWTPM_CTR}" >/dev/null 2>&1 || true
     if [[ "${KEEP}" -eq 1 ]]; then
-        echo "==> Kept ${WORKDIR} (swtpm state, serial logs, facts) and ${INSTALL_DISK}"
+        # Off the shared path: iso-boot-live reuses /var/tmp/krytis-install.img when
+        # it exists, so leaving this LUKS disk there breaks the next
+        # iso-install-test with "unknown filesystem type 'crypto_LUKS'" (#1282).
+        KEPT_DISK="${INSTALL_DISK}"
+        if [[ -z "${REUSE_DISK}" && -f "${INSTALL_DISK}" ]]; then
+            KEPT_DISK=/var/tmp/krytis-tpm-install-kept.img
+            mv -f "${INSTALL_DISK}" "${KEPT_DISK}"
+        fi
+        echo "==> Kept ${WORKDIR} (swtpm state, serial logs, facts) and ${KEPT_DISK}"
     else
         # swtpm wrote the state as the container's root, which is the host user
         # under rootless podman, but `podman unshare` covers a remapped uid too.
