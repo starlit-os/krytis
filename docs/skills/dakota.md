@@ -403,9 +403,10 @@ its merge triggers (projectbluefin/dakota#1722 body). Its `track_bundle.py` `bun
 when the paths the bundle touches are unchanged, so a branch that only sits on an older
 base is not rebuilt; the PR body is still refreshed. krytis does not bundle: its PR builds
 are changed-element only, and a bundle would have to cool as one unit, so every member's
-newer release would wait for the whole bundle to merge. The skip-the-no-op-push half does
-apply. krytis recommits every pending branch on every run, which costs a `synchronize`
-and a PR-check run twice a day. Full writeup in
+newer release would wait for the whole bundle to merge. The skip-the-no-op-push half was
+adopted on 2026-10-15, together with hourly tracking runs. krytis compares the cooldown
+trailers as well as the files, and also skips PR edits that would change only the run
+link. Full writeup in
 `docs/skills/bst.md` § Tracking cooldown: 24h per update.
 
 ## Referencing This Project
