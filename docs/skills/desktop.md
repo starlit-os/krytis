@@ -2796,7 +2796,7 @@ until something else triggered a read. Likely cause, from the journal timestamps
 code (not reproduced): serve re-reads every device when the hidraw topology changes, but the
 keyboard's HID++ link only came up 23 s after its USB node did, and `load_settings()`
 swallows the error. Right-click on the bar widget (its `refresh` action) re-reads. This is
-a plugin bug, not carried.
+a plugin bug, not carried; verifying the cause is #1292.
 
 **The device-name filter dropped PRO-series mice.** `describe_device()` skips any device
 `is_mx_name()` rejects, and its `\bg ?pro\b` token missed Solaar's "PRO X Wireless". The
