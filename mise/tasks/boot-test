@@ -715,6 +715,28 @@ case "${BAZAAR_OVERRIDE}" in
         ;;
 esac
 
+# The live-ISO installer (fisherman) leaves two things on the physical root that
+# config/fisherman-cleanup.bst deletes: a plain-text LUKS passphrase under
+# /sysroot/etc (#1280, TPM-machine installs) and ~11G of scratch at
+# /sysroot/.fisherman-scratch (#1282, every ISO install). Neither exists on a
+# generate-disk install, so there this passes trivially; under iso-install-test
+# and luks-install-test it checks the cleanup end to end. The scratch unit runs
+# after multi-user.target and takes minutes, so wait for it to finish first.
+for _ in $(seq 1 60); do
+    case "$(SSH systemctl show -P ActiveState krytis-fisherman-scratch-cleanup.service 2>/dev/null)" in
+        activating|active) sleep 5 ;;
+        *) break ;;
+    esac
+done
+LEFTOVERS=$(SSH 'for p in /sysroot/.fisherman-scratch /sysroot/etc/fisherman; do [ -e "$p" ] && echo "$p"; done; true' 2>/dev/null || true)
+if [ -n "${LEFTOVERS}" ]; then
+    echo "    FAIL: installer leftovers still on the physical root after boot (#1280, #1282):" >&2
+    printf '      %s\n' ${LEFTOVERS} >&2
+    FAILED=1
+else
+    echo "    no installer leftovers on the physical root"
+fi
+
 # The first-boot wizard must actually reach its prompts (#531). For months it
 # exited instantly, skipping keymap and timezone without a word, because both
 # files already existed: /etc/vconsole.conf copied from the factory by

@@ -1968,6 +1968,8 @@ That change is **not** in the pipeline krytis owns: `scripts/iso-sd-boot.sh` kee
 
 Their scratch paths are fixed rather than temp-dir'd, so a failed run leaves them for inspection: `/var/tmp/krytis-install.img` (install target), `/var/tmp/krytis-scratch.img` (the live VM's `/var/tmp`), `/tmp/krytis-qemu-{live,installed}.sock` (HMP monitors), `/tmp/krytis-qemu-{live,installed}-serial.log`, and `/var/tmp/krytis-qemu-{live,installed}-vars.fd` (writable OVMF varstores).
 
+**`iso-boot-live` reuses `/var/tmp/krytis-install.img` if it exists**: it only creates the disk when the file is absent. A disk left there by an earlier run is installed over, not replaced. That isn't harmless: after an encrypted install, an unencrypted `iso-install-test` on the same file fails inside fisherman with `remounting root partition after retagging: … unknown filesystem type 'crypto_LUKS'`. The old LUKS signature on the root partition survives fisherman's `mkfs.btrfs`, and `mount` picks it up after the partition retag. Seen 2026-10-15 (#1282, #1294). Before a run that matters, move any disk you want to keep off that path (`tpm-install-test --keep` now moves its disk to `/var/tmp/krytis-tpm-install-kept.img`). Not tested on hardware: a person reinstalling without encryption over an encrypted krytis install would probably hit the same failure.
+
 For a one-off build on a **mutable** dev host instead, install the tools directly (e.g. CachyOS: `sudo pacman -S --needed mtools xorriso squashfs-tools isomd5sum buildah`) and drive the assembly script yourself — `mise run build-iso` always sets `ISO_TOOLS_IMAGE`, so the host-binary path is only reachable by calling the script:
 
 ```bash

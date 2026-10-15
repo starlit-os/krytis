@@ -379,9 +379,20 @@ throughout. Measured on a composefs install 2026-10-15 (#1280): plain remount �
 `remount,bind,rw` → files deleted, global `/sysroot` still `ro`, system `running`.
 `files/fisherman-cleanup/` is the shipped example.
 
-The physical root has **no `/etc` or `/usr` of its own**. Anything there was written by
-a tool that mistook it for the deployment — fisherman's first-boot TPM2 staging is the
-known case (#1276, #1280).
+The physical root has **no `/etc` or `/usr` of its own**, and nothing but `boot`,
+`composefs`, `ostree`, `state` and `var` at its top level. Anything else was left by a
+tool that mistook it for the deployment or forgot to clean up. Known cases, both from
+fisherman: its first-boot TPM2 staging under `/sysroot/etc` and `/sysroot/usr` (#1276,
+#1280), and `/sysroot/.fisherman-scratch`, ~11G on every live-ISO install, because it
+deletes the scratch path only after unmounting the target (#1282). `boot-test` fails if
+either survives first boot.
+
+**A long cleanup unit must not block boot.** A `WantedBy=multi-user.target` unit gets an
+implicit `After=` from the target, so a oneshot deleting ~161k files would hold up
+`multi-user.target`. Set `DefaultDependencies=no` on the unit to drop that, then
+`After=multi-user.target` plus `Conflicts=`/`Before=shutdown.target`
+(`krytis-fisherman-scratch-cleanup.service`). It still counts as a boot job, so
+`systemctl is-system-running --wait` waits for it.
 
 ## Boot debug techniques
 

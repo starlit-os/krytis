@@ -1,0 +1,28 @@
+[Unit]
+Description=Remove the installer's leftover scratch data from the physical root
+Documentation=https://github.com/starlit-os/krytis/issues/1282
+# fisherman leaves ~11G here on every live-ISO install (#1282). Elsewhere this
+# unit is skipped.
+ConditionPathExists=/sysroot/.fisherman-scratch
+# Off the boot path: ~161k files take minutes to delete. DefaultDependencies=no
+# stops multi-user.target from ordering itself after this unit (a target adds
+# After= on what it Wants= otherwise), so the explicit After= below makes it
+# start once the system is up instead of before.
+DefaultDependencies=no
+After=multi-user.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+# Same confinement as krytis-fisherman-cleanup.service: the writable /sysroot
+# exists only in this unit's mount namespace. Interrupted by a shutdown, the
+# condition still holds next boot and it resumes.
+PrivateMounts=yes
+IOSchedulingClass=idle
+Nice=19
+SyslogIdentifier=krytis-fisherman-scratch-cleanup
+ExecStart=/usr/libexec/krytis/fisherman-scratch-cleanup.sh
+
+[Install]
+WantedBy=multi-user.target
