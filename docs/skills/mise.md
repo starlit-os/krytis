@@ -1127,7 +1127,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
-| Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list) |
+| Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list); `upstream-policy-check` — fail if an upstream krytis carries a patch against or cites an open issue/PR in has no row in [`docs/design/upstream-ai-policies.md`](../design/upstream-ai-policies.md), or a row is held by nothing (needs `gh`; not in `checks.yml`; see below) |
 | Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below); `patch-inventory-check` — fail if a `kind: patch` source or owned-org fork pin has no row in [`docs/design/carried-patches.md`](../design/carried-patches.md), or a row names a carry that is gone (`checks.yml`, every PR; see below); `image-inventory [--write] [--check]` — regenerate or check the list of krytis elements in the image in [`docs/design/image-inventory.md`](../design/image-inventory.md), keeping hand-written descriptions; `--check` fails on drift or an empty description (`checks.yml`, every PR); `ref-status [--ref <rev>] [--text-file <path>] [--no-issues] [--all]` — report-only: closed krytis `#N` next to open-status wording, and other projects' issue/PR status claims flagged undated, stale or closed, across `docs/`, `elements/`, `mise/tasks/` and open issue bodies. A manual step of the `skill-rot-audit` skill, not a gate: it needs `gh` auth and exits 0 whatever it finds (see below); `labels-sync [--check]` — create/update the `effort:*` and `tracking` issue labels defined in the task; `--check` lists open issues without exactly one effort label (see [`github-projects.md`](github-projects.md) § Effort labels) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
@@ -1211,6 +1211,19 @@ until somebody classifies it. As with `large-blob-check`'s allowlist, a `FIRST_P
 entry no source uses any more fails the gate. A fork in an org krytis doesn't own looks
 like any upstream URL, so the check can't see it; such pins still need a hand-written
 row.
+
+**`upstream-policy-check` imports `ref-status` instead of copying its reference
+parser.** Loading the extension-less task with `importlib.machinery.SourceFileLoader`
+gives it ref-status's `tree_sources`/`extract`/`github_states` unchanged, so the two
+tasks can never disagree about what an `owner/repo#N` is, and GraphQL's rename
+following comes for free: `containers/podman#27779` lands on the
+`github.com/podman-container-tools/podman` row with no alias table. Two consequences.
+The policy doc is excluded from its own scan, or every row would justify itself
+through the citations in its Details section. And `--no-issues` turns off the STALE
+row check, because about a quarter of the upstreams (seance, umbriel, Flathub,
+rust-lang/rust) are cited only in open krytis issue bodies. It needs network and
+`gh` auth, so unlike `patch-inventory-check` it is not a `checks.yml` gate: run it
+when adding a carry or citing a new upstream issue.
 
 **`ref-status` is a lead generator, so precision mattered more than recall — the first
 draft drowned its own signal.** Run against the tree just before #1069 (the doc-rot fix
