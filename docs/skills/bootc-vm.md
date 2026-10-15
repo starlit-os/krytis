@@ -361,6 +361,28 @@ journal out of a mounted disk image is where this bites — see
 This is the live `/etc` for that deployment — changes here survive reboot.
 Useful for setting a root password or unlocking accounts without rebuilding.
 
+### Writing to the physical root from a running system: `remount,bind,rw` in a private namespace
+
+`/sysroot` is the btrfs top-level subvolume, read-only *as a mount*
+(`set_mount_readonly()`, above), while the superblock is read-write because `/etc` and
+`/var` are bind clones of the same filesystem. A plain `mount -o remount,rw /sysroot`
+asks to change both and fails with **`mount point is busy`** (exit 32). What works is
+changing only the mount's flag:
+
+```bash
+mount -o remount,bind,rw /sysroot
+```
+
+Run it in a unit with `PrivateMounts=yes` and the writable view exists only in that
+unit's mount namespace, discarded when the unit exits; the system's `/sysroot` stays `ro`
+throughout. Measured on a composefs install 2026-10-15 (#1280): plain remount → EBUSY;
+`remount,bind,rw` → files deleted, global `/sysroot` still `ro`, system `running`.
+`files/fisherman-cleanup/` is the shipped example.
+
+The physical root has **no `/etc` or `/usr` of its own**. Anything there was written by
+a tool that mistook it for the deployment — fisherman's first-boot TPM2 staging is the
+known case (#1276, #1280).
+
 ## Boot debug techniques
 
 ### An EMPTY serial log is never an image bug — read it as "firmware never printed"

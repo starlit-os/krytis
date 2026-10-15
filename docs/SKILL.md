@@ -61,6 +61,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 |---|---|
 | Agent workflow, decision gates, skill mandate | [`AGENTS.md`](../AGENTS.md) |
 | Enroll secure boot keys on real hardware | [`docs/secure-boot-enrollment.md`](secure-boot-enrollment.md) |
+| User notice: the installer left a plain-text disk passphrase on TPM-machine installs; what the image removes and why to change the passphrase (#1280) | [`docs/disk-passphrase-leak.md`](disk-passphrase-leak.md) |
 | Architecture, rationale, deferred work | [`docs/design/`](design/) |
 | Live execution plans (dated) | [`docs/plans/`](plans/) — completed ones in [`done/`](plans/done/) |
 

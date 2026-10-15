@@ -232,6 +232,10 @@ echo "key_file=$(test -e /etc/fisherman/tpm2-enroll.key && echo present || echo 
 echo "stray_key=$(test -e /sysroot/etc/fisherman/tpm2-enroll.key && echo present || echo absent)"
 echo "stray_key_mode=$(stat -c '%a:%U' /sysroot/etc/fisherman/tpm2-enroll.key 2>/dev/null)"
 echo "stray_key_sha256=$(sha256sum /sysroot/etc/fisherman/tpm2-enroll.key 2>/dev/null | cut -d' ' -f1)"
+# config/fisherman-cleanup.bst (#1280) deletes that key on the first boot of an
+# image that carries it: yes/success on boot 1 means it found the key and
+# removed it; no/success means there was nothing to remove.
+echo "cleanup_unit=$(systemctl show -P ConditionResult krytis-fisherman-cleanup.service)/$(systemctl show -P Result krytis-fisherman-cleanup.service)"
 echo "tpm2_tokens=$(printf '%s' "$META" | jq '[.tokens[] | select(.type=="systemd-tpm2")] | length' 2>/dev/null || echo error)"
 echo "keyslots=$(printf '%s' "$META" | jq '.keyslots | length' 2>/dev/null || echo error)"
 echo "===END==="
