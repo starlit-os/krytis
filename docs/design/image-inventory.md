@@ -77,6 +77,7 @@ element does, its row's text is a review question.
 | `config/fisherman-cleanup.bst` | Deletes what the ISO installer leaves on the physical root: a plain-text copy of the disk passphrase (#1280) and ~11G of install scratch (#1282). |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
+| `config/zram-generator.bst` | zram-generator's default config (zstd `zram0`, half of RAM). It used to ship with the generator; the `freedesktop-sdk-extra` element ships none. |
 | `config/oomd.bst` | Enables systemd-oomd and arms its memory-pressure kill on each user's `app.slice` (#1216). |
 
 #### `stacks/bootc.bst`
