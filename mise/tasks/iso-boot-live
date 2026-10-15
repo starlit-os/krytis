@@ -9,6 +9,7 @@
 #USAGE flag "--mem <mb>" default="8192" help="QEMU memory in MiB"
 #USAGE flag "--smp <n>" default="8" help="QEMU vCPU count"
 #USAGE flag "--ovmf-vars-scratch <path>" default="/var/tmp/krytis-qemu-live-vars.fd" help="Writable copy of the OVMF variable store"
+#USAGE flag "--tpm-socket <path>" help="Attach an emulated TPM 2.0: the control socket of a running swtpm (tpm-install-test starts one)"
 
 set -euo pipefail
 
@@ -18,7 +19,7 @@ source "${REPO_ROOT}/scripts/e2e-lib.sh"
 
 # argc-fallback: parse flags when invoked directly (not via mise run).
 CLI_ISO="" CLI_DISK="" CLI_SCRATCH="" CLI_MONITOR="" CLI_SERIAL=""
-CLI_SSH_PORT="" CLI_MEM="" CLI_SMP="" CLI_OVMF_VARS_SCRATCH=""
+CLI_SSH_PORT="" CLI_MEM="" CLI_SMP="" CLI_OVMF_VARS_SCRATCH="" CLI_TPM_SOCKET=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --iso)               CLI_ISO="$2";              shift 2 ;;
@@ -30,6 +31,7 @@ while [ $# -gt 0 ]; do
         --mem)               CLI_MEM="$2";              shift 2 ;;
         --smp)               CLI_SMP="$2";              shift 2 ;;
         --ovmf-vars-scratch) CLI_OVMF_VARS_SCRATCH="$2"; shift 2 ;;
+        --tpm-socket)        CLI_TPM_SOCKET="$2";       shift 2 ;;
         *) break ;;
     esac
 done
@@ -43,6 +45,15 @@ SSH_PORT="${CLI_SSH_PORT:-${usage_ssh_port:-2224}}"
 QEMU_MEM="${CLI_MEM:-${usage_mem:-8192}}"
 QEMU_SMP="${CLI_SMP:-${usage_smp:-8}}"
 OVMF_VARS_SCRATCH="${CLI_OVMF_VARS_SCRATCH:-${usage_ovmf_vars_scratch:-/var/tmp/krytis-qemu-live-vars.fd}}"
+TPM_SOCKET="${CLI_TPM_SOCKET:-${usage_tpm_socket:-}}"
+TPM_ARGS=()
+if [[ -n "${TPM_SOCKET}" ]]; then
+    [[ -S "${TPM_SOCKET}" ]] || { echo "ERROR: --tpm-socket ${TPM_SOCKET} is not a socket" >&2; exit 1; }
+    # Commas are QEMU option syntax, not array separators.
+    # shellcheck disable=SC2054
+    TPM_ARGS=(-chardev "socket,id=chrtpm,path=${TPM_SOCKET}"
+              -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0)
+fi
 
 QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
            /usr/bin/qemu-system-x86_64 \
@@ -96,6 +107,7 @@ echo "Booting live ISO: $ISO (mem=${QEMU_MEM} MiB, smp=${QEMU_SMP})"
 $QEMU_PREFIX "$QEMU" \
     -machine q35 $CPU_FLAG -m "${QEMU_MEM}" -smp "${QEMU_SMP}" $QEMU_ACCEL \
     "${QEMU_PFLASH[@]}" \
+    "${TPM_ARGS[@]}" \
     -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
     -device virtio-scsi-pci,id=scsi \
     -device scsi-cd,drive=iso \

@@ -1964,7 +1964,7 @@ That change is **not** in the pipeline krytis owns: `scripts/iso-sd-boot.sh` kee
 | `iso-e2e-test` | Orchestrates the three above; internal helper — `--install-only` stops after the install |
 | `iso-install-test` | Full ISO → fisherman → disk install, then the boot verdict via `boot-test` (`--secure`, `--expect-fail` for the negative secure-boot test) |
 | `luks-install-test` | Same, installing to an encrypted root and answering the passphrase prompt (#473) |
-| `tpm-install-test` | Same, with the GUI's TPM default (`tpm2-luks-passphrase`) and swtpm attached; boots the same disk twice and reports what fisherman's first-boot TPM2 enrollment did (#1276). `--expect <outcome>` makes it a gate; `--reuse-disk <img>` reboots a kept install |
+| `tpm-install-test` | Boots the live ISO with swtpm and fails if the installer's probe would offer TPM2 (#1276; `--probe-only` stops there), then installs with the GUI's former TPM default (`tpm2-luks-passphrase`), boots the same disk twice and reports what fisherman's first-boot TPM2 enrollment did. `--expect <outcome>` makes that half a gate; `--reuse-disk <img>` reboots a kept install |
 
 Their scratch paths are fixed rather than temp-dir'd, so a failed run leaves them for inspection: `/var/tmp/krytis-install.img` (install target), `/var/tmp/krytis-scratch.img` (the live VM's `/var/tmp`), `/tmp/krytis-qemu-{live,installed}.sock` (HMP monitors), `/tmp/krytis-qemu-{live,installed}-serial.log`, and `/var/tmp/krytis-qemu-{live,installed}-vars.fd` (writable OVMF varstores).
 

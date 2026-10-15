@@ -461,3 +461,41 @@ and writes `state/deploy/<hash>/etc/hostname` directly — confirmed in the inst
 Its only other action patched Universal Blue's `rechunker-group-fix.service`, which
 krytis has never shipped, and which had been printing "deployment etc/ not found" on
 every run instead of patching anything.
+
+### The installer's TPM2 default is turned off by hiding the TPM from its probe (2026-10-15)
+
+**What:** bootc-installer defaults its TPM2 switch **on** wherever fisherman's probe calls
+a TPM 2.0 usable (`bootc_installer/defaults/encryption.py`: `tpm2_switch.set_active(has_tpm2)`),
+which makes the recipe `tpm2-luks-passphrase` ([krytis#1276](https://github.com/starlit-os/krytis/issues/1276)).
+krytis keeps TPM-bound unlock off until #368, and the installer has **no recipe or
+environment option** to change the default. The only override, `BOOTC_INSTALLER_FAKE_TPM`,
+forces the TPM *on*.
+
+**Fix:** `configure-live-krytis.sh` writes a live-only udev rule,
+`90-krytis-live-hide-tpm.rules`, that hides the TPM from the probe. The probe runs as
+`liveuser` through `flatpak-spawn --host` (`fisherman_runner.probe_argv`) and decides from
+two paths, both read without root (fisherman `internal/probe/tpm.go`):
+
+| Probe step | Rule | Result |
+|---|---|---|
+| `os.ReadFile(/sys/class/tpm/tpm0/tpm_version_major)` | `chmod 0400` the attribute on `add` | `EACCES`, falls through |
+| `os.Stat(/dev/tpmrm0)` | `rm -f /dev/%k` on `tpmrm` `add` | absent, falls through |
+| `os.Stat(/sys/class/tpm/tpm0)` | untouched | `present: true, usable: false` |
+
+That is the answer a TPM 1.2 machine gets: the GUI hides the row and the switch stays
+off. The kernel still has the TPM; only the live user's view changes. The installed
+system is untouched.
+
+**Rejected alternatives:**
+- **`initcall_blacklist=` on the live kernel cmdline.** `tpm`, `tpm_tis_core`, `tpm_tis` and
+  `tpm_crb` are all built in, and CRB's init function (`crb_acpi_driver_init`) isn't even
+  in kallsyms, so it can't be named reliably. Skipping core `tpm_init` would leave the
+  drivers registering against a class that doesn't exist, on the boot path.
+- **Rewriting the recipe in a fisherman wrapper.** The GUI would then promise TPM unlock
+  that never happens.
+
+**Check:** `mise run tpm-install-test --probe-only` boots the ISO with swtpm and fails
+unless the kernel sees the TPM and the probe reports it unusable.
+
+**Remove when:** #368 designs TPM-bound unlock, or bootc-installer gains a recipe option
+for the default.
