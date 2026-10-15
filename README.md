@@ -53,3 +53,5 @@ mise boot-vm
 <https://github.com/starlit-os/krytis>
 
 > Entrapta: \[to herself] Krytis, Krytis, Krytis... \[the interface dings and flashes red] Hmm. There's something here, but it's locked. We need administrator clearance to access it.
+
+<!-- #1271 cooldown smoke: candidate v3 -->
