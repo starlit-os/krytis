@@ -6,9 +6,19 @@
 #USAGE flag "--expect <outcome>" help="Fail unless the outcome is this one: not-staged, not-run, enroll-failed, slot-ignored or tpm-unlock. Without it the outcome is only reported"
 #USAGE flag "--keep" help="Keep the installed disk, swtpm state and serial logs for inspection"
 #USAGE flag "--reuse-disk <path>" help="Skip the install and boot this disk (a previous --keep run's /var/tmp/krytis-tpm-install-kept.img). It is booted in place, so its TPM token state carries over, and it gets a fresh TPM"
+#USAGE flag "--probe-only" help="Only boot the live ISO with a TPM and check the installer's probe does not offer TPM2 (#1276); about 2 minutes, no install"
 
 set -euo pipefail
 
+# FIRST, the decided behaviour (#1276, 2026-10-15): TPM2 enrollment stays off
+# until #368. The live ISO hides the TPM from the installer's probe
+# (live/src/configure-live-krytis.sh, a live-only udev rule), so the GUI shows no
+# TPM row and writes luks-passphrase. Step [0b] boots the live ISO with swtpm and
+# fails unless the kernel sees the TPM but `fisherman probe` reports it unusable.
+#
+# The rest of this task still installs with the recipe the GUI USED to write, to
+# record what fisherman does with it (the input #368 will need).
+#
 # Why this exists (#1276). The GUI installer krytis ships (tuna-os/bootc-installer)
 # turns its TPM2 switch ON by default whenever the machine has a TPM 2.0, which
 # makes the recipe `encryption.type = tpm2-luks-passphrase`. fisherman then stages
@@ -49,10 +59,13 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${REPO_ROOT}"
+# shellcheck source=scripts/e2e-lib.sh
+source "${REPO_ROOT}/scripts/e2e-lib.sh"
 
 PASSPHRASE="${usage_passphrase:-testpassphrase}"
 EXPECT="${usage_expect:-}"
 KEEP=$([[ "${usage_keep:-}" == "true" ]] && echo 1 || echo 0)
+PROBE_ONLY=$([[ "${usage_probe_only:-}" == "true" ]] && echo 1 || echo 0)
 
 case "${EXPECT}" in
     ""|not-staged|not-run|enroll-failed|slot-ignored|tpm-unlock) ;;
@@ -124,7 +137,9 @@ cleanup() {
         [[ -n "${REUSE_DISK}" ]] || rm -f "${INSTALL_DISK}"
     fi
 }
-trap cleanup EXIT
+# e2e-lib.sh owns the EXIT trap (its askpass shim registers there too), so
+# register through it rather than replacing it with `trap`.
+e2e_on_exit cleanup
 
 echo "==> Installing Krytis with the GUI's TPM default, then booting it twice against swtpm"
 echo "    iso:      ${ISO_ABS}"
@@ -156,6 +171,53 @@ start_swtpm() {
     for _ in $(seq 1 30); do [[ -S "${WORKDIR}/tpm/swtpm.sock" ]] && return 0; sleep 1; done
     echo "ERROR: swtpm socket never appeared" >&2; return 1
 }
+
+# ── Live probe (#1276) ───────────────────────────────────────────────────────
+# Boot the live ISO with the TPM attached and run the same unprivileged
+# `fisherman probe --json` the installer runs (bootc-installer's
+# Systeminfo.has_tpm2 reads its tpm.usable). The kernel must see the TPM, or the
+# check proves nothing; the probe must not call it usable.
+if [[ -z "${REUSE_DISK}" ]]; then
+    echo "==> [0b/4] Live session with a TPM: the installer's probe must not offer TPM2 (#1276)"
+    start_swtpm live
+    LIVE_PORT=2250
+    while ! e2e_port_free "${LIVE_PORT}"; do LIVE_PORT=$((LIVE_PORT + 1)); done
+    # Outside WORKDIR: cleanup (registered first, so it runs first) deletes
+    # WORKDIR, and e2e_qemu_stop needs this socket and its .pid to stop the VM.
+    LIVE_MON="/tmp/krytis-tpm-live-probe-$$.sock"
+    e2e_on_exit "e2e_qemu_stop '${LIVE_MON}' 'live probe VM'"
+    "${REPO_ROOT}/mise/tasks/iso-boot-live" --iso "${ISO_ABS}" \
+        --disk "${WORKDIR}/live-probe-disk.img" --scratch "${WORKDIR}/live-probe-scratch.img" \
+        --monitor "${LIVE_MON}" --serial "${WORKDIR}/live-probe-serial.log" \
+        --ssh-port "${LIVE_PORT}" --mem 4096 --smp 4 \
+        --ovmf-vars-scratch "${WORKDIR}/live-probe-vars.fd" \
+        --tpm-socket "${WORKDIR}/tpm/swtpm.sock"
+    e2e_ssh_auth_init live
+    # shellcheck disable=SC2086
+    PROBE=$(${E2E_SSH_WRAP} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password ${E2E_SSH_AUTH_OPTS} \
+        -p "${LIVE_PORT}" liveuser@127.0.0.1 \
+        'echo "kernel_tpm=$(test -e /sys/class/tpm/tpm0 && echo yes || echo no)"; /usr/local/bin/fisherman probe --json' || true)
+    e2e_qemu_stop "${LIVE_MON}" "live probe VM"
+    KERNEL_TPM=$(printf '%s\n' "${PROBE}" | sed -n 's/^kernel_tpm=//p')
+    TPM_JSON=$(printf '%s\n' "${PROBE}" | sed '/^kernel_tpm=/d' | python3 -c \
+        'import json,sys; print(json.dumps(json.load(sys.stdin).get("tpm")))' 2>/dev/null || echo "")
+    echo "    kernel sees a TPM: ${KERNEL_TPM:-unknown}; fisherman probe tpm: ${TPM_JSON:-<unreadable>}"
+    if [[ "${KERNEL_TPM}" != yes || -z "${TPM_JSON}" ]]; then
+        echo "==> INCONCLUSIVE: the live session saw no TPM, or the probe output was unreadable." >&2
+        printf '%s\n' "${PROBE}" | head -20 >&2
+        exit 2
+    fi
+    if [[ "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("usable"))' "${TPM_JSON}")" != False ]]; then
+        echo "==> FAIL: the installer's probe calls the TPM usable, so the GUI defaults to tpm2-luks-passphrase." >&2
+        echo "    live/src/configure-live-krytis.sh's 90-krytis-live-hide-tpm.rules is missing or no longer works (#1276)." >&2
+        exit 1
+    fi
+    echo "    PASS: the TPM is there, and the installer will not offer TPM2 enrollment"
+    if [[ "${PROBE_ONLY}" -eq 1 ]]; then
+        exit 0
+    fi
+fi
 
 # ── Install ──────────────────────────────────────────────────────────────────
 echo "==> [1/4] Live ISO boot + install with encryption.type=tpm2-luks-passphrase"

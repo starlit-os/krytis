@@ -156,6 +156,26 @@ polkit.addRule(function(action, subject) {
 });
 EOF
 
+# ── Keep the installer's TPM2 enrollment off (#1276) ──────────────────────────
+# bootc-installer turns its TPM2 switch ON by default whenever fisherman's probe
+# says a TPM 2.0 is usable, which makes the recipe tpm2-luks-passphrase. krytis
+# keeps TPM-bound unlock off until #368 designs it, and the installer has no
+# recipe option for that. The probe runs as liveuser and decides from two paths
+# (fisherman internal/probe/tpm.go):
+#   1. reads /sys/class/tpm/tpm0/tpm_version_major ("2" → usable)
+#   2. else stats /dev/tpmrm0 (exists → usable)
+# Make (1) root-only and remove the (2) node, and the probe reports
+# present/not-usable, the same answer a TPM 1.2 machine gets: the installer
+# hides the TPM row and the switch stays off.
+# Live session only, like everything in this script: the installed system keeps
+# its TPM untouched. tpm-install-test's live-probe check asserts this.
+cat > /etc/udev/rules.d/90-krytis-live-hide-tpm.rules <<'EOF'
+# Live ISO only (krytis#1276): hide the TPM from the installer's unprivileged
+# probe so it doesn't default to tpm2-luks-passphrase. See configure-live-krytis.sh.
+ACTION=="add", SUBSYSTEM=="tpm", RUN+="/usr/bin/chmod 0400 /sys%p/tpm_version_major"
+ACTION=="add", SUBSYSTEM=="tpmrm", RUN+="/usr/bin/rm -f /dev/%k"
+EOF
+
 # ── Disable systemd-firstboot in the live session ─────────────────────────────
 # The Krytis image enables systemd-firstboot.service (see
 # elements/config/systemd-firstboot.bst). On the live ISO the overlay root has

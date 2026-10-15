@@ -654,8 +654,14 @@ process per boot). The first full run, 2026-10-15, against a sealed ISO built fr
   mounts them as `/usr` or `/etc`. The key file is the LUKS passphrase (its sha256
   matches), mode 600, and with the unit never running nothing shreds it.
 
-Outcome `not-staged`. The test only reports by default because which outcome is
-correct is #1276's Security + Breakage decision; `--expect` turns it into a gate.
+Outcome `not-staged`. The install part only reports by default; `--expect` turns it
+into a gate once #368 decides which outcome is correct. #1276's own decision (TPM2
+enrollment off until #368) is gated separately and always: step `[0b]` boots the
+live ISO with swtpm and fails unless the kernel sees the TPM and `fisherman probe`
+(the installer's TPM check) reports it unusable. The live-only udev rule that does
+that is in `docs/skills/krytis-live-config.md`. `--probe-only` runs just that step,
+in about 2 minutes.
+
 Facts it records that a fix will need: the image's running system has
 `libcryptsetup-token-systemd-tpm2.so`, the initrd only the FIDO2 one, yet
 `systemd-cryptsetup@root` in the initrd tries TPM2 natively ("No valid TPM2 token data
