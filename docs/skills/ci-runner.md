@@ -314,7 +314,13 @@ idle.
 
 No cache-key cost, then or now: `max-jobs`'s runtime env vars are excluded
 from the cache key (see § `max-jobs` does NOT affect cache keys), which is
-what made per-runner sizing safe in the first place.
+what made per-runner sizing safe in the first place. That holds only while no element
+inlines `%{max-jobs}` into a command (same section, caveat).
+
+**The budget only binds compilers that read `max-jobs`.** `cargo build` without `--jobs`
+runs one job per logical CPU, and `$(nproc)` does the same by construction. As of
+2026-10-14 that is nine cargo elements plus `desktop/oo7.bst` and `dev/qemu.bst`; the list
+and the fix are in `docs/skills/bst.md` § Job Parallelism in `kind: manual`.
 
 **The generalisable lesson: an idle-cache verification run proves nothing
 about RAM.** #794's verification run landed almost entirely bow cache hits,
@@ -683,11 +689,17 @@ isn't. No Proton Pass authentication, no `pull-keys`, no UEFI key material
 ever touches this job — that machinery stays confined to `publish.yml`,
 which is what actually produces `:sealed` in the first place.
 
-`build-iso --sealed` already runs `verify-iso-payload` internally right
-after assembly (`mise/tasks/build-iso`'s own tail), so `build-iso.yml`'s
-separate "Verify ISO payload" step is gated `if: ${{ !inputs.sealed }}` —
-running it again for the sealed path would just re-check what the task
-itself already asserted, against the same local tag.
+`build-iso` ends with `verify-iso-payload` in both modes (`mise/tasks/build-iso`'s own
+tail), so `build-iso.yml` has no separate verify step. Sealed builds get the image-ID digest
+gate plus the installer-recipe name check. Unsealed builds get the name check alone
+(`--names-only`).
+
+**An ID check on an unsealed ISO can only fail.** `live/iso-tools/payload-prep.sh` injects
+two files into an unsealed payload and re-commits it with `buildah commit --squash`, which
+gives it a new image ID. The workflow used to run exactly that check, as an unsealed-only
+"Verify ISO payload" step against `localhost/krytis:latest`. Every dispatch through
+2026-10-10 was sealed, so the step was skipped every time and the bug never surfaced
+(#1261).
 
 ### R2 publish (`publish_r2`, issue #867)
 
@@ -988,8 +1000,9 @@ backlog specific to this repo/account, not routine jitter.
 **Fix applied:** moved both off `:00` to arbitrary non-round minutes, and
 in #824 the whole chain moved 5h earlier so the scheduled publish it now
 feeds lands in the maintainer's morning: `track-bst-sources.yml` →
-`13 0 * * *` (since #1191, `13 0,12 * * *`: the 12:13 pass sits outside the
-chain and only shortens the tracking cooldown), `cache-warm.yml` → `41 1 * * 1-5`, `publish.yml` →
+`13 0 * * *` (#1191 made it `13 0,12 * * *`, and since 2026-10-15 it is `13 * * * *`:
+the passes other than 00:13 sit outside the chain and only shorten the tracking
+cooldown), `cache-warm.yml` → `41 1 * * 1-5`, `publish.yml` →
 `30 3 * * 1-5`. The relative spacing is what matters and is unchanged —
 ~90min from tracking to cache-warm so tracking PRs have a window to land
 before cache-warm builds, ~110min from cache-warm to publish so publish
@@ -1958,6 +1971,24 @@ cores and RAM of whichever runner it lands on (§ Build concurrency is
 build. Do not cite "matches bow's cache key shape" as a reason to pin it,
 and do not treat changing it as cache-busting.
 
+**Caveat: this holds only for `max-jobs` that reaches the build through a nocache
+environment variable.** (Added 2026-10-14 from dakota `1a1a7f4`/`b0c2874`.) Everything
+above is about the plugins' `MAKEFLAGS`/`JOBS`/`LTOJOBS`, which are declared under
+`environment:` and re-listed under `environment-nocache:`. An element that writes
+`%{max-jobs}` straight into a command (`./b2 -j%{max-jobs}`, `ninja -j%{max-jobs}`) gets the
+value expanded into the command text, and the command text **is** cache-keyed.
+
+dakota hit this with `boost.bst`. It builds at `max-jobs: 8` and exports at `max-jobs: 1`, so
+boost and every reverse dependency, up to the final OCI element, got a different key in
+each stage. Every publish failed with `No artifacts to stage`.
+
+Krytis is exposed the same way: `cache-warm.yml` sizes `max-jobs` per runner, while
+`publish.yml` inherits `mise/tasks/bst`'s `max-jobs: 4` (§ Workflow Runner Choices,
+below). One inlined `%{max-jobs}` would make publish miss every artifact cache-warm pushed
+for that element and everything above it. As of 2026-10-14 no element does
+(`grep -rn 'max-jobs' elements` finds only `overrides/libdecor.bst`'s nocache `LTOJOBS`).
+The safe pattern is in `docs/skills/bst.md` § Job Parallelism in `kind: manual`.
+
 **The "829/837 elements now match" and `expat.bst` findings below remain
 useful data points** (a real cache-key diff was run, real numbers came out
 of it) but their causal link to the `max-jobs` pin specifically should be
@@ -2127,7 +2158,7 @@ bb-storage's SSD.
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml`, `grype-db-cache.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans, the daily Grype database cache refresh and the QEMU enrollment gate. None of them runs a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain. Moving `vuln-diff.yml` to `krytis-vps` was considered on 2026-10-09 and declined. It would queue behind `build-changed`/cache-warm on the one runner slot, and it runs fork-PR code (after approval) as root on a persistent box. Its ~73s first-Grype-call cost was the database import, which the Actions cache now removes on hosted runners (#1156) |
 
-The self-hosted override only takes effect on a manual `workflow_dispatch` run. `publish.yml` needs no guard, because its override defaults to Blacksmith, so the null input on its cron run already picks the wanted host. `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
+The self-hosted override only takes effect on a manual `workflow_dispatch` run. `publish.yml` needs no guard, because its override defaults to Blacksmith, so the null input on its cron run already picks the wanted host. `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above) — as long as no element inlines `%{max-jobs}` into a command, which *would* key it (§ `max-jobs` does NOT affect cache keys, caveat). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
 
 **`force_self_hosted` reaches every runner that carries GitHub's default labels.** It targets
 `["self-hosted","linux","x64"]`, and `config.sh` adds exactly those three labels to every

@@ -351,6 +351,34 @@ gh stack link <N> <next-pr>               # append a later layer to stack #N
 
 Also put `Stacked on #<parent>` in the child's body, so the order is readable without the stack map.
 
+**Stacking PRs that already exist against `main`** (stack 1264: five independent fix PRs
+turned into one stack, 2026-10-14). `gh stack link` only chains bases for PRs *it* creates.
+For existing PRs it links them as they are and rewrites nothing, so each branch has to
+contain its parent first, or merging the top would not land the layers below it. In order:
+
+1. **Re-chain locally.** Run `git rebase <parent-branch>` in each child's worktree, bottom to
+   top. A child that was branched off `main` needs `git rebase --onto <parent-branch>
+   origin/main`, so it doesn't replay commits that are already in the parent.
+2. **Re-sign the rewritten commits in one pass, from the top worktree.** First detach every
+   other rewritten layer's worktree (`git -C <wt> switch --detach`), then run
+   `git rebase --force-rebase --update-refs <bottom-branch>`. That re-signs every commit
+   above the bottom branch, one touch each, and moves each middle branch ref to its
+   rewritten commit. `--update-refs` silently skips a ref that another worktree has checked
+   out, which is why the detach comes first. Switch the worktrees back afterwards.
+3. `git push --force-with-lease` the rewritten branches, then
+   `gh pr edit <child> --base <parent-branch>` for each re-based PR, then `gh stack link`
+   with all PR numbers, bottom to top.
+
+**When the FIDO2 key can't be touched yet, build the chain unsigned and sign once at the
+end.** Run the step-1 rebases and any new commits with `git -c commit.gpgsign=false …`.
+Step 2 then signs everything in a single sitting.
+
+Retrying signed rebases one at a time goes wrong in a specific way. An untouched key makes
+the signer fail with `Couldn't sign message (signer): agent refused operation?` after about
+a minute. A rebase interrupted that way leaves the pick **applied and staged but not
+committed**, so `git rebase --continue` refuses with "you have staged changes". Recover
+with `git commit -C <original-sha>` and then `--continue`, or `git rebase --abort`.
+
 ### Merging a stack
 
 - **Merging a PR also merges every unmerged PR below it**, in one operation. Merging the top PR lands the whole stack, so approving the top PR approves every layer under it.
@@ -459,29 +487,58 @@ ls "$(git rev-parse --show-toplevel)/.."
 
 Look for `dakota` and `zirconium-hawaii` (or similar names) in that listing. Don't assume a path — verify it exists before reading from it.
 
-### Dakota — layers on a bluefin OCI base (RPM)
+### Dakota — built from scratch too, but keeps junction files krytis replaces
 
-Dakota's BST elements run on top of a pre-built bluefin OCI image. That base ships files from RPMs — `/etc/sudoers`, `/etc/pam.d/sudo`, pre-configured `/etc`, standard FHS layout from Fedora packages.
+This section used to say dakota layers its elements on a pre-built bluefin RPM image that
+supplies `/etc/sudoers` and `/etc/pam.d/sudo`. That is not how dakota works (checked
+against dakota `45f097b`, 2026-10-14). Its rootfs is a BuildStream stack built from scratch,
+the same way krytis's is: dakota's `oci/layers/bluefin-stack.bst` stacks `bluefin/deps.bst`
+plus fdsdk and gnome-build-meta elements, and nothing under its `elements/oci/` pulls a
+base image.
 
-**Dakota elements only install the delta.** If a file already exists in the bluefin base, the Dakota element won't touch it.
+**The real difference is which junction files each project keeps.** Take sudo:
 
-**Krytis builds from scratch.** fdsdk provides no RPM base. If a component needs a config file, sudoers entry, PAM config, or any file the C reference implementation installs via `make install` — our element or override must install it explicitly. Overriding `components/sudo.bst` drops GNU sudo's `make install` output including `/etc/sudoers` and `/etc/pam.d/sudo`; a Dakota element for the same override doesn't reinstall those because bluefin already has them.
+- **dakota keeps fdsdk's C sudo** (`components/sudo.bst`, staged via
+  `freedesktop-sdk.bst:vm/config/sudo.bst`, which `bluefin-stack.bst` lists directly). C
+  sudo owns `/etc/sudoers` and `/etc/pam.d/sudo`. dakota's `bluefin/sudo-rs.bst` installs
+  only the binaries: it whitelists the `/usr/bin/sudo`/`sudoedit` overlap and depends on
+  `vm/config/sudo.bst` so that sudo-rs stages last and wins — see
+  `docs/skills/dakota.md` § Staging order, not the whitelist, picks the overlap winner.
+- **krytis replaces C sudo outright.** `elements/freedesktop-sdk.bst` redirects
+  `components/sudo.bst: core/sudo-rs.bst`, so C sudo's `make install` output never stages,
+  and `elements/core/sudo-rs.bst` has to write `/etc/sudoers` and `/etc/pam.d/sudo` itself.
+
+So a dakota element that relies on a junction component krytis has overridden or never
+stages will look complete and still be missing files here.
 
 **Verification checklist when porting from Dakota:**
 
-1. Read the element code — but also check what the *base image* contributes.
-2. Ask: "Does this element assume any config file, PAM stack entry, or `/etc` content that bluefin's RPMs install?" If yes, Krytis must install it explicitly.
+1. Read the element code, then list every junction element dakota's stack stages that the
+   element silently relies on (`bluefin-stack.bst`, `bluefin/deps.bst`, and the element's
+   own `depends:`).
+2. For each one, check krytis's `elements/freedesktop-sdk.bst` `config.overrides:` and
+   `elements/stacks/`. If krytis redirects or omits it, the config files, PAM entries or
+   `/etc` content it installed must come from the krytis element instead.
 3. Run `mise lint` and attempt a build before concluding the port is complete.
 
 ### Zirconium Hawaii — closer analog to Krytis
 
-Zirconium Hawaii also builds from fdsdk with no RPM base. It is a **better reference than Dakota** when both have an element, because it faces the same constraints Krytis does. See `docs/skills/zirconium-hawaii.md`.
+Zirconium Hawaii also builds from fdsdk from scratch, and its desktop is the same shape as
+krytis's (niri + Wayland; see `docs/skills/zirconium-hawaii.md` § What It Is), so it is
+usually the **better reference than Dakota** when both have an element. It is not closer
+on junction-file choices, though: it also keeps C sudo (zirconium-hawaii's
+`stacks/base-system.bst` stages `components/sudo.bst`), so the checklist above applies to
+it as well.
 
 ### Always read their skills docs too
 
-When referencing Dakota or Zirconium Hawaii, read `docs/skills/` in the sibling repo — not just the element file. Context that isn't in the element (what the base image provides, known workarounds, build quirks) lives there.
+When referencing Dakota or Zirconium Hawaii, read the sibling repo's own guidance — dakota's
+`docs/` and `.agents/skills/`, and for zirconium-hawaii its commit bodies (it has no docs
+tree; see `zirconium-hawaii.md` § Arch-derived kernel configs) — not just the element file.
+Context that isn't in the element (which junction files the stack keeps, known workarounds,
+build quirks) lives there.
 
-**Don't read only the `.bst` file.** The element captures what the author needed to add on top of their environment. The skills docs capture what that environment provides implicitly.
+**Don't read only the `.bst` file.** The element captures what the author needed to add on top of their stack. The rest of the stack, and the guidance docs, capture what it gets implicitly.
 
 ## Sync a Component Fork Before Branching From It (`kitten-lily/*`)
 

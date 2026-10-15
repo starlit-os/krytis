@@ -132,9 +132,9 @@ arm that was actually running.
 Whichever arm wins, the decision PR has to set zswap explicitly, with a karg or a udev rule.
 Leaving it to the kernel default is how the image got into its current state.
 
-The swapfile is half of RAM by default (`--size <MiB>` overrides this). That gives it the
-same capacity as zram0, which keeps oomd's percentage-based `SwapUsedLimit` comparable if
-#510's follow-up ever turns oomd on.
+The swapfile is half of RAM by default (`--size <MiB>` overrides this), the same capacity as
+zram0. (This no longer matters for oomd: #1216 armed only a memory-pressure kill on users'
+`app.slice` and no swap kill, so oomd never reads swap capacity.)
 
 ## Tool: `mise run swap-eval`
 
@@ -239,8 +239,7 @@ as a per-host override in `/etc`. For `zram`, that override is
     the `elements/config/desktop-udev.bst` header and `docs/skills/bst.md` § Desktop
     performance config element pattern.
   - Implement the chosen arm (see the table above) and update the zram-generator comment in
-    `elements/stacks/base-system.bst`, which also claims oomd protection that does not exist
-    (finding 3).
+    `elements/stacks/base-system.bst`. Its oomd comment was already corrected by #1216.
   - Add an image assertion for the shipped arm, following dakota's `just swap-audit`
     precedent, so a later kernel or junction bump cannot silently change the arm again.
   - Verify with `mise run build` and `mise boot-test`. Then reboot both machines into the

@@ -197,13 +197,16 @@ Non-compliance = automatic rejection.
 
 **Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs. `mise run build` already ends with `mise run lint` plus the image gates `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check` (`generate-image-version` → `load-image` → `lint` → `umbriel-config-validate` → `cracklib-dict-check` → `portal-routing-check`) — running `mise run build` satisfies this gate on its own; a separate `mise run lint` afterward is redundant (it re-lints the same image) and running it *before* `mise run build` completes only lints stale content. See `docs/skills/mise.md`'s "Standard build workflow" section.
 
+**Sudo and commit signing are not blockers:** a failed `sudo -n true` ("interactive authentication is required") does not mean you can't run `generate-disk`, `boot-test` or other root steps. Run the command in a **pty** and the human enters the FIDO2 PIN and touches the key at the prompt. Commit the same way with `env -u SSH_AUTH_SOCK git commit` in a pty. Never hand these steps to the human, and never fall back to a stale `--reuse-disk` image for that reason. See `docs/skills/mise.md` § Agents can run the sudo steps: use a pty.
+
 **Mise task integrity:** All maintenance tasks must be `mise` tasks. No loose shell commands. If a task isn't covered by an existing task, add one alongside your change. Every agent action must be replicable by a human via `mise <task>`. Do not rename existing tasks without explicit human approval.
 
 **Update path gate:** Before opening a PR that adds a new element, confirm one of:
 - (a) The source is `git_repo` with a `track:` glob **and** the element is listed in the `track` matrix in `.github/workflows/track-bst-sources.yml`.
-- (b) A `<name>-update` mise task exists **and** a corresponding CI job in `track-bst-sources.yml` follows the `track-mise` pattern.
+- (b) The element has a row in `TARGETS` in `mise/tasks/tarball-update` **and** is in the `track-tarball` matrix in `track-bst-sources.yml`; or, for an element no provider fits, a bespoke `<name>-update` mise task exists **and** a corresponding CI job in `track-bst-sources.yml` follows the `track-mise` pattern.
+- (c) The source is `kind: anitya` (buildstream-plugins-community 2.4.0+, already pinned) **and** the element is listed in the `track` matrix, the same as (a). `bst source track` resolves an anitya source from release-monitoring.org, so no task is needed. Prerequisite: `anitya` must be added to the `plugins/buildstream-plugins-community.bst` sources list in `project.conf`; it isn't there as of 2026-10-14. The source has limits (no `base-dir`, tar only, no version-series hold); see `docs/skills/bst.md` § `kind: anitya` tracks release tarballs.
 
-`bst source track` is a no-op on `kind: tar` and `kind: remote` sources — elements using these source kinds silently fall out of the automated update loop unless option (b) is in place. The same blind spot applies to a `kind: git_repo` source used with a manual `directory:` to check out what is really a git submodule (`.gitmodules` entry) — use `kind: git_module` for those instead, or `bst source track` will silently stop updating that submodule while the parent element's own ref keeps tracking fine. See `docs/skills/bst.md` § Element update path.
+`bst source track` is a no-op on `kind: tar` and `kind: remote` sources — elements using these source kinds silently fall out of the automated update loop unless option (b) is in place, or the source is converted to (c). The same blind spot applies to a `kind: git_repo` source used with a manual `directory:` to check out what is really a git submodule (`.gitmodules` entry) — use `kind: git_module` for those instead, or `bst source track` will silently stop updating that submodule while the parent element's own ref keeps tracking fine. See `docs/skills/bst.md` § Element update path.
 
 **Agents MUST NOT push directly to `main`.** All changes via PR from a feature branch.
 
@@ -258,6 +261,10 @@ Issue titles must be **short imperative phrases of ≤ 5 words**. Applies to bot
 Good: `Fix composefs boot failure` · `Add greetd service` · `Update mise to 2.1`
 
 Bad: `The composefs boot is broken and needs to be fixed` (too long) · `feat: add greetd` (conventional-commit prefixes belong in commits, not issue titles)
+
+### Effort label
+
+Every new issue gets **exactly one** `effort:XS`/`S`/`M`/`L` label at filing (umbrellas get `tracking` instead), plus one comment saying what the work is, what blocks it and the next step. Effort is hands-on work once unblocked; gates and upstream waits go in the comment, not the size. Rules and sizes: `docs/skills/github-projects.md` § Effort labels.
 
 ### Slug derivation
 

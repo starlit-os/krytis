@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+#MISE description="Boot the image and assert systemd-oomd kills a memory hog in a user's app.slice, and nothing in session.slice, where noctalia.service runs (#1216, #1253)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install and boot"
+#USAGE flag "--reuse-disk <path>" help="Boot a copy of this already-installed raw disk instead of running generate-disk (skips the only step that needs root)"
+#USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys) and print its path"
+
+# What this proves on a booted krytis VM (#1216):
+#
+#   1. systemd-oomd parses its config cleanly (no "Unknown section" line, the
+#      #219 drop-in's failure mode).
+#   2. A user's app.slice carries config/oomd.bst's ManagedOOMMemoryPressure=
+#      kill, and the user manager registered it with oomd: `oomctl` lists that
+#      app.slice as pressure-monitored, and lists nothing under swap.
+#   3. A memory hog in app.slice is killed BY OOMD (oomd's journal names its
+#      cgroup, the unit's Result is oom-kill), not by the kernel OOM killer.
+#   4. An idle sibling in app.slice and a canary in session.slice, where
+#      niri/umbriel/dbus/the portals live, both survive.
+#   5. noctalia.service, the shell and lock screen, is enabled for
+#      graphical-session.target and placed in session.slice, so oomd can never
+#      pick it (#1253). Without a graphical session it doesn't start here; what
+#      is asserted is the placement every real session inherits.
+#
+# The user manager comes from `loginctl enable-linger`, not a login: oomd only
+# cares that user@<uid>.service is running and owns its cgroups. Units are
+# started with plain `systemd-run --user` through setpriv (the image has no
+# runuser), so nothing here depends on machined or a graphical session.
+#
+# The hog is a python3 loop appending 16 MiB byte strings under MemoryHigh=:
+# memory.high throttling stalls it (counted as memory PSI) without ever
+# invoking the kernel OOM killer the way MemoryMax= would, the same mechanism
+# `mise run swap-eval pressure` uses. Not `tail /dev/zero`: the image's `tail`
+# is uutils, which does not buffer an endless line (the hog sat at 1.3 MiB with
+# zero pressure for 180 s), and the bytes are 0x01, not 0x00, so the pages are
+# really written instead of left to the zero page.
+#
+# Provisioning follows homed-ssh-fallback-test: SMBIOS credentials only, the
+# installed disk is never mutated, and only generate-disk needs root.
+
+# shellcheck disable=SC2015  # pass() cannot fail, so `A && pass || fail` is a true if/else
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+CLI_IMAGE=""; CLI_REUSE_DISK=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)      CLI_IMAGE="$2"; shift 2 ;;
+        --reuse-disk) CLI_REUSE_DISK="$2"; shift 2 ;;
+        --keep)       CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+if [ -n "${REUSE_DISK}" ] && [ ! -f "${REUSE_DISK}" ]; then
+    echo "ERROR: --reuse-disk file not found: ${REUSE_DISK}" >&2
+    exit 1
+fi
+command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
+
+TEST_USER="oomdtest"
+WORKDIR=$(mktemp -d /var/tmp/krytis-oomd-test.XXXXXX)
+DISK="${WORKDIR}/test.raw"
+SSH_PORT=2342
+while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT + 1)); done
+
+QEMU_PID=""
+cleanup() {
+    [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
+    if [ -n "${KEEP}" ]; then
+        echo "==> WORKDIR kept at ${WORKDIR}"
+    else
+        rm -rf "${WORKDIR}"
+    fi
+}
+trap cleanup EXIT
+# set -e alone exits without a word; say which command it was.
+trap 'echo "==> ABORTED at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+ssh-keygen -t ed25519 -N '' -C 'krytis oomd-test root' -f "${WORKDIR}/id_root" -q
+
+if [ -n "${REUSE_DISK}" ]; then
+    echo "==> [1/6] Copying ${REUSE_DISK} (no install, no root)..."
+    cp --reflink=auto "${REUSE_DISK}" "${DISK}"
+else
+    echo "==> [1/6] Installing ${IMAGE} → ${DISK}..."
+    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size 15G
+fi
+
+echo "==> [2/6] Booting headless with sshd enabled for this boot only..."
+printf '[Unit]\nWants=sshd.service\n' > "${WORKDIR}/mu-dropin.conf"
+cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
+[Service]
+ImportCredential=krytis.oomdtest_root_keys
+ExecStart=
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile .ssh/authorized_keys ${CREDENTIALS_DIRECTORY}/krytis.oomdtest_root_keys"
+DROPIN
+# Same reason as boot-test: no GPU here, and the greeter compositor free-spins
+# without one (#764).
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/true\nRestart=no\n' > "${WORKDIR}/greetd-dropin.conf"
+
+cred_b64() { base64 -w0 < "$1"; }
+. scripts/ovmf-paths.sh   # #458
+OVMF_CODE=$(ovmf_code_plain)
+cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"
+
+qemu-system-x86_64 \
+    -enable-kvm -m "${VM_RAM:-8192}" -cpu host -smp "${VM_CPUS:-4}" \
+    -machine q35 \
+    -drive "file=${DISK},format=raw,if=virtio" \
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+    -device virtio-net-pci,netdev=net0 \
+    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")" \
+    -smbios "type=11,value=io.systemd.credential.binary:krytis.oomdtest_root_keys=$(cred_b64 "${WORKDIR}/id_root.pub")" \
+    -display none \
+    -serial "file:${WORKDIR}/serial.log" \
+    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+QEMU_PID=$(cat "${WORKDIR}/qemu.pid")
+
+SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5)
+ROOT() { timeout 120 ssh "${SSH_OPTS[@]}" -o LogLevel=ERROR -i "${WORKDIR}/id_root" root@localhost "$@"; }
+
+UP=false
+DEADLINE=$((SECONDS + 300))
+while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    if timeout 10 ssh "${SSH_OPTS[@]}" -i "${WORKDIR}/id_root" root@localhost true 2>/dev/null; then
+        UP=true; break
+    fi
+    sleep 3
+done
+if [ "${UP}" != true ]; then
+    echo "==> FAIL: root SSH never came up within 300s — nothing about oomd was tested." >&2
+    tail -40 "${WORKDIR}/serial.log" >&2 || true
+    exit 1
+fi
+ROOT 'systemctl --version | head -1; systemctl is-active systemd-oomd.service' | sed 's/^/    /' || true
+
+FAILED=0
+pass() { echo "    PASS  $1"; }
+fail() { echo "    FAIL  $1" >&2; FAILED=1; }
+
+echo "==> [3/6] Starting ${TEST_USER}'s user manager (linger, no login)..."
+ROOT "useradd --create-home ${TEST_USER} && loginctl enable-linger ${TEST_USER}" \
+    || { echo "==> FAIL: could not create ${TEST_USER}" >&2; exit 1; }
+TEST_UID=$(ROOT "id -u ${TEST_USER}")
+USER_UNIT="user@${TEST_UID}.service"
+APP_SLICE="/user.slice/user-${TEST_UID}.slice/${USER_UNIT}/app.slice"
+for _ in $(seq 60); do
+    [ "$(ROOT "systemctl is-active ${USER_UNIT}" || true)" = active ] && break
+    sleep 1
+done
+# Everything below runs as the user against their own manager.
+U() { ROOT "setpriv --reuid=${TEST_UID} --regid=${TEST_UID} --init-groups env XDG_RUNTIME_DIR=/run/user/${TEST_UID} $*"; }
+
+# A unit in app.slice and one in session.slice before the hog starts: the
+# first realises app.slice (oomd only hears about it once it has a cgroup),
+# both are what must survive.
+U systemd-run --user --quiet --unit=oomdtest-app-idle sleep infinity
+U systemd-run --user --quiet --unit=oomdtest-session-canary --slice=session.slice sleep infinity
+sleep 3
+
+echo "==> [4/6] oomd configuration and registration..."
+WARN=$(ROOT "journalctl -b -q -u systemd-oomd -g 'Unknown section|Unknown key|Failed to parse' -o cat" || true)
+[ -z "${WARN}" ] && pass "oomd logged no config warnings" || fail "oomd config warnings: ${WARN}"
+PROPS=$(U systemctl --user show -p ManagedOOMMemoryPressure -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec app.slice | tr '\n' ' ')
+echo "    app.slice: ${PROPS}"
+case "${PROPS}" in
+    *ManagedOOMMemoryPressure=kill*) pass "app.slice has ManagedOOMMemoryPressure=kill" ;;
+    *) fail "app.slice is not armed: ${PROPS}" ;;
+esac
+OOMCTL=$(ROOT oomctl)
+printf '%s\n' "${OOMCTL}" | sed 's/^/    | /'
+SWAP_PATHS=$(printf '%s\n' "${OOMCTL}" | awk '/^Swap Monitored CGroups:/{f=1;next} /^Memory Pressure Monitored CGroups:/{f=0} f && /Path:/')
+PRESSURE_PATHS=$(printf '%s\n' "${OOMCTL}" | awk '/^Memory Pressure Monitored CGroups:/{f=1;next} /^[A-Z]/{f=0} f && /Path:/ {print $2}')
+[ -z "${SWAP_PATHS}" ] && pass "no cgroup is swap-monitored" || fail "swap-monitored cgroups: ${SWAP_PATHS}"
+grep -qx "${APP_SLICE}" <<<"${PRESSURE_PATHS}" \
+    && pass "oomd monitors ${APP_SLICE}" || fail "oomd does not list ${APP_SLICE} (got: ${PRESSURE_PATHS:-nothing})"
+# Every user manager registers its own app.slice, root's included (the
+# harness's SSH session starts user@0.service), so the invariant is that each
+# monitored path is SOME user's app.slice, never user@.service or a system unit.
+OTHER=$(grep -vxE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/app\.slice' <<<"${PRESSURE_PATHS}" || true)
+[ -z "${OTHER}" ] && pass "every pressure-monitored cgroup is a user's app.slice" || fail "unexpected pressure-monitored cgroups: ${OTHER}"
+NOCTALIA=$(U systemctl --user show -p Slice -p UnitFileState -p WantedBy noctalia.service | tr '\n' ' ')
+echo "    noctalia.service: ${NOCTALIA}"
+case "${NOCTALIA}" in
+    *Slice=session.slice*) pass "noctalia.service runs in session.slice, outside oomd's candidates" ;;
+    *) fail "noctalia.service is not in session.slice: ${NOCTALIA}" ;;
+esac
+case "${NOCTALIA}" in
+    *UnitFileState=enabled*) pass "noctalia.service is enabled" ;;
+    *) fail "noctalia.service is not enabled: ${NOCTALIA}" ;;
+esac
+
+echo "==> [5/6] Memory hog in app.slice (python3, MemoryHigh=128M), waiting up to 180s for oomd..."
+ROOT "cat > /run/oomdtest-hog.py && chmod 644 /run/oomdtest-hog.py" <<'PY'
+chunks = []
+while True:
+    chunks.append(b"\x01" * (16 << 20))
+PY
+U systemd-run --user --quiet --unit=oomdtest-hog -p MemoryHigh=128M python3 /run/oomdtest-hog.py
+KILLED=false
+for _ in $(seq 90); do
+    if [ "$(U systemctl --user is-active oomdtest-hog.service || true)" != active ]; then
+        KILLED=true; break
+    fi
+    sleep 2
+done
+
+echo "==> [6/6] Who was killed..."
+OOMD_LOG=$(ROOT "journalctl -b -q -u systemd-oomd -o cat" || true)
+printf '%s\n' "${OOMD_LOG}" | grep -i 'kill' | sed 's/^/    | /' || true
+RESULT=$(U systemctl --user show -P Result oomdtest-hog.service || true)
+[ "${KILLED}" = true ] && pass "the hog stopped" || fail "the hog was still running after 180s"
+# oomd logs "Marked <victim> for killing due to memory pressure for <monitored>
+# being N% > limit for > duration with reclaim activity" (oomd-manager.c).
+grep -F "${APP_SLICE}/oomdtest-hog.service for killing due to memory pressure for ${APP_SLICE} " <<<"${OOMD_LOG}" >/dev/null \
+    && pass "oomd marked the hog's cgroup for killing on app.slice pressure" \
+    || fail "oomd's journal has no pressure kill of ${APP_SLICE}/oomdtest-hog.service"
+[ "${RESULT}" = oom-kill ] && pass "hog unit Result=oom-kill" || fail "hog unit Result=${RESULT:-<none>}, want oom-kill"
+KERNEL_OOM=$(ROOT "journalctl -b -q -k -g 'Out of memory|invoked oom-killer' -o cat" || true)
+[ -z "${KERNEL_OOM}" ] && pass "the kernel OOM killer never ran" || fail "kernel OOM killer ran: ${KERNEL_OOM}"
+[ "$(U systemctl --user is-active oomdtest-app-idle.service || true)" = active ] \
+    && pass "idle sibling in app.slice survived" || fail "idle sibling in app.slice was killed"
+[ "$(U systemctl --user is-active oomdtest-session-canary.service || true)" = active ] \
+    && pass "session.slice canary survived" || fail "session.slice canary was killed"
+
+if [ "${FAILED}" -ne 0 ]; then
+    echo "    --- oomctl and the hog's cgroup at failure ---" >&2
+    ROOT "oomctl; d=/sys/fs/cgroup${APP_SLICE}; for f in memory.pressure memory.current memory.swap.current memory.stat; do echo \"== app.slice \$f\"; grep -E '^(some|full|pgscan|pgsteal) ' \$d/\$f 2>/dev/null || cat \$d/\$f; done; h=\$d/oomdtest-hog.service; for f in memory.pressure memory.current memory.swap.current memory.events; do echo \"== hog \$f\"; cat \$h/\$f; done; swapon --show" 2>/dev/null | sed 's/^/    | /' >&2 || true
+    echo "    --- guest journal: systemd-oomd + ${USER_UNIT} ---" >&2
+    ROOT "journalctl -b --no-pager -o short-monotonic -u systemd-oomd -u ${USER_UNIT} | grep -v podman | tail -40" 2>/dev/null | sed 's/^/    | /' >&2 || true
+fi
+ROOT systemctl poweroff >/dev/null 2>&1 || true
+
+if [ "${FAILED}" -ne 0 ]; then
+    echo "==> oomd-test FAILED"
+    exit 1
+fi
+echo "==> oomd-test PASSED"

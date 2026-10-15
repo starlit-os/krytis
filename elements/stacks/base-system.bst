@@ -156,6 +156,7 @@ depends:
 
   # ── Memory / OOM protection ────────────────────────────────────────
   # zram-generator is already included above (gnomeos-deps).
-  # oomd: enables systemd-oomd.service (compiled into systemd) with tuning.
-  # Prevents OOM kills by acting on swap pressure before the kernel OOM fires. Closes #219.
+  # oomd: enables systemd-oomd.service and arms a memory-pressure kill on each
+  # user's app.slice, so a runaway app is killed before the kernel OOM killer
+  # runs. Never the session (session.slice) and no swap kill (#219, #1216).
   - config/oomd.bst

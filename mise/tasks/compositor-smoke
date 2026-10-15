@@ -66,8 +66,8 @@ case "$COMPOSITOR" in
         #
         # The markers are umbriel's OWN log lines. Until krytis#980 they were
         # `initialized EGL`, `OpenGL ES vendor=` and `output HEADLESS-1`, none
-        # of which umbriel ever emits -- all three come from NOCTALIA, the Qt
-        # client the shipped config autostarts, initialising its own EGL. The
+        # of which umbriel ever emits -- all three came from NOCTALIA, which
+        # the shipped config autostarted until #1253, initialising its own EGL. The
         # task was asserting that noctalia's renderer worked, which it only
         # ever saw because the UMBRIEL_CONFIG no-op above let the shipped
         # config's `autostart` fire. umbrielfx, the thing #775 added this task
@@ -84,12 +84,13 @@ case "$COMPOSITOR" in
             'GL renderer:'
             "output 'HEADLESS-1': applied mode="
         )
-        # Only the shipped config carries krytis's `autostart = ["noctalia"]`,
-        # and this line is umbriel reporting that it acted on it -- so it also
-        # proves the [include] overlay in files/umbriel/config.toml really
-        # merged, not merely parsed.
+        # Only the shipped config carries krytis's `autostart` (bazaar-daemon
+        # since #1253 moved noctalia to noctalia.service), and this line is
+        # umbriel reporting that it acted on it -- so it also proves the
+        # [include] overlay in files/umbriel/config.toml really merged, not
+        # merely parsed.
         if [ "$SHIPPED_CONFIG" = "true" ]; then
-            REQUIRE+=("spawned 'noctalia' on WAYLAND_DISPLAY=")
+            REQUIRE+=("spawned 'flatpak run --command=bazaar-daemon io.github.kolunmi.Bazaar --no-window' on WAYLAND_DISPLAY=")
         fi
         ;;
     greeter)

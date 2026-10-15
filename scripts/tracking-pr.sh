@@ -6,17 +6,20 @@
 #   tracking-pr.sh <branch> <title> <body-file>
 #
 # Run it right after scripts/commit-tracking-update.sh has moved <branch>. The
-# cooldown state is read from the trailers that script writes on the branch
-# head commit:
-#   Tracking-First-Seen: <UTC>  when this exact update was first committed
+# cooldown state is read from the trailers scripts/tracking-cooldown.sh
+# decided, on the branch head commit:
+#   Tracking-First-Seen: <UTC>  when this exact update was first seen
 #   Tracking-Ready-At:   <UTC>  First-Seen + 24h
 #   Tracking-Cooldown: exempt   source is first-party (kitten-lily/, starlit-os/)
+#   Tracking-Next-First-Seen / Tracking-Next-Ready-At: <UTC>
+#                               a newer update, held back until this one
+#                               merges or the newer one has cooled
 #
 # Before Ready-At, the PR is opened as a draft, or converted back to one, so
 # it cannot be merged by accident. From Ready-At on, it is marked ready for
 # review. A head commit with no trailers fails closed and counts as cooling.
 # This is the BST-tracking counterpart of Renovate's minimumReleaseAge (see
-# docs/skills/bst.md § Tracking cooldown: 24h from first sighting).
+# docs/skills/bst.md § Tracking cooldown: 24h per update).
 #
 # Requires: gh (authenticated, pull-requests:write), GITHUB_REPOSITORY.
 
@@ -39,6 +42,8 @@ trailer() { sed -n "s/^$1: //p" <<<"$MESSAGE" | tail -n 1; }
 FIRST_SEEN=$(trailer Tracking-First-Seen)
 READY_AT=$(trailer Tracking-Ready-At)
 EXEMPT=$(trailer Tracking-Cooldown)
+NEXT_SEEN=$(trailer Tracking-Next-First-Seen)
+NEXT_READY=$(trailer Tracking-Next-Ready-At)
 
 BODY=$(cat "$BODY_FILE")
 if [ -n "$EXEMPT" ]; then
@@ -50,28 +55,44 @@ elif [ -n "$READY_AT" ] && [ "$(date -u +%s)" -ge "$(date -u -d "$READY_AT" +%s)
 elif [ -n "$READY_AT" ]; then
   READY=0
   NOTE="> [!IMPORTANT]
-> **Cooling until ${READY_AT}.** This update was first seen ${FIRST_SEEN}, and the PR stays a draft for 24h after that. If upstream changes the update in the meantime, the clock restarts. See \`docs/skills/bst.md\` § Tracking cooldown: 24h from first sighting."
+> **Cooling until ${READY_AT}.** This update was first seen ${FIRST_SEEN}, and the PR stays a draft for 24h after that. A newer upstream release waits for this one instead of replacing it; closing the PR restarts the clock. See \`docs/skills/bst.md\` § Tracking cooldown: 24h per update."
 else
   READY=0
   NOTE="> [!WARNING]
 > **Cooling: the head commit carries no \`Tracking-Ready-At\` trailer**, so this PR stays a draft until a tracking run recommits it."
 fi
+if [ -n "$NEXT_SEEN" ]; then
+  NOTE="${NOTE}
+>
+> A newer update, first seen ${NEXT_SEEN}, is held back. A tracking run proposes it after this PR merges, or replaces this update with it once it has cooled (${NEXT_READY})."
+fi
 printf '%s\n\n%s\n' "$NOTE" "$BODY" >"$BODY_FILE.cooldown"
 
-EXISTING=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number,isDraft,url \
+EXISTING=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number,isDraft,url,title,body \
   --jq '.[0] // empty' 2>/dev/null || true)
+
+# The PR body links the run that generated it, so it differs on every run.
+# Compare without the run id, and leave the PR alone when nothing else
+# changed: every edit is an `edited` event, and checks.yml re-runs on those.
+# The link then points at the run that last changed the PR.
+normalize() { tr -d '\r' | sed -E 's#/actions/runs/[0-9]+#/actions/runs/N#g'; }
 
 if [ -n "$EXISTING" ]; then
   PR_NUMBER=$(jq -r '.number' <<<"$EXISTING")
   IS_DRAFT=$(jq -r '.isDraft' <<<"$EXISTING")
   PR_URL=$(jq -r '.url' <<<"$EXISTING")
-  echo "Updating existing PR #$PR_NUMBER"
-  gh pr edit "$PR_NUMBER" -R "$REPO" --title "$TITLE" --body-file "$BODY_FILE.cooldown" >/dev/null
+  if [ "$(jq -r '.title' <<<"$EXISTING")" = "$TITLE" ] &&
+    [ "$(jq -r '.body' <<<"$EXISTING" | normalize)" = "$(normalize <"$BODY_FILE.cooldown")" ]; then
+    echo "PR #$PR_NUMBER title and body unchanged"
+  else
+    echo "Updating existing PR #$PR_NUMBER"
+    gh pr edit "$PR_NUMBER" -R "$REPO" --title "$TITLE" --body-file "$BODY_FILE.cooldown" >/dev/null
+  fi
   if [ "$READY" -eq 1 ] && [ "$IS_DRAFT" = "true" ]; then
     echo "Cooled or exempt: marking PR #$PR_NUMBER ready for review"
     gh pr ready "$PR_NUMBER" -R "$REPO" >/dev/null
   elif [ "$READY" -eq 0 ] && [ "$IS_DRAFT" = "false" ]; then
-    echo "Update changed or has not cooled: converting PR #$PR_NUMBER back to draft"
+    echo "Not cooled: converting PR #$PR_NUMBER back to draft"
     gh pr ready --undo "$PR_NUMBER" -R "$REPO" >/dev/null
   fi
 else

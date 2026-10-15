@@ -40,16 +40,20 @@ kind: manual
 # (symlink to /dev/null, same pattern as live/src/configure-live-krytis.sh's
 # systemd-firstboot.service mask) makes systemd's dependency resolution treat
 # it as absent rather than failed. `vm/config/networkd.bst` itself stays a
-# dependency (still provides the default `.link` files' MAC/naming policy,
-# which is udev-driven and independent of the daemon actually running) --
-# only the two units that do nothing but produce a misleading "offline"
-# signal are masked.
+# dependency, but it ships no `.link` files (`99-default.link` and the MAC/
+# naming policy come from systemd itself). Its whole payload is
+# `20-wired.network` (Name=e*, DHCP=ipv4) plus a `networkd.preset` naming the
+# nonexistent unit `systemd-networkd.preset`, so the preset is inert. That
+# `.network` file is dormant only because of this mask: lifting the mask
+# while NetworkManager is present revives it as a second DHCP config on every
+# `e*` interface. See docs/skills/bst.md § NetworkManager Is Present and
+# Running (corrected 2026-10-14, zirconium-hawaii f40096e).
 #
 # Removal condition: if krytis ever drops NetworkManager (i.e. stops
-# depending on anything that pulls it in transitively) and switches to
-# systemd-networkd actually managing physical interfaces via a real
-# (non-`.example`) `.network` file, delete this element and let networkd
-# resume normal operation.
+# depending on anything that pulls it in transitively) and wants
+# systemd-networkd to manage physical interfaces (fdsdk's `20-wired.network`
+# already would), delete this element and let networkd resume normal
+# operation.
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 

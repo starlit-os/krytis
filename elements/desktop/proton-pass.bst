@@ -5,6 +5,9 @@ kind: manual
 # Bundled Electron — no system electron dependency.
 # Update path: mise run proton-pass-update / track-proton-pass CI job.
 # Closes #206.
+# Switching to the Flathub build (me.proton.Pass) is deferred: its click-to-copy
+# depends on Xwayland forwarding the copy, which niri and Umbriel refuse. See
+# docs/design/proton-pass-flatpak.md.
 
 build-depends:
 - freedesktop-sdk.bst:components/binutils.bst

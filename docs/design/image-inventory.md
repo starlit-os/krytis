@@ -74,7 +74,7 @@ element does, its row's text is a review question.
 | `config/fido2-root-unlock.bst` | Makes the root volume try FIDO2 unlock. In base-system because the initramfs reads it from there. |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
-| `config/oomd.bst` | Enables and tunes systemd-oomd. |
+| `config/oomd.bst` | Enables systemd-oomd and arms its memory-pressure kill on each user's `app.slice` (#1216). |
 
 #### `stacks/bootc.bst`
 
@@ -102,6 +102,7 @@ element does, its row's text is a review question.
 | `desktop/niri.bst` | niri, the default Wayland compositor. |
 | `desktop/umbriel.bst` | Umbriel, the opt-in second Wayland compositor (#774). |
 | `desktop/noctalia.bst` | noctalia shell, built from the `kitten-lily/noctalia` fork. |
+| `config/noctalia-service.bst` | Runs noctalia as a user service in `session.slice`, out of systemd-oomd's reach (#1253). |
 | `config/battery-power-profile-hook.bst` | Battery/AC power-profile switch script for noctalia's hooks. Opt-in. |
 | `desktop/ghostty.bst` | Ghostty terminal. |
 | `desktop/seance.bst` | Séance, a GTK4 terminal multiplexer for AI coding agents, built on libghostty. |

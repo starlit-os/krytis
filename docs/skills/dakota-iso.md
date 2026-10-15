@@ -7,9 +7,13 @@ Krytis's own pipeline is documented in [`mise.md`](mise.md) § ISO build task an
 
 ## What It Is
 
-`projectbluefin/dakota-iso` builds the live installer media for the Bluefin family —
-`dakota`, `bluefin`, `bluefin-lts-hwe`, `lts`, `stable`. A `just` project: `just container
-<target>` builds the live-environment image, `just iso-sd-boot <target>` assembles the
+`projectbluefin/dakota-iso` builds the live installer media for the Bluefin family. As of
+2026-10-14 (dakota-iso `d23d0e8`) its scope is **`dakota` and `utah`** (its `AGENTS.md:13`):
+`5ddc01f` (projectbluefin/dakota-iso#228) retired `bluefin` and `bluefin-lts-hwe` and
+renamed `build-iso-bluefin.yml` to `build-iso-utah.yml`, which builds Utah daily. The
+`bluefin`, `bluefin-lts-hwe`, `lts` and `stable` target directories are still in its tree,
+and its `AGENTS.md` keeps the two retired ones for revival only. A `just` project:
+`just container <target>` builds the live-environment image, `just iso-sd-boot <target>` assembles the
 squashfs + systemd-boot ESP + hybrid ISO, and a `plain-boot-qemu-live` /
 `plain-install-qemu` / `plain-boot-qemu-installed` chain drives a QEMU install gate.
 
@@ -22,8 +26,15 @@ path in this file belongs to before acting on it.
 
 Krytis's installer ISO was built by this project until #838/#839 ported the whole call
 graph in-tree ([#519](https://github.com/starlit-os/krytis/issues/519) has the file-by-file
-BOM and the exclusion list). Krytis is single-target, always composefs + systemd-boot, so
-every one of those indirections collapsed to a constant on the krytis side.
+BOM and the exclusion list). Krytis is single-target, always composefs + systemd-boot. The
+port initially kept the per-variant indirections anyway: `scripts/iso-sd-boot.sh` and
+`scripts/iso-install-fisherman.sh` read `krytis/live_target`, stripped an
+`-nvidia`/`-nvidia-open` suffix krytis never has, and read
+`live/src/<variant>/{composefs,bootloader}` (the bootloader file never existed, so the
+reader's default always won). #1247 collapsed all of it to constants and deleted
+`krytis/live_target` and `live/src/krytis/composefs`, after the composefs knob turned out to
+be read three different ways (§ `cat f | tr -d … || echo default` loses its default without
+pipefail, below).
 
 ## Fork State — there is no fork any more
 
@@ -148,10 +159,10 @@ strings at lines 2-3 and 80-82, option documentation at 20-22 and 38 — which n
 hit for `superiso` outside an archived plan — `STORE_SFS=""` at 48, the `--store)` case arm
 at 53, and the copy block at 326-329. Nothing ever passed it: no `mise/tasks/iso-*` call
 site and no `scripts/iso-sd-boot.sh` one. Krytis embeds its payload the same VFS way —
-`scripts/iso-sd-boot.sh:170-174` writes a `driver = "vfs"` store into
+`scripts/iso-sd-boot.sh:175-187` writes a `driver = "vfs"` store into
 `${CS_STAGING}/var/lib/containers/storage` and copies it to
-`${SQUASHFS_ROOT}/var/lib/containers/storage` at 224-226, the branch krytis always takes
-because `live/src/krytis/composefs` is `true`, and the live image's own
+`${SQUASHFS_ROOT}/var/lib/containers/storage` at 211-213 (the only path since #1247 removed
+the overlay branch), and the live image's own
 `/etc/containers/storage.conf` names exactly that path as its `additionalimagestores`
 (`live/src/configure-live-krytis.sh:222-230`). Dead here for the same reason it was dead
 upstream.
@@ -168,35 +179,33 @@ offline stores" size estimate *derived* from the phantom line item, plus a compo
 row for it and an ISO layout that was no longer producible. Deleting a feature means
 grepping the docs for every claim **derived** from it, not only for its name.
 
-### Digest-pin the third-party images your build and test tasks run
+### Digest-pin the third-party images your build and test tasks run — RESOLVED in krytis (`a045d77`, 2026-09-24)
 
 *Source: dakota-iso `6cfe4f28` — "fix(justfile): pin third-party images chunkah and qemu
 with sha256 digests (#170)".*
 
-These images run with more privilege than anything else in the pipeline — `--device
-/dev/kvm`, `--privileged` or `--security-opt label=disable`, bind-mounted disk images — so a
-mutable `:latest` is a supply-chain hole exactly the size of an unpinned GitHub Action.
-Upstream pinned `ghcr.io/tuna-os/chunkah` and `ghcr.io/qemus/qemu` to `:<tag>@sha256:…` and
-added a test assertion so the pin cannot silently regress.
+These images run with more privilege than anything else in the pipeline:
+`--device /dev/kvm`, `--privileged` or `--security-opt label=disable`, and bind-mounted
+disk images. A mutable `:latest` is a supply-chain hole exactly the size of an unpinned
+GitHub Action. Upstream pinned `ghcr.io/tuna-os/chunkah` and `ghcr.io/qemus/qemu` to
+`:<tag>@sha256:…` and added a test assertion so the pin cannot silently regress.
 
-**krytis is exposed twice**, both `ghcr.io/qemus/qemu:latest`, no tag and no digest:
-`mise/tasks/boot-vm:150` (the no-native-qemu fallback — `--rm --privileged --device /dev/kvm
---pull=always`, disk bind-mounted at `/boot.img`) and `mise/tasks/convert-to-qcow2:82`
-(`--entrypoint qemu-img` over the built disk). `--pull=always` makes it strictly worse:
-every run fetches whatever the tag points at now.
+**krytis was exposed twice** when this was mined: `mise/tasks/boot-vm` (the
+no-native-qemu fallback, run with `--pull=always`) and `mise/tasks/convert-to-qcow2` both
+ran `ghcr.io/qemus/qemu:latest`. krytis's `a045d77` fixed both. They now share
+`QEMU_IMAGE_REF="ghcr.io/qemus/qemu:7.50@sha256:e7f6fda5…"` (`boot-vm:17`,
+`convert-to-qcow2:29`), and `--pull=always` is gone, since a digest names exactly one image.
+krytis's other third-party image was already pinned the same way:
+`mise/tasks/chunkify:10` holds `quay.io/coreos/chunkah:v0.7.0@sha256:8b565782…`.
 
-This is an omission, not a policy difference — krytis already does it right for its other
-third-party image. `mise/tasks/chunkify:10` pins
-`quay.io/coreos/chunkah:v0.6.0@sha256:ff8b8b46…`, `mise/tasks/chunkah-update` bumps it, and
-the `track-chunkah` job in `.github/workflows/track-bst-sources.yml` drives that on a
-schedule.
-
-**What makes a pin durable:** Renovate cannot see either `qemus/qemu` ref. They live in bash
-task scripts rather than a manifest, and `.github/renovate.json5`'s custom regex managers
-cover only `mise.toml` + `Containerfile.runner` (`actions/runner`), `mise.toml`
-(`protonpass/pass-cli`) and `.github/workflows/*.yml` (`jdx/mise`). A digest with no update
-path trades a supply-chain hole for a rot hole: pin *and* add the manager, or the
-`<name>-update` task + tracking job that `chunkah` already demonstrates.
+**What makes a pin durable** is still the part worth carrying. Renovate cannot see either
+ref: they live in bash task scripts rather than a manifest, and `.github/renovate.json5`'s
+custom regex managers cover only `mise.toml` + `Containerfile.runner` (`actions/runner`),
+`mise.toml` (`protonpass/pass-cli`) and `.github/workflows/*.yml` (`jdx/mise`). A digest
+with no update path trades a supply-chain hole for a rot hole. So each pin comes with a
+`<name>-update` task and a tracking job: `mise/tasks/chunkah-update` + `track-chunkah`, and
+`mise/tasks/qemu-image-update` + `track-qemu-image`, both in
+`.github/workflows/track-bst-sources.yml`.
 
 ### An emulator probe that fails to exec costs you the serial log, not just the binary
 
@@ -247,28 +256,144 @@ status is `tr`'s, which is 0 even when `cat` failed, the `||` never fires, and t
 gets `""` where it expected `true` / `systemd` / a label — a boot-critical default failing
 open as the empty string.
 
-**krytis has five**, all in scope and therefore correct today: `scripts/iso-sd-boot.sh:81`
-(`live_target`), `:83` (`composefs`), `:267` (`live_label`), and
-`scripts/iso-install-fisherman.sh:48` (`live_target`), `:50` (`bootloader`). Both scripts set
-`set -euo pipefail` at the top (`iso-sd-boot.sh:31`, `iso-install-fisherman.sh:18`).
+**krytis had five; one is left.** Before #1247 the five were `scripts/iso-sd-boot.sh`
+(`live_target`, `composefs`, `live_label`) and `scripts/iso-install-fisherman.sh`
+(`live_target`, `bootloader`), all correct only because both scripts set
+`set -euo pipefail` at the top (`iso-sd-boot.sh:31`, `iso-install-fisherman.sh:18`). #1247
+replaced four with constants. The survivor, `LIVE_LABEL` at `iso-sd-boot.sh:246`, now fails
+loudly if it comes out empty: it is passed to `live/src/build-iso.sh --label`, whose
+`${2:?--label requires a string}` aborts the build.
 
-The hazard is that the correctness of those defaults is carried by a `set` line hundreds of
+The hazard is that the correctness of such defaults is carried by a `set` line hundreds of
 lines away, and this repo **already** crosses shell boundaries where that line does not
 survive: `iso-sd-boot.sh` `export -f`s `_ns_build_squashfs` and re-enters it via `podman
-unshare bash -c '_ns_build_squashfs'` (259), which is why the function re-asserts `set -euo
-pipefail` on its own first line (144); `iso-install-fisherman.sh` builds a `sudo bash -c "…"`
-string that re-asserts it too (96). Move any of the five reads into a helper, into that
-`podman unshare` sub-invocation or into an `sh -c`, and it fails mute — an empty
-`COMPOSEFS_BACKEND` fails the `== "true"` tests at `iso-sd-boot.sh:170,223`, so the payload
-is staged as an overlay store at `usr/lib/containers/storage`, which is neither the path nor
-the driver the live image's `storage.conf` looks for
-(`live/src/configure-live-krytis.sh:222-230`: `driver = "vfs"`,
+unshare bash -c '_ns_build_squashfs'` (238), which is why the function re-asserts `set -euo
+pipefail` on its own first line (150); `iso-install-fisherman.sh` builds a `sudo bash -c "…"`
+string that re-asserts it too (95). Move a read like this into a helper, into that `podman
+unshare` sub-invocation or into an `sh -c`, and it fails mute. Before #1247 the concrete
+case was an empty `COMPOSEFS_BACKEND`: it staged the payload as an overlay store at
+`usr/lib/containers/storage`, which is neither the path nor the driver the live image's
+`storage.conf` looks for (`live/src/configure-live-krytis.sh:222-230`: `driver = "vfs"`,
 `additionalimagestores = ["/var/lib/containers/storage"]`).
 
 Note the asymmetry one line up: `LIVE_TITLE=$(cat … || echo 'Krytis Live')`
-(`iso-sd-boot.sh:266`) has no pipe and is pipefail-independent — only the whitespace-stripped
+(`iso-sd-boot.sh:245`) has no pipe and is pipefail-independent — only the whitespace-stripped
 reads are fragile. Upstream's fix made the *reader* pipefail-independent rather than trusting
 every caller to have set it.
+
+**pipefail does not save you from a blank file.** *Source: dakota-iso `fee4040` — "fix(build):
+unify composefs resolution across host, container, and squashfs scripts (#176)". Mined
+2026-10-14.* `|| echo "$default"` covers a **missing** file only. With pipefail in scope, an
+empty or whitespace-only file still gives `cat` exit 0 and `tr` output `""`, so the caller
+gets the empty string anyway. Upstream's reader now trims and then falls back when the value
+is missing **or** blank (`read_variant_config` mirrors `_vc_read`), and each mode has one
+authority for composefs instead of three scripts deciding it separately.
+
+krytis had the pre-fix split until #1247. A blank `live/src/krytis/composefs` would have made
+one build run half of each path:
+
+| Reader (before #1247) | Blank file meant | Path taken |
+|---|---|---|
+| `scripts/iso-sd-boot.sh` (`… \| tr -d … \|\| echo "true"`) | `""` | overlay store at `usr/lib/containers/storage` (its `== "true"` tests failed) |
+| `live/iso-tools/payload-prep.sh` (`${COMPOSEFS_BACKEND:-true}`, received the exported value) | `true` | VFS/squash payload |
+| `live/src/configure-live-krytis.sh` (`images.json` `"composefs": true`, `recipe["composeFsBackend"] = True`), `scripts/iso-install-fisherman.sh` | ignored, hardcoded `true` | composefs install recipe |
+
+Setting the file to `false` broke it the other way: the overlay store was embedded, but the
+recipe and the live `storage.conf` (`driver = "vfs"`) still expected composefs. Krytis is
+single-target and always composefs, so #1247 deleted the knob instead of porting upstream's
+resolver. The overlay branches in `iso-sd-boot.sh` and the unsquashed branch in
+`payload-prep.sh` went with it, and the file, the `COMPOSEFS_BACKEND` variable and its
+exports no longer exist.
+
+### The ISO's embedded payload and the installer's `local_imgref` are set independently
+
+*Source: dakota-iso `bd407ff` (guard that the embedded ISO payload is the image the installer
+requests, #223) and `965938f` (#241). Mined 2026-10-14.*
+
+Upstream's Utah ISO embedded `utah:testing` while its installer recipe asked for
+`utah-nvidia:testing`. Every offline install then failed with `pull failed attempt podman pull
+containers-storage …`. The two names are configured in unrelated files and agreed only by
+convention. Upstream now treats `<variant>/payload_ref` as the source of truth and tests the
+workflow embed, `configure-live.sh`'s default and the `images.json` catalogue against it.
+
+krytis has the same split:
+
+- **Embed:** `scripts/iso-sd-boot.sh:45` uses `PAYLOAD_REF`, else `krytis/payload_ref`.
+- **Installer:** `live/src/configure-live-krytis.sh:249` bakes
+  `KRYTIS_IMGREF=${PAYLOAD_REF:-ghcr.io/starlit-os/krytis:latest}` into `recipe.json`
+  (`local_imgref`, `image`, `imgref`) and `images.json`.
+- `mise run build-iso` passes one `PAYLOAD_REF` to both. `mise run iso-container-build`
+  without `--payload-ref` relies on two literals happening to match, and
+  `.github/workflows/build-iso.yml` hardcodes a third copy.
+- **The E2E install can't catch it:** `scripts/iso-install-fisherman.sh:34-46` writes its
+  own recipe from `payload_ref`, and on a miss falls back to a `docker://` network pull, so
+  an online E2E run passes even when the offline GUI install would fail.
+
+**Gated since #1248.** `mise/tasks/verify-iso-payload` used to match the store entry by image
+ID only (its `names` were printed, not asserted). It now also reads
+`etc/bootc-installer/recipe.json` from the same squashfs. It fails unless `local_imgref` is a
+`containers-storage:` ref, and unless every `containers-storage:` ref in the recipe
+(`local_imgref`, `image`), minus the prefix, is among the matched store entry's `names`.
+`targetImgref` and the bare `imgref` are deliberately not checked: they name what the
+installed system tracks, which may legitimately be remote. `build-iso` runs it on every
+build. Sealed builds match the store entry by image ID first. Unsealed builds pass
+`--names-only` (#1261), because `payload-prep.sh` re-commits the payload and the ID can't
+match, so the entry is found by the recipe's own `local_imgref`. `iso-install-test
+--secure` also runs the sealed form.
+
+### Resolve a binary before prefixing `sudo` — `command -v` answers for the caller's PATH
+
+*Source: dakota-iso `9c123ee` — "docs(skills): capture CI action pin dereferencing and sudo
+PATH lessons (#234)". Mined 2026-10-14. The pin-dereferencing half is already covered in
+[`ci-runner.md`](ci-runner.md) § SHA pinning — do it by hand; `mise lint` does not auto-pin.*
+
+Upstream's `cosign` was installed by a setup action into `$GITHUB_PATH` and vanished under
+`sudo just`, because the runner's sudoers sets `secure_path`. The general shape:
+`command -v tool && sudo tool` tests one PATH and executes with another.
+
+**Whether PATH survives depends on the host's sudoers, not on "sudo".** Checked 2026-10-14:
+
+- **krytis host:** sudo-rs 0.2.15. Its default `env_keep` includes `PATH`
+  (trifectatechfoundation/sudo-rs `src/defaults/mod.rs` at `v0.2.15`), and krytis's
+  `/etc/sudoers` is `#includedir /etc/sudoers.d` with no `secure_path` in any drop-in
+  (`elements/core/sudo-rs.bst`). The caller's PATH is kept, so this does **not** bite on
+  krytis.
+- **Fedora, Debian and Ubuntu default sudoers** set `Defaults secure_path=…`. There, a tool
+  found only under `$HOME` or Linuxbrew is gone under sudo.
+
+**Fixed in krytis for #1249.** `scripts/e2e-lib.sh` `e2e_monitor` was exposed on a non-krytis
+dev host. It set `prefix=sudo` when the QEMU monitor socket was root-owned, checked
+`command -v socat` on the user's PATH, then ran `$prefix socat … 2>/dev/null || true`. A
+brew-only socat passed the check, failed under sudo, and the error was swallowed before the
+python3 fallback could run, so `system_powerdown`/`quit` (`scripts/iso-install-fisherman.sh`)
+and `screendump` (`mise/tasks/iso-verify-boot`) were silently dropped. Only `_e2e_stop`'s
+SIGKILL fallback hid it.
+
+It now resolves first and then prefixes, for both socat and the python3 fallback:
+`socat=$(command -v socat)` → `$prefix "${socat}" …`. To reproduce without a
+`secure_path` host, put a stub `sudo` that runs `env PATH=/usr/bin:/bin "$@"` and a
+user-only stub `socat` first on `PATH`, then `chmod 555` the socket so the prefix is taken.
+The old code dropped the command and the new code delivered it.
+
+### `images.json` `flatpak_var_path` is the target's var **root**
+
+*Source: dakota-iso `0a349a9` — "fix(iso): installed ostree systems get their Flatpaks
+(#225)". Mined 2026-10-14.*
+
+fisherman appends `lib/flatpak` to `flatpak_var_path` itself
+(`filepath.Join(target, flatpakVarPath, "lib", "flatpak")` in tuna-os/fisherman
+`fisherman/internal/post/post.go` `CopyFlatpaks`, checked at `b0348d98` on 2026-10-14).
+Upstream's ostree variants set it to `var/lib/flatpak`, so Flatpaks were copied to
+`/sysroot/var/lib/flatpak/lib/flatpak` and installed systems had none. Upstream's own
+comment described the key the wrong way too.
+
+krytis's value is correct: `state/os/default/var`, in the `images.json` heredoc in
+`live/src/configure-live-krytis.sh`, which now carries a comment saying so (#1250). The
+key name invites a "fix" to `…/var/lib/flatpak`, which would ship installed systems with no
+Flatpaks and no error. When the key is empty, fisherman auto-detects a composefs-native
+target and lands on the same `state/os/default/var/lib/flatpak`, so for krytis the
+explicit value only pins what auto-detection would choose. A wrong value is the only way
+to break it.
 
 ---
 

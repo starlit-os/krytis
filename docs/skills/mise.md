@@ -1108,7 +1108,7 @@ fi
 groups them by purpose, because a hand-maintained copy of the tree rots: the list
 that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**25 of the 117 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**25 of the 119 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. Count from the
 **tree**, not the CLI: `find mise/tasks -type f | wc -l` and
 `grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
@@ -1123,12 +1123,12 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `portal-routing-check [--tag]` — resolve xdg-desktop-portal routing headlessly under `niri` and `Umbriel` and compare every interface's backend against the table in the task, run by `build`; it also fails on an unparsable `.portal` file, on a krytis `/etc/xdg` routing key whose removal changes nothing, and on an Umbriel `none` pin for an interface `umbriel.portal` now declares (#1027, #1028, #1029, see [`desktop.md`](desktop.md) § xdg-desktop-portal routing); `umbriel-portal-smoke [--image]` — run umbriel headlessly with xdg-desktop-portal and assert that Settings (color-scheme) reaches apps through xdp-gnome without gnome-shell, both the value and the `SettingChanged` signal (#1029); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon; `oo7-portal-test [--artifact] [--keep]` — drive oo7-portal's `RetrieveSecret` on a private bus across two daemon restarts and fail if an app's token ever changes or a locked Login gets a new one; run it on every oo7 re-pin (#1028, see `docs/design/secrets-service.md` § Secret portal (oo7-portal) — shipping since #1028) |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
-| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts; `homed-ssh-fallback-test [--reuse-disk <raw>]` — boot the image, create a homed user, and assert a pubkey-only SSH login reaches a mounted home through `systemd-home-fallback-shell` (see [`pam.md`](pam.md) § Two consequences of key-only SSH, #422) |
+| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `tpm-install-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts; `homed-ssh-fallback-test [--reuse-disk <raw>]` — boot the image, create a homed user, and assert a pubkey-only SSH login reaches a mounted home through `systemd-home-fallback-shell` (see [`pam.md`](pam.md) § Two consequences of key-only SSH, #422); `oomd-test [--reuse-disk <raw>]` — boot the image, start a lingering user's manager, and assert systemd-oomd monitors only users' `app.slice` cgroups, kills a `MemoryHigh=`-throttled hog there, leaves an idle `app.slice` sibling and a `session.slice` canary alive, and that `noctalia.service` is enabled in `session.slice` (#1216, #1253; see [`desktop.md`](desktop.md) § systemd-oomd) |
 | Supply chain | `sbom` `vuln-scan` `sign` `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
-| Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list) |
-| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below); `patch-inventory-check` — fail if a `kind: patch` source or owned-org fork pin has no row in [`docs/design/carried-patches.md`](../design/carried-patches.md), or a row names a carry that is gone (`checks.yml`, every PR; see below); `image-inventory [--write] [--check]` — regenerate or check the list of krytis elements in the image in [`docs/design/image-inventory.md`](../design/image-inventory.md), keeping hand-written descriptions; `--check` fails on drift or an empty description (`checks.yml`, every PR); `ref-status [--ref <rev>] [--text-file <path>] [--no-issues] [--all]` — report-only: closed krytis `#N` next to open-status wording, and other projects' issue/PR status claims flagged undated, stale or closed, across `docs/`, `elements/`, `mise/tasks/` and open issue bodies. A manual step of the `skill-rot-audit` skill, not a gate: it needs `gh` auth and exits 0 whatever it finds (see below) |
+| Docs & upstreams | `docs-links` `upstream-sync` `bazaar-recommends-diff` — diff Bluefin's Bazaar curated list against `docs/design/bazaar-curated-candidates.md` (see [`desktop.md`](desktop.md) § Bluefin's Bazaar curated list); `upstream-policy-check` — fail if an upstream krytis carries a patch against or cites an open issue/PR in has no row in [`docs/design/upstream-ai-policies.md`](../design/upstream-ai-policies.md), or a row is held by nothing (needs `gh`; not in `checks.yml`; see below) |
+| Repo hygiene | `prune-worktrees` — remove worktrees/branches whose PR is merged (see [`workflow.md`](workflow.md)); `large-blob-check` — fail if any tracked file exceeds 5 MiB, allowlist in the task itself (`checks.yml` runs it on every PR; see below); `patch-inventory-check` — fail if a `kind: patch` source or owned-org fork pin has no row in [`docs/design/carried-patches.md`](../design/carried-patches.md), or a row names a carry that is gone (`checks.yml`, every PR; see below); `image-inventory [--write] [--check]` — regenerate or check the list of krytis elements in the image in [`docs/design/image-inventory.md`](../design/image-inventory.md), keeping hand-written descriptions; `--check` fails on drift or an empty description (`checks.yml`, every PR); `ref-status [--ref <rev>] [--text-file <path>] [--no-issues] [--all]` — report-only: closed krytis `#N` next to open-status wording, and other projects' issue/PR status claims flagged undated, stale or closed, across `docs/`, `elements/`, `mise/tasks/` and open issue bodies. A manual step of the `skill-rot-audit` skill, not a gate: it needs `gh` auth and exits 0 whatever it finds (see below); `labels-sync [--check]` — create/update the `effort:*` and `tracking` issue labels defined in the task; `--check` lists open issues without exactly one effort label (see [`github-projects.md`](github-projects.md) § Effort labels) |
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 | Element pin checks | `rust-bindgen-check` `gnome-disk-utility-check` — assert a forked override still matches the freedesktop-sdk / gnome-build-meta element it was copied from; `gtk3-mirror-check` — the same for every GTK3-strip mirror of #641 (`overrides/libportal.bst`, `gnome-desktop.bst`, `libdecor.bst`), table-driven, failing with "delete this mirror" once upstream drops GTK3 itself (see [`bst.md`](bst.md) § Default-`auto` meson features are *on* in both junctions); `libdisplay-info-check` — whether the 0.3.0 hold can be dropped yet; `greetd-relock` — regenerate greetd's `Cargo.lock` bump patch; `gtk3-audit [--tag]` — graph + ELF scan of what still pulls GTK3 in, against a ratcheting allowlist that each #641 step trims (see [`bst.md`](bst.md) § "What pulls library X into the image" needs the graph *and* an ELF scan) |
@@ -1211,6 +1211,19 @@ until somebody classifies it. As with `large-blob-check`'s allowlist, a `FIRST_P
 entry no source uses any more fails the gate. A fork in an org krytis doesn't own looks
 like any upstream URL, so the check can't see it; such pins still need a hand-written
 row.
+
+**`upstream-policy-check` imports `ref-status` instead of copying its reference
+parser.** Loading the extension-less task with `importlib.machinery.SourceFileLoader`
+gives it ref-status's `tree_sources`/`extract`/`github_states` unchanged, so the two
+tasks can never disagree about what an `owner/repo#N` is, and GraphQL's rename
+following comes for free: `containers/podman#27779` lands on the
+`github.com/podman-container-tools/podman` row with no alias table. Two consequences.
+The policy doc is excluded from its own scan, or every row would justify itself
+through the citations in its Details section. And `--no-issues` turns off the STALE
+row check, because about a quarter of the upstreams (seance, umbriel, Flathub,
+rust-lang/rust) are cited only in open krytis issue bodies. It needs network and
+`gh` auth, so unlike `patch-inventory-check` it is not a `checks.yml` gate: run it
+when adding a carry or citing a new upstream issue.
 
 **`ref-status` is a lead generator, so precision mattered more than recall — the first
 draft drowned its own signal.** Run against the tree just before #1069 (the doc-rot fix
@@ -1310,6 +1323,25 @@ Do **not** hide a task merely because another task calls it. `bst` `validate` `b
 `pull-keys` `mise-lock` are all called internally *and* run directly by humans, so they
 stay visible. `load-image-root` in particular was split out of `generate-disk` in #588
 specifically to be run standalone.
+
+## Agents can run the sudo steps: use a pty
+
+`generate-disk`, and every task that calls it (`boot-test`, `homed-ssh-fallback-test`,
+`oomd-test` and others without `--reuse-disk`), runs `sudo`. `sudo -n true` fails with
+"interactive authentication is required", but that does **not** mean an agent is blocked
+or has to hand the command to the human. Run the task in a **pty** (the agent's `pty`
+option, not a pipe). sudo then prompts in the session for the FIDO2 PIN and a touch,
+and the human answers there. Seen 2026-10-14 (#1216): `generate-disk` ran end to end
+this way. Earlier sessions concluded "no sudo available" from the `sudo -n` failure
+and fell back to stale `--reuse-disk` images.
+
+Run the root step once, then iterate unprivileged: `generate-disk --disk /var/tmp/<name>.raw`
+followed by `--reuse-disk /var/tmp/<name>.raw` on each test. Each test copies the disk or
+boots it without installing, so one install serves `boot-test` and `oomd-test` alike.
+
+The same applies to commit signing: `env -u SSH_AUTH_SOCK git commit` in a pty, with the
+human touching the key when asked (see [`workflow.md`](workflow.md) § `agent refused
+operation` is a missed touch window, not a broken setup).
 
 ## `boot-test` provisions the guest with systemd credentials, not disk edits
 
@@ -1828,7 +1860,7 @@ Flags are resolved by the task and handed to `iso-sd-boot.sh` as environment (`T
 | `--sealed` | Embed the signed-UKI image as the offline payload: the payload ref becomes `ghcr.io/starlit-os/krytis:sealed` (so `recipe.json`'s `targetImgref` follows the sealed stream — pointing it at `:latest` would make the first `bootc upgrade` replace the signed boot chain, #371), `PAYLOAD_SEALED=1` makes the embed byte-identical, and the output is renamed `krytis-live-sealed.iso`. `./scripts/ensure-sealed-image.sh` runs first. The live *environment* stays unsigned either way — sealing concerns the payload only. |
 | `--payload-image <ref>` | `--sealed` only (errors out otherwise): embed an already-built image as-is instead of `localhost/krytis:sealed`, never re-sealing it. Use the published ref for release validation, where local bits wearing the published name would prove nothing. |
 
-Artifacts land in `OUTPUT_DIR`: `output/krytis-live.iso`, or `output/krytis-live-sealed.iso` for `--sealed` (`iso-sd-boot.sh` always writes `${TARGET}-live.iso`; the task renames afterwards). The intermediates — `krytis-rootfs.sfs`, `krytis-boot-files.tar`, `krytis-payload*.oci.tar` — are cleaned up by the script's EXIT trap. A sealed build ends by running `mise/tasks/verify-iso-payload`, which asserts the finished ISO really embeds the expected image ID.
+Artifacts land in `OUTPUT_DIR`: `output/krytis-live.iso`, or `output/krytis-live-sealed.iso` for `--sealed` (`iso-sd-boot.sh` always writes `${TARGET}-live.iso`; the task renames afterwards). The intermediates — `krytis-rootfs.sfs`, `krytis-boot-files.tar`, `krytis-payload*.oci.tar` — are cleaned up by the script's EXIT trap. Every build ends by running `mise/tasks/verify-iso-payload`. It asserts that each `containers-storage:` name the baked installer `recipe.json` requests is a name of the embedded image (#1248; `dakota-iso.md` § The ISO's embedded payload and the installer's `local_imgref` are set independently). A sealed build also asserts that the finished ISO embeds the expected image ID. An unsealed build runs it with `--names-only`, because `payload-prep.sh` re-commits an unsealed payload, so its ID can never match (#1261).
 
 ### The payload is resolved by tag — a missing local tag embeds a stale image silently
 
@@ -1879,10 +1911,9 @@ Krytis runs **rootless** podman. Three things this breaks compared with a rootfu
 
 ### The offline store is embedded as a **vfs** `containers-storage`
 
-`iso-sd-boot.sh`'s `_ns_build_squashfs` imports the prepped payload archive into a `containers-storage` that ships inside the squashfs, via `skopeo copy oci-archive:… containers-storage:…` inside a `podman run --privileged` container writing to a plain bind-mounted host directory (`CS_STAGING`, on `WORKDIR`'s real filesystem — recommend xfs/ext4/btrfs per the `findmnt` hint earlier in the script). Which store it writes is chosen by `live/src/<variant>/composefs`:
+`iso-sd-boot.sh`'s `_ns_build_squashfs` imports the prepped payload archive into a `containers-storage` that ships inside the squashfs, via `skopeo copy oci-archive:… containers-storage:…` inside a `podman run --privileged` container writing to a plain bind-mounted host directory (`CS_STAGING`, on `WORKDIR`'s real filesystem — recommend xfs/ext4/btrfs per the `findmnt` hint earlier in the script). The store is always `driver = "vfs"` at `/var/lib/containers/storage`, copied into the squashfs root with `cp -a`.
 
-- **`composefs=true`** (krytis) — `driver = "vfs"`, store at `/var/lib/containers/storage`, copied into the squashfs root with `cp -a`.
-- **`composefs=false`** — `driver = "overlay"`, store at `/usr/lib/containers/storage`, copied with `rsync -a --no-specials --no-devices` (overlay whiteout char-devices need privilege the rootless copy step doesn't have).
+Until #1247 there was a second, overlay branch (`driver = "overlay"` at `/usr/lib/containers/storage`, copied with `rsync -a --no-specials --no-devices`), chosen by a `live/src/<variant>/composefs` file inherited from dakota-iso. It was never usable on krytis: the installer recipe and the E2E install hardcode composefs, and a blank file sent this script and `payload-prep.sh` down different branches (`dakota-iso.md` § `cat f | tr -d … || echo default` loses its default without pipefail). #1247 deleted the file, the `COMPOSEFS_BACKEND` variable and both non-composefs branches.
 
 Three other places encode krytis's vfs layout, and all four move together or not at all: `live/src/configure-live-krytis.sh` writes the live `/etc/containers/storage.conf` with `driver = "vfs"`; `live/iso-tools/payload-prep.sh` injects the same storage.conf into unsealed payloads; and `mise/tasks/verify-iso-payload` reads `var/lib/containers/storage/vfs-images/images.json` straight out of the ISO's squashfs.
 
@@ -1918,7 +1949,7 @@ The payload is then only ever the read-only additional store, never the primary 
 
 #248 argued that vfs on the `composefs=true` embed step was a misdiagnosis carried over from a different step. The *actual* rootless overlay-on-overlayfs constraint lives in `payload-prep.sh` (buildah's own working-container storage on the iso-tools container's overlayfs rootfs — rootless gotcha #2 above, still true), whereas the embed step is already `--privileged` and writes to a bind mount, not to the container's own overlayfs — which is why the `composefs=false` sibling branch has always used `driver = "overlay"` there successfully. So it switched the composefs branch to overlay (plus the `rsync` copy) to get rid of the `bootc update` warning above.
 
-That change is **not** in the pipeline krytis owns: `scripts/iso-sd-boot.sh` keeps `driver = "vfs"` and `cp -a` on the `composefs=true` branch, and the live `storage.conf`, the payload-prep injection and the `verify-iso-payload` gate all encode the vfs layout. The reasoning still holds, so re-porting it is possible — but it means changing all four places in one pass plus a real `mise run iso-install-test` to confirm the warning is gone, not editing the embed step alone.
+That change is **not** in the pipeline krytis owns: `scripts/iso-sd-boot.sh` keeps `driver = "vfs"` and `cp -a` (its only branch since #1247), and the live `storage.conf`, the payload-prep injection and the `verify-iso-payload` gate all encode the vfs layout. The reasoning still holds, so re-porting it is possible — but it means changing all four places in one pass plus a real `mise run iso-install-test` to confirm the warning is gone, not editing the embed step alone.
 </details>
 
 ### Status
@@ -1933,6 +1964,7 @@ That change is **not** in the pipeline krytis owns: `scripts/iso-sd-boot.sh` kee
 | `iso-e2e-test` | Orchestrates the three above; internal helper — `--install-only` stops after the install |
 | `iso-install-test` | Full ISO → fisherman → disk install, then the boot verdict via `boot-test` (`--secure`, `--expect-fail` for the negative secure-boot test) |
 | `luks-install-test` | Same, installing to an encrypted root and answering the passphrase prompt (#473) |
+| `tpm-install-test` | Same, with the GUI's TPM default (`tpm2-luks-passphrase`) and swtpm attached; boots the same disk twice and reports what fisherman's first-boot TPM2 enrollment did (#1276). `--expect <outcome>` makes it a gate; `--reuse-disk <img>` reboots a kept install |
 
 Their scratch paths are fixed rather than temp-dir'd, so a failed run leaves them for inspection: `/var/tmp/krytis-install.img` (install target), `/var/tmp/krytis-scratch.img` (the live VM's `/var/tmp`), `/tmp/krytis-qemu-{live,installed}.sock` (HMP monitors), `/tmp/krytis-qemu-{live,installed}-serial.log`, and `/var/tmp/krytis-qemu-{live,installed}-vars.fd` (writable OVMF varstores).
 

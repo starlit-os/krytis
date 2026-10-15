@@ -191,7 +191,7 @@ Merge semantics that make the overlay safe (`src/config/config_merge.cpp`,
   only `Mod+Return` is replaced; `Mod+Return` itself merges key-by-key, so
   setting only `action` inherits upstream's `repeat`/`allow_when_inhibited`.
 - Non-table values and non-table arrays are **replaced wholesale** — that is
-  what `autostart = ["noctalia"]` relies on, and it is also how a later file
+  what `autostart = [ … ]` relies on, and it is also how a later file
   drops what an earlier one contributed (including via an empty array).
 - Arrays of tables (`[[window_rule]]`, `[[layer_rule]]`, `[[workspace]]`,
   `[[input.device]]`) **accumulate** across files rather than replacing.
@@ -1007,9 +1007,10 @@ immediately: the compositor came up perfectly and all three markers were missing
 marker belongs to the process under test before trusting it; a passing grep against a
 combined stdout proves only that *something* logged it.
 
-`spawned 'noctalia' on WAYLAND_DISPLAY=` is umbriel reporting that it acted on
-`autostart = ["noctalia"]`, so `--shipped-config` is also the proof that the `[include]`
-overlay really **merged** rather than merely parsed — a validator cannot tell those apart.
+`spawned 'flatpak run --command=bazaar-daemon … --no-window' on WAYLAND_DISPLAY=` is umbriel
+reporting that it acted on krytis's `autostart`, so `--shipped-config` is also the proof that
+the `[include]` overlay really **merged** rather than merely parsed — a validator cannot tell
+those apart. The marker was `spawned 'noctalia'` until #1253 moved noctalia to `noctalia.service`.
 Observed on the reference machine (Iris Xe):
 `[wlr] [render/fx_renderer/fx_renderer.c:600] GL renderer: Mesa Intel(R) Iris(R) Xe Graphics (RPL-U)`.
 
@@ -1421,6 +1422,28 @@ boot-time oneshot.
 **Shipping a different theme** means all three places: the theme files somewhere on the
 path (`~/.local/share/icons/<Theme>` is already covered by the override), the name in
 `cursor { }`, and the name in `90-krytis-session.conf`.
+
+## Sandboxed apps can't reach the clipboard through Xwayland without an X11 window in focus
+
+Password managers built on Electron (Proton Pass, Bitwarden) copy with the Rust `arboard`
+crate, not Electron's clipboard. On Wayland, arboard uses the `wlr`/`ext` data-control
+protocols. Compositors withhold those from clients flagged as sandboxed through
+`security-context-v1`, so a Flatpak build shows its "copied" toast and the clipboard keeps
+its old contents. Flathub's usual fix is to grant `--socket=x11` so arboard writes the X11
+clipboard instead, but that only reaches Wayland apps if the Xwayland bridge passes it
+on. Neither bridge krytis ships does that while a Wayland window has focus:
+
+- **niri / xwayland-satellite:** satellite calls `wl_data_device.set_selection` with its
+  last keyboard serial. smithay rejects it from a client without keyboard focus ("denying
+  setting selection by a non-focused client").
+- **Umbriel / wlroots Xwayland:** `xwayland/selection/incoming.c` returns early when no
+  Xwayland surface has focus. The primary selection isn't gated, so middle-click paste may
+  still work.
+
+So the X11-socket fix works only when the app's own window is on X11:
+`flatpak override --env=XDG_SESSION_TYPE=x11 <app-id>` for Electron ≥ 38.2. This is from
+reading the source on 2026-10-15, not from a run; `docs/design/proton-pass-flatpak.md` has
+the citations and the test matrix. It's why native `desktop/proton-pass.bst` stays.
 
 ## Validating niri Config Changes
 
@@ -2142,11 +2165,43 @@ command by default, so behaviour is unchanged until a user wires it up. See
 
 ### systemd-oomd
 
-Already compiled into our systemd build. Enable via a config element (`elements/config/oomd.bst`) that drops:
-- `/usr/lib/systemd/oomd.conf.d/krytis.conf` — SwapUsedLimit=90%, pressure limit 60%, duration 20s
-- `/usr/lib/systemd/system-preset/70-krytis-oomd.preset` — `enable systemd-oomd.service`
+`elements/config/oomd.bst`, pulled in by `stacks/base-system.bst`. The daemon is part of our systemd build; the element ships two files:
+- `/usr/lib/systemd/system-preset/70-krytis-oomd.preset`: `enable systemd-oomd.service`.
+- `/usr/lib/systemd/user/app.slice.d/10-krytis-oomd.conf`: `ManagedOOMMemoryPressure=kill`, `ManagedOOMMemoryPressureLimit=50%`, `ManagedOOMMemoryPressureDurationSec=20s` on the **user** manager's `app.slice`.
 
-Add to `stacks/base-system.bst` (system-level, not desktop-level). Pattern: `strip-commands: [':']` since no binaries.
+Check it on a booted image with `oomctl`. "Memory Pressure Monitored CGroups" should list `…/user@<uid>.service/app.slice` for each logged-in user, and nothing should be listed under swap.
+
+**An enabled oomd does nothing unless a unit opts in.** oomd only watches cgroups whose unit sets `ManagedOOMSwap=kill` or `ManagedOOMMemoryPressure=kill`. Fedora gets those from its `systemd-oomd-defaults` subpackage and Ubuntu from `debian/extra/systemd-oomd-defaults/`. Neither freedesktop-sdk nor gnome-build-meta ships an equivalent. From #219 to #1216, krytis enabled the service and armed nothing. Its `oomd.conf.d` drop-in also used an `[OOMPolicy]` section; `oomd.conf` only has `[OOM]`, and the journal says so (`Unknown section 'OOMPolicy'. Ignoring.`). Validate any oomd or unit drop-in with `systemd-analyze` before shipping it: put the file next to a copy of the unit, run `SYSTEMD_UNIT_PATH=<dir>: systemd-analyze --user verify <dir>/app.slice`, and add a bogus key as a control so you know the check can fail.
+
+**Why `app.slice` and not `user@.service`.** oomd chooses its victim by reclaim activity (`oomd_select_by_pgscan_rate` in `src/oom/oomd-util.c`), ignores `oom_score_adj`, and kills the whole cgroup it picks. If it monitors `user@.service`, `session.slice/niri.service` and `session.slice/umbriel.service` are candidates next to the apps. niri is `BindsTo=graphical-session.target` and umbriel is `PartOf=umbriel-session.target`, so killing either one ends the session. Ubuntu ran exactly that setting (`kill` at 50 %) and turned it off in 26.10, after a deterministic oomd trigger killed the session in 7/10 runs (ubuntu-settings 26.10.1, LP #2089800, 2026-09). `app.slice` holds what users launch: niri's `app-niri-*.scope`, umbriel's `app-umbriel-<pid>-<n>.scope`, noctalia's launcher services and flatpak scopes. noctalia itself runs in `session.slice` as `noctalia.service` (#1253, see § noctalia runs as a user service).
+
+A user manager may arm its own units. oomd accepts a ManagedOOM registration from a non-root peer when the cgroup's owner matches the peer's uid (`process_managed_oom_message` in `src/oom/oomd-manager.c`), and `user@<uid>.service` and everything below it are owned by that uid. The user manager also writes the `user.oomd_avoid`/`user.oomd_omit` xattrs for `ManagedOOMPreference=` (`cgroup_xattr_apply` in `src/core/cgroup.c`: "The 'user.*' xattrs can be set from a user manager"). That was confirmed on adora on 2026-10-14: a prefix drop-in `app-krytistest-.scope.d/` set `user.oomd_avoid="1"` on a transient `app-krytistest-4242.scope`. This contradicts Ubuntu's `52-oomd-relax.conf`. Whether oomd then *honours* `avoid` on a user's `app.slice` is still unobserved; `systemd.resource-control(5)` says it does when the candidate and the monitored ancestor have the same owner. krytis doesn't rely on it: noctalia left `app.slice` instead.
+
+**Why no swap kill.** Ubuntu set `-.slice` to `ManagedOOMSwap=auto` in 2022, because the swap kill was killing browsers while the desktop still felt responsive (LP #1972159). Debian adopted the same default in `systemd 256~rc4-1`. `SwapUsedLimit` is also a percentage of total swap, so its meaning would change with #510's choice of swap backend.
+
+**Don't port Ubuntu 26.10's `OOMScoreAdjust` tiering as is.** Ubuntu lowers `user@.service` and about 39 session units to `-500` and leaves apps at `DefaultOOMScoreAdjust=100`. A child inherits `oom_score_adj` at fork, and a scope has no exec context, so it has no `OOMScoreAdjust=` to reset it. Scopes accept only `RuntimeMaxSec`, `TimeoutStopSec` and `OOMPolicy` beyond cgroup settings (`load-fragment-gperf.gperf.in`). A compositor at `-500` would therefore pass `-500` to everything it spawns into a scope: Mod+Return's seance, nautilus, noctalia, bazaar-daemon, and any spawn bind a user adds. A large build in that terminal would then outlive every app systemd started at `100`. Today every session process sits at `200` (the user manager's default), so the kernel kills the largest process, and niri (~100 MB) and noctalia (~200 MB) are rarely that. Tiering needs the spawner to reset the child's value first, the way niri already restores `RLIMIT_NOFILE` for its children. It was rejected for #1216 on these grounds.
+
+**Proof run:** `mise run oomd-test [--reuse-disk <raw>]` boots the image and checks the whole path. It starts a lingering user's manager, confirms every cgroup in `oomctl` is some user's `app.slice` and that nothing is swap-monitored, then runs a python3 hog under `MemoryHigh=128M` in `app.slice`. The hog must be killed by oomd itself: its journal line `Marked <hog> for killing due to memory pressure for <app.slice> …` must appear, and the kernel OOM killer must not run. An idle `app.slice` sibling and a `session.slice` canary must both survive. On the first passing run (2026-10-14, image `26.08.202610141308`), oomd marked the hog when `app.slice` `full` avg10 was 92.99 %, having stayed over the 50 % limit for more than 20 s. Four details that cost runs:
+- **Root's `app.slice` is listed too.** The harness's root SSH session starts `user@0.service`, and every user manager registers its own `app.slice`.
+- **The image has no `runuser`.** Use `setpriv --reuid= --regid= --init-groups`.
+- **`tail /dev/zero` is no hog here.** The image's `tail` is uutils, which does not buffer an endless line: it sat at 1.3 MiB with zero pressure for 180 s.
+- **`MemoryMax=` won't do.** It makes the kernel's memcg OOM killer act instead of oomd; `MemoryHigh=` throttling is counted as memory PSI and leaves the kill to oomd.
+
+### noctalia runs as a user service
+
+`elements/config/noctalia-service.bst` ships `noctalia.service` (`Slice=session.slice`, `WantedBy=graphical-session.target`, enabled by a `user-preset`). Neither compositor starts noctalia any more (`files/niri/startup.kdl`, `files/umbriel/config.toml`). The point is oomd: before #1253 both compositors spawned the shell into `app.slice`, so oomd could kill the panel, launcher and lock screen in one go.
+
+What made it work, each checked against source on 2026-10-14:
+- **Environment ordering.** `niri --session` calls `import_environment()` before `sd_notify(READY)` (`src/main.rs`), and `niri.service` is `Type=notify` and `Before=graphical-session.target`. umbriel imports `WAYLAND_DISPLAY … UMBRIEL_SOCKET` and only then starts `umbriel-session.target`, which binds `graphical-session.target` (`sessionEnvironmentCommand` in `src/server/server.cpp`). A unit `After=graphical-session.target` therefore sees `WAYLAND_DISPLAY` and `NIRI_SOCKET`/`UMBRIEL_SOCKET` under both compositors.
+- **`XDG_SESSION_ID` is load-bearing.** noctalia finds its logind session for the `Lock`/`Unlock` signals, brightness and logout from `XDG_SESSION_ID`, else `GetSessionByPID` (`src/dbus/logind/logind_service.cpp`). `GetSessionByPID` fails for a process under `user@.service`. Both start scripts import the whole login environment first (`niri-session`: bare `systemctl --user import-environment`; `start-umbriel`: every `ENVIRON` name), so the variable reaches the unit. A new session launcher that imports only a named list would silently break `loginctl lock-session` and lid-close locking.
+- **polkit.** The agent registers with `polkit_unix_session_new(XDG_SESSION_ID)`. polkitd falls back to `sd_uid_get_display` when the caller is not in a session (`polkitbackendsessionmonitor-systemd.c`), so registering from a service works.
+- **Launched apps must not inherit the cgroup.** noctalia's `launch_apps_as_systemd_services` defaults to `false` upstream. With `false`, every launched app is a child of noctalia: in `session.slice` that app escapes oomd and dies whenever noctalia restarts. `/etc/skel`'s `settings.toml` sets `true`, but only for new accounts, so `desktop/noctalia.bst` carries `patches/noctalia/launch-apps-as-systemd-services-by-default.patch`, which flips the struct default. The schema loader keeps the struct default for a missing key, and an explicit `false` still wins. noctalia only honours the setting when `/proc/self/cgroup` contains `/user@<uid>.service/` (`runningUnderSystemdUserManager`), which both the old scopes and the new service satisfy.
+- **Old accounts.** `config/niri-skel.bst` *copies* `startup.kdl`, so accounts created before #1253 still have `spawn-at-startup "noctalia"`. That spawn runs right after niri's READY, racing the service. `ExecCondition=/usr/bin/sh -c '! pgrep -x -U %U noctalia'` makes the service step aside cleanly when the spawn wins. Otherwise noctalia's single-instance lock makes one of the two exit 1 ("noctalia is already running"). Those accounts stay on the `app.slice` instance until the line is deleted. umbriel accounts are unaffected: `/etc/skel/.config/umbriel/config.toml` includes the system tier rather than copying it.
+- **`Restart=on-abnormal`, not `on-failure`.** It restarts after a crash or a kill, a kernel OOM kill included, but not after exit 1, which is also the duplicate-instance exit.
+
+`mise run oomd-test` asserts the placement (`Slice=session.slice`, `UnitFileState=enabled`) for a fresh user. It has no graphical session, so the unit never starts there. Checking it in a real session: `systemctl --user status noctalia.service`, `cat /proc/$(pgrep -x noctalia)/cgroup` (should end in `session.slice/noctalia.service`), and `journalctl --user -u noctalia -g 'logind session lock monitor active'`. Running as a service also means noctalia's own log reaches the journal for the first time. Under niri's spawn it went nowhere visible, and that hid a skel bug from #306 until #1253: `files/noctalia-skel/settings.toml` enabled the `cava` theme template, but the image ships no cava. The template's `apply.sh` exits 1 without `~/.config/cava/config`, so every account from skel logged `hook failed with exit code 1` on each theme apply. **Only list a `builtin_ids` template whose target app the image ships.** Check with `podman run --rm localhost/krytis:latest sh -c 'command -v <app>'` and read `/usr/share/noctalia/assets/templates/<id>/apply.sh` for what it requires.
+
+Testing the `ExecCondition` skip path with a transient unit needs the numeric UID. `systemd-run -p ExecCondition=…` does **not** expand specifiers, so `%U` reaches `pgrep` literally, `pgrep` errors with exit 2, `!` turns that into 0, and the unit starts: a false pass. With `$(id -u)` and noctalia running, the unit ends `inactive` with `ConditionResult=no` ("Skipped due to 'exec-condition'"), not failed. The shipped file is loaded from disk, where `%U` does expand (`pgrep -x -U 60339` in `systemctl status`). Verified on adora on 2026-10-14.
 
 ### amd-pstate EPP default
 

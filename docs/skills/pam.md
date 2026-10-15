@@ -176,7 +176,7 @@ $ sudo -k -v
 [sudo: authenticate] Try again with password:
 ```
 
-There is no `pam_systemd_home(8)` option to change this, and it is not unique to homed — [systemd/systemd#32615](https://github.com/systemd/systemd/issues/32615) is the same ask against `systemd-cryptsetup`, closed as not-easy by Poettering (USB enumeration timing at boot). `pam_u2f`, by contrast, checks device presence (`fido_dev_info_manifest`) before ever prompting for a PIN (`util.c:do_authentication()`) — confirmed empirically too, it never triggered a prompt with no device present.
+There is no `pam_systemd_home(8)` option to change this, and it is not unique to homed — [systemd/systemd#32615](https://github.com/systemd/systemd/issues/32615) is the same ask against `systemd-cryptsetup`. Poettering answered on 2024-05-02 that it is "not as easy as it might sound" (USB enumeration timing at boot), and it has had no activity since; it is still open, as of 2026-10-15. `pam_u2f`, by contrast, checks device presence (`fido_dev_info_manifest`) before ever prompting for a PIN (`util.c:do_authentication()`) — confirmed empirically too, it never triggered a prompt with no device present.
 
 **Fix: stop enrolling the homed login credential; remove any that already exist.** `files/fido2-tasks/fido2/enroll` no longer runs `homectl update --fido2-device=auto` at all. Instead, if it finds an existing `fido2HmacCredential` on the user's home record (left over from before this decision, or hand-enrolled against the grain), it removes it with `homectl update "$USER" --fido2-device=` — an empty value is homed's remove syntax (`parse_fido2_device_field()` unconditionally calls `drop_from_identity("fido2HmacCredential", "fido2HmacSalt")`, then only re-adds if the value is non-empty). Removal needs **no** account password — unlike enrollment, it does not re-key the LUKS/fscrypt slots (`and_change_password` is only set when `arg_fido2_device` ends up non-empty), so this is safe for a script to do unprompted. Verified live: `homectl update lily --fido2-device=` returned immediately with no prompt, `fido2HmacCredential` was gone from the JSON record afterward, and a follow-up `sudo -k -v` went straight to `Password:` with no PIN/presence detour at all.
 
@@ -1454,7 +1454,7 @@ screen, and vice versa.
 krytis ships no separate locker — no swaylock, gtklock, hyprlock or waylock is packaged or
 present on a live machine. **noctalia itself is the lock screen**, an `ext-session-lock-v1`
 client (`src/shell/lockscreen/lock_screen.cpp`), with niri/umbriel as the lock server.
-`files/umbriel/config.toml` autostarts noctalia, and `elements/config/logind-lid.bst` states
+`noctalia.service` starts it in both sessions (`elements/config/noctalia-service.bst`, #1253), and `elements/config/logind-lid.bst` states
 it outright: *"Krytis ships no swayidle/hypridle/swaylock and needs none."* There is no lock
 keybind at all — lock is reached from noctalia's own panel, `loginctl lock-session`, lid
 close, or an idle action.
@@ -1498,6 +1498,54 @@ Before the fix, a password typed with an enrolled key plugged in was handed to t
 PIN. [INFERENCE, from CTAP2's PIN rules; not hardware-tested] Each such unlock spent one of the
 key's PIN retries: three wrong in a row needs a replug, and eight blocks the PIN. The once-only
 answer makes that case fail visibly instead.
+
+### A FIDO2 unlock logs two account-phase errors; both are expected
+
+Every lock-screen unlock that `pam_u2f` grants (PIN + touch) logs, from noctalia's
+`pam-helper` child (#1268):
+
+```
+noctalia[…]: pam_systemd_home(login:account): Failed to acquire home for user lily: Access denied
+noctalia[…]: pam_unix(login:account): setuid failed: Operation not permitted
+```
+
+The unlock succeeds and `pam_acct_mgmt` returns `PAM_SUCCESS`. Reproduced by replaying the
+lock screen's account phase unprivileged (`pam_start("login", $USER)` then `pam_acct_mgmt`,
+no `pam_authenticate`): `rc=0`, same two lines. Neither line is a fault:
+
+- **`Access denied` is sd-bus, not polkit.** With no auth-phase home reference,
+  `pam_systemd_home`'s account phase calls `RefHome` (`pam_systemd_home.c` `acquire_home()`,
+  v261.3). `homed-manager-bus.c` registers `RefHome` with flags `0`, unlike `AcquireHome`
+  (`SD_BUS_VTABLE_UNPRIVILEGED`), so sd-bus `check_access()` demands `CAP_SYS_ADMIN` and
+  rejects the caller before homed sees it. `_bus_error_message()` turns any
+  `SD_BUS_ERROR_ACCESS_DENIED` into the literal string "Access denied", which is why homed
+  and polkitd log nothing alongside it. Reproduce with
+  `busctl call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager RefHome sb "$USER" false`
+  as the user: `Call failed: Access denied`, home `active`. The module returns
+  `PAM_SERVICE_ERR`, which `-account sufficient` ignores. This line is `LOG_ERR`, so it shows
+  in `journalctl -p err`.
+- **`setuid failed` is `LOG_DEBUG`.** `pam_unix`'s account phase forks to run
+  `unix_chkpwd <user> chkexpiry`. The child's `setuid(0)` fails for a non-root euid, and
+  linux-pam 1.7.2 logs it at debug priority in that case and carries on
+  (`modules/pam_unix/pam_unix_acct.c` `_unix_run_verify_binary()`; journal `PRIORITY=7`).
+  The setuid-root helper then does the expiry check and returns success.
+
+**A password unlock logs neither line.** There the auth phase's `AcquireHome` (unprivileged)
+stores `systemd-home-fd-<user>`, so the account phase short-circuits before `RefHome`, runs
+homed's record checks, and ends the stack as `sufficient`. `pam_unix` account never runs. In
+adora's journal, no `login:auth … successfully acquired` PID since 2026-09-01 is followed by an
+account-phase line, and the first `Access denied` is 2026-09-10, the day after c2eee9f (#784)
+moved `pam_u2f` ahead of `pam_systemd_home`.
+
+**Consequence: on a FIDO2 unlock, homed's own account checks don't run.**
+`pam_sm_acct_mgmt` returns at the failed `RefHome`, before `user_record_test_blocked()`, the
+rate limit, and the password-change checks. The account phase then rests on `pam_nologin` and
+`pam_unix` (expiry through nss_systemd's shadow view). [INFERENCE, untested: whether a homed
+`expireUSec` surfaces as `sp_expire` to `unix_chkpwd`.] Accepted on #1268: the session is
+already logged in, and a dedicated locker PAM service to drop one log line would need a
+`kitten-lily/noctalia` fork change, since the service name is hardcoded. Note also that
+noctalia's `PAM_AUTHINFO_UNAVAIL` allowance on `pam_acct_mgmt` (`src/auth/pam_authenticator.cpp`)
+is never exercised on krytis: the account phase succeeds outright.
 
 ## `userdbctl` can wedge SSH pubkey auth — and any probe that only sets `ConnectTimeout`
 

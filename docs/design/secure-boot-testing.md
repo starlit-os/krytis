@@ -65,7 +65,7 @@ T3 needs ~60 GB free on `/var/tmp`
 | `mise run docs-links` | every `docs/…` reference, markdown link, backticked repo-relative path and backticked `mise run <task>` resolves | nothing about behaviour |
 | `scripts/parse-efi-auth.py <f.auth>` | each signature list carries a parseable certificate, and prints its subject | that the firmware will *accept* the file (signature, timestamp ordering, variable name) |
 | `mise run generate-ovmf-vars` | the test varstore's db matches the sealed image's `db.auth` byte count, and refuses to finish when it does not | that either one is *correct* — only that they agree |
-| `mise run verify-iso-payload` | the ISO's embedded store holds the exact image ID expected | that the image boots |
+| `mise run verify-iso-payload` | the ISO's embedded store holds the exact image ID expected, under every `containers-storage:` name the baked installer recipe requests (#1248) | that the image boots |
 
 `parse-efi-auth.py` is the cheapest gate that would have caught #438: the shipped
 files reported `SignatureSize=16` on all five entries.
@@ -334,8 +334,9 @@ time `.github/workflows/` held only `publish.yml`, `track-bst-sources.yml` and
   `ghcr.io/starlit-os/krytis:sealed` after every successful `publish.yml` run,
   installing QEMU/OVMF/virt-firmware and `chmod`ing `/dev/kvm` exactly as the
   KVM probe below predicted.
-- `build-iso.yml` runs `mise run build-iso` + `mise run verify-iso-payload` on the
-  always-on VPS runner, on `workflow_dispatch`.
+- `build-iso.yml` runs `mise run build-iso` on the always-on VPS runner, on
+  `workflow_dispatch`. `build-iso` ends with `verify-iso-payload` itself (ID + recipe-name
+  check when sealed, `--names-only` when unsealed, #1261).
 
 **Still human-remembered:** every root-requiring boot gate — `boot-test` (and its
 `--secure`/`--expect-fail` arms), `iso-install-test`, `selfenroll-test`,
@@ -631,6 +632,34 @@ Two traps in reading it:
   audit is necessary and insufficient — which is why `elements/core/initramfs.bst`
   keeps an explicit named list with an assertion per entry, rather than deriving the
   list from the notes.
+
+### G-9 · No install gate used the installer's TPM default — #1276
+
+Every encrypted install gate wrote `encryption.type = luks-passphrase`, while the GUI
+writes `tpm2-luks-passphrase` on any machine with a TPM 2.0 (tuna-os/bootc-installer
+`bootc_installer/defaults/encryption.py`), and no install gate attached a TPM. So
+whatever fisherman does on TPM hardware, which is most of the hardware krytis targets,
+was never run.
+
+`mise run tpm-install-test` installs with that recipe and boots the result twice
+against one persistent swtpm state (`tpm-boot-test`'s container approach, one swtpm
+process per boot). The first full run, 2026-10-15, against a sealed ISO built from
+`main` with tuna-os/bootc-installer v2026.10.09-9f2b0199 (fisherman `b0348d9`):
+
+- fisherman logs "TPM2 auto-unlock will be enrolled on first boot" and exits 0;
+- on the installed system, `fisherman-tpm2-enroll.service` is `not-found`, the root
+  keeps one passphrase keyslot and no `systemd-tpm2` token, and both boots prompt;
+- the unit, its `multi-user.target.wants` link and `/etc/fisherman/tpm2-enroll.key`
+  all exist under `/sysroot`, the physical root, where a composefs deployment never
+  mounts them as `/usr` or `/etc`. The key file is the LUKS passphrase (its sha256
+  matches), mode 600, and with the unit never running nothing shreds it.
+
+Outcome `not-staged`. The test only reports by default because which outcome is
+correct is #1276's Security + Breakage decision; `--expect` turns it into a gate.
+Facts it records that a fix will need: the image's running system has
+`libcryptsetup-token-systemd-tpm2.so`, the initrd only the FIDO2 one, yet
+`systemd-cryptsetup@root` in the initrd tries TPM2 natively ("No valid TPM2 token data
+found") before prompting, so the missing plugin is not what would stop a TPM unlock.
 
 ---
 

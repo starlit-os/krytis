@@ -16,7 +16,6 @@
 #                        to the host containers-storage — works rootless+rootful)
 #   PAYLOAD_OCI        — output oci-archive path
 #   OUTPUT_DIR         — scratch dir for the generated config files
-#   COMPOSEFS_BACKEND  — "true" (squash + diffid relabel) or anything else
 #   PAYLOAD_SEALED     — "1" to pass the payload through byte-identically
 #                        (see the rationale at the pass-through branch below)
 set -euo pipefail
@@ -25,7 +24,6 @@ set -euo pipefail
 : "${PAYLOAD_INPUT:?PAYLOAD_INPUT must be set}"
 : "${PAYLOAD_OCI:?PAYLOAD_OCI must be set}"
 : "${OUTPUT_DIR:?OUTPUT_DIR must be set}"
-COMPOSEFS_BACKEND="${COMPOSEFS_BACKEND:-true}"
 
 # A sealed payload carries a UKI whose .cmdline has a composefs= digest baked in
 # at seal time. `bootc install` recomputes that digest over the image it installs
@@ -58,26 +56,22 @@ INJECT_CTR=$(buildah from "oci-archive:${PAYLOAD_INPUT}")
 buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
 buildah run "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
 
-if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
-    buildah run "${INJECT_CTR}" -- mkdir -p /etc/containers
-    buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
-    echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
-    buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-    buildah rm "${INJECT_CTR}"
-    ANNOT_CTR=$(buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
-    SQUASHED_DIFFID=$(skopeo inspect --config "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}" 2>/dev/null | \
-        python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
-    if [[ -n "${SQUASHED_DIFFID}" ]]; then
-        echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID} (composefs mode)"
-        buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-        buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-    fi
-    buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-    buildah rm "${ANNOT_CTR}"
-else
-    # Non-composefs (bootcDirect): no squash to preserve ostree commits.
-    echo "=== Committing ${PAYLOAD_IMAGE} WITHOUT squash to preserve ostree commits ==="
-    buildah commit "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-    buildah rm "${INJECT_CTR}"
+# Krytis is always composefs (#1247): inject the VFS storage.conf, squash to one
+# layer (a multi-layer image explodes in a VFS store) and relabel
+# ostree.final-diffid to the squashed layer.
+printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
+buildah run "${INJECT_CTR}" -- mkdir -p /etc/containers
+buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
+echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
+buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
+buildah rm "${INJECT_CTR}"
+ANNOT_CTR=$(buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
+SQUASHED_DIFFID=$(skopeo inspect --config "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}" 2>/dev/null | \
+    python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
+if [[ -n "${SQUASHED_DIFFID}" ]]; then
+    echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID}"
+    buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
+    buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
 fi
+buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
+buildah rm "${ANNOT_CTR}"

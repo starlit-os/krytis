@@ -19,9 +19,9 @@
 # of the block this replaces; a directory picks up every file that
 # actually changed under it, not just the expected one).
 #
-# The commit body carries the cooldown trailers (Tracking-Fingerprint,
-# Tracking-First-Seen, then Tracking-Ready-At or Tracking-Cooldown: exempt)
-# that scripts/tracking-pr.sh reads to decide draft vs ready.
+# The commit body carries the cooldown trailers that scripts/tracking-cooldown.sh
+# decided for this branch (it must run first, over the same paths) and that
+# scripts/tracking-pr.sh reads to decide draft vs ready.
 #
 # Requires: gh (authenticated, contents:write on the target repo), jq.
 
@@ -48,55 +48,43 @@ if [ "${#CHANGED[@]}" -eq 0 ]; then
   exit 1
 fi
 
-# Cooldown: an update must be seen for 24h before its PR leaves draft
-# (scripts/tracking-pr.sh). The clock is the first run that committed *this*
-# update, identified by a fingerprint of its added and removed lines. Hunk
-# headers and context are left out, so an unrelated edit to the same element
-# on main doesn't restart it, but any change upstream does. The fingerprint and
-# the first-seen time ride along as commit trailers. The branch is recreated
-# on every run, so the previous head commit is the only state there is. See
-# docs/skills/bst.md § Tracking cooldown: 24h from first sighting.
-COOLDOWN_SECONDS="${TRACKING_COOLDOWN_SECONDS:-86400}"
-FINGERPRINT=$(git diff -U0 --binary HEAD -- "$@" \
-  | { grep -vE '^(diff --git |index |@@ |--- |\+\+\+ )' || true; } \
-  | sha256sum | cut -d' ' -f1)
-FIRST_SEEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-# `git/ref/` (singular) is an exact match. `git/refs/heads/<name>` lists every
-# ref under that prefix when <name> itself is missing, and on a 404 `gh api`
-# still prints the error body, so only a successful call may set PREV_SHA.
-PREV_SHA=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq '.object.sha' 2>/dev/null) || PREV_SHA=""
-if [ -n "$PREV_SHA" ]; then
-  PREV_MESSAGE=$(gh api "repos/$REPO/git/commits/$PREV_SHA" --jq '.message')
-  prev_fp=$(sed -n 's/^Tracking-Fingerprint: //p' <<<"$PREV_MESSAGE" | tail -n 1)
-  prev_seen=$(sed -n 's/^Tracking-First-Seen: //p' <<<"$PREV_MESSAGE" | tail -n 1)
-  if [ "$prev_fp" = "$FINGERPRINT" ] && [ -n "$prev_seen" ]; then
-    FIRST_SEEN="$prev_seen"
-  fi
+# Cooldown trailers: scripts/tracking-cooldown.sh decided them before the job
+# read the new version, and may have held the working tree back to the open
+# PR's update. Refuse to commit without that decision, or with one made for
+# other paths: the trailers would describe content this commit doesn't carry.
+# See docs/skills/bst.md § Tracking cooldown: 24h per update.
+STATE_FILE="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tracking-cooldown/${BRANCH//\//_}.env"
+if [ ! -f "$STATE_FILE" ]; then
+  echo "commit-tracking-update: no cooldown decision for $BRANCH; run scripts/tracking-cooldown.sh first" >&2
+  exit 1
 fi
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+if [ "${TRACKING_PATHS:-}" != "$*" ]; then
+  echo "commit-tracking-update: cooldown was decided for '${TRACKING_PATHS:-}', not '$*'" >&2
+  exit 1
+fi
+BODY="$TRACKING_TRAILERS"
 
-# First-party sources skip the cooldown: the risk it guards against is a
-# hijacked third-party release, not our own. That holds only when every
-# changed file is an element whose primary (first) source lives under
-# kitten-lily/ or starlit-os/. Anything else (a .bin, a mise task, a
-# third-party element) cools.
-FIRST_PARTY=1
-for f in "${CHANGED[@]}"; do
-  if [[ "$f" != *.bst ]] || [ ! -f "$f" ]; then FIRST_PARTY=0; break; fi
-  primary_url=$(grep -oP '^\s*url:\s*\K\S+' "$f" | head -n 1 || true)
-  if ! [[ "$primary_url" =~ (^|[:/])(kitten-lily|starlit-os)/ ]]; then FIRST_PARTY=0; break; fi
-done
-
-BODY="Tracking-Fingerprint: ${FINGERPRINT}
-Tracking-First-Seen: ${FIRST_SEEN}"
-if [ "$FIRST_PARTY" -eq 1 ]; then
-  BODY="${BODY}
-Tracking-Cooldown: exempt (first-party source)"
-  echo "commit-tracking-update: first-party source, no cooldown"
-else
-  READY_AT=$(date -u -d "@$(( $(date -u -d "$FIRST_SEEN" +%s) + COOLDOWN_SECONDS ))" +%Y-%m-%dT%H:%M:%SZ)
-  BODY="${BODY}
-Tracking-Ready-At: ${READY_AT}"
-  echo "commit-tracking-update: first seen ${FIRST_SEEN}, ready at ${READY_AT}"
+# Skip the push when the published branch already carries this exact commit:
+# the same update, the same headline and the same cooldown trailers. Only its
+# base is older. Recommitting it onto the newer main would be a synchronize
+# that re-runs every PR check and moves nothing forward, every hour, for every
+# open tracking PR. The trailers have to match as well as the files: a held
+# run restores the PR's own content but may just have recorded a new
+# Tracking-Next-*, and dropping that push would lose its first sighting. The
+# cost is that an open PR is no longer re-tested against every newer main.
+# See docs/skills/bst.md § Tracking cooldown: 24h per update.
+if git fetch -q --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null; then
+  PUBLISHED=$(git rev-parse "refs/remotes/origin/$BRANCH")
+  published_files=$(git diff --name-only "$PUBLISHED^" "$PUBLISHED" -- "$@" 2>/dev/null | sort)
+  wanted_message=$(printf '%s\n\n%s' "$(cat "$MESSAGE_FILE")" "$BODY")
+  if [ "$published_files" = "$(printf '%s\n' "${CHANGED[@]}" | sort)" ] &&
+    git diff --quiet "$PUBLISHED" -- "${CHANGED[@]}" &&
+    [ "$(git log -1 --format=%B "$PUBLISHED")" = "$wanted_message" ]; then
+    echo "commit-tracking-update: $BRANCH already carries this update and its trailers; not pushing"
+    exit 0
+  fi
 fi
 
 # The commit is built on a throwaway scratch branch, and only then is $BRANCH

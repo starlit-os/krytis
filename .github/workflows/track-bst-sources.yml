@@ -2,15 +2,15 @@ name: Track BuildStream Sources
 
 on:
   schedule:
-    # 00:13 UTC, not top-of-the-hour: GitHub's scheduler is documented to
-    # delay :00-triggered crons under load, and this repo's own history
-    # shows that delay growing from ~20min to ~4-5h over a few weeks (both
-    # this and cache-warm.yml were on '0 6' and drifted in lockstep every
-    # day — see docs/skills/ci-runner.md § *Scheduled Workflow Cron Delay*).
+    # :13, not top-of-the-hour: GitHub's scheduler is documented to delay
+    # :00-triggered crons under load, and this repo's own history shows that
+    # delay growing from ~20min to ~4-5h over a few weeks (both this and
+    # cache-warm.yml were on '0 6' and drifted in lockstep every day — see
+    # docs/skills/ci-runner.md § *Scheduled Workflow Cron Delay*).
     #
-    # This is the head of the daily chain, and the whole chain moved 5h
-    # earlier in #824 so that the scheduled publish it now feeds lands in
-    # the maintainer's morning rather than mid-afternoon:
+    # The 00:13 run is the head of the daily chain, and the whole chain
+    # moved 5h earlier in #824 so that the scheduled publish it now feeds
+    # lands in the maintainer's morning rather than mid-afternoon:
     #   00:13 track (here) -> 01:41 cache-warm -> 03:30 publish
     # The relative spacing is unchanged; only the start moved. Tracking
     # stays first because these jobs open PRs, cache-warm builds the image,
@@ -20,14 +20,15 @@ on:
     # cache-warm should build *after* today's tracked updates have had a
     # chance to land, not before.
     #
-    # 12:13 is a second pass, outside that chain: cache-warm and publish
-    # still run once, after 00:13. It exists for the 24h cooldown
-    # (scripts/tracking-pr.sh). With one run a day, the run after first
-    # sighting landed a few minutes either side of the 24h mark, so an
-    # update often waited 48h. With two, a PR leaves draft 24–36h after
-    # the bot first sees the update, and new upstream releases are
-    # noticed half a day sooner.
-    - cron: '13 0,12 * * *'
+    # Every other hour is outside that chain: cache-warm and publish still
+    # run once a day. The hourly passes exist for the 24h cooldown
+    # (scripts/tracking-cooldown.sh): a PR leaves draft within about an hour
+    # of Ready-At, and a new release is first seen within about an hour of
+    # publication. They are cheap because a run that finds nothing new
+    # pushes nothing and edits nothing (scripts/commit-tracking-update.sh,
+    # scripts/tracking-pr.sh), so open tracking PRs see no synchronize and
+    # their checks don't re-run.
+    - cron: '13 * * * *'
   workflow_dispatch:
     inputs:
       group:
@@ -75,6 +76,21 @@ on:
 
 permissions: read-all
 
+# One run at a time. Scheduled runs start hours late under load, so hourly
+# crons can queue up; two overlapping runs would both rewrite the same
+# tracking branches and their cooldown trailers. Not cancelled: a run killed
+# between moving a branch and updating its PR leaves them disagreeing.
+# GitHub keeps one pending run per group and drops older pending ones,
+# which only loses a pass the next hour repeats.
+concurrency:
+  group: track-bst-sources
+  cancel-in-progress: false
+
+# Every job sets BRANCH once, for both "Apply tracking cooldown" and "Create or
+# update PR". The cooldown step must run before anything reads the new
+# version: while the branch's open PR is pending, it puts that PR's update
+# back into the working tree, so the title and body describe what gets
+# committed (scripts/tracking-cooldown.sh, #1271).
 jobs:
   track-linux-cachyos:
     runs-on: ubuntu-26.04
@@ -85,6 +101,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'linux-cachyos' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-linux-cachyos
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -102,7 +120,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -127,6 +145,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/linux-cachyos.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -143,7 +167,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-linux-cachyos"
           TITLE="chore(deps): update linux-cachyos ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -173,6 +196,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'mise' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-mise
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -190,7 +215,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -214,6 +239,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/mise.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -227,7 +258,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-mise"
           TITLE="chore(deps): update mise ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -261,6 +291,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'microsoft-dbx' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-microsoft-dbx
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -278,7 +310,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current revocation count
@@ -300,6 +332,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" files/microsoft-uefi-certs/dbx.bin files/microsoft-uefi-certs/dbx.esl
+
       - name: Read new revocation count
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -313,7 +351,6 @@ jobs:
         run: |
           OLD_CNT="${{ steps.current.outputs.count }}"
           NEW_CNT="${{ steps.new.outputs.count }}"
-          BRANCH="auto/track-microsoft-dbx"
           TITLE="chore(deps): update Microsoft dbx ${OLD_CNT} -> ${NEW_CNT} revocations"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -352,6 +389,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'gum' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-gum
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -369,7 +408,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -393,6 +432,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/gum.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -406,7 +451,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-gum"
           TITLE="chore(deps): update gum ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -436,6 +480,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'libsodium' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-libsodium
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -453,7 +499,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -477,6 +523,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/libsodium.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -490,7 +542,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-libsodium"
           TITLE="chore(deps): update libsodium ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -520,6 +571,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'niri' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-niri
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -537,7 +590,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -561,6 +614,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/niri.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -574,7 +633,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-niri"
           TITLE="chore(deps): update niri v${OLD_VER} -> v${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -604,6 +662,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'ghostty' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-ghostty
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -621,7 +681,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -645,6 +705,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/ghostty.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -658,7 +724,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-ghostty"
           TITLE="chore(deps): update ghostty ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -690,6 +755,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'seance' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-seance
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -707,7 +774,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -731,6 +798,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/seance.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -744,7 +817,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-seance"
           TITLE="chore(deps): update seance ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -776,6 +848,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'symbols-nerd-font' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-symbols-nerd-font
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -793,7 +867,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -817,6 +891,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/symbols-nerd-font.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -830,7 +910,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-symbols-nerd-font"
           TITLE="chore(deps): update symbols-nerd-font ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1005,6 +1084,8 @@ jobs:
             branch: auto/track-spdlog
             title: "chore(deps): update spdlog"
 
+    env:
+      BRANCH: ${{ matrix.branch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1022,7 +1103,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Install system dependencies
@@ -1058,12 +1139,17 @@ jobs:
             fi
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH="${{ matrix.branch }}"
           BASE_TITLE="${{ matrix.title }}"
           BST_PATH="elements/${{ matrix.element }}"
 
@@ -1151,6 +1237,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'core-junctions' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-core-junctions
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1168,7 +1256,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Install system dependencies
@@ -1187,13 +1275,14 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git diff --quiet && { echo "No junction updates"; exit 0; }
+          bash scripts/tracking-cooldown.sh "$BRANCH" elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
 
           TITLE="chore(deps): update core junctions (gnome-build-meta + freedesktop-sdk)"
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
-          bash scripts/commit-tracking-update.sh auto/track-core-junctions /tmp/commit-msg.txt elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
+          bash scripts/commit-tracking-update.sh "$BRANCH" /tmp/commit-msg.txt elements/gnome-build-meta.bst elements/freedesktop-sdk.bst
 
           printf '%s\n' "Updates \`gnome-build-meta.bst\` and \`freedesktop-sdk.bst\` atomically. Manual review required — junction bumps can break downstream elements." > /tmp/pr-body.md
-          bash scripts/tracking-pr.sh auto/track-core-junctions "$TITLE" /tmp/pr-body.md
+          bash scripts/tracking-pr.sh "$BRANCH" "$TITLE" /tmp/pr-body.md
 
   track-pangolin:
     runs-on: ubuntu-26.04
@@ -1204,6 +1293,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'pangolin' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-pangolin
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1221,7 +1312,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1245,6 +1336,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/core/pangolin-cli.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1258,7 +1355,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-pangolin"
           TITLE="chore(deps): update pangolin-cli ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1288,6 +1384,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'game-devices-udev' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-game-devices-udev
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1305,7 +1403,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1327,6 +1425,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/game-devices-udev.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1340,7 +1444,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-game-devices-udev"
           TITLE="chore(deps): update game-devices-udev ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1370,6 +1473,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'proton-pass' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-proton-pass
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1387,7 +1492,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1409,6 +1514,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/proton-pass.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1422,7 +1533,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-proton-pass"
           TITLE="chore(deps): update proton-pass ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1452,6 +1562,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'falcond' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-falcond
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1469,7 +1581,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1493,6 +1605,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/falcond.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1506,7 +1624,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-falcond"
           TITLE="chore(deps): update falcond ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1539,6 +1656,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'libqalculate' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-libqalculate
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1556,7 +1675,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1580,6 +1699,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/libqalculate.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1593,7 +1718,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-libqalculate"
           TITLE="chore(deps): update libqalculate ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1626,6 +1750,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'falcond-profiles' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-falcond-profiles
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1643,7 +1769,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current commit
@@ -1669,6 +1795,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/falcond.bst
+
       - name: Read new commit
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1684,7 +1816,6 @@ jobs:
         run: |
           OLD_SHA="${{ steps.current.outputs.short }}"
           NEW_SHA="${{ steps.new.outputs.short }}"
-          BRANCH="auto/track-falcond-profiles"
           TITLE="chore(deps): update falcond-profiles ${OLD_SHA} -> ${NEW_SHA}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1714,6 +1845,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'scx-loader' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-scx-loader
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1731,7 +1864,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Install system dependencies
@@ -1760,6 +1893,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/scx-loader.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1773,7 +1912,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-scx-loader"
           TITLE="chore(deps): update scx-loader ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1803,6 +1941,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'zed' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-zed
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1820,7 +1960,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1844,6 +1984,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/zed.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1857,7 +2003,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-zed"
           TITLE="chore(deps): update zed ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1887,6 +2032,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'zen-browser' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-zen-browser
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1904,7 +2051,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -1928,6 +2075,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/desktop/zen-browser.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -1941,7 +2094,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-zen-browser"
           TITLE="chore(deps): update zen-browser ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -1971,6 +2123,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'chunkah' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-chunkah
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1988,7 +2142,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Install skopeo
@@ -2010,12 +2164,17 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" mise/tasks/chunkify
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH="auto/track-chunkah"
           TITLE="chore(deps): update chunkah digest"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -2040,6 +2199,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'qemu' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-qemu
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2057,7 +2218,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Read current version
@@ -2081,6 +2242,12 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" elements/dev/qemu.bst
+
       - name: Read new version
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         id: new
@@ -2094,7 +2261,6 @@ jobs:
         run: |
           OLD_VER="${{ steps.current.outputs.version }}"
           NEW_VER="${{ steps.new.outputs.version }}"
-          BRANCH="auto/track-qemu"
           TITLE="chore(deps): update qemu ${OLD_VER} -> ${NEW_VER}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -2128,6 +2294,8 @@ jobs:
       github.event.inputs.group == 'all' ||
       github.event.inputs.group == 'qemu-image' ||
       github.event_name == 'schedule'
+    env:
+      BRANCH: auto/track-qemu-image
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2145,7 +2313,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Install skopeo
@@ -2167,12 +2335,17 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" mise/tasks/boot-vm mise/tasks/convert-to-qcow2
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH="auto/track-qemu-image"
           TITLE="chore(deps): update qemus/qemu digest"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt
@@ -2216,6 +2389,8 @@ jobs:
           - buildstream-plugins
           - buildstream-plugins-community
           - zig-0.16
+    env:
+      BRANCH: auto/track-${{ matrix.name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2233,7 +2408,7 @@ jobs:
         uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.8
+          version: 2026.10.10
           experimental: true
 
       - name: Resolve element path
@@ -2257,13 +2432,18 @@ jobs:
             git diff --stat
           fi
 
+      - name: Apply tracking cooldown
+        if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tracking-cooldown.sh "$BRANCH" "${{ steps.elem.outputs.path }}"
+
       - name: Create or update PR
         if: steps.changes.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           ELEMENT="${{ steps.elem.outputs.path }}"
-          BRANCH="auto/track-${{ matrix.name }}"
           TITLE="chore(deps): update ${{ matrix.name }}"
 
           printf '%s\n' "$TITLE" > /tmp/commit-msg.txt

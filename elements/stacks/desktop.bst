@@ -28,6 +28,9 @@ depends:
 
   # ── Shell ───────────────────────────────────────────────────────────────
   - desktop/noctalia.bst
+  # Runs noctalia as a user service in session.slice so systemd-oomd (armed on
+  # app.slice only) can never pick the shell and lock screen (#1253).
+  - config/noctalia-service.bst
 
   # Battery/AC power-profiles-daemon switch script for noctalia's [hooks]
   # battery_discharging / battery_charging. Opt-in -- ships the script only,
