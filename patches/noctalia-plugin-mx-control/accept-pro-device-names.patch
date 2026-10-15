@@ -1,0 +1,38 @@
+# krytis#1220: the MX Control backend drops Logitech's PRO-series mice, so the
+# panel never lists them and never shows DPI.
+#
+# describe_device() and scan_hidraw() keep a device only if is_mx_name()
+# matches its name. The G-series token there is `\bg ?pro\b`, which wants
+# "G Pro" or "GPro". Solaar names the current PRO mice without the G:
+# "PRO X Wireless" (codename "PRO X"), "PRO X SUPERLIGHT", "PRO Wireless".
+# Verified on a PRO X Wireless (046d:4093) behind a Lightspeed receiver
+# (046d:c547): `solaar show` exposes dpi/report_rate/onboard_profiles, but
+# `mxctl.py status` listed only the paired G915 TKL keyboard.
+#
+# Fix: make the G optional, `\b(?:g ?)?pro\b`. Headsets and webcams named
+# "PRO" stay out, because is_mx_name() rejects "headset" and "webcam" before it
+# tries the regex.
+#
+# Upstream is unfixed as of 2026-10-15: zachwilke/omarchy-mxcontrol 0968d77
+# (the copy the plugin carries, see mx-control/UPSTREAM.md) and
+# noctalia-dev/community-plugins bd83481 (mx-control 0.2.2) both still have
+# `\bg ?pro\b`, from upstream's "G-series support" commit 93ee62c. Proposed
+# upstream as zachwilke/omarchy-mxcontrol#18 (issue
+# zachwilke/omarchy-mxcontrol#17), open as of 2026-10-15. With this patch, the
+# sha256 list in UPSTREAM.md no longer matches backend/mxctl.py.
+#
+# Remove when the plugin's backend accepts "PRO X Wireless". That PR merging is
+# not enough: community-plugins' mx-control has to re-copy the backend too.
+diff --git a/mx-control/backend/mxctl.py b/mx-control/backend/mxctl.py
+index 2afc3c8..b9f775b 100755
+--- a/mx-control/backend/mxctl.py
++++ b/mx-control/backend/mxctl.py
+@@ -148,7 +148,7 @@ FALLBACK_RECEIVER_PIDS = {
+ }
+ 
+ MX_NAME_RE = re.compile(
+-    r"(?:\bmx\b|master|anywhere|vertical|ergo|lift|mechanical|keys mini|mx keys|mx master|\bg ?pro\b|\bg\d{3}\b)",
++    r"(?:\bmx\b|master|anywhere|vertical|ergo|lift|mechanical|keys mini|mx keys|mx master|\b(?:g ?)?pro\b|\bg\d{3}\b)",
+     re.IGNORECASE,
+ )
+ 

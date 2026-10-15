@@ -22,6 +22,11 @@ kind = "git"
 location = "https://github.com/noctalia-dev/community-plugins"
 name = "community"
 
+[[plugins.source]]
+kind = "path"
+location = "/usr/share/noctalia/plugins"
+name = "krytis"
+
 [shell]
 date_format = "%A, %F"
 font_family = "Adwaita Sans"

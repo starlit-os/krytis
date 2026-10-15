@@ -1,8 +1,9 @@
 # Host requirements for the MX Control noctalia plugin
 
-**Issue:** #1220 · **Status (2026-10-14): steps 1 and 2 done, in one PR.** Step 3's hardware
-check is open; its skill write-back (`docs/skills/desktop.md`, `docs/skills/bst.md`) landed
-with steps 1–2.
+**Issue:** #1220 · **Status (2026-10-14): steps 1 and 2 shipped in #1244.** Step 3's hardware
+check is tracked in its own draft PR, which archives this plan once the results below are
+filled in. Step 3's skill write-back (`docs/skills/desktop.md`, `docs/skills/bst.md`) landed
+with #1244.
 
 | Plugin | Catalog id | What it executes |
 |---|---|---|
@@ -125,3 +126,20 @@ chain; the uaccess rule. Add a short Python-packaging section to `docs/skills/bs
 not resolved, so declare only what is actually imported).
 
 Archive this plan to `docs/plans/done/` in the same PR.
+
+## Step 3 results
+
+Image: `26.08.202610142056` (booted, built after #1244 merged). Run 2026-10-15 on a G915 TKL
+keyboard (`046d:408e`) and a PRO X Wireless mouse (`046d:4093`), both on one Lightspeed
+receiver (`046d:c547`). Plugin: `gamaraan/mx-control` 0.2.2 from community-plugins
+`bd83481`.
+
+| Check | Result |
+|---|---|
+| `/dev/hidraw*` for the receiver after a replug: `ls -l` shows `+`, `getfacl` has `user:<seat user>:rw-` | PASS. Replugged at 19:18:59. `hidraw10`–`14` (the receiver plus both devices) are `crw-rw----+`, and `getfacl` shows `user:lily:rw-` on each. The MSI, Razer and 8BitDo nodes stay `crw-------`. The journal has no `sudo`/`run0`/`pkexec` entries around the replug. |
+| `python3 <plugin dir>/backend/mxctl.py discover` → `"accessible": true`, device listed | PASS, with `/usr/bin/python3`: `"installed": true, "accessible": true`, and the G915 is listed with battery 79%. The bare `python3` from a mise-activated shell is the repo `.venv`'s 3.12 and reports `"installed": false`; that is a false result, see `docs/skills/desktop.md` § Hardware-backed plugins: read what the plugin executes, not `dependencies`. |
+| MX Control enabled in Settings → Plugins: bar capsule shows battery | PASS, observed in the bar. |
+| Panel shows DPI and device settings; a setting change applies | PASS **with the carried patch**. Unpatched, the panel never listed the PRO X: `is_mx_name()` rejects "PRO X Wireless", so no DPI. The G915's settings were also empty after the replug until a refresh (a plugin bug, not carried). With `patches/noctalia-plugin-mx-control/accept-pro-device-names.patch`, tested as a `local` dev-source copy byte-identical to the element's artifact: the PRO X shows DPI 800 (511 steps) and the G915 shows 15 settings. A DPI change on the PRO X and a setting change on the G915 both took effect. |
+
+The patch ships in `elements/desktop/noctalia-plugin-mx-control.bst`, served by the `krytis`
+path source in `files/noctalia-skel/settings.toml`. See `docs/design/carried-patches.md`.

@@ -2816,8 +2816,9 @@ A plugin's `plugin.toml` `dependencies =` field is informational only, as mx-con
 comment says. To find what a plugin needs from the host, read its backend: what it `spawn`s,
 which interpreter, and what that imports.
 
-MX Control (`gamaraan/mx-control`) runs `python3 backend/mxctl.py serve` with the **system**
-interpreter, and `import_solaar()` imports Solaar's `logitech_receiver.{base,device,receiver,
+MX Control (`gamaraan/mx-control`) runs `python3 backend/mxctl.py serve`. `service.luau`
+spawns the bare name `python3`, so it gets whatever is first on noctalia's `PATH`, which in
+the session is `/usr/bin/python3`. `import_solaar()` imports Solaar's `logitech_receiver.{base,device,receiver,
 settings_templates,base_usb}` and `solaar.configuration`. Through `settings_templates` →
 `diversion`, that loads `pyudev`, `evdev`, `psutil`, `yaml`, `typing_extensions` and
 `gi.require_version("Gdk", "3.0")` at import time. Solaar's `install_requires` lists more
@@ -2832,6 +2833,75 @@ returned `"installed": true, "accessible": false`: every `/dev/hidraw*` is
 (`046d` over USB, `0005:046D:*` over Bluetooth) `uaccess`, so logind gives the seat user an
 ACL. `71-logitech-gdu.rules` from `desktop/game-devices-udev.bst` only covers the F310/F710
 gamepads. Check with `getfacl /dev/hidrawN` (a `user:<you>:rw-` entry) after a replug.
+
+**Run manual checks with `/usr/bin/python3`, not `python3`.** In a shell with mise
+activated (any krytis checkout), `python3` is the project `.venv`'s 3.12, which can't see
+the system 3.14 site-packages. There, `mxctl.py discover` reports `"installed": false,
+"importError": "logitech_receiver not found"` on an image where the plugin works fine.
+
+**`discover` and `status` answer different questions.** `discover` only scans hidraw, so
+it always reports `"readonly": true` and `"settings": []`, even when everything works.
+Settings come from `status`, through Solaar. While the plugin is enabled, `mxctl.py serve`
+holds `$XDG_RUNTIME_DIR/omarchy-mx/mxctl.lock`, and `status` just returns serve's
+`status.json` snapshot. To see what the panel sees, read that file with `jq`.
+
+**After a receiver replug, settings can stay empty until a refresh.** Verified 2026-10-15
+on a G915 TKL (Lightspeed `046d:c547`). The snapshot kept `"online": true, "settings": []`
+until something else triggered a read. Likely cause, from the journal timestamps and the
+code (not reproduced): serve re-reads every device when the hidraw topology changes, but the
+keyboard's HID++ link only came up 23 s after its USB node did, and `load_settings()`
+swallows the error. Right-click on the bar widget (its `refresh` action) re-reads. This is
+a plugin bug, not carried; verifying the cause is #1292.
+
+**The device-name filter dropped PRO-series mice.** `describe_device()` skips any device
+`is_mx_name()` rejects, and its `\bg ?pro\b` token missed Solaar's "PRO X Wireless". The
+mouse, and with it the only DPI setting, never reached the panel. krytis carries the fix;
+see the next section. Check for this whenever `solaar show` lists a device the panel
+doesn't.
+
+### Carrying a patch on a noctalia plugin: image element + `path` source
+
+*Source: #1220.*
+
+A git-sourced plugin is fetched and materialized at runtime under
+`~/.local/state/noctalia/plugins/`, so a patch has nowhere to go. To carry one, ship the
+plugin from the image instead. `desktop/noctalia-plugin-mx-control.bst` is the pattern:
+`git_repo` on `noctalia-dev/community-plugins` (no tags, so `track: refs/heads/main`), a
+`kind: patch` with `a/<plugin>/…` paths, and an install step that copies only `<plugin>/`
+to `/usr/share/noctalia/plugins/`. A `[[plugins.source]] kind = "path"` named `krytis`,
+listed after `community` in `files/noctalia-skel/settings.toml`, serves that directory.
+
+Why this works, checked against the pinned noctalia ref `07c8bc7`
+(`src/scripting/plugin_manager.cpp` `applyPluginSourcesToRegistry`,
+`plugin_source_paths.cpp`, `plugin_id.h`):
+
+- **Precedence.** For a duplicate id, a later `[[plugins.source]]` beats an earlier one, and
+  the implicit `local` dev source (`~/.local/share/noctalia/plugins/`) beats them all. The
+  path source has to come after `community`.
+- **Layout.** A path source with no `catalog.toml` is scanned for `*/plugin.toml`. The
+  plugin's files are read from `<location>/<id after the slash>`, so `gamaraan/mx-control`
+  lives in `/usr/share/noctalia/plugins/mx-control`.
+- **Read-only is fine.** Only git sources are ever exported or written. Path sources are
+  "externally owned", and noctalia's update and remove do nothing to them. Plugin updates
+  arrive as track PRs on the element.
+
+Costs: every commit to *any* plugin in community-plugins, including the bot's catalog
+commits, moves the ref, so expect frequent track PRs that don't touch the patched plugin.
+As with all skel changes, existing accounts don't get the source. Add it by hand: `noctalia
+msg plugins source add krytis path /usr/share/noctalia/plugins`, or add the TOML block.
+
+**Testing a plugin patch on real hardware before building an image.** Copy the plugin into
+the `local` dev source (`cp -a ~/.local/state/noctalia/plugins/materialized/community/<plugin>
+~/.local/share/noctalia/plugins/`) and patch it there. `noctalia msg plugins list` should
+show the id as `[local]`. noctalia hot-reloads a path source's Luau files when they change
+(journal: `hot reload: reloaded service`), so UI patches show up at once. The plugin's
+Python helper does not reload. For mx-control, killing `mxctl.py serve` does not respawn
+it, so to pick up a backend change reload the plugin with `noctalia msg plugins disable
+<id>` then `enable <id>`. That moves the id to the end of `[plugins].enabled`, which is
+harmless. The `[plugins]` log then shows each scan loading the community copy first and the
+local copy overriding it; the local copy is the one that runs. mx-control's
+`tests/shared_test.lua` runs with plain `lua` (`/usr/bin/lua`) from the plugin root. Delete
+the local copy once the image carries the patch, or it keeps shadowing the image's copy.
 
 ### Plugin notifications are toast-only: 6 s, no history, dropped under DND
 
