@@ -416,6 +416,34 @@ The same script against `git merge --squash` reproduces the old failure exactly 
 - **A stale base branch.** If the parent is force-pushed, the child's base moves under it. `git fetch origin --prune && git log --oneline origin/<parent-branch>..HEAD` shows what is genuinely yours.
 - **Re-verification after the parent lands.** A clean auto-merge still shifts the ground the change sits on — re-run the change's own verification against the merged `main` before asking for review.
 
+## Updating a PR Branch Behind `main`: Rebase + Force-Push
+
+*Source: maintainer preference, set 2026-10-15. #1245 was the last PR updated with a merge
+from `main` (`26c7c5e`).*
+
+To bring your own PR branch up to date with `main`, or to clear a conflict, rebase it and
+force-push. Don't merge `main` into it:
+
+```bash
+git fetch origin
+git rebase origin/main            # in a pty: every replayed commit is re-signed
+git push --force-with-lease origin <branch>
+```
+
+- **Signing.** A rebase rewrites every commit above the fork point, and each one is signed
+  again with your key. One touch usually covers a short run of commits. If a sign fails
+  mid-rebase, see § `agent refused operation` is a missed touch window, not a broken setup
+  (the staged-changes and `gpg_sign_opt` traps).
+- **Exceptions, which keep their own procedure:**
+  - Bot-authored branches (`auto/track-*`) are updated with a merge. A local rebase strips
+    the bot's server-side signature; see § Locally rebasing a bot-authored branch strips
+    its signature.
+  - Native stacks use `gh stack rebase`, never GitHub's "Rebase stack" button (`AGENTS.md`
+    § Worktree & Branch Policy, and § Stacked PRs above).
+- **After the push,** required checks re-run from scratch. `BLOCKED` right after a
+  force-push means queued; see § Re-signing a commit that was already pushed unsigned. And
+  re-run the change's own verification against the rebased tree: `main` moved underneath it.
+
 ## Splitting a Branch: Cherry-Pick, Never `checkout <sha> -- <paths>`
 
 *Source: the `feat/oo7-prompter-testbed` split (#579), where this nearly shipped a silent regression.*
