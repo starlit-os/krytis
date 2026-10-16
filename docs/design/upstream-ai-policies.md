@@ -48,14 +48,17 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | vim | `github.com/vim/vim` | Own patch `elements/overrides/vim.bst` (krytis policy, not upstreamable). | Yes | Disclose AI use. An **`Assisted-by: <tool>` trailer is required**. The PR template has "AI involvement is disclosed" / "No AI was used" boxes. No ban. |
 | greetd | `git.sr.ht/~kennylevinsen/greetd`, `github.com/kennylevinsen/greetd` (mirror) | Vuln-remediation patches `elements/desktop/greetd.bst`. | Partial | No project rule. **SourceHut's ToS bans LLM-written or LLM-assisted code, tickets and emails** on the platform. Patches go to `greetd-devel@lists.sr.ht`. |
 | rust-bindgen | `github.com/rust-lang/rust-bindgen` | Vuln-remediation patches `elements/overrides/rust-bindgen.bst`. | No | rust-lang/rust's LLM policy explicitly excludes other rust-lang repos. The Rust moderation team's spam policy bans unreviewed automated contributions [INFERENCE: it applies org-wide]. |
-| freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst` and `elements/overrides/rust-bindgen.bst` mirror its elements. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
+| freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst`, `elements/overrides/rust-bindgen.bst` and `elements/overrides/btrfs-progs.bst` mirror its elements. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
 | efitools | `git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git` | Patches `elements/core/efitools.bst`. | No | Nothing in the tree. Patches go to `sbsigntools@groups.io`, kernel-style with `Signed-off-by` [INFERENCE]. |
+| btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. The kernel's policy (no agent `Signed-off-by`, `Assisted-by: LLM [tools]`) is context [INFERENCE]. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
 | Ghostty | `github.com/ghostty-org/ghostty` | Own patch `elements/desktop/ghostty.bst`. | Yes | AI allowed. **Disclose the tool and its extent.** The human must fully understand the code. No AI media. Slop gets you on a public denounce list. PRs need a vouch and a pre-accepted issue. Its `AGENTS.md` tells agents never to open issues or PRs. |
 | oo7 | `github.com/linux-credentials/oo7` | Own patch `elements/desktop/oo7.bst`. Waits on oo7#506. | No | No contributor docs, and the org `.github` has none either. |
 | xwayland-satellite | `github.com/Supreeeme/xwayland-satellite` | Patch `elements/desktop/xwayland-satellite.bst`. | Yes | Pinned issue Supreeeme/xwayland-satellite#512: AI-assisted PRs are fine if you understand them. **No pasted LLM issues, comments, PR descriptions or review replies.** |
 | GNOME (gnome-build-meta) | `gitlab.gnome.org/GNOME/gnome-build-meta` | `elements/desktop/xwayland-satellite.bst` bypasses its `sdk/xwayland-satellite.bst`. | No | gnome-build-meta has no rule, and there is no GNOME-wide one. Extensions, Circle and Discourse ban AI-generated work, and many modules (Loupe, Calendar, …) ban LLM contributions outright. Check the module's own CONTRIBUTING. |
+| gnome-disk-utility | `gitlab.gnome.org/GNOME/gnome-disk-utility` | GNOME/gnome-disk-utility#505 (whether the GTK4 51 release slipped) gates step 3 of `docs/plans/2026-09-30-gtk3-realistic-floor.md` (#1033). `elements/desktop/gnome-disk-utility.bst` mirrors its gnome-build-meta element. | No | Nothing in the tree (`HACKING` covers only commit-message format). No issue or MR mentions an AI rule. The GNOME-wide notes on the gnome-build-meta row apply as context. |
 | noctalia | `github.com/noctalia-dev/noctalia` | Fork pin and patch `elements/desktop/noctalia.bst`. | No | No rule, though contributors have asked for one (noctalia-dev/noctalia#4380). Only "Do not machine translate strings". Conventional Commits. A bot enforces the PR template. |
+| omarchy-mxcontrol | `github.com/zachwilke/omarchy-mxcontrol` | Own patches `elements/desktop/noctalia-plugin-mx-control.bst`, one proposed as zachwilke/omarchy-mxcontrol#18 (#1220). | No | No contributor docs or templates. The owner's own commits carry `Co-Authored-By: Claude …` and `Cursor Agent` trailers, so AI-assisted work is visibly normal there. |
 | bootc | `github.com/bootc-dev/bootc` | `elements/config/starlit-update.bst` works around bootc#2422. #1232 and #545 track bootc PRs. | Yes | Human review is required. **An LLM must not add `Signed-off-by`.** Use `Assisted-by: AI` / `Generated-by: AI` **without model names** (REVIEW.md says the opposite). No `Co-developed-by`. Over ~500 lines, file a design issue first. |
 | Podman | `github.com/podman-container-tools/podman` | containers/podman#27779 and containers/podman#28038 (multistage builds ignore a local image), `docs/skills/krytis-live-config.md`. | Yes | Org-wide LLM policy. **No verbatim LLM output in issues, comments or PR text.** A PR checkbox says they are human-written. Assisted code is fine, but "remove … LLM metadata". Violations can mean bans. DCO is mandatory. |
 | container-libs | `github.com/podman-container-tools/container-libs` | podman-container-tools/container-libs#34 and podman-container-tools/container-libs#625 (Fulcio workflow identity) gate #418. | Yes | Same org-wide policy as Podman. |
@@ -166,6 +169,19 @@ nothing was found, so an absence is evidenced and not assumed.
   ("AI agents MUST NOT add Signed-off-by tags", `Assisted-by: LLM [TOOL]`) is a plausible
   expectation for a kernel maintainer's list. That is [INFERENCE] only.
 
+### btrfs-progs
+
+- The [README](https://github.com/kdave/btrfs-progs/blob/devel/README.md) "Development"
+  section accepts patches on linux-btrfs@vger.kernel.org or as GitHub pull requests,
+  one logical change per patch. `Signed-off-by` is optional for small changes, and it
+  links the kernel's DCO. There is no AI text.
+- Checked at v7.1: the repo root (no CONTRIBUTING, AGENTS, CLAUDE or AI files),
+  `README.md` and `Documentation/dev/*.rst`, grepped for AI/LLM/generative/copilot.
+- Because it follows kernel process, the kernel's
+  [coding-assistants.rst](https://docs.kernel.org/process/coding-assistants.html) is the
+  likely expectation: "AI agents MUST NOT add Signed-off-by tags", and the trailer is
+  `Assisted-by: LLM [TOOL1] [TOOL2]`. That is [INFERENCE] only.
+
 ### ananicy-cpp
 
 - The repo root has no CONTRIBUTING, templates or `docs/`. Issue and MR searches for
@@ -213,6 +229,15 @@ nothing was found, so an absence is evidenced and not assumed.
   [Discourse moderation](https://discourse.gnome.org/t/llm-generated-projects-and-content-on-gnomes-discourse-instance/36006);
   and module-level bans such as [Loupe's](https://gitlab.gnome.org/GNOME/loupe/-/blob/1c3300d340d26ebea47f4b79cad91808c4f76b7b/CONTRIBUTING.md#use-of-generative-ai).
 
+### gnome-disk-utility
+
+- The tree's root has `HACKING` and `README.md`, neither with AI text. `HACKING` says where
+  development and bugs live, and how to format a commit message. There is no `.gitlab/`
+  directory, so there are no issue or MR templates.
+- Issue and MR searches for `LLM`, `AI-generated`, `ChatGPT` and `Copilot` found nothing.
+  The 12 `generative` hits are all fuzzy matches on "generate".
+- As of: `main` `836cf716` (2026-09-25).
+
 ### noctalia
 
 - [CONTRIBUTING.md](https://github.com/noctalia-dev/noctalia/blob/main/CONTRIBUTING.md) and
@@ -222,6 +247,15 @@ nothing was found, so an absence is evidenced and not assumed.
 - The same org's noctalia-greeter (formerly a krytis fork pin, see carried-patches.md §
   Historical carries) and umbriel also have no rule.
 - As of: CONTRIBUTING.md `127c43eff6` (2026-10-08).
+
+### omarchy-mxcontrol
+
+- The repo has no CONTRIBUTING, AGENTS, CLAUDE or AI file. `.github/` holds only
+  `workflows/`, and there is no owner-level `.github` repo. The README has no contributor
+  section.
+- Behaviour: 5 of the repo's 22 commits carry `Co-Authored-By: Claude …` trailers and 3
+  carry `Co-authored-by: Cursor Agent`, all on the owner's own work.
+- As of: `main` `0968d77` (2026-09-07).
 
 ### bootc
 

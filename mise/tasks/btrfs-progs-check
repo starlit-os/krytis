@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#MISE description="Verify overrides/btrfs-progs.bst still matches freedesktop-sdk's pinned btrfs-progs and its patch applies"
+
+# elements/overrides/btrfs-progs.bst mirrors freedesktop-sdk's
+# elements/components/btrfs-progs.bst so one patch can be applied on top of it.
+# The patch makes mkfs.btrfs flush its signature-wiping zeroes before it
+# discards the device (#1294, upstream tracking #1302).
+#
+# A mirrored element rots without a signal: a junction bump moves the upstream
+# btrfs-progs ref and build config while the copy keeps building the old one.
+# This task diffs the copy against the junction's element, ignoring comments,
+# the patch source and the `freedesktop-sdk.bst:` prefixes. It then checks that
+# the patch still applies to the pinned ref.
+#
+# When it fails, either resync the copy, or, if the junction's btrfs-progs now
+# persists the zeroing before it discards, delete the override element, the
+# patch, this task and the overrides entry in elements/freedesktop-sdk.bst
+# (#1302 lists everything).
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+OVERRIDE="elements/overrides/btrfs-progs.bst"
+UPSTREAM_PATH="elements/components/btrfs-progs.bst"
+PATCH="patches/btrfs-progs/flush-zeroing-before-discard.patch"
+CLONE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git"
+
+if [ ! -f "$OVERRIDE" ]; then
+    echo "==> $OVERRIDE is gone — nothing to check."
+    exit 0
+fi
+
+REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/freedesktop-sdk.bst | head -1)"
+SHA="${REF##*-g}"
+if [ -z "$SHA" ] || [ "$SHA" = "$REF" ]; then
+    echo "==> Could not read a git-describe ref from elements/freedesktop-sdk.bst" >&2
+    exit 1
+fi
+
+URL="https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SHA}/${UPSTREAM_PATH}"
+echo "==> Comparing $OVERRIDE against freedesktop-sdk ${SHA:0:12}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if ! curl -fsSL --retry 3 --retry-delay 10 "$URL" -o "$TMP/upstream.bst"; then
+    echo "==> Could not fetch $URL" >&2
+    exit 1
+fi
+
+normalise() {
+    grep -vE '^\s*#|^\s*$'
+}
+
+# The patch source is the mirror's only addition. Sibling dependencies carry a
+# `freedesktop-sdk.bst:` prefix because a bare `components/foo.bst` only
+# resolves inside freedesktop-sdk's own namespace; strip it before diffing.
+drop_local_additions() {
+    grep -vxF -e "- kind: patch" -e "  path: $PATCH" | sed 's/^- freedesktop-sdk\.bst:/- /'
+}
+
+normalise <"$TMP/upstream.bst" >"$TMP/upstream.norm"
+normalise <"$OVERRIDE" | drop_local_additions >"$TMP/override.norm"
+
+FAILED=0
+
+if ! diff -u --label "freedesktop-sdk/$UPSTREAM_PATH" "$TMP/upstream.norm" \
+        --label "$OVERRIDE" "$TMP/override.norm"; then
+    echo
+    echo "==> btrfs-progs-check FAILED — the override has drifted from the junction."
+    FAILED=1
+fi
+
+if ! grep -q "path: $PATCH" "$OVERRIDE"; then
+    echo "==> $OVERRIDE no longer applies $PATCH" >&2
+    FAILED=1
+fi
+
+BTRFS_REF="$(grep -A3 '^- kind: git_repo$' "$OVERRIDE" | grep -oP '^\s*ref:\s*\K\S+')"
+BTRFS_TAG="${BTRFS_REF%%-*}"
+echo "==> Checking $PATCH applies to btrfs-progs ${BTRFS_TAG}"
+
+CLONE="$TMP/btrfs-progs"
+if ! git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$BTRFS_TAG" \
+        "$CLONE_URL" "$CLONE"; then
+    echo "==> Could not clone btrfs-progs at $BTRFS_TAG" >&2
+    FAILED=1
+else
+    CLONED_SHA="$(git -C "$CLONE" rev-parse HEAD)"
+    if [ "${BTRFS_REF##*-g}" != "$CLONED_SHA" ]; then
+        echo "==> $BTRFS_TAG resolved to $CLONED_SHA, expected ${BTRFS_REF##*-g}" >&2
+        FAILED=1
+    fi
+    if ! git -C "$CLONE" apply --check "$ROOT/$PATCH"; then
+        echo "==> $PATCH no longer applies cleanly to btrfs-progs $BTRFS_TAG." >&2
+        echo "    If upstream now flushes the zeroing before the discard, drop the carry (#1302)." >&2
+        FAILED=1
+    fi
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    echo
+    echo "    Resync $OVERRIDE, or drop the override if the junction's btrfs-progs"
+    echo "    now persists the zeroing before it discards (#1302)."
+    exit 1
+fi
+
+echo "==> btrfs-progs-check passed."

@@ -54,6 +54,9 @@ config:
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
     components/rust-bindgen.bst: overrides/rust-bindgen.bst
+    # mkfs.btrfs flushes its signature-wiping zeroes before it discards (#1294,
+    # upstream tracking #1302). Drift and exit condition: `mise run btrfs-progs-check`.
+    components/btrfs-progs.bst: overrides/btrfs-progs.bst
     # GTK3-free libdecor (#1075, #641 step 5a): drops components/gtk3.bst and the
     # libdecor-gtk.so plugin; libdecor-cairo.so stays as the fallback. Drift and exit
     # condition: `mise run gtk3-mirror-check`.

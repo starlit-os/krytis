@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#MISE description="Boot the live ISO and check that the installer's mkfs.btrfs erases an old LUKS signature (#1294)"
+#USAGE flag "--iso <path>" help="Debug live ISO to boot. Default: output/krytis-live-sealed.iso, else output/krytis-live.iso"
+
+set -euo pipefail
+
+# Reinstalling over an encrypted disk failed at fisherman's last remount with
+# "unknown filesystem type 'crypto_LUKS'" (#1294). Since v6.16.1, btrfs-progs'
+# mkfs zeroes the old signatures with buffered writes and then issues
+# BLKDISCARD, which drops those writes from the page cache before they reach
+# the disk. On a device that ignores the discard, both LUKS2 headers survive
+# next to the new btrfs. krytis carries a fix in elements/overrides/btrfs-progs.bst
+# (upstream tracking #1302).
+#
+# This runs the case in the live session, with the image's own mkfs.btrfs. The
+# installer runs on the host there too: bootc-installer starts fisherman with
+# `flatpak-spawn --host pkexec`, and the flatpak bundles no mkfs. The steps are
+# luksFormat, then fisherman's exact `mkfs.btrfs -f -L root`, then reading the
+# disk back. The device must be a real block device that ignores discard: a file
+# image gets no BLKDISCARD, so it can't fail. QEMU virtio-blk advertises discard
+# and its default discard=ignore drops it, which is the failing case.
+#
+# Exit status: 0 PASS, 1 FAIL (the LUKS signature survived mkfs), 2
+# INCONCLUSIVE (the VM disk didn't take the discard path, so the check proved
+# nothing).
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "${REPO_ROOT}"
+# shellcheck source=scripts/e2e-lib.sh
+source "${REPO_ROOT}/scripts/e2e-lib.sh"
+
+if [[ -n "${usage_iso:-}" ]]; then
+    ISO="${usage_iso}"
+elif [[ -f "output/krytis-live-sealed.iso" ]]; then
+    ISO="output/krytis-live-sealed.iso"
+else
+    ISO="output/krytis-live.iso"
+fi
+
+if [[ ! -f "${ISO}" ]]; then
+    echo "ERROR: ISO not found: ${ISO}" >&2
+    echo "       Build it:  mise run build-iso --debug" >&2
+    exit 1
+fi
+command -v qemu-system-x86_64 &>/dev/null || { echo "ERROR: needs qemu-system-x86_64 on the host." >&2; exit 1; }
+# Driven over SSH, so it needs a --debug ISO (same check as luks-install-test).
+DEBUG_DROPIN="etc/ssh/sshd_config.d/05-live-debug.conf"
+SFS_OFFSET="$(python3 scripts/iso-squashfs-offset.py "${ISO}")"
+if ! unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${DEBUG_DROPIN}" >/dev/null 2>&1; then
+    echo "ERROR: ${ISO} has no ${DEBUG_DROPIN} — it was built without --debug." >&2
+    echo "  Rebuild it:  mise run build-iso$([[ "${ISO}" == *sealed* ]] && echo ' --sealed') --debug" >&2
+    exit 1
+fi
+
+ISO_ABS="$(realpath "${ISO}")"
+WORKDIR=$(mktemp -d /var/tmp/krytis-mkfs-reformat.XXXXXX)
+# Outside WORKDIR: cleanup runs first and deletes WORKDIR, while e2e_qemu_stop
+# still needs the socket and its .pid.
+MONITOR="/tmp/krytis-mkfs-reformat-$$.sock"
+e2e_on_exit "rm -rf '${WORKDIR}'"
+e2e_on_exit "e2e_qemu_stop '${MONITOR}' 'live VM'"
+
+PORT=2260
+while ! e2e_port_free "${PORT}"; do PORT=$((PORT + 1)); done
+
+# A small target disk is enough: the bug lives in the first 2 MiB.
+truncate -s 4G "${WORKDIR}/disk.img"
+
+echo "==> Checking that mkfs.btrfs erases an old LUKS signature (#1294)"
+echo "    iso: ${ISO_ABS}"
+"${REPO_ROOT}/mise/tasks/iso-boot-live" --iso "${ISO_ABS}" \
+    --disk "${WORKDIR}/disk.img" --scratch "${WORKDIR}/scratch.img" \
+    --monitor "${MONITOR}" --serial "${WORKDIR}/serial.log" \
+    --ssh-port "${PORT}" --mem 4096 --smp 4 \
+    --ovmf-vars-scratch "${WORKDIR}/vars.fd"
+
+e2e_ssh_auth_init live
+# shellcheck disable=SC2086
+FACTS=$(${E2E_SSH_WRAP} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password ${E2E_SSH_AUTH_OPTS} \
+    -p "${PORT}" liveuser@127.0.0.1 'sudo bash -s' <<'REMOTE'
+set -u
+D=/dev/vda
+echo "discard_max_bytes=$(cat /sys/block/vda/queue/discard_max_bytes)"
+mkfs.btrfs --version | head -1 | sed 's/^/mkfs_version=/'
+# Fast KDF: the header layout is what matters, not the key's strength.
+printf pw | cryptsetup luksFormat -q --type=luks2 --pbkdf pbkdf2 \
+    --pbkdf-force-iterations 1000 --key-file=- "$D"
+echo "before=$(blkid -p -o value -s TYPE "$D")"
+mkfs.btrfs -f -L root "$D" >/tmp/mkfs.log 2>&1
+grep -q 'Performing full device TRIM' /tmp/mkfs.log && echo "trimmed=yes" || echo "trimmed=no"
+echo 3 >/proc/sys/vm/drop_caches
+echo "magic=$(dd if="$D" bs=4096 count=1 iflag=direct status=none | head -c 6 | od -An -tx1 | tr -d ' ')"
+echo "after=$(blkid -p -o value -s TYPE "$D" 2>&1)"
+# fisherman's remount after retagging passes no -t, so mount goes by blkid.
+mkdir -p /tmp/m
+if mount "$D" /tmp/m 2>/tmp/mount.err; then
+    echo "mount=$(findmnt -no FSTYPE /tmp/m)"; umount /tmp/m
+else
+    echo "mount=failed: $(head -1 /tmp/mount.err)"
+fi
+wipefs -n "$D" | sed 's/^/wipefs: /'
+REMOTE
+) || true
+
+printf '%s\n' "${FACTS}" | sed 's/^/    /'
+fact() { printf '%s\n' "${FACTS}" | sed -n "s/^$1=//p" | head -1; }
+
+if [[ "$(fact before)" != crypto_LUKS ]]; then
+    echo "==> INCONCLUSIVE: the disk never held a LUKS signature before mkfs." >&2
+    exit 2
+fi
+if [[ "$(fact discard_max_bytes)" == 0 || "$(fact trimmed)" != yes ]]; then
+    echo "==> INCONCLUSIVE: mkfs.btrfs didn't discard the VM disk, so the failing path never ran." >&2
+    exit 2
+fi
+# LUKS2's magic is "LUKS\xba\xbe".
+if [[ "$(fact magic)" == 4c554b53babe || "$(fact after)" != btrfs || "$(fact mount)" != btrfs ]]; then
+    echo "==> FAIL: the LUKS signature survived mkfs.btrfs, so blkid and a plain mount still see crypto_LUKS." >&2
+    echo "    elements/overrides/btrfs-progs.bst's patch is missing or no longer works (#1294, #1302)." >&2
+    exit 1
+fi
+echo "==> PASS: mkfs.btrfs erased the LUKS headers, and a plain mount finds btrfs."

@@ -213,6 +213,7 @@ element does, its row's text is a review question.
 | `overrides/vim.bst` | `freedesktop-sdk.bst:components/vim.bst` | Adds a patch that hides gvim's desktop entry from the app menu (#241). |
 | `core/sudo-rs.bst` | `freedesktop-sdk.bst:components/sudo.bst` | sudo-rs, a memory-safe sudo, in place of sudo. |
 | `overrides/rust-bindgen.bst` | `freedesktop-sdk.bst:components/rust-bindgen.bst` | Build tool. Patched to drop an unbuilt crate that put a vulnerable `rand` into the SBOM (#498). |
+| `overrides/btrfs-progs.bst` | `freedesktop-sdk.bst:components/btrfs-progs.bst` | Patched so `mkfs.btrfs` erases old signatures, such as LUKS headers, on a disk that ignores TRIM (#1294). |
 | `overrides/libdecor.bst` | `freedesktop-sdk.bst:components/libdecor.bst` | Built without its GTK3 plugin (#1075). |
 | `overrides/libdisplay-info.bst` | `freedesktop-sdk.bst:components/libdisplay-info.bst` | Held at 0.3.0 for niri's bindings. |
 | `core/openssh.bst` | `freedesktop-sdk.bst:components/openssh.bst` | Config under `/etc/ssh/` with an `Include` for drop-ins (#408). |
