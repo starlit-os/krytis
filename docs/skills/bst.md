@@ -4675,3 +4675,48 @@ move when 85 GB of sparse VM images were deleted). Unconfirmed cause: extent boo
 the large always-rewritten `*.home` image, where btrfs keeps whole extents allocated while
 `st_blocks` counts only the referenced bytes. If you need that space,
 `btrfs filesystem defragment` on the home image is the thing to try — untested here.
+
+## Repairing the local cache after the filesystem under it crashed
+
+**Symptom:** every build dies in `Query cache`, before any element runs, with a casd
+error that names neither the cause nor a fix:
+
+```
+FetchTree: std::system_error exception thrown at [buildboxcommon_fslocalcas.cpp:557] [system:2],
+  errMsg = "Error reading: …/cas/objects/a8/20b6…", errno : No such file or directory
+FindMissingBlobs: Unexpected error in RPC handling        (StatusCode.UNKNOWN)
+```
+
+Seen twice on 2026-10-16, both times after the USB enclosure holding `~/.cache/buildstream`
+dropped off the bus mid-build. btrfs logged `Transaction … aborted (error -5)` and
+`emergency shutdown`. After remounting, `btrfs check --readonly` found **no error**: the
+filesystem was consistent, but BuildStream's own data was not.
+
+**What the aborted transaction leaves behind:**
+
+- **CAS objects under the right name with the wrong content.** These are zero-length files
+  whose data was still in delalloc when the device went, plus, once, a 7.2 GB blob cut off
+  mid-write. A content-addressed store never re-hashes a name it already has, so one bad
+  object poisons every artifact that shares it. The `ENOENT` above was a zero-length
+  object that *did* exist.
+- **Zero-length refs** in `artifacts/refs`, `source_protos` and `elementsources`. An empty
+  file parses as a valid empty proto, so nothing rejects it. casd then throws on its empty
+  digests, which is the `UNKNOWN` error.
+
+**Fix:** `mise run bst-cache-repair` reports, and `--fix` moves the debris into
+`/var/tmp/bst-cache-quarantine-<timestamp>`. It hash-checks every CAS object (2 min 16 s
+for 724,849 objects, 28 GB, on the USB SSD), or only those written after the crash with
+`--since 'YYYY-MM-DD HH:MM'` (the abort time in `journalctl -k`), and it flags empty or
+unparsable refs. An *absent* object is the ordinary "not cached"
+case, so BuildStream re-pulls from bow or rebuilds. The quarantine can be deleted once a
+build succeeds. On 2026-10-16 the first crash left 132 bad objects, and the second left
+15 objects and two empty `oci-krytis-image` refs.
+
+**Don't repair by deleting refs whose trees have absent objects.** That was the first
+attempt, and it moved 1,845 refs while the error stayed. casd's quota expiry deletes blobs
+but keeps refs, so on a healthy cache hundreds of refs point at partly absent trees, and
+BuildStream handles each one as a miss. The task counts them and leaves them alone.
+
+Run `btrfs check --readonly` (as root, filesystem unmounted) before remounting, and the
+task after. The first rules out filesystem damage; only the second can see the CAS's own
+consistency. The task refuses to run while `buildbox-casd` or `bst` is running.

@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+#MISE description="Find and quarantine local BuildStream cache entries a crash left corrupt (bad CAS objects, empty refs)"
+#USAGE flag "--fix" help="Move what it finds into a quarantine directory. Without it the task only reports"
+#USAGE flag "--since <time>" help="Hash-check only CAS objects modified at or after this local time, e.g. '2026-10-16 10:00'. Default: every object"
+#USAGE flag "--cachedir <dir>" help="BuildStream cache directory. Default: ~/.cache/buildstream"
+#USAGE flag "--quarantine <dir>" help="Where --fix moves things. Default: /var/tmp/bst-cache-quarantine-<timestamp>"
+"""Repair the local BuildStream cache after the filesystem under it crashed.
+
+When the btrfs holding ~/.cache/buildstream shut down mid-build (a USB
+enclosure dropping off the bus, 2026-10-16), every later build died in
+"Query cache" with an error that names neither the cause nor a fix:
+
+  FetchTree: ... Error reading: .../cas/objects/a8/20b6..., errno : No such file or directory
+  FindMissingBlobs: Unexpected error in RPC handling        (StatusCode.UNKNOWN)
+
+`btrfs check` found nothing wrong: the filesystem was consistent. BuildStream's
+own data was not. The aborted transaction left two kinds of debris:
+
+- CAS objects with the right name but the wrong content: zero-length files
+  (data still in delalloc when the device went) and one blob cut off mid-write.
+  A content-addressed store never re-checks a name it already has, so these
+  poison every artifact that shares them.
+- Zero-length refs (artifacts/refs, source_protos, elementsources). An empty
+  file parses as an empty proto, and casd fails on its empty digests.
+
+Both are safe to remove: an absent object or ref is the ordinary "not cached"
+case, which BuildStream answers by pulling from the remote (bow) or rebuilding.
+A tree with *absent* objects is also normal (casd's quota expiry deletes blobs
+but keeps refs), so the task reports those and leaves them alone.
+
+The task moves rather than deletes, so --fix can be undone.
+"""
+
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+EMPTY_DIGEST = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+REF_DIRS = ("artifacts/refs", "source_protos", "elementsources")
+
+
+def flag(name: str, args: list[str]) -> str | None:
+    """mise passes flags as usage_* env vars; a direct run passes argv."""
+    env = os.environ.get(f"usage_{name.replace('-', '_')}")
+    if env:
+        return env
+    opt = f"--{name}"
+    if opt in args:
+        i = args.index(opt)
+        if i + 1 < len(args) and not args[i + 1].startswith("--"):
+            return args[i + 1]
+        return "true"
+    return None
+
+
+def live_build() -> str:
+    # casd owns the CAS while it runs, and bst drives casd: moving objects
+    # underneath either is the same class of mistake as clean-cache deleting a
+    # live build's scratch. Orphaned buildbox-fuse mounts (bst.md § Two traps
+    # that made `clean-cache` fail) don't count: they only read staging.
+    out = subprocess.run(["pgrep", "-a", "-f", r"buildbox-casd|(^|[/ ])bst( |$)"],
+                         capture_output=True, text=True).stdout
+    me = str(os.getpid())
+    return "\n".join(l for l in out.splitlines()
+                     if l.split(maxsplit=1)[0] != me and "bst-cache-repair" not in l)
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def corrupt_objects(objects: Path, since: float | None) -> tuple[int, list[Path]]:
+    candidates = []
+    for sub in objects.iterdir():
+        for p in sub.iterdir():
+            st = p.stat()
+            digest = sub.name + p.name
+            if st.st_size == 0 and digest != EMPTY_DIGEST:
+                candidates.append((digest, p))
+            elif since is None or st.st_mtime >= since:
+                candidates.append((digest, p))
+
+    def bad(c):
+        digest, p = c
+        return p if sha256(p) != digest else None
+
+    with ThreadPoolExecutor(os.cpu_count() or 4) as pool:
+        return len(candidates), [p for p in pool.map(bad, candidates) if p]
+
+
+def corrupt_refs(cachedir: Path) -> list[Path]:
+    from buildstream._protos.buildstream.v2 import artifact_pb2, source_pb2
+
+    bad = []
+    for rel in REF_DIRS:
+        proto = artifact_pb2.Artifact if rel == "artifacts/refs" else source_pb2.Source
+        for root, _, files in os.walk(cachedir / rel):
+            for name in files:
+                p = Path(root, name)
+                data = p.read_bytes()
+                if not data:
+                    bad.append(p)
+                    continue
+                try:
+                    proto().ParseFromString(data)
+                except Exception:
+                    bad.append(p)
+    return bad
+
+
+def trees_with_absent_objects(cachedir: Path, removed: set[str], bad_refs: set[Path]) -> int:
+    """Artifact refs whose directory trees reference an object that isn't there."""
+    from buildstream._protos.buildstream.v2 import artifact_pb2
+    from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2 as re
+
+    objects = cachedir / "cas/objects"
+    known: dict[str, bool] = {}
+
+    def complete(digest: str) -> bool:
+        if digest in known:
+            return known[digest]
+        p = objects / digest[:2] / digest[2:]
+        if digest in removed or not p.exists():
+            known[digest] = False
+            return False
+        d = re.Directory()
+        d.ParseFromString(p.read_bytes())
+        known[digest] = all(complete(c.digest.hash) for c in d.directories)
+        return known[digest]
+
+    count = 0
+    for root, _, files in os.walk(cachedir / "artifacts/refs"):
+        for name in files:
+            p = Path(root, name)
+            if p in bad_refs:
+                continue
+            a = artifact_pb2.Artifact()
+            a.ParseFromString(p.read_bytes())
+            if any(a.HasField(f) and getattr(a, f).hash and not complete(getattr(a, f).hash)
+                   for f in ("files", "buildtree", "sources")):
+                count += 1
+    return count
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    fix = flag("fix", args) == "true"
+    since_s = flag("since", args)
+    cachedir = Path(flag("cachedir", args) or Path.home() / ".cache/buildstream").expanduser()
+    quarantine = Path(flag("quarantine", args) or
+                      f"/var/tmp/bst-cache-quarantine-{time.strftime('%Y%m%d-%H%M%S')}")
+
+    since = None
+    if since_s:
+        try:
+            since = time.mktime(time.strptime(since_s, "%Y-%m-%d %H:%M"))
+        except ValueError:
+            print(f"ERROR: --since wants 'YYYY-MM-DD HH:MM', got '{since_s}'", file=sys.stderr)
+            return 2
+
+    if not (cachedir / "cas/objects").is_dir():
+        print(f"ERROR: no CAS at {cachedir}/cas/objects", file=sys.stderr)
+        return 2
+
+    live = live_build()
+    if live:
+        print("ERROR: refusing to run while BuildStream or casd is running:", file=sys.stderr)
+        print("\n".join("    " + l for l in live.splitlines()), file=sys.stderr)
+        return 1
+
+    scope = f"modified since {since_s}" if since_s else "all"
+    print(f"==> Hash-checking CAS objects ({scope}, plus every zero-length one) in {cachedir}")
+    checked, objs = corrupt_objects(cachedir / "cas/objects", since)
+    print(f"    {checked} checked, {len(objs)} corrupt")
+
+    print("==> Checking refs for empty or unparsable protos")
+    refs = corrupt_refs(cachedir)
+    print(f"    {len(refs)} corrupt")
+
+    for p in objs + refs:
+        print(f"    {p.relative_to(cachedir)}  ({p.stat().st_size} bytes)")
+
+    absent = trees_with_absent_objects(cachedir, {p.parent.name + p.name for p in objs}, set(refs))
+    print(f"==> {absent} artifact ref(s) have trees with absent objects. That is normal after "
+          "casd's quota expiry or the removals above; BuildStream re-pulls them. Left alone.")
+
+    if not objs and not refs:
+        print("==> Nothing to repair.")
+        return 0
+    if not fix:
+        print("==> Report only. Re-run with --fix to move these into a quarantine directory.")
+        return 1
+
+    for p in objs + refs:
+        dest = quarantine / p.relative_to(cachedir)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(p, dest)
+    print(f"==> Moved {len(objs) + len(refs)} entries to {quarantine}.")
+    print("    Run the build again; delete the quarantine once a build succeeds.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
