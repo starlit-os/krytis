@@ -1823,9 +1823,10 @@ The job should either create/update a PR (if a new release exists) or print "Alr
 
 Every "Create or update PR" step commits via `createCommitOnBranch` (GraphQL) through this shared script, not `git commit && git push` — `github-actions[bot]` has no settings page, so there is no way to attach a signing key to it, and GitHub auto-signs commits it creates itself via the API regardless of caller credential. See #154, #699.
 
-Two non-obvious things found building it:
+Non-obvious things found building and running it:
 
-- **`gh api graphql -f`/`-F` cannot pass JSON-typed (array/object) GraphQL variables.** Both flags always coerce to a string (or, for `-F`, a small set of scalar literals) — there is no way to hand `[FileAddition!]!` a real JSON array through them. Build the whole request body (`{query, variables: {...}}`) as JSON with `jq -n --argjson ...` and pipe it to `gh api graphql --input -` instead.
+- **`gh api graphql -f`/`-F` cannot pass JSON-typed (array/object) GraphQL variables.** Both flags always coerce to a string (or, for `-F`, a small set of scalar literals) — there is no way to hand `[FileAddition!]!` a real JSON array through them. Build the whole request body (`{query, variables: {...}}`) as JSON with `jq -n` and pipe it to `gh api graphql --input -` instead.
+- **File contents reach `jq` through files (`--rawfile`, `--slurpfile`), never argv (`--arg`, `--argjson`).** Linux caps each single argument at 128 KiB (`MAX_ARG_STRLEN`, 32 pages), separately from the 4 MiB `ARG_MAX` total, and exceeding it fails `execve` with `Argument list too long` / exit 126 before `jq` runs. `elements/desktop/scx-scheds.bst` is 111 KB and its base64 is 148 KB; the v1.1.4 bump failed every scheduled run from 2026-10-15 21:23Z until this was fixed. Each addition is written as one NDJSON line and `--slurpfile` reads the file back as the array.
 - **Never let the tracked branch point at its base, even for a moment: GitHub auto-closes the PR, and reopening it is a race.** The script used to reset the branch to `main` and then commit onto it. Between those two API calls the branch was 0 commits ahead, and GitHub closed the open PR (PR #705, closed and force-pushed in the same timeline event by the API caller). The old `git commit && git push --force-with-lease` flow never hit this, because the reset and the commit went out in one push.
 
   Reopening it afterwards is a race the script can lose two ways, and #1168 lost both, stranding a zen-browser bump from 2026-10-10 to 10-11.
