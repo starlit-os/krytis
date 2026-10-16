@@ -101,32 +101,39 @@ fi
 # The scratch name sits outside auto/ so nothing that matches tracking
 # branches by prefix sees it; run id + attempt keep parallel matrix jobs apart.
 SCRATCH="tracking-scratch/${GITHUB_RUN_ID:-local-$$}-${GITHUB_RUN_ATTEMPT:-1}/$BRANCH"
-cleanup_scratch() {
+# Every file's base64 payload goes to jq through files, never argv: Linux caps a
+# single argument at 128 KiB (MAX_ARG_STRLEN), and desktop/scx-scheds.bst
+# (111 KB, ~148 KB as base64) failed with "Argument list too long" when the
+# payload was passed as --arg/--argjson.
+WORK=$(mktemp -d)
+cleanup() {
   gh api -X DELETE "repos/$REPO/git/refs/heads/$SCRATCH" >/dev/null 2>&1 || true
+  rm -rf "$WORK"
 }
-trap cleanup_scratch EXIT
+trap cleanup EXIT
 
 echo "commit-tracking-update: building the commit on $SCRATCH (from main, $MAIN_SHA)"
 gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$SCRATCH" -f sha="$MAIN_SHA" >/dev/null
 
 # Build additions/deletions as proper JSON (not string concatenation) so
-# base64 payloads and unicode paths can never break the request body.
-ADDITIONS_JSON="[]"
+# base64 payloads and unicode paths can never break the request body. One
+# JSON object per line; --slurpfile below reads each file back as the array.
+: >"$WORK/additions.ndjson"
 for f in "${CHANGED[@]}"; do
   deleted=0
   for d in "${DELETED[@]:-}"; do
     [ -n "$d" ] && [ "$f" = "$d" ] && deleted=1
   done
   [ "$deleted" -eq 1 ] && continue
-  content_b64=$(base64 -w0 -- "$f")
-  ADDITIONS_JSON=$(jq -c --arg path "$f" --arg contents "$content_b64" \
-    '. + [{path: $path, contents: $contents}]' <<<"$ADDITIONS_JSON")
+  base64 -w0 -- "$f" >"$WORK/contents.b64"
+  jq -nc --arg path "$f" --rawfile contents "$WORK/contents.b64" \
+    '{path: $path, contents: $contents}' >>"$WORK/additions.ndjson"
 done
 
-DELETIONS_JSON="[]"
+: >"$WORK/deletions.ndjson"
 for f in "${DELETED[@]:-}"; do
   [ -z "$f" ] && continue
-  DELETIONS_JSON=$(jq -c --arg path "$f" '. + [{path: $path}]' <<<"$DELETIONS_JSON")
+  jq -nc --arg path "$f" '{path: $path}' >>"$WORK/deletions.ndjson"
 done
 
 echo "commit-tracking-update: committing ${#CHANGED[@]} file(s)"
@@ -150,8 +157,8 @@ COMMIT=$(jq -n \
   --arg oid "$MAIN_SHA" \
   --rawfile headline "$MESSAGE_FILE" \
   --arg body "$BODY" \
-  --argjson additions "$ADDITIONS_JSON" \
-  --argjson deletions "$DELETIONS_JSON" \
+  --slurpfile additions "$WORK/additions.ndjson" \
+  --slurpfile deletions "$WORK/deletions.ndjson" \
   '{
     query: $query,
     variables: {
