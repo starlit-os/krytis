@@ -499,3 +499,43 @@ unless the kernel sees the TPM and the probe reports it unusable.
 
 **Remove when:** #368 designs TPM-bound unlock, or bootc-installer gains a recipe option
 for the default.
+
+### A reinstall over an encrypted disk kept the old LUKS headers (2026-10-16)
+
+**What:** an unencrypted ISO install onto a disk that held an encrypted krytis install
+wrote the whole OS, then died at fisherman's remount after retagging: `mount: unknown
+filesystem type 'crypto_LUKS'` ([krytis#1294](https://github.com/starlit-os/krytis/issues/1294)).
+`/dev/vda2` held a working btrfs *and* both untouched LUKS2 headers (`0x0`, `0x4000`), and
+`blkid -p` reported only `crypto_LUKS`, without calling the result ambivalent. fisherman's first
+mount names `-t btrfs` and works. The remount passes no type, so it goes by blkid.
+
+**Cause:** btrfs-progs, not fisherman. Since v6.16.1 (kdave/btrfs-progs `d50769a4`)
+`btrfs_prepare_device()` zeroes the first and last 2 MiB with a **buffered** `pwrite` and
+*then* issues `BLKDISCARD`. The kernel's discard ioctl truncates the block device's page
+cache over the range (`truncate_bdev_range()`) without writing it back, so the zeroes
+never reach the disk. QEMU virtio-blk advertises discard, and its default
+`discard=ignore` drops the request, so the old bytes stay. `btrfs_wipe_existing_sb()`
+would not have caught it: it looks up `SBMAGIC` without ever running a probe. fisherman
+runs no `wipefs`, and `sfdisk --wipe=always` only clears whole-disk signatures, not
+signatures inside a partition.
+
+**Two traps when reproducing it:**
+- **A file image can't reproduce it.** `mkfs.btrfs` on a regular file issues no
+  `BLKDISCARD`, so the zeroes survive and the result looks clean. It has to be a real
+  block device that ignores discard: the live VM's `/dev/vda` works.
+- **The issue's first guess was a LUKS2 secondary header out of mkfs's reach.** That was
+  wrong: both headers sit far inside the 2 MiB mkfs means to zero. Read the disk back
+  (`dd … iflag=direct`, `wipefs -n`) before reasoning about offsets.
+
+**Fix:** a krytis carry, `elements/overrides/btrfs-progs.bst` plus
+`patches/btrfs-progs/flush-zeroing-before-discard.patch`, which adds an `fsync()` between
+the zeroing and the discard. The image's `mkfs.btrfs` is the one every install uses. The
+GUI starts fisherman with `flatpak-spawn --host pkexec` (bootc-installer's
+`fisherman_runner.py`), and the installer flatpak bundles no mkfs. `mise run mkfs-reformat-test`
+boots the live ISO and runs `luksFormat` followed by fisherman's own `mkfs.btrfs -f -L root`
+on the VM disk. It fails while the LUKS signature survives. Upstream tracking: #1302. On
+hardware, whether the bug shows depends on what the drive returns after TRIM
+[INFERENCE, not tested].
+
+**Remove when:** the junction's btrfs-progs persists the zeroing before the discard
+(`mise run btrfs-progs-check` fails once the patch stops applying).

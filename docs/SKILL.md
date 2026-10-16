@@ -42,6 +42,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Reference the upstream live-ISO/installer project krytis's ISO pipeline was forked out of | [`docs/skills/dakota-iso.md`](skills/dakota-iso.md) |
+| Debug an ISO install that fails over a previously used disk (`unknown filesystem type 'crypto_LUKS'` after the OS is written), or change the carried btrfs-progs patch (`mise run mkfs-reformat-test`, `mise run btrfs-progs-check`) | [`docs/skills/krytis-live-config.md`](skills/krytis-live-config.md) § A reinstall over an encrypted disk kept the old LUKS headers |
 | File or triage an issue (pick its `effort:*` label, `mise run labels-sync --check`), or manage the GitHub Project board, milestones, or issue hierarchy | [`docs/skills/github-projects.md`](skills/github-projects.md) — issues: § Effort labels |
 | Set up a worktree / branch, or follow the self-improvement loop | [`docs/skills/workflow.md`](skills/workflow.md) |
 | Sync the dakota/zirconium-hawaii/dakota-iso mirrors and mine them for lessons | [`docs/skills/upstream-sync.md`](skills/upstream-sync.md), skill: `.claude/skills/upstream-lessons/` |
