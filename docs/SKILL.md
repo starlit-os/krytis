@@ -10,6 +10,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Add a package to Krytis | [`docs/skills/bst.md`](skills/bst.md) § Adding a Package |
 | Remove a package from Krytis | [`docs/skills/bst.md`](skills/bst.md) § Removing an element touches more than the element |
 | Debug a build failure | [`docs/skills/bst.md`](skills/bst.md) § *A cached failed artifact is replayed, not rebuilt* |
+| Recover from builds that all die in `Query cache` with a casd `FetchTree`/`FindMissingBlobs` error, after the disk under `~/.cache/buildstream` crashed (`mise run bst-cache-repair`) | [`docs/skills/bst.md`](skills/bst.md) § Repairing the local cache after the filesystem under it crashed |
 | Write or debug an element's `integration-commands`, or a `mise run cracklib-dict-check` failure | [`docs/skills/bst.md`](skills/bst.md) § An integration command's tools are not implied by the element that ships it |
 | Understand the OCI assembly pipeline | [`docs/skills/bst.md`](skills/bst.md) § OCI Assembly Pipeline |
 | Package a Rust project | [`docs/skills/bst.md`](skills/bst.md) § Rust / Cargo Projects |
