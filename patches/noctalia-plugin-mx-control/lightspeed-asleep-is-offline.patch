@@ -15,8 +15,10 @@
 # settings 2 s after its link comes up. Its lighting stayed off throughout,
 # so the pings do not wake it.
 #
-# Not proposed upstream. Remove when the plugin's backend no longer trusts the
-# cached flag on NoSuchDevice.
+# Proposed upstream on 2026-10-17 as suggested changes on
+# zachwilke/omarchy-mxcontrol#16 (pullrequestreview-5558966452), with a test.
+# Remove when the plugin's backend no longer trusts the cached flag on
+# NoSuchDevice.
 diff --git a/mx-control/backend/mxctl.py b/mx-control/backend/mxctl.py
 index 1aaeafd..ef12b26 100755
 --- a/mx-control/backend/mxctl.py
