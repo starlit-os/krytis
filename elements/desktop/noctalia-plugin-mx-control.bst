@@ -12,11 +12,19 @@ kind: manual
 # still not enabled by default: it only does anything with Logitech HID++
 # hardware attached.
 #
-# Two patches. accept-pro-device-names makes the backend's device-name filter
-# accept Logitech's PRO-series mice ("PRO X Wireless"). Without it the panel
-# never lists them, and DPI never shows. tooltip-all-devices makes the bar
-# tooltip list every device's battery, not only the first online one. Both
-# are under patches/noctalia-plugin-mx-control/.
+# Five patches, all under patches/noctalia-plugin-mx-control/, applied in order:
+# - accept-pro-device-names: the backend's device-name filter accepts
+#   Logitech's PRO-series mice ("PRO X Wireless"). Without it the panel never
+#   lists them, and DPI never shows.
+# - tooltip-all-devices: the bar tooltip lists every device's battery, not
+#   only the first online one.
+# - retry-empty-settings: backport of zachwilke/omarchy-mxcontrol#16. A
+#   device that links after serve's replug re-read no longer stays at
+#   `settings: []` (#1292).
+# - lightspeed-asleep-is-offline: on top of that backport. An asleep
+#   Lightspeed device counts as offline instead of being re-read every 2 s.
+# - stop-serve-by-interpreter-path: disabling the plugin actually stops its
+#   serve helper (#1313).
 #
 # community-plugins has no tags, so this tracks main. Every commit to any
 # plugin there, including the bot's "update plugin catalog" commits, moves the
@@ -48,3 +56,9 @@ sources:
   path: patches/noctalia-plugin-mx-control/accept-pro-device-names.patch
 - kind: patch
   path: patches/noctalia-plugin-mx-control/tooltip-all-devices.patch
+- kind: patch
+  path: patches/noctalia-plugin-mx-control/retry-empty-settings.patch
+- kind: patch
+  path: patches/noctalia-plugin-mx-control/lightspeed-asleep-is-offline.patch
+- kind: patch
+  path: patches/noctalia-plugin-mx-control/stop-serve-by-interpreter-path.patch
