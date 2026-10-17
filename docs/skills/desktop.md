@@ -2895,13 +2895,29 @@ the `local` dev source (`cp -a ~/.local/state/noctalia/plugins/materialized/comm
 ~/.local/share/noctalia/plugins/`) and patch it there. `noctalia msg plugins list` should
 show the id as `[local]`. noctalia hot-reloads a path source's Luau files when they change
 (journal: `hot reload: reloaded service`), so UI patches show up at once. The plugin's
-Python helper does not reload. For mx-control, killing `mxctl.py serve` does not respawn
-it, so to pick up a backend change reload the plugin with `noctalia msg plugins disable
-<id>` then `enable <id>`. That moves the id to the end of `[plugins].enabled`, which is
-harmless. The `[plugins]` log then shows each scan loading the community copy first and the
+Python helper does not reload, and **`noctalia msg plugins disable`/`enable` does not
+restart it either**. mx-control's `onExit` stops serve with `pkill -TERM -f
+'^python3 [^ ]*/mxctl\.py serve$'` (`shared.HELPER_PATTERN`), but serve's command line
+starts with `/usr/bin/python3`, so the pattern matches nothing. The old serve keeps the
+helper lock and a fresh heartbeat, and each serve the re-enabled service launches exits on
+that lock. On 2026-10-17 a serve from a deleted local copy survived three disable/enable
+cycles and went away only on relogin. To pick up a backend change, kill serve instead:
+`pkill -f 'mxctl\.py serve'`. The service relaunches serve from the current copy once
+`status.json`'s `ts` is more than 90 s old (`HELPER_RESTART_SEC`; checked every 10 s).
+Measured: killed 17:30:43, relaunched 17:32:14. Confirm the path with `pgrep -af 'mxctl.py
+serve'`. The `[plugins]` log shows each scan loading the community copy first and the
 local copy overriding it; the local copy is the one that runs. mx-control's
 `tests/shared_test.lua` runs with plain `lua` (`/usr/bin/lua`) from the plugin root. Delete
 the local copy once the image carries the patch, or it keeps shadowing the image's copy.
+Kill its serve as well, or that serve keeps running until relogin.
+
+**Debugging only the backend needs no override.** The service treats any serve holding the
+lock as alive, because liveness is the heartbeat and not a process match. Copy the plugin
+anywhere (`/tmp`), instrument `backend/mxctl.py`, kill the running serve, and start
+`/usr/bin/python3 <copy>/backend/mxctl.py serve` in a terminal straight away. The widget then
+shows the copy's snapshot, and its stderr is visible. Kill it when done, and the service
+relaunches its own serve after 90 s. #1292's cause was pinned this way, by logging the
+`except` blocks in `load_settings()`.
 
 ### Plugin notifications are toast-only: 6 s, no history, dropped under DND
 
