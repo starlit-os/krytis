@@ -58,15 +58,21 @@ RETRYABLE = {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED}
 
 # Project name per junction, from each project's project.conf `name:`. It is not
 # derivable from the junction element's name (gnome-build-meta.bst -> gnome), and
-# the artifact name is keyed on it. Local elements belong to krytis.
-PROJECTS = {"freedesktop-sdk.bst": "freedesktop-sdk", "gnome-build-meta.bst": "gnome"}
+# the artifact name is keyed on it. Local elements belong to krytis. Keyed on the
+# innermost junction: gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/x.bst
+# belongs to freedesktop-sdk-extra (nested since gnome-build-meta eaa10b21).
+PROJECTS = {
+    "freedesktop-sdk.bst": "freedesktop-sdk",
+    "gnome-build-meta.bst": "gnome",
+    "freedesktop-sdk-extra.bst": "freedesktop-sdk-extra",
+}
 
 
 def artifact_name(element, cache_key):
     """BuildStream's Element.get_artifact_name(): element.py _get_normal_name +
     _compose_artifact_name."""
     junction, _, path = element.rpartition(":")
-    project = PROJECTS[junction] if junction else "krytis"
+    project = PROJECTS[junction.rpartition(":")[2]] if junction else "krytis"
     normal = os.path.splitext(path.replace(os.sep, "-"))[0]
     valid = string.digits + string.ascii_letters + "-._"
     normal = "".join(c if c in valid else "_" for c in normal)

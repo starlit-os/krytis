@@ -8,6 +8,7 @@ and writes files/fakecap-manifest.tsv (path\telement\tinterval) for
 fakecap-restore to consume.
 """
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -20,10 +21,22 @@ DEFAULT_INTERVAL = "monthly"
 
 # manifest.json records elements by their bare in-project name even when the
 # element is actually owned by a content junction, so a bare checkout can
-# 404 for junction-owned elements. This repo only has two content junctions
-# (checked via `kind: junction` in elements/*.bst) — try the bare name first,
-# then each of these, before giving up.
-JUNCTION_PREFIXES = ["freedesktop-sdk.bst:", "gnome-build-meta.bst:"]
+# 404 for junction-owned elements. Try the bare name first, then each of these
+# junction prefixes, before giving up. The nested one exists since
+# gnome-build-meta eaa10b21 moved distrobox, toolbox, accountsservice, samba, …
+# into its freedesktop-sdk-extra.bst junction; without it those elements are
+# skipped and their files lose their attribution.
+JUNCTION_PREFIXES = [
+    "freedesktop-sdk.bst:",
+    "gnome-build-meta.bst:",
+    "gnome-build-meta.bst:freedesktop-sdk-extra.bst:",
+]
+
+# Set by `mise run generate-fakecap-manifest --pull`: lets each checkout fetch an
+# artifact missing from the local cache from bow. A build only downloads what it
+# stages, so e.g. fdsdk's components/_private/*-base.bst (consumed through filter
+# elements) are usually absent locally, and a checkout without a remote fails.
+BST = ["./mise/tasks/bst"] + (["--pull"] if os.environ.get("FAKECAP_PULL") else [])
 
 
 def element_names(manifest_path: Path) -> list[str]:
@@ -39,7 +52,7 @@ def _checkout_tar(ref: str) -> bytes:
     # output otherwise interleaves with and corrupts the tar stream on fd 1.
     proc = subprocess.run(
         [
-            "./mise/tasks/bst",
+            *BST,
             "artifact",
             "checkout",
             "--tar",
@@ -94,12 +107,14 @@ def main() -> int:
     print(f"==> {len(elements)} elements in manifest", file=sys.stderr)
 
     rows: list[tuple[str, str, str]] = []
+    skipped: list[str] = []
     for i, element in enumerate(elements, 1):
         print(f"==> [{i}/{len(elements)}] {element}", file=sys.stderr)
         try:
             paths = files_for_element(element)
         except (subprocess.CalledProcessError, tarfile.TarError) as exc:
             print(f"    skip (checkout/tar failed): {exc}", file=sys.stderr)
+            skipped.append(element)
             continue
         for path in paths:
             rows.append((path, element, DEFAULT_INTERVAL))
@@ -110,6 +125,13 @@ def main() -> int:
             out.write(f"{path}\t{element}\t{interval}\n")
 
     print(f"==> Wrote {len(rows)} rows to {OUTPUT_TSV}", file=sys.stderr)
+    if skipped:
+        # Their files are missing from the manifest, not merely unattributed:
+        # say so where the run ends instead of only in the scrollback.
+        print(f"==> WARNING: {len(skipped)} element(s) skipped, their files are "
+              "absent from the manifest:", file=sys.stderr)
+        for element in skipped:
+            print(f"    {element}", file=sys.stderr)
     return 0
 
 
