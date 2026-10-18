@@ -35,4 +35,4 @@ sources:
 - kind: git_repo
   url: freedesktop:xdg/xdg-utils.git
   track: v*.*.*
-  ref: v1.2.1-0-g356c380ad6fecc9ce6bea1f6a77986ba67402c80
+  ref: v1.3.0-rc.1-0-gbd9ae921abec32d283c8861a70c6dd95f9a47d23
