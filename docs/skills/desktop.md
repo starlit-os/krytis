@@ -2890,6 +2890,13 @@ commits, moves the ref, so expect frequent track PRs that don't touch the patche
 As with all skel changes, existing accounts don't get the source. Add it by hand: `noctalia
 msg plugins source add krytis path /usr/share/noctalia/plugins`, or add the TOML block.
 
+**Proposing a plugin patch upstream** follows community-plugins' PR template, which a bot
+enforces. An update to a plugin must bump its `version` in `plugin.toml`. A PR that touches
+somebody else's plugin is converted to draft until that plugin's author replies. See
+`docs/design/upstream-ai-policies.md` § community-plugins. Work from the
+`kitten-lily/community-plugins` fork. noctalia-dev/community-plugins#1073 is the worked
+example.
+
 **Testing a plugin patch on real hardware before building an image.** Copy the plugin into
 the `local` dev source (`cp -a ~/.local/state/noctalia/plugins/materialized/community/<plugin>
 ~/.local/share/noctalia/plugins/`) and patch it there. `noctalia msg plugins list` should
@@ -2897,7 +2904,8 @@ show the id as `[local]`. noctalia hot-reloads a path source's Luau files when t
 (journal: `hot reload: reloaded service`), so UI patches show up at once. The plugin's
 Python helper does not reload. To pick up a backend change, run `noctalia msg plugins
 disable <id>` then `enable <id>`. Disable stops serve, and enable launches a fresh one from
-the current copy. That works only with `stop-serve-by-interpreter-path.patch` (#1313).
+the current copy. That works only with `stop-serve-by-interpreter-path.patch` (#1313),
+proposed upstream as noctalia-dev/community-plugins#1073 (open as of 2026-10-19).
 Upstream's `onExit` runs `pkill -TERM -f '^python3 [^ ]*/mxctl\.py serve$'`, but serve's
 command line starts with `/usr/bin/python3`, so the pattern matches nothing. The old serve
 keeps the helper lock and a fresh heartbeat, and each serve the re-enabled service launches
@@ -2909,9 +2917,15 @@ The service relaunches serve from the current copy once `status.json`'s `ts` is 
 90 s old (`HELPER_RESTART_SEC`; checked every 10 s). Measured: killed 17:30:43, relaunched
 17:32:14. Confirm the path with `pgrep -af 'mxctl.py serve'`. The `[plugins]` log shows each
 scan loading the community copy first and the local copy overriding it; the local copy is
-the one that runs. mx-control's `tests/shared_test.lua` runs with plain `lua`
-(`/usr/bin/lua`) from the plugin root. Delete the local copy once the image carries the
-patch, or it keeps shadowing the image's copy. Kill its serve as well.
+the one that runs. **A new local copy doesn't replace the running service.** `plugins list`
+shows `[local]` as soon as the copy lands, but the service that is already running keeps the
+previous copy's Luau until the plugin is disabled. That first disable runs the *old* copy's
+`onExit`. On 2026-10-19 the image's unpatched pattern left serve running after the first
+disable. The journal logged `started service` only on the following enable, and every
+disable after that killed serve. So run one disable/enable before testing anything in
+`onExit`. mx-control's `tests/shared_test.lua` runs with plain `lua` (`/usr/bin/lua`) from
+the plugin root. Delete the local copy once the image carries the patch, or it keeps
+shadowing the image's copy. Kill its serve as well.
 
 **Debugging only the backend needs no override.** The service treats any serve holding the
 lock as alive, because liveness is the heartbeat and not a process match. Copy the plugin

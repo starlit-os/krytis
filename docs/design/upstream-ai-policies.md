@@ -58,7 +58,8 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | GNOME (gnome-build-meta) | `gitlab.gnome.org/GNOME/gnome-build-meta` | `elements/desktop/xwayland-satellite.bst` bypasses its `sdk/xwayland-satellite.bst`. | No | gnome-build-meta has no rule, and there is no GNOME-wide one. Extensions, Circle and Discourse ban AI-generated work, and many modules (Loupe, Calendar, …) ban LLM contributions outright. Check the module's own CONTRIBUTING. |
 | gnome-disk-utility | `gitlab.gnome.org/GNOME/gnome-disk-utility` | GNOME/gnome-disk-utility#505 (whether the GTK4 51 release slipped) gates step 3 of `docs/plans/2026-09-30-gtk3-realistic-floor.md` (#1033). `elements/desktop/gnome-disk-utility.bst` mirrors its gnome-build-meta element. | No | Nothing in the tree (`HACKING` covers only commit-message format). No issue or MR mentions an AI rule. The GNOME-wide notes on the gnome-build-meta row apply as context. |
 | noctalia | `github.com/noctalia-dev/noctalia` | Fork pin and patch `elements/desktop/noctalia.bst`. | No | No rule, though contributors have asked for one (noctalia-dev/noctalia#4380). Only "Do not machine translate strings". Conventional Commits. A bot enforces the PR template. |
-| omarchy-mxcontrol | `github.com/zachwilke/omarchy-mxcontrol` | Own patches `elements/desktop/noctalia-plugin-mx-control.bst`: one proposed as zachwilke/omarchy-mxcontrol#18 (#1220), and one as suggested changes in a review on zachwilke/omarchy-mxcontrol#16 (#1316). | No | No contributor docs or templates. The owner's own commits carry `Co-Authored-By: Claude …` and `Cursor Agent` trailers, so AI-assisted work is visibly normal there. |
+| omarchy-mxcontrol | `github.com/zachwilke/omarchy-mxcontrol` | Own patches `elements/desktop/noctalia-plugin-mx-control.bst`: one proposed as zachwilke/omarchy-mxcontrol#18 (#1220), and one as suggested changes in a review on zachwilke/omarchy-mxcontrol#16, taken as `7432d3e` (#1316). | No | No contributor docs or templates. The owner's own commits carry `Co-Authored-By: Claude …` and `Cursor Agent` trailers, so AI-assisted work is visibly normal there. |
+| community-plugins | `github.com/noctalia-dev/community-plugins` | Own patches `elements/desktop/noctalia-plugin-mx-control.bst` on its Luau: one proposed as noctalia-dev/community-plugins#1073 (#1316), one feature not proposed. | No | No AI rule. A required attestation says the code is "not obfuscated, minified, or generated", which is about readability. "No unreviewed machine/LLM translations". A bot enforces the PR template. **A PR changing someone else's plugin is drafted until its author replies.** The README waives the author's sign-off for fixes. |
 | bootc | `github.com/bootc-dev/bootc` | `elements/config/starlit-update.bst` works around bootc#2422. #1232 and #545 track bootc PRs. | Yes | Human review is required. **An LLM must not add `Signed-off-by`.** Use `Assisted-by: AI` / `Generated-by: AI` **without model names** (REVIEW.md says the opposite). No `Co-developed-by`. Over ~500 lines, file a design issue first. |
 | Podman | `github.com/podman-container-tools/podman` | containers/podman#27779 and containers/podman#28038 (multistage builds ignore a local image), `docs/skills/krytis-live-config.md`. | Yes | Org-wide LLM policy. **No verbatim LLM output in issues, comments or PR text.** A PR checkbox says they are human-written. Assisted code is fine, but "remove … LLM metadata". Violations can mean bans. DCO is mandatory. |
 | container-libs | `github.com/podman-container-tools/container-libs` | podman-container-tools/container-libs#34 and podman-container-tools/container-libs#625 (Fulcio workflow identity) gate #418. | Yes | Same org-wide policy as Podman. |
@@ -256,6 +257,33 @@ nothing was found, so an absence is evidenced and not assumed.
 - Behaviour: 5 of the repo's 22 commits carry `Co-Authored-By: Claude …` trailers and 3
   carry `Co-authored-by: Cursor Agent`, all on the owner's own work.
 - As of: `main` `0968d77` (2026-09-07).
+
+### community-plugins
+
+- The [README](https://github.com/noctalia-dev/community-plugins/blob/main/README.md) and
+  the [PR template](https://github.com/noctalia-dev/community-plugins/blob/main/.github/PULL_REQUEST_TEMPLATE.md)
+  have no AI rule. The template's "Code review attestation" requires "The code is
+  readable and not obfuscated, minified, or generated". The README's matching rule is
+  "No obfuscated, minified, or generated code. A reviewer must be able to read every line
+  you ship", so it is about readability. Translations must not be "unreviewed
+  machine/LLM translations", and the README forbids machine-translated locales.
+- **Someone else's plugin:** "Someone else's PR changing your plugin is not merged without
+  your sign-off, unless it fixes something that is broken or is a mechanical change
+  applied across the whole repo." `pr-notify-plugin-authors.yml` @-mentions the author
+  and converts the PR to draft "until you have had a chance to look at it". Their reply
+  marks it ready. On noctalia-dev/community-plugins#503, a maintainer waited for the author
+  and said "Will wait a bit more since this is not a bug fix."
+- **Template bot:** `enforce-pr-template.yml` converts a ready PR back to draft (and
+  earlier closed it) when the description loses the `<!-- noctalia-pr-template:v1 -->`
+  marker or a required heading. A ready PR needs exactly one plugin type, at least one
+  compositor and every Checklist and attestation box checked. An update must bump
+  `version` in `plugin.toml`, and a PR touches exactly one plugin directory.
+- Behaviour: AI-assisted PRs that disclose it are merged. noctalia-dev/community-plugins#503
+  ("Disclaimer: AI-assisted tooling was used.") was merged by a maintainer. Several
+  plugins are AI tooling themselves.
+- noctalia-dev/community-plugins#1073 disclosed the tool in the PR body and carried an
+  `Assisted-by:` trailer.
+- As of: README `2bb2854cc9` (2026-10-13), PR template `e6eaa58b54` (2026-09-03).
 
 ### bootc
 
