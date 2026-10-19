@@ -21,7 +21,7 @@ sources:
 - kind: git_repo
   url: github:nothings/stb.git
   track: refs/heads/master
-  ref: 2c980bb59875b0d32144a71867fbdebb2f77cd20
+  ref: a7d4c2175630e1ea5b6f8dd00ab96fed0b97b96d
 
 config:
   install-commands:
