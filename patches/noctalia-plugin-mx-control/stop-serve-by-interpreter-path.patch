@@ -12,8 +12,9 @@
 # pattern string. It now runs the pattern through `grep -E`, as pkill does,
 # against real command lines, and fails on the old pattern.
 #
-# Not proposed upstream. Remove when community-plugins' mx-control matches
-# serve under an interpreter path.
+# Proposed upstream on 2026-10-19 as noctalia-dev/community-plugins#1073,
+# the same two hunks plus a 0.2.3 version bump. Remove when community-plugins'
+# mx-control matches serve under an interpreter path.
 diff --git a/mx-control/shared.luau b/mx-control/shared.luau
 index 5afc10e..60563b0 100644
 --- a/mx-control/shared.luau
