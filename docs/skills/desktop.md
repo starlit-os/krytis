@@ -814,9 +814,32 @@ A VM can't test lid close, s2idle resume or a real panel, and `switch-local` cos
 reboot. `mise run noctalia-session-try [--debug]` checks out the `desktop/noctalia.bst`
 artifact from the last build (`--deps none`, ~300 MB; the default `run` closure is ~3.5 GB)
 to `/var/tmp/noctalia-session-try`, and points `noctalia.service` at it with a runtime
-drop-in, `$XDG_RUNTIME_DIR/systemd/user/noctalia.service.d/90-session-try.conf`. `--revert`
-removes it. Logout or reboot also removes it, because the runtime directory goes with the
-user manager.
+drop-in, `$XDG_RUNTIME_DIR/systemd/user/noctalia.service.d/90-session-try.conf`. Logout or
+reboot removes the drop-in, because the runtime directory goes with the user manager. They do
+**not** undo the settings, so always finish with `--revert`, even after a reboot.
+
+**A noctalia settings migration is one-way, and going back silently resets the shell.** A
+newer noctalia migrates `~/.local/state/noctalia/settings.toml` on load and writes the new
+`config_version` to disk. v5.3.0 wrote 15 over 14, and its only change for that version is
+the dock monitor list. An older binary that finds a `config_version` above the newest it
+knows rejects the whole file as `config.version.unsupported`
+(`storedConfigVersion()` in `src/config/config_migrations.cpp`) and runs on defaults. At the
+default log level nothing is logged. The only trace is a default setting where yours should
+be, e.g. `[backdrop] disabled in config` on a file that says `enabled = true`. This hit the
+first `--revert` on 2026-10-20: the shell came back with stock settings.
+
+- The task now copies `settings.toml` to `/var/tmp/noctalia-session-try.settings.toml` on the
+  first apply. That path survives a reboot. `--revert` stops the shell first, because the
+  trial binary hot-reloads the file and would migrate a restored copy straight back. If
+  `config_version` differs, it restores the copy and keeps the migrated file as
+  `settings.toml.session-try-newer`.
+- To repair by hand: set `config_version` back to the old value and restart
+  `noctalia.service`. This is only safe when the newer version's migrations changed nothing
+  else in your file, so diff against a pre-migration copy first.
+- The same trap applies to `bootc rollback` to an image with an older noctalia, after a
+  newer one has migrated the file. [INFERENCE from the same code path; not observed.]
+
+Other constraints:
 
 - It runs the new binary against the running image's libraries, so it's only valid when the
   bump changes no `dependency()`. The task refuses to start if `ldd` finds a missing library.
