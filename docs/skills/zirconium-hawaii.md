@@ -278,8 +278,8 @@ in `exclude:`. zirconium hit a broken bootc v1.16.7 and pinned around it with:
 
 Full writeup in `docs/skills/bst.md` § `git_repo` tracking: excluding a bad tag, and
 patching ahead of a vendored ref. Krytis's own `elements/core/bootc.bst` tracks `v*` on
-the same upstream project with no `exclude:` today — same exposure if a future point
-release ships broken.
+the same upstream project and carries only the pre-release `exclude:` patterns (#1342). A
+broken point release would still need its tag added to that list.
 
 ## Patching a junction's own vendored source pin
 

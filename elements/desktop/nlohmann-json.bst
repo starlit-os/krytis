@@ -26,4 +26,8 @@ sources:
 - kind: git_repo
   url: github:nlohmann/json.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v3.12.0-0-g55f93686c01528224f448c19128836e7df245f72

@@ -55,6 +55,12 @@ sources:
 - kind: git_repo
   url: github:trifectatechfoundation/sudo-rs.git
   track: 'v[0-9]*.[0-9]*.[0-9]*'
+  # upstream tagged dev snapshots as v0.2.0-dev.20230711
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
+  - '*-dev*'
   ref: v0.2.15-0-ge4cfa9cf7b71e287dd5046633c0f5276072d147d
 - kind: cargo2
   url: crates:crates

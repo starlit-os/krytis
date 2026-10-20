@@ -23,4 +23,8 @@ sources:
 - kind: git_repo
   url: github:dyne/frei0r.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v3.1.3-0-g32e91405d2ec5e222f75175b36dc4cc7bc0667ef

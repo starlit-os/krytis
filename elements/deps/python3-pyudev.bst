@@ -14,4 +14,8 @@ sources:
 - kind: git_repo
   url: github:pyudev/pyudev.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v0.24.5-0-g65f292d491ea9e3edbb372365b8ed098b1735214

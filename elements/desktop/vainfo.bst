@@ -18,4 +18,10 @@ sources:
 - kind: git_repo
   url: github:intel/libva-utils.git
   track: '*.*.*'
+  # upstream tags pre-releases as 2.9.0.pre1
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
+  - '*pre*'
   ref: 2.24.0-0-gc3ba9e07e61841f1bc2c9932d957b44e5827a852

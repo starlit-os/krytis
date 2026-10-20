@@ -74,6 +74,10 @@ sources:
 - kind: git_repo
   url: gitlab:ananicy-cpp/ananicy-cpp.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v1.2.0-0-gcf5ac2eb7b9660794f26f274975066f33359c63e
 
 # GCC 16 (fdsdk's shipped compiler) rejects v1.2.0's missing <cstring>/<cstdint>/
@@ -89,6 +93,10 @@ sources:
 - kind: git_repo
   url: github:CachyOS/ananicy-rules.git
   track: '*.*.*'
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: 1.1.49-0-g03ef03fbf7e834385377432ccecaedd32e3414bb
   directory: ananicy-rules-src
 

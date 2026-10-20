@@ -154,6 +154,10 @@ sources:
 - kind: git_repo
   url: github:uutils/coreutils.git
   track: '[0-9]*.[0-9]*.[0-9]*'
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: 0.12.0-0-gdc1efd89948a9ca4c78c3a4b9a6ac891019a8c69
 
 - kind: cargo2

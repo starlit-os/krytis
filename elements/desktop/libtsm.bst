@@ -19,4 +19,8 @@ sources:
 - kind: git_repo
   url: github:kmscon/libtsm.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v4.8.0-0-gef2365d0f9f1a370d721a82470d69c3646fe97f0
