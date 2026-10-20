@@ -2878,7 +2878,10 @@ builds a wheel without build isolation and installs it under `%{install-root}`.
   `.desktop` and metainfo) exist to `rm`. A plain `install-commands:` list replaces the
   install; see § Overriding `install-commands` on a buildsystem element.
 - **A git tag in a pure-version scheme needs an `exclude:` for pre-releases.** Solaar tags
-  `1.1.20` and `1.1.20rc3` alike, so `track: '[0-9]*'` plus `exclude: ['*rc*']`.
+  `1.1.20` and `1.1.20rc3` alike, so `track: '[0-9]*'` plus `exclude: ['*rc*']`. A dotted
+  glob does not help: `track:` is fnmatch, `*` spans `-` and `.`, so `v*.*.*` matches
+  `v1.3.0-rc.1` (xdg-utils, #1323 tracked straight to it). Any `track:` without an
+  `exclude:` relies on upstream never tagging a pre-release.
 - **`bst shell <element>` can't run the import test.** A Python element's runtime closure has
   no `sh` (`Staged artifacts do not provide command 'sh'`). Test imports in the loaded image:
   `podman run --rm localhost/krytis:latest python3 -c 'import …'`.
