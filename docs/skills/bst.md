@@ -1664,15 +1664,20 @@ appended to the step summary, as `` `Qalculate/libqalculate`: skipped release v5
 A skip that repeats across many runs means the template is stale, not that upstream is
 slow. To check by hand: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].name'`.
 
-### An auto-track `ref:` bump never builds the element — upstream dep additions land broken
+### An auto-track `ref:` bump often needs new deps — fix them on the tracking PR
 
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
-`ref:`. It does **not** build the element. So when an upstream release adds a new
-`dependency()` to its `meson.build`/`CMakeLists.txt`, the bump merges green and `mise build`
-is broken on `main` from that moment — for *every* branch, since `mise lint` and
-`mise boot-test` both go through a full build. #400 (`noctalia-greeter` v1.0.0 → v1.1.0) and
-#401 (`noctalia` → v5.0.0-beta.7) did exactly this, costing three new deps across two
-elements (#412).
+`ref:`; it does not build anything itself. When an upstream release adds a new
+`dependency()` to its `meson.build`/`CMakeLists.txt`, the bump alone fails to build. Before
+`build-changed.yml` (#743) such a PR merged green and broke `mise build` on `main`: #400
+(`noctalia-greeter` v1.0.0 → v1.1.0) and #401 (`noctalia` → v5.0.0-beta.7) cost three new deps
+across two elements (#412). Now the PR's **Build changed elements** check goes red with
+meson's `Dependency "<name>" not found`. That check is not required, so a red one on a
+tracking PR still has to be read before merging. #1325 (noctalia-greeter v1.6.0 → v1.7.0) was
+the first catch: v1.7.0 added `libjxl` + `libjxl_threads` for JPEG XL wallpapers, both
+satisfied by `freedesktop-sdk.bst:components/libjxl.bst` in `depends:`. fdsdk carries many
+libraries krytis has never named (`libjxl`, `highway`, `lcms`, `gflags`). Check
+`elements/components/` at the junction's pinned ref before writing a new element.
 
 **When reviewing or merging an auto-track PR on a source-built element, diff the upstream
 build file, not just the ref.** One command answers it:
