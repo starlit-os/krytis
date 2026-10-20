@@ -55,6 +55,11 @@ COPY files/microsoft-uefi-certs/ /tmp/microsoft-uefi-certs/
 # an empty list and 16 + len(DER) for a real one. It fails the build instead of
 # the boot. `mise run enroll-test` is the runtime gate.
 #
+# The first check refuses a db key that is not the private key for db_crt
+# (#1327). `mise run seal-uki` checks all three pairs before building; this
+# repeats it for db so a hand-run `podman build --secret …` fails here too,
+# instead of signing binaries that only fail at boot under enforcement.
+#
 # No `#` comments inside the RUN below — the Dockerfile parser joins
 # `\`-continued lines, so a comment would swallow the command after it.
 RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
@@ -62,6 +67,8 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
     --mount=type=secret,id=pk_key --mount=type=secret,id=pk_crt \
     if [ "$SEAL_SECURE_BOOT" = "true" ]; then \
         set -ex && \
+        [ "$(openssl pkey -in /run/secrets/db_key -pubout)" = "$(openssl x509 -in /run/secrets/db_crt -pubkey -noout)" ] || \
+            { echo "FATAL: db_key does not match db_crt" >&2; exit 1; } && \
         mkdir -p /var/tmp /usr/lib/bootc/install/secureboot-keys/auto && \
         sbsign --key /run/secrets/db_key --cert /run/secrets/db_crt \
             --output /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed \
