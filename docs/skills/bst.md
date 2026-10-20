@@ -1460,9 +1460,9 @@ downgraded `ref:`:
   - v1.16.7
 ```
 
-Krytis's own `elements/core/bootc.bst` tracks `v*` on the same upstream project with no
-`exclude:` today — if a future bootc point release ships broken, this is the fix, not just
-a `ref:` rollback.
+`elements/core/bootc.bst` tracks `v*` on the same upstream project and carries only the
+pre-release `exclude:` patterns (see the next section). If a future bootc point release
+ships broken, add that tag to the same list as well as rolling `ref:` back.
 
 **Patching a junction's own vendored source pin lands a point-fix immediately, without
 waiting for the next full junction bump.** *Source: zirconium-hawaii `30febd5`, `5cb27df`.*
@@ -1481,9 +1481,65 @@ above (Patch queues on junctions destroy upstream cache reuse, in `docs/skills/d
 about the cache-key cost of any junction-level patch — weigh that against the wait either
 way. (The two specific bugs that motivated this in zirconium-hawaii — mesa 26.1.6 and
 ostree v2026.3 — were already fixed at the fdsdk pin of the day, 26.08rc.2, which carried
-mesa-26.1.8 and ostree v2026.4; the pin is `freedesktop-sdk-26.08.1` today, i.e. strictly
-later, so there is still nothing to backport. Record the technique for the next time this
-happens.)
+mesa-26.1.8 and ostree v2026.4. The pin is `freedesktop-sdk-26.08.2` as of 2026-10-20, which
+is strictly later, so there is still nothing to backport. Record the technique for the next
+time this happens.)
+
+### `git_repo` tracking: every tag glob needs a pre-release `exclude:` (#1342)
+
+`bst source track` lists the remote's refs, keeps those matching `refs/(heads|tags)/<track>`
+minus any matching an `exclude:` pattern, and takes `max(…, key=version_sort_key)`
+(`buildstream_plugins_community/sources/_git_utils.py` `resolve_ref`). The key splits each
+ref into letter and digit runs and sorts letters *below* digits. So `v1.3.0-rc.1` loses to
+`v1.3.0`, but it beats `v1.2.1`. Once upstream tags the next release's first pre-release, an
+unguarded glob tracks to it. That is how #1323 bumped xdg-utils to `v1.3.0-rc.1`.
+
+- **A narrower glob doesn't help.** Patterns go through `fnmatch.translate`, where `*` spans
+  `-` and `.`. `v*.*.*`, `*.*.*` and `v[0-9]*.[0-9]*.[0-9]*` all match `-rc.1`, `.pre1` and
+  `-dev.20230711`.
+- **Matching is case-sensitive.** `fnmatch.translate` adds no `IGNORECASE`, so `'*rc*'` does
+  not catch openssh's `V_1_2_3_PRE1`.
+- **Branches can't win against tags.** The key covers the full ref name, and `tags` sorts
+  above `heads`, so a matching `refs/heads/v2.x` (spdlog) only matters if no tag matches.
+
+**Convention:** every `git_repo` source that tracks tags carries `'*rc*'`, `'*alpha*'` and
+`'*beta*'`, plus whatever naming its upstream has actually used. Use the dash-free forms:
+freedesktop-sdk tags `26.08beta.4` and `26.08rc.2`, and Solaar `1.1.20rc3`. Extras carried as of
+#1342: openssh `'*PRE*'`, `'*BETA*'`, `'*TEST*'`, `'*RC*'` (including the underscore-less
+`V_1_2PRE17`); sudo-rs `'*-dev*'`; vainfo `'*pre*'`. Mesa, Solaar and ddcutil had their own
+lists before this and kept them. Branch-tracking sources (`refs/heads/main`, `master`,
+`gnome-51`) and single-tag pins (`efibootmgr` `18`) need none.
+
+**Junction mirrors are the exception: leave their `track:` exactly as upstream wrote it,
+with no added `exclude:`.** `elements/overrides/{rust-bindgen,btrfs-progs,libdisplay-info,libdecor,libportal}.bst`
+copy an fdsdk or gnome-build-meta element verbatim. They are deliberately kept out of the
+track matrix and are pinned to the junction's ref; their `track:` exists only so the copy
+matches upstream's element. An added `exclude:` protects nothing there, and it fails
+`mise run rust-bindgen-check` and `mise run btrfs-progs-check`, which compare the whole
+source list against the junction's element. `gtk3-mirror-check` and
+`libdisplay-info-check` happened not to notice. Before adding an `exclude:`, read the element
+header's "Update path" line.
+
+**Choosing patterns for a new element:** list the upstream tags, drop the ones the exclude
+matches, and check that each dropped tag really is a pre-release. A loose pattern can catch
+a stable tag by substring (a hypothetical `*rc*` against `v2.0-source`). Upstream's odd
+non-pre-release suffixes (sudo-rs `v0.2.6-man`, rust-bindgen `v0.52.0-sp1`, uutils
+`0.0.30-delete`) are a separate hazard; they only matter while they are the newest match.
+
+```shell
+git ls-remote --tags <url> | grep -v '\^{}' | cut -f2 | sed 's|refs/tags/||' | sort -V
+```
+
+**Changing `exclude:` (or `track:`) never changes a cache key.** `git_repo`'s
+`get_unique_key()` is `{"ref": …, "bugfix": 1}`. For #1342, `bst show --deps all
+--format '%{name} %{full-key}' oci/krytis/image.bst` gave identical keys for all 925 elements
+before and after the change. That includes `freedesktop-sdk.bst`'s junction source. The proof
+for this kind of PR is a `bst source track` run that resolves to the same refs as before, plus
+the mirror drift checks above, not an image build. Track only elements whose update path is
+tracking: on a pinned mirror, `bst source track` jumps to upstream's newest tag. On
+rust-bindgen that then fails, because its carried patches don't apply to `v0.73.2`. Tracking
+rewrites `ref:` in place, so with nothing staged save the diff first (`git diff > x.patch`),
+track, compare, then `git checkout -- elements && git apply x.patch`.
 
 ### One shared updater, not one script per element (#648)
 

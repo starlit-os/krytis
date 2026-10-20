@@ -28,4 +28,8 @@ sources:
 - kind: git_repo
   url: github:Vladimir-csp/xdg-terminal-exec.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v0.14.3-0-g065925df9f419008159258ae169018bfd23df71b

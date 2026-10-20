@@ -15,4 +15,8 @@ sources:
 - kind: git_repo
   url: github:gvalkov/python-evdev.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v2.0.0-0-g9508e5239ac50cd2ea9099519b3f17c9e3fc154d

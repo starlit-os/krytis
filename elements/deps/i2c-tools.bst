@@ -4,6 +4,10 @@ sources:
 - kind: git_repo
   url: kernel:utils/i2c-tools/i2c-tools.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v4.4-0-gc20cd0b4be78e7b84104452b7fc9c570f00f92bf
 - kind: local
   path: files/i2c-tools

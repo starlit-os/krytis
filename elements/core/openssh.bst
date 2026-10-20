@@ -119,6 +119,15 @@ sources:
 - kind: git_repo
   url: github:openssh/openssh-portable.git
   track: V_*
+  # upstream's old pre-releases are upper-case: V_1_2PRE17, V_2_0_0_BETA1, V_1_2_3_TEST1
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
+  - '*PRE*'
+  - '*BETA*'
+  - '*TEST*'
+  - '*RC*'
   ref: V_10_3_P1-0-g2d98db98331803cbb820211b2fb0d31a6e71e58e
   # We ignore the patch version because this is set in a different component in CPE
   version-guess-pattern: '(\d+)_(\d+)'

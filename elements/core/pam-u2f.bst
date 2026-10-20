@@ -17,4 +17,8 @@ sources:
 - kind: git_repo
   url: github:Yubico/pam-u2f.git
   track: pam_u2f-*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: pam_u2f-1.4.0-0-g1d85db26b590c191a508d06eddc86fbff6b5009e

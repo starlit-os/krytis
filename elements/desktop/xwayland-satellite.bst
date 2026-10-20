@@ -82,6 +82,10 @@ sources:
 - kind: git_repo
   url: github:Supreeeme/xwayland-satellite.git
   track: 'v*'
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v0.8.3-0-gb83eab900644e4c7c77982ce3d44cb490f0c5e1d
 
 - kind: patch

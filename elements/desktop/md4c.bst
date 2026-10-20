@@ -13,6 +13,10 @@ sources:
 - kind: git_repo
   url: github:mity/md4c.git
   track: release-*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: release-0.5.3-0-g472c417005c2c71b8617de4f7b8d6b30411d78f4
 
 variables:

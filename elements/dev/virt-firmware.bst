@@ -20,4 +20,8 @@ sources:
 - kind: git_repo
   url: gitlab:kraxel/virt-firmware.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v26.7.4-0-g2974ca36bb14026224f153d6e5ec39f100bfbb24

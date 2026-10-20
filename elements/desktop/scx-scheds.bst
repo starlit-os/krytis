@@ -66,6 +66,9 @@ sources:
   track: v*
   exclude:
   - v1.1.3 # scx_lavd 1.1.3 causes massive freezes on 7.2.x kernels — see element comment
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v1.1.4-0-ge7b3a219617472cf78880ac424714e52c932db61
 
 - kind: cargo2

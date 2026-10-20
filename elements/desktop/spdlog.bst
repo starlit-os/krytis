@@ -28,4 +28,8 @@ sources:
 - kind: git_repo
   url: github:gabime/spdlog.git
   track: v*
+  exclude:
+  - '*rc*'
+  - '*alpha*'
+  - '*beta*'
   ref: v1.17.0-0-g79524ddd08a4ec981b7fea76afd08ee05f83755d
