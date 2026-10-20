@@ -1702,6 +1702,19 @@ there), a genuinely header-only package goes in `build-depends:`. Verify which i
 than guessing — fdsdk builds `tomlplusplus` as `libtomlplusplus.so.3`, so it is a `depends:`
 despite the upstream project being header-only by default.
 
+**A bump of a library element breaks its consumers, not itself, and `build-changed` never
+builds the consumers.** It deliberately skips reverse dependencies. #1332 bumped
+`desktop/stb.bst` (`nothings/stb` 2c980bb → a7d4c21) green, but upstream had moved
+`stb_image_resize2.h` to its own repo, `nothings/stb_image_resize`, so the header vanished from
+`/usr/include/stb/`. `stb.bst` still built, since `install ./*.h` just installed fewer files. The
+break surfaced on the next unrelated PR whose changed elements pulled in a rebuilt
+noctalia-greeter (#1349), as meson's `stb/stb_image_resize2.h not found`. For a tracking PR on
+`desktop/stb.bst`, `desktop/nlohmann-json.bst` or `desktop/md4c.bst`, build the consumers before
+merging: `mise run bst --pull build desktop/<lib>.bst <consumers>`. The consumers are listed in
+`docs/design/image-inventory.md`. A manual element that globs its install files hides a
+removed file the same way, so diff the upstream tree's file list too
+(`gh api repos/<o>/<r>/compare/<old>...<new> -q '.files[]|select(.status!="modified")'`).
+
 ### The track job's PR title/version comes from parsing the git-describe `ref:`
 
 `git_repo` refs are git-describe strings — `v5.0.0-beta.6-0-g<sha40>` — and the `track`
