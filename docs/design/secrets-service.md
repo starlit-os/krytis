@@ -328,9 +328,13 @@ Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`. Ori
 `ba821c7da` on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`); **rebased 2026-08-17 onto
 upstream `main` `87b203c68` (`v5.0.0-beta.8-135`)** and re-pinned in PR #606. The branch has
 been followed forward since — `elements/desktop/noctalia.bst` pins
-`v5.3.0-2-g1aab2f2f` as of 2026-10-20, still on `track: feat/system-prompter`. **No PR or issue
-has been opened against `noctalia-dev/noctalia`** — per AGENTS.md's Upstream Gate that needs
-an explicit instruction naming that action. The branch loses nothing by waiting.
+`v5.3.0-2-g1aab2f2f` as of 2026-10-20, still on `track: feat/system-prompter`. **Proposed
+upstream on 2026-10-20** as noctalia-dev/noctalia#4951, with feature request
+noctalia-dev/noctalia#4950. Both were open as of 2026-10-20. The PR branch
+(`feat/native-system-prompter`) is separate from the pin. It squashes the two commits onto
+upstream `main` and adds what upstream's `CONTRIBUTING.md` requires on top: a Settings →
+Security toggle, an entry in upstream's user docs (`shell.mdx`), and `gcr-4` in the CI, Nix
+and Guix package lists.
 
 The rebase absorbed 98 upstream commits with **no source conflict** — the 1722-line feature
 commit applied untouched. The only conflict was documentation: upstream moved its dependency

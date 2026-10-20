@@ -28,8 +28,8 @@ provider*.
   evidence for the decision, not to pre-empt it.
 - **Breakage Gate.** Touches the PAM stack (`config/greetd-config.bst`) and the greeter
   session. Human sign-off required before any of this merges.
-- **Upstream Gate.** Nothing has been opened against `noctalia-dev/noctalia`. The prompter
-  lives on a fork branch.
+- **Upstream Gate.** The prompter was proposed on 2026-10-20 as noctalia-dev/noctalia#4951.
+  Until a release contains it, it lives on a fork branch.
 
 ## Must not merge as-is
 

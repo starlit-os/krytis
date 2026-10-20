@@ -6,7 +6,7 @@
 `feat/system-prompter` branch (not upstream `noctalia-dev/noctalia`) for a native
 `org.gnome.keyring.SystemPrompter` provider. It went in as an interim step over the
 *then*-shipping gnome-keyring backend (PR #574) and shipped for real alongside the oo7
-cutover in #594 (2026-08-15); #84 was closed as completed on 2026-09-04. The branch is still unupstreamed. Two non-obvious
+cutover in #594 (2026-08-15); #84 was closed as completed on 2026-09-04. The prompter was proposed upstream on 2026-10-20 as noctalia-dev/noctalia#4951. Two non-obvious
 mechanics from doing this:
 
 **`git_repo` sources can pin `track:` to a branch name, not just a tag glob.**

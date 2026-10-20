@@ -694,6 +694,32 @@ where it buys durable coverage.
 `noctalia-dev` is outside `starlit-os/` and `kitten-lily/`, so publishing there needs an
 explicit instruction naming that action.
 
+**What the first core PR needed beyond the fork commit** (noctalia-dev/noctalia#4951, the
+SystemPrompter, 2026-10-20). The template bot passed it on the first try. The krytis pin
+branch was not submittable as-is:
+
+- **A new library dependency touches seven files, not two.** Besides `meson.build` and
+  `BUILDING.md`: upstream's CI package list (`ci.yml`, or the PR's own CI fails to
+  configure), `nix/package.nix`, the Guix `noctalia.scm`, and the Stack table in
+  `CONTRIBUTING.md` and `CREDITS.md`. `git grep -l <an existing sibling dep>` outside `src/`
+  finds them all. Check the package name in each distro (nixpkgs `gcr_4`; Guix's `gcr` is
+  already 4.x, with `gcr-3` as the old one).
+- **A user config key needs a Settings entry and `docs/user` in the same commit.** Mirror the
+  sibling key: `settings_registry.cpp` `makeEntry(SettingsSection::…)`, labels under
+  `settings.schema.<section>.<key>` in `en.json`, with keys kept sorted, and the
+  `docs/user/configuration/*.mdx` example block plus a bullet. Then run
+  `python3 tools/i18n-check.py`.
+- **Comments must not narrate rationale or history.** The fork's header comment explaining
+  why gcr 4 dropped the prompter had to go. That belongs in the commit message, and
+  `CONTRIBUTING.md` wants that message short too.
+- **CI parity runs locally in `archlinux:latest`.** Use the package list from `ci.yml` plus
+  any new dependency, then `PATH=/usr/lib/llvm22/bin:$PATH just format-check`, `just build`,
+  `just test debug --print-errorlogs` and `just lint`. It took about 26 minutes cold,
+  most of it the whole-tree clang-tidy. Bind-mount the worktree. `build-debug/` is ignored.
+- **Submit from a separate branch**, not the pin's `feat/system-prompter`. The pin is based
+  on a release tag and keeps krytis-only history. The PR branch is one commit on upstream
+  `main`, and force-pushing it during review cannot move what krytis builds.
+
 ## Lid close locks then suspends — noctalia holds the logind delay inhibit
 
 *Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7); the
