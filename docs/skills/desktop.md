@@ -808,6 +808,30 @@ nothing. `[lockscreen] monitors = [...]` does not help either: when none of the 
 connectors is present (e.g. undocked), `LockScreen::isInteractiveOutput()` falls back to
 treating every output as interactive, so the built-in panel gets the full animated lock.
 
+### Trying a noctalia build in the running session
+
+A VM can't test lid close, s2idle resume or a real panel, and `switch-local` costs a
+reboot. `mise run noctalia-session-try [--debug]` checks out the `desktop/noctalia.bst`
+artifact from the last build (`--deps none`, ~300 MB; the default `run` closure is ~3.5 GB)
+to `/var/tmp/noctalia-session-try`, and points `noctalia.service` at it with a runtime
+drop-in, `$XDG_RUNTIME_DIR/systemd/user/noctalia.service.d/90-session-try.conf`. `--revert`
+removes it. Logout or reboot also removes it, because the runtime directory goes with the
+user manager.
+
+- It runs the new binary against the running image's libraries, so it's only valid when the
+  bump changes no `dependency()`. The task refuses to start if `ldd` finds a missing library.
+- No asset override is needed. noctalia checks `<exe>/../share/noctalia/assets` before its
+  install path (`src/core/files/resource_paths.cpp`), and the log confirms which one it used:
+  `[paths] using assets from …`, at debug level.
+- `--debug` sets `NOCTALIA_LOG_LEVEL=debug`. That exposes the sleep path in
+  `~/.cache/noctalia/noctalia.log`: `lock screen ready for sleep`, or the warning
+  `lock screen did not acknowledge its revealed frame before the sleep deadline`.
+- Apps launched from the shell survive the restart only because
+  `launch_apps_as_systemd_services` is `true` (§ noctalia runs as a user service).
+
+First used on 2026-10-20 to try v5.3.0's upstream fix for the resume flash on the laptop
+before merging the bump.
+
 ### Two of the three pinned keys are literal defaults — the third is not
 
 `config/logind-lid.bst` pins three keys. Verified against the running image
