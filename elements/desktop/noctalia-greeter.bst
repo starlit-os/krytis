@@ -43,6 +43,11 @@ depends:
 - freedesktop-sdk.bst:components/freetype.bst
 - freedesktop-sdk.bst:components/fontconfig.bst
 - freedesktop-sdk.bst:components/libwebp.bst
+# libjxl: JPEG XL wallpaper decoding. Upstream meson.build:66-67 requires
+# both libjxl and libjxl_threads as of v1.7.0; fdsdk's libjxl.bst ships
+# them as shared libraries (and both .pc files), so `depends`, not
+# `build-depends`.
+- freedesktop-sdk.bst:components/libjxl.bst
 - freedesktop-sdk.bst:components/libxkbcommon.bst
 - freedesktop-sdk.bst:components/librsvg.bst
 - freedesktop-sdk.bst:components/glib.bst
@@ -72,4 +77,4 @@ sources:
   - '*rc*'
   - '*alpha*'
   - '*beta*'
-  ref: v1.6.0-0-g44337ecba043749c29de6f3d563315b91987a908
+  ref: v1.7.0-0-gaf0bf4b1e1c40738db917b04c9c0563b4f718953
