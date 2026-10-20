@@ -49,6 +49,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | greetd | `git.sr.ht/~kennylevinsen/greetd`, `github.com/kennylevinsen/greetd` (mirror) | Vuln-remediation patches `elements/desktop/greetd.bst`. | Partial | No project rule. **SourceHut's ToS bans LLM-written or LLM-assisted code, tickets and emails** on the platform. Patches go to `greetd-devel@lists.sr.ht`. |
 | rust-bindgen | `github.com/rust-lang/rust-bindgen` | Vuln-remediation patches `elements/overrides/rust-bindgen.bst`. | No | rust-lang/rust's LLM policy explicitly excludes other rust-lang repos. The Rust moderation team's spam policy bans unreviewed automated contributions [INFERENCE: it applies org-wide]. |
 | freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst`, `elements/overrides/rust-bindgen.bst` and `elements/overrides/btrfs-progs.bst` mirror its elements. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
+| freedesktop-sdk-extra | `gitlab.com/freedesktop-sdk/freedesktop-sdk-extra` | gnome-build-meta's nested junction since gnome-build-meta MR !5085. freedesktop-sdk-extra#41 (ppp 2.5.4, fix open as freedesktop-sdk-extra!246) gates #1221. | No | Nothing in the repo. The README defers to fdsdk's shared quality standards and documentation, which have no AI text either (see the freedesktop-sdk row). |
 | efitools | `git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git` | Patches `elements/core/efitools.bst`. | No | Nothing in the tree. Patches go to `sbsigntools@groups.io`, kernel-style with `Signed-off-by` [INFERENCE]. |
 | btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. The kernel's policy (no agent `Signed-off-by`, `Assisted-by: LLM [tools]`) is context [INFERENCE]. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
@@ -159,6 +160,17 @@ nothing was found, so an absence is evidenced and not assumed.
   `code-of-conduct.md`, which defers to the
   [freedesktop.org CoC](https://www.freedesktop.org/wiki/CodeOfConduct/) (no AI text); 26
   wiki page names; GitLab issue and MR title searches.
+
+### freedesktop-sdk-extra
+
+- [README.md](https://gitlab.com/freedesktop-sdk/freedesktop-sdk-extra/-/blob/main/README.md)
+  (`2232d396`, checked 2026-10-20) § Contributions defers to freedesktop-sdk's "quality
+  standards including the coding styles and coding practices" and its shared
+  [documentation](https://freedesktop-sdk.gitlab.io/documentation/getting-started/index.html).
+  It has no AI text.
+- Checked: repo root (`LICENSES`, `NEWS.yml`, `README.md`, `REUSE.toml`; no CONTRIBUTING,
+  AGENTS, CLAUDE or AI files; no `.gitlab/` templates). A GitLab issue search for "AI",
+  "LLM", "machine learning" and "copilot" found no policy thread.
 
 ### efitools
 

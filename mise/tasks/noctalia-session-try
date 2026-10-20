@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+#MISE description="Run the locally built noctalia in this session without deploying the image (--revert to undo)"
+#USAGE flag "--artifact <dir>" help="Use an already-checked-out desktop/noctalia.bst artifact instead of checking out a fresh one"
+#USAGE flag "--debug" help="Run it with NOCTALIA_LOG_LEVEL=debug (~/.cache/noctalia/noctalia.log)"
+#USAGE flag "--revert" help="Remove the override and restart the image's own /usr/bin/noctalia"
+
+# Swaps the shell for the desktop/noctalia.bst artifact from the last `mise run
+# build`, for testing on real hardware what a VM can't show: lid close,
+# suspend/resume, the lock screen, and multiple outputs. The image's own noctalia
+# comes back on --revert, at logout or at reboot, because the override is a
+# runtime drop-in under $XDG_RUNTIME_DIR, which systemd removes with the user
+# manager.
+#
+# It runs the artifact's binary against the *running* image's libraries. That is
+# only valid when the bump changes no dependency, so the task refuses to start if
+# ldd reports a missing library. Assets need no override: noctalia resolves
+# <exe>/../share/noctalia/assets before the install path
+# (src/core/files/resource_paths.cpp), so the artifact's own assets win.
+#
+# Apps launched from noctalia survive the restart only because krytis defaults
+# launch_apps_as_systemd_services to true (patches/noctalia/). An app started
+# while that is false dies with the shell.
+#
+# See docs/skills/desktop.md § Trying a noctalia build in the running session.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+ARTIFACT="${usage_artifact:-}"
+DEBUG="${usage_debug:-false}"
+REVERT="${usage_revert:-false}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --artifact) ARTIFACT="$2"; shift 2 ;;
+        --debug) DEBUG=true; shift ;;
+        --revert) REVERT=true; shift ;;
+        *) shift ;;
+    esac
+done
+
+: "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is unset; run this from the graphical session}"
+DROPIN_DIR="$XDG_RUNTIME_DIR/systemd/user/noctalia.service.d"
+DROPIN="$DROPIN_DIR/90-session-try.conf"
+DEFAULT_ARTIFACT=/var/tmp/noctalia-session-try
+
+restart_and_report() {
+    systemctl --user daemon-reload
+    systemctl --user restart noctalia.service
+    sleep 2
+    local pid exe
+    pid="$(systemctl --user show -p MainPID --value noctalia.service)"
+    if [ "$pid" = "0" ]; then
+        echo "==> FAILED: noctalia.service is not running:"
+        journalctl --user -u noctalia.service -n 20 --no-pager
+        exit 1
+    fi
+    exe="$(readlink "/proc/$pid/exe")"
+    echo "==> noctalia.service running: pid $pid, $exe ($("$exe" --version))"
+}
+
+if [ "$REVERT" = "true" ]; then
+    rm -f "$DROPIN"
+    rmdir "$DROPIN_DIR" 2>/dev/null || true
+    restart_and_report
+    echo "==> Reverted. Remove $DEFAULT_ARTIFACT when you no longer need it."
+    exit 0
+fi
+
+if [ -z "$ARTIFACT" ]; then
+    ARTIFACT="$DEFAULT_ARTIFACT"
+    rm -rf "$ARTIFACT"
+    echo "==> Checking out desktop/noctalia.bst to $ARTIFACT..."
+    # --deps none: the default (run) checks out the whole runtime closure, ~3.5 GB.
+    mise run bst artifact checkout --deps none desktop/noctalia.bst --directory "$ARTIFACT" >/dev/null || {
+        echo "==> FAILED to check out desktop/noctalia.bst — build it first."
+        exit 1
+    }
+fi
+
+BIN="$ARTIFACT/usr/bin/noctalia"
+[ -x "$BIN" ] || { echo "==> FAILED: no executable at $BIN"; exit 1; }
+[ -d "$ARTIFACT/usr/share/noctalia/assets" ] || {
+    echo "==> FAILED: no assets at $ARTIFACT/usr/share/noctalia/assets"; exit 1; }
+
+missing="$(ldd "$BIN" | grep 'not found' || true)"
+if [ -n "$missing" ]; then
+    echo "==> FAILED: the running image lacks libraries this build links:"
+    echo "$missing"
+    echo "    Deploy the image instead (mise run switch-local)."
+    exit 1
+fi
+
+echo "==> image:    $(/usr/bin/noctalia --version)"
+echo "==> artifact: $("$BIN" --version)"
+
+mkdir -p "$DROPIN_DIR"
+{
+    echo "# Written by mise run noctalia-session-try; removed by --revert."
+    echo "[Service]"
+    echo "ExecStart="
+    echo "ExecStart=$BIN"
+    [ "$DEBUG" = "true" ] && echo "Environment=NOCTALIA_LOG_LEVEL=debug"
+} > "$DROPIN"
+
+restart_and_report
+echo "==> Override active until --revert, logout or reboot: $DROPIN"

@@ -431,9 +431,9 @@ or `track-mise` CI job is needed. A matrix entry in the `track` job in
 
 `desktop/noctalia.bst` also uses `git_repo`, but **not** `track: v*` today: it carries a
 fork pin, `github:kitten-lily/noctalia.git` `track: feat/system-prompter`, for the native
-`org.gnome.keyring.SystemPrompter` provider oo7 needs and, since 2026-10-08, the
-lock-before-suspend fix in § The last frame before sleep is what resume shows. The
-element's `ref:` states which
+`org.gnome.keyring.SystemPrompter` provider oo7 needs. From 2026-10-08 to the v5.3.0 rebase
+on 2026-10-20 it also carried the lock-before-suspend fix in § The last frame before sleep is
+what resume shows; v5.3.0 ships upstream's own. The element's `ref:` states which
 commit; do not restate it here. The revert target (`noctalia-dev/noctalia` + `track: v*`)
 is written out in the element's `FORK PIN` comment as prose — there is no commented-out
 `sources:` block to uncomment.
@@ -697,7 +697,8 @@ explicit instruction naming that action.
 ## Lid close locks then suspends — noctalia holds the logind delay inhibit
 
 *Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7); the
-inhibit-release path re-read on the v5.2.1 fork pin for the resume-flash fix below.*
+inhibit-release path re-read on the v5.2.1 fork pin for the resume-flash fix below, and on
+v5.3.0 (2026-10-20) after upstream's own fix replaced it.*
 
 **The locker authenticates through PAM service `login`, not `greetd`** — hardcoded in
 noctalia's `src/shell/lockscreen/lock_screen.cpp`, reaching krytis's `system-auth` from
@@ -714,9 +715,9 @@ second locker would race it. The full chain:
 lid close
   -> logind HandleLidSwitch=suspend        (config/logind-lid.bst pins this)
        -> PrepareForSleep(true) on the system bus
-            -> noctalia locks (no entry transition), holding Inhibit("sleep", …, "delay")
+            -> noctalia locks, holding Inhibit("sleep", …, "delay")
                  -> inhibit released once the session is locked AND every lock surface
-                    has presented a frame without the pre-lock desktop capture
+                    has acknowledged a frame with no pre-lock desktop capture in it
                       -> suspend proceeds
 ```
 
@@ -725,7 +726,7 @@ Where each half lives:
 | Half | Owner | Evidence |
 |---|---|---|
 | lid event -> suspend request | logind | `elements/config/logind-lid.bst` -> `/usr/lib/systemd/logind.conf.d/20-krytis-lid.conf` |
-| suspend request -> locked screen | noctalia | `LogindService::acquireSleepDelayInhibit()` = `Inhibit("sleep", "noctalia", "Lock before sleep", "delay")` (`src/dbus/logind/logind_service.cpp`); the `setPrepareForSleepCallback` lambda in `Application::initSystemBusServices()` (`src/app/application_services.cpp`) releases it through `LockScreen::runWhenDesktopConcealed()` |
+| suspend request -> locked screen | noctalia | `LogindService::acquireSleepDelayInhibit()` = `Inhibit("sleep", "noctalia", "Lock before sleep", "delay")` (`src/dbus/logind/logind_service.cpp`); the `setPrepareForSleepCallback` lambda in `Application::initSystemBusServices()` (`src/app/application_services.cpp`) calls `LockScreen::prepareForSleep()`, and the lock screen's ready-for-sleep hook calls `Application::releaseSleepDelayInhibitIfPending()` (v5.3.0) |
 
 The inhibit is acquired in `LogindService::setLockBeforeSuspendEnabled()`, gated on
 `shouldLockBeforeSuspend()`, i.e. `[lockscreen] enabled` **and** `lock_before_suspend`. Both
@@ -757,7 +758,7 @@ for the opt-in `blurred_desktop` background.
 
 **`locked` is not the same as safe to suspend.** On s2idle the outputs keep the last frame
 they presented, and they show it again on resume until the client draws a new one. Before
-the fork fix, noctalia let suspend go ahead in two places, and both fired on a frame that was
+v5.3.0, noctalia let suspend go ahead in two places, and both fired on a frame that was
 a picture of the desktop:
 
 - The lock entry transition (`[lockscreen] transition`, default: all six effects, 1500 ms)
@@ -775,28 +776,61 @@ on every active output, and while locked it draws only the lock surface over sol
 (`Niri::redraw` and the `is_locked()` branch of output rendering, both in `src/niri.rs`). The leak is the lock *client* drawing session
 content in its own lock surface.
 
-**The fix is change 2 of the fork pin** (`elements/desktop/noctalia.bst` § FORK PIN):
+**v5.3.0 fixes it upstream** with c83fb9b9c, for noctalia#4829. noctalia#4617 reports this
+exact lid-close symptom on niri, and both issues were closed as completed on 2026-10-16. krytis
+carried its own fix on the fork pin from 2026-10-08 (`1047f8fd8`) and dropped it in the v5.3.0
+rebase on 2026-10-20. The two use the same gate and differ in what happens first:
 
-- Locks taken for sleep pass `LockScreen::lock(/*animateEntry=*/false)`. The capture is still
-  taken, for the unlock transition.
-- `LockSurface::skipEnterTransition()` cuts short any entry transition already running, e.g.
-  a manual lock followed by a lid close within 1.5 s.
-- Suspend waits for `LockSurface::desktopConcealed()` on every surface. A `render()` override
-  marks the first commit made after the cover was hidden, and the frame callback for that
-  commit confirms it. A callback still pending from an older commit cannot satisfy the wait.
+- Suspend waits for `LockSurface::readyForSleep()` on every surface. A `render()` override
+  requests a frame callback for the first commit made in phase `Disabled`, `EnterEndpoint` or
+  `Stable`, none of which draws the capture, and the callback confirms it. Lock-before-suspend
+  (`LockScreen::prepareForSleep()`) and lock-and-suspend (`runAfterSessionLocked()`) both wait
+  on it.
+- Upstream lets the entry transition play to its end first (1500 ms by default). krytis's fix
+  skipped it for sleep locks. Upstream skips it only when the compositor reports the outputs
+  powered off (`CompositorPlatform::shouldSuppressLockTransition()`, 4e21d7d93).
+- If no surface acknowledges, upstream proceeds after the transition's duration plus 3 s and
+  logs `lock screen did not acknowledge its revealed frame before the sleep deadline`. logind's
+  `InhibitDelayMaxSec` (5 s) still caps the lock-before-suspend path, so a transition longer
+  than about 5 s lets logind suspend mid-animation.
 
 The general rule applies to any locker whose first frames reproduce session content
 (screenshot fade-ins, blurred-screenshot backgrounds): **gate suspend on a presented frame
 that is safe to freeze, not on the lock protocol's confirmation.**
 
-**Workaround without the fix:** `[lockscreen] transition = []` in
-`~/.local/state/noctalia/settings.toml`. With no transition, no capture is taken and the first
-lock frame is the real lock screen, at the cost of the lock and unlock animations. The key is
+**To suspend without waiting for the animation** (and, before v5.3.0, the workaround for the
+flash): `[lockscreen] transition = []` in `~/.local/state/noctalia/settings.toml`. With no
+transition, no capture is taken and the first lock frame is the real lock screen, at the cost
+of the lock and unlock animations. The key is
 **singular**. `transitions = []` (the C++ field name, `LockscreenConfig::transitions`) logs
 `lockscreen.transitions: unknown setting` to `~/.cache/noctalia/noctalia.log` and changes
 nothing. `[lockscreen] monitors = [...]` does not help either: when none of the listed
 connectors is present (e.g. undocked), `LockScreen::isInteractiveOutput()` falls back to
 treating every output as interactive, so the built-in panel gets the full animated lock.
+
+### Trying a noctalia build in the running session
+
+A VM can't test lid close, s2idle resume or a real panel, and `switch-local` costs a
+reboot. `mise run noctalia-session-try [--debug]` checks out the `desktop/noctalia.bst`
+artifact from the last build (`--deps none`, ~300 MB; the default `run` closure is ~3.5 GB)
+to `/var/tmp/noctalia-session-try`, and points `noctalia.service` at it with a runtime
+drop-in, `$XDG_RUNTIME_DIR/systemd/user/noctalia.service.d/90-session-try.conf`. `--revert`
+removes it. Logout or reboot also removes it, because the runtime directory goes with the
+user manager.
+
+- It runs the new binary against the running image's libraries, so it's only valid when the
+  bump changes no `dependency()`. The task refuses to start if `ldd` finds a missing library.
+- No asset override is needed. noctalia checks `<exe>/../share/noctalia/assets` before its
+  install path (`src/core/files/resource_paths.cpp`), and the log confirms which one it used:
+  `[paths] using assets from …`, at debug level.
+- `--debug` sets `NOCTALIA_LOG_LEVEL=debug`. That exposes the sleep path in
+  `~/.cache/noctalia/noctalia.log`: `lock screen ready for sleep`, or the warning
+  `lock screen did not acknowledge its revealed frame before the sleep deadline`.
+- Apps launched from the shell survive the restart only because
+  `launch_apps_as_systemd_services` is `true` (§ noctalia runs as a user service).
+
+First used on 2026-10-20 to try v5.3.0's upstream fix for the resume flash on the laptop
+before merging the bump.
 
 ### Two of the three pinned keys are literal defaults — the third is not
 

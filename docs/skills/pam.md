@@ -1478,8 +1478,8 @@ password took 12–15 s to be reported instead of ~3 s. Upstream fixed it on 202
 `fbf410e2` ("prevent infinite PAM retry loops on lock screen"). That's swaylock's shape
 ([swaylock#447](https://github.com/swaywm/swaylock/pull/447)): a `passwordSent` flag in
 `PamConversationData`, and `PAM_CONV_ERR` for any later `ECHO_OFF`. v5.2.1 predates the fix,
-so krytis carries it as a backport (`07c8bc7f9`) on the `kitten-lily/noctalia` fork until a
-release contains it (`docs/design/carried-patches.md`).
+so krytis carried it as a backport (`07c8bc7f9`) on the `kitten-lily/noctalia` fork from
+2026-10-11 until the v5.3.0 rebase on 2026-10-20. v5.3.0 contains `fbf410e2`.
 
 **Consequence: with an enrolled FIDO2 key plugged in, the lock screen takes the PIN, not the
 password.** Accepted on #999 (2026-10-11). Checked against both modules' source:

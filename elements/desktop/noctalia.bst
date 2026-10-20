@@ -56,23 +56,23 @@ depends:
 # dropped. Upstream's async dispatch falls back to sdbus-c++'s default
 # timeout; manually verified this is not an issue in practice.
 #
-# FORK PIN: kitten-lily/noctalia branch feat/system-prompter. Changes 1 and 2
-# are not upstreamed (no PR opened against noctalia-dev/noctalia -- that needs
-# an explicit instruction per AGENTS.md's Upstream Gate). It carries three:
-#   1. the native org.gnome.keyring.SystemPrompter provider that oo7 depends on
-#      for every unlock prompt, per the note above;
-#   2. fix(lockscreen) 1047f8fd8: lid-close / lock-and-suspend locks skip the
-#      entry transition and hold suspend until every lock surface has presented
-#      a frame without the pre-lock desktop capture. Without it the panel keeps a
-#      screenshot of the unlocked desktop through sleep and shows it on resume.
-#      See docs/skills/desktop.md § The last frame before sleep is what resume shows.
-#   3. fix(auth) 07c8bc7f9: a backport of upstream fbf410e2 (noctalia#4283,
-#      #999), which answers only the first PAM_PROMPT_ECHO_OFF per unlock attempt,
-#      so a mistyped password costs one pam_systemd_home pass instead of five.
-#      With an enrolled FIDO2 key plugged in, pam_u2f's PIN prompt takes that one
-#      answer, so the lock screen then wants the PIN, not the password. See
-#      docs/skills/pam.md § The lock screen authenticates through `login`, not `greetd`.
-#      It is upstream code: drop it at the first release that contains fbf410e2.
+# FORK PIN: kitten-lily/noctalia branch feat/system-prompter. The change is not
+# upstreamed (no PR opened against noctalia-dev/noctalia -- that needs an
+# explicit instruction per AGENTS.md's Upstream Gate). It carries one: the
+# native org.gnome.keyring.SystemPrompter provider that oo7 depends on for every
+# unlock prompt, per the note above (two commits: the feature and its
+# BUILDING.md dependency entry).
+#
+# Two carries went with the 2026-10-20 rebase onto v5.3.0, because v5.3.0
+# ships upstream's own version of each:
+#   - fix(lockscreen) 1047f8fd8 (resume showed the unlocked desktop). Upstream
+#     c83fb9b9c (noctalia#4829) gates both lock-before-suspend and
+#     lock-and-suspend on a frame callback for the first commit with no
+#     desktop capture, as ours did. Unlike ours it plays the entry transition
+#     first (1500 ms default, inside logind's 5 s InhibitDelayMaxSec). See
+#     docs/skills/desktop.md § The last frame before sleep is what resume shows.
+#   - fix(auth) 07c8bc7f9, the cherry-pick of upstream fbf410e2 (#999), which
+#     v5.3.0 contains.
 #
 # Rebase history of the carried commit. 2026-08-17: onto upstream main
 # 87b203c68 (v5.0.0-beta.8-135) -- the 1722-line feature commit applied across
@@ -101,6 +101,11 @@ depends:
 # dependency lists unchanged. The lockscreen fix then went on top as its own
 # commit, and on 2026-10-11 the fbf410e2 backport on top of that (`git
 # cherry-pick -x`, clean, upstream author kept).
+# 2026-10-20: the two prompter commits alone onto the v5.3.0 tag (156 commits),
+# with no conflict; all 17 carried files have byte-identical hunks. The
+# lockscreen fix and the fbf410e2 backport were left off (see above), and the
+# v5.3.0 tag was pushed to the fork. v5.2.1 -> v5.3.0 changes no
+# `dependency()` call (sorted sets at the two tags are identical).
 #
 # Rebase the branch onto the new tag and re-track when upstream cuts a
 # release: `track: <branch>` cannot see tags, so no auto-track PR will ever
@@ -109,8 +114,7 @@ depends:
 # Revert to
 #   url: github:noctalia-dev/noctalia.git
 #   track: v*
-# once changes 1 and 2 land upstream (or are dropped) and a release contains
-# change 3. Tracking a branch instead
+# once the prompter lands upstream (or is dropped). Tracking a branch instead
 # of the v* tag glob means `bst source track` follows the branch head, not
 # releases -- expect more frequent auto-track PRs than usual until then, and
 # note that an unrelated commit on that branch changes what krytis ships.
@@ -118,7 +122,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.2.1-4-g07c8bc7f9958c3c30ddadcc09ada53794fdadb55
+  ref: v5.3.0-2-g1aab2f2f829f7ffae1658a51f87b00c981c959d5
 # launch_apps_as_systemd_services defaults to true (upstream: false). With
 # false, every app started from the launcher, dock or taskbar is a child of
 # noctalia and lives in its cgroup. config/noctalia-service.bst runs noctalia

@@ -632,7 +632,17 @@ work that was never upstreamed — `starlit-os/sysext-bakery` looked like an unu
 komodo-periphery commits that exist nowhere else. `ahead_by: 0` on every branch is the only
 safe-to-delete signal; otherwise ask.
 
-Deleting is also not possible with the usual credentials: the standard `gh` token scope set
+**`ahead_by > 0` on a fork branch doesn't make it ours either.** A fork copies every
+upstream branch that exists when it's created. `kitten-lily/omarchy-mxcontrol` showed
+`cursor/plain-hid-adapter-names-088d` 1 ahead and `cursor/private-runtime-dir-5bd0` 2 ahead
+of upstream `main`, and both looked like unpushed work. They were zachwilke's own PR branches
+for zachwilke/omarchy-mxcontrol#1 and #2, already merged: each tip SHA equalled the upstream
+branch of the same name and the PR's `headRefOid`. They were deleted on 2026-10-20. Compare
+`gh api repos/<fork>/branches` against `gh api repos/<upstream>/branches` before treating a
+fork branch as krytis work. Deleting a branch needs only the default `repo` scope:
+`gh api -X DELETE repos/<fork>/git/refs/heads/<branch>`.
+
+Deleting the fork repo itself is not possible with the usual credentials: the standard `gh` token scope set
 (`repo`, `workflow`, `read:org`, …) has no `delete_repo`, and the API returns 403 until
 `gh auth refresh -h github.com -s delete_repo` is run interactively by the human.
 

@@ -21,14 +21,15 @@
 #   lid close
 #     -> logind HandleLidSwitch=suspend
 #          -> PrepareForSleep(true)
-#               -> noctalia locks (no entry transition), holding a `delay` sleep inhibit
+#               -> noctalia locks, holding a `delay` sleep inhibit
 #                    -> inhibit released once the session is locked and every lock
-#                       surface has presented a frame without the pre-lock desktop capture
+#                       surface has acknowledged a frame with no pre-lock desktop capture
 #                         -> suspend
 #
 # The lock half is entirely noctalia's: LogindService::acquireSleepDelayInhibit()
 # takes Inhibit("sleep", "noctalia", "Lock before sleep", "delay"), and the
-# PrepareForSleep handler releases it through LockScreen::runWhenDesktopConcealed().
+# PrepareForSleep handler calls LockScreen::prepareForSleep(), whose ready-for-sleep
+# hook releases it (noctalia v5.3.0, upstream c83fb9b9c).
 # Releasing on the bare `locked` event is not enough: the panel keeps its last frame
 # through sleep, and the first lock frames of an animated lock are a screenshot of
 # the unlocked desktop. Krytis ships no swayidle/hypridle/swaylock and needs none.
