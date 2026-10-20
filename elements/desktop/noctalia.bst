@@ -56,12 +56,12 @@ depends:
 # dropped. Upstream's async dispatch falls back to sdbus-c++'s default
 # timeout; manually verified this is not an issue in practice.
 #
-# FORK PIN: kitten-lily/noctalia branch feat/system-prompter. The change is not
-# upstreamed (no PR opened against noctalia-dev/noctalia -- that needs an
-# explicit instruction per AGENTS.md's Upstream Gate). It carries one: the
-# native org.gnome.keyring.SystemPrompter provider that oo7 depends on for every
-# unlock prompt, per the note above (two commits: the feature and its
-# BUILDING.md dependency entry).
+# FORK PIN: kitten-lily/noctalia branch feat/system-prompter. It carries one
+# change: the native org.gnome.keyring.SystemPrompter provider that oo7 depends
+# on for every unlock prompt, per the note above (two commits: the feature and
+# its BUILDING.md dependency entry). Proposed upstream on 2026-10-20 as
+# noctalia-dev/noctalia#4951 (issue noctalia-dev/noctalia#4950), from branch
+# feat/native-system-prompter, which is a separate branch from this pin.
 #
 # Two carries went with the 2026-10-20 rebase onto v5.3.0, because v5.3.0
 # ships upstream's own version of each:
