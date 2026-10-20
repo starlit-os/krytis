@@ -40,8 +40,8 @@ The `bst`, `validate`, `load-image` and `sbom` tasks fall back to `BST_CONTAINER
 | Full image build | `mise build` |
 
 **Element names are relative to `element-path: elements` (project.conf), not to the repo
-root.** `mise bst build elements/desktop/zed.bst` fails with `Could not find element
-… Did you mean 'desktop/zed.bst'?` — pass `desktop/zed.bst`. The element
+root.** `mise bst build elements/desktop/presence-bridge.bst` fails with `Could not find element
+… Did you mean 'desktop/presence-bridge.bst'?` — pass `desktop/presence-bridge.bst`. The element
 directories are exactly `core/`, `desktop/`, `config/`, `stacks/`, `oci/`,
 `overrides/`, `deps/`, `dev/`, `plugins/`. There is no per-distro top-level element
 directory here — a `krytis/` one has never existed, and neither has the `components/`
@@ -2100,6 +2100,13 @@ Both true, but irrelevant — Warp published its own apt repo at `https://releas
 
 ### Bundled-app tarballs with RPATH structure (e.g. Zed)
 
+*Source: the native Zed element, `desktop/zed.bst` (#237), shipped until #1319 replaced it
+with the preinstalled `dev.zed.Zed` flatpak. That element and its `zed-update` task no
+longer exist (`git log --diff-filter=D -- elements/desktop/zed.bst` finds the removal). The
+pattern still applies to any app that ships a self-contained tarball. For how the Flatpak
+behaves instead, see `docs/skills/desktop.md` § Zed's Flatpak runs on the host, not in its
+sandbox.*
+
 Some apps ship a self-contained tarball (`app.tar.gz → app.app/`) with an internal layout that encodes RPATH. For example, Zed's `bin/zed` has `RPATH: $ORIGIN/../lib` — it expects bundled `.so` files at `../lib` relative to the binary. If you install `bin/zed` to `/usr/bin/zed`, `$ORIGIN/../lib` resolves to `/usr/lib/`, which is the **system** lib directory, not the bundled libs.
 
 **Fix:** install the app to a private directory (`/usr/lib/<app>/`) that preserves the relative structure, then symlink the launcher:
@@ -3872,10 +3879,12 @@ This installs the `.flatpakrepo` file to `/usr/share/flatpak/remotes.d/` — the
 
 ## Flatpak Pre-install Service Pattern
 
-To install initial system Flatpak apps on first boot use a systemd oneshot service gated on a marker file rather than `ConditionFirstBoot=yes`. The marker approach retries if the network was unavailable on the first boot, while `ConditionFirstBoot=yes` only ever fires once.
+To install system Flatpak apps, use a systemd oneshot that records each app it has handled, rather than `ConditionFirstBoot=yes`. A failed install leaves the app unrecorded, so a boot without network is retried on the next one, while `ConditionFirstBoot=yes` only ever fires once.
 
 Key points:
-- Gate with `ConditionPathExists=!/var/lib/flatpak/.krytis-preinstall-done`; write the marker at the end of the script (only if `flatpak install` succeeded).
+- **Record per app, not once per system.** Until #1319 the unit was gated on a single marker, `ConditionPathExists=!/var/lib/flatpak/.krytis-preinstall-done`, written after the first successful run. That made `APPS` a first-boot-only list: an app added to it later never reached a system that had already finished, which is every existing install. `files/flatpak-preinstall/flatpak-preinstall.sh` now touches `/var/lib/flatpak/.krytis-preinstalled/<app-id>` per app and runs on every boot without a `Condition`, exiting at once when nothing is pending. An app the user uninstalls stays uninstalled, because its record survives. The old marker still means "Bazaar was handled", so the script records Bazaar for systems that carry it.
+- An app that is already installed (the live ISO copies its Flatpaks to the target) costs nothing: `flatpak install --system --noninteractive` prints `Skipping: <ref> is already installed` and exits 0 (Flatpak 1.18.3), and the script records it.
+- Running every boot is free in practice: `network-online.target` is already pulled in by `starlit-update.service`, `podman-restart.service`, `fwupd-refresh.service` and `systemd-sysupdate.service` (`systemctl list-dependencies --reverse network-online.target`, 2026-10-20).
 - Order with `Wants=`/`After=network-online.target`, since the install needs Flathub. Don't order against `flatpak-system-helper.service`: it is D-Bus-activated (`/usr/share/dbus-1/system-services/org.freedesktop.Flatpak.SystemHelper.service` names it as `SystemdService=`), so the first `flatpak install --system` starts it.
 - The `flatpak` binary is already in the image transitively (see § above); no explicit dep needed.
 - The bootc-installer flatpak (`org.bootcinstaller.Installer`) lives only in the live ISO overlay — it is not part of the OCI image — so no firstboot removal service is needed. Dakota's `bluefin-remove-installer.service` exists because their image includes it; krytis's does not.

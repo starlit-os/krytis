@@ -3294,7 +3294,6 @@
 /./usr/bin/zcmp	bootstrap/gzip.bst	monthly
 /./usr/bin/zdiff	bootstrap/gzip.bst	monthly
 /./usr/bin/zdump	bootstrap/glibc.bst	monthly
-/./usr/bin/zed	desktop/zed.bst	monthly
 /./usr/bin/zegrep	bootstrap/gzip.bst	monthly
 /./usr/bin/zen	desktop/zen-browser.bst	monthly
 /./usr/bin/zfgrep	bootstrap/gzip.bst	monthly
@@ -169893,17 +169892,6 @@
 /./usr/lib/x86_64-linux-gnu/xtables/libxt_tos.so	components/iptables.bst	monthly
 /./usr/lib/x86_64-linux-gnu/xtables/libxt_u32.so	components/iptables.bst	monthly
 /./usr/lib/x86_64-linux-gnu/xtables/libxt_udp.so	components/iptables.bst	monthly
-/./usr/lib/zed/bin/zed	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libX11-xcb.so.1	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libXau.so.6	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libXdmcp.so.6	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libbsd.so.0	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libstdc++.so.6	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libxcb-xkb.so.1	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libxcb.so.1	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libxkbcommon-x11.so.0	desktop/zed.bst	monthly
-/./usr/lib/zed/lib/libxkbcommon.so.0	desktop/zed.bst	monthly
-/./usr/lib/zed/libexec/zed-editor	desktop/zed.bst	monthly
 /./usr/lib/zen-browser/application.ini	desktop/zen-browser.bst	monthly
 /./usr/lib/zen-browser/browser/chrome/icons/default/default128.png	desktop/zen-browser.bst	monthly
 /./usr/lib/zen-browser/browser/chrome/icons/default/default16.png	desktop/zen-browser.bst	monthly
@@ -172140,7 +172128,6 @@
 /./usr/share/applications/com.seance.app.desktop	desktop/seance.bst	monthly
 /./usr/share/applications/cups.desktop	components/_private/cups-base.bst	monthly
 /./usr/share/applications/dev.noctalia.Noctalia.desktop	desktop/noctalia.bst	monthly
-/./usr/share/applications/dev.zed.Zed.desktop	desktop/zed.bst	monthly
 /./usr/share/applications/gnome-disk-image-mounter.desktop	desktop/gnome-disk-utility.bst	monthly
 /./usr/share/applications/gnome-disk-image-writer.desktop	desktop/gnome-disk-utility.bst	monthly
 /./usr/share/applications/gtk3-demo.desktop	sdk/gtk+-3.bst	monthly
@@ -328482,7 +328469,6 @@
 /./usr/share/icons/Papirus/96x96/places	desktop/papirus-icon-theme.bst	monthly
 /./usr/share/icons/Papirus/index.theme	desktop/papirus-icon-theme.bst	monthly
 /./usr/share/icons/hicolor/1024x1024/apps/com.mitchellh.ghostty.png	desktop/ghostty.bst	monthly
-/./usr/share/icons/hicolor/1024x1024/apps/zed.png	desktop/zed.bst	monthly
 /./usr/share/icons/hicolor/128x128/apps/com.mitchellh.ghostty.png	desktop/ghostty.bst	monthly
 /./usr/share/icons/hicolor/128x128/apps/com.seance.app.png	desktop/seance.bst	monthly
 /./usr/share/icons/hicolor/128x128/apps/cups.png	components/_private/cups-base.bst	monthly
@@ -328554,7 +328540,6 @@
 /./usr/share/icons/hicolor/48x48/apps/zen-browser.png	desktop/zen-browser.bst	monthly
 /./usr/share/icons/hicolor/512x512/apps/com.mitchellh.ghostty.png	desktop/ghostty.bst	monthly
 /./usr/share/icons/hicolor/512x512/apps/qemu.png	dev/qemu.bst	monthly
-/./usr/share/icons/hicolor/512x512/apps/zed.png	desktop/zed.bst	monthly
 /./usr/share/icons/hicolor/64x64/apps/cups.png	components/_private/cups-base.bst	monthly
 /./usr/share/icons/hicolor/64x64/apps/org.freedesktop.fwupd.png	components/fwupd.bst	monthly
 /./usr/share/icons/hicolor/64x64/apps/qemu.png	dev/qemu.bst	monthly

@@ -18,7 +18,6 @@ blocklists:
       - io.github.kolunmi.Bazaar
       # Flatpak duplicates of apps the image ships natively.
       - me.proton.Pass          # elements/desktop/proton-pass.bst
-      - dev.zed.Zed             # elements/desktop/zed.bst
       - app.zen_browser.zen     # elements/desktop/zen-browser.bst
       - org.vim.Vim             # elements/overrides/vim.bst (vim and gvim)
       - org.freedesktop.fwupd   # freedesktop-sdk.bst:components/fwupd.bst

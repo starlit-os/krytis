@@ -138,7 +138,7 @@ element does, its row's text is a review question.
 | `config/umbriel-skel.bst` | `/etc/skel` seed for Umbriel's user config (#982). |
 | `config/noctalia-skel.bst` | `/etc/skel` seed for noctalia's state. |
 | `config/noctalia-assets.bst` | Extra images in noctalia's assets directory. |
-| `config/flatpak-preinstall.bst` | First-boot install of the initial system Flatpaks (Bazaar and others). |
+| `config/flatpak-preinstall.bst` | Installs krytis's system Flatpaks (Bazaar, Zed), each once per system. |
 | `config/bazaar-config.bst` | Bazaar's curated page, blocklist and `/etc` read access. |
 | `config/starlit-update.bst` | Daily timer that updates bootc, system Flatpaks, firmware and mise tools. |
 
@@ -147,7 +147,6 @@ element does, its row's text is a review question.
 | Element | What it adds |
 |---|---|
 | `desktop/proton-pass.bst` | Proton Pass. Prebuilt `.deb`, x86_64 only. |
-| `desktop/zed.bst` | Zed editor. Prebuilt binary. |
 | `desktop/zen-browser.bst` | Zen Browser. Prebuilt binary. |
 | `desktop/presence-bridge.bst` | Host-side game detection for Flatpak Discord clients. Installed disabled ([`presence-bridge.md`](presence-bridge.md)). |
 | `desktop/gnome-disk-utility.bst` | GNOME Disks. A copy of gnome-build-meta's element with the gnome-settings-daemon plug-in turned off. |

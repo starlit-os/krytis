@@ -622,7 +622,8 @@ again. The unit orders `After=systemd-tmpfiles-setup.service systemd-sysusers.se
   files baked into the OCI layer's `/var`, so the file cannot be shipped there directly.
 - `tmpfiles.d` is not a fit: `w` won't create the file on first boot and `f` truncates
   on **every** boot, clobbering the user's saved greeter preferences.
-- Same ConditionPathExists-gated oneshot pattern as `config/flatpak-preinstall.bst`.
+- A ConditionPathExists-gated oneshot, the pattern `config/flatpak-preinstall.bst` used
+  until #1319 replaced its single marker with a per-app record.
 - Changing the shipped default later requires a new migration: existing deployments
   already have the file, so the gate skips them by design.
 
@@ -1419,7 +1420,8 @@ confirmed by extracting the actual archive rather than assuming:
   duplicating multi-MB binaries in the image layer.
 - **The launcher binary is a stripped, pre-linked ELF PIE** (`zen` in the Zen tarball,
   execs `zen-bin` alongside it) with `$ORIGIN`-relative library resolution baked in at
-  Mozilla's build time — same shape as `zed.bst`'s `/usr/lib/zed` + symlink pattern.
+  Mozilla's build time — same shape as the `/usr/lib/zed` + symlink pattern the native
+  Zed element used (`docs/skills/bst.md` § Bundled-app tarballs with RPATH structure).
   Install the whole extracted tree to `/usr/lib/<name>/` and symlink only the launcher
   into `/usr/bin/`; do not try to relocate individual `.so` files.
 - **Must disable the bundled auto-updater.** Firefox-derivative browsers self-update by
@@ -3151,16 +3153,63 @@ refresh. Non-obvious points:
   and redirected to Homebrew. krytis has neither, so those rows can't be copied as they
   are.
 - **krytis preinstalls Flatpaks through two paths that have drifted apart.** The image's
-  first-boot `files/flatpak-preinstall/flatpak-preinstall.sh` installs only Bazaar. The
-  live ISO's `live/src/flatpaks`, inherited from dakota-iso's Bluefin list, bakes in 11
-  more (Papers, Loupe, Showtime, Flatseal and others). So a
-  system installed from the ISO has them, and a system reached by `bootc switch` doesn't.
-  Check both files before claiming what "krytis preinstalls".
+  `files/flatpak-preinstall/flatpak-preinstall.sh` installs Bazaar and Zed (#1319), and
+  reaches existing installs too. The live ISO's `live/src/flatpaks`, inherited from
+  dakota-iso's Bluefin list, bakes in 11 more (Papers, Loupe, Showtime, Flatseal and
+  others). So a system installed from the ISO has them, and a system reached by
+  `bootc switch` doesn't. Check both files before claiming what "krytis preinstalls".
 - **flathub.org is blocked from the cloud-agent sandbox.** The Flathub API
   (`/api/v2/appstream/<id>`) works on a dev machine only. From the sandbox, get app
   summaries from the AppStream metainfo in the `github.com/flathub/<id>` packaging repo,
   or from the upstream repo it builds. Always sanity-check the name, because an upstream
   tree's first metainfo is often a vendored dependency's.
+
+## Zed's Flatpak runs on the host, not in its sandbox
+
+krytis ships Zed as the Flathub `dev.zed.Zed`, preinstalled by
+`files/flatpak-preinstall/flatpak-preinstall.sh`. It replaced the native `desktop/zed.bst`
+in #1319. Measured on a booted image on 2026-10-20 (Flatpak `v1.24.2`, commit `13dba90e`):
+
+- **The editor escapes at startup.** `flatpak run dev.zed.Zed` starts `/app/bin/zed-wrapper`
+  (ide-flatpak-wrapper), which execs `/app/bin/zed`, Zed's CLI. The CLI then re-runs
+  `/var/lib/flatpak/app/dev.zed.Zed/…/files/libexec/zed-editor` on the host through
+  `flatpak-spawn --host` (the `org.freedesktop.Flatpak` talk-name), as a child of
+  `systemd --user`. `readlink /proc/<pid>/ns/mnt` is the same for the editor, its LSPs, its
+  terminal shell and a host shell. Only `FLATPAK_XDG_*_HOME`, `LD_LIBRARY_PATH` and
+  `ZED_*` cross over. Everything else comes from the host, and Zed reads PATH from a login
+  shell in the project directory, just as native Zed does.
+- **So toolchains behave as they did natively.** rust-analyzer used the rustup toolchain
+  from a project `mise.toml`, basedpyright ran on the mise `node`, and the terminal is a host
+  `/bin/bash` with the gcr `SSH_AUTH_SOCK`. FIDO2 commit signing from the Git panel worked.
+  The `org.freedesktop.Sdk` runtime and `--socket=ssh-auth` are never used. The Flathub
+  README documents `ZED_FLATPAK_NO_ESCAPE=1` to keep the editor sandboxed. With it set the
+  runtime matters, and host tools need `host-spawn`.
+- **There is no sandbox to rely on.** The escape is the default, so the editor runs
+  unconfined as the user. That is the same exposure as the native binary. What changes is
+  who vouches for updates (Flathub instead of krytis review) and that Zed's bundled libraries
+  are no longer in the image SBOM or the image vulnerability scan.
+- **`LD_LIBRARY_PATH` reaches every process Zed starts**, the terminal included. It points
+  at the host path of the app's `/app/lib`. That's harmless only because the manifest's
+  `libdir: /app/libflatpak` ("Work around Zed's broken sandbox escape") leaves `/app/lib`
+  holding an empty `debug/` directory. The editor's own libraries load through RPATH from
+  `/app/libzed`. If a future manifest puts `.so` files back in `/app/lib`, host programs run
+  from Zed's terminal will load them. After bumps that look odd, check with
+  `ls /var/lib/flatpak/app/dev.zed.Zed/current/active/files/lib`.
+- **Settings live in `~/.var/app/dev.zed.Zed/config/zed`.** Data, extensions and the LSPs
+  Zed downloads live in `~/.var/app/dev.zed.Zed/data/zed`. The Flatpak never reads native
+  `~/.config/zed` (right after install, its config dir held only `themes/`). By the
+  owner's decision, krytis ships no migration unit. The release note's command is
+  `mkdir -p ~/.var/app/dev.zed.Zed/config && cp -a --update=none ~/.config/zed ~/.var/app/dev.zed.Zed/config/`,
+  which merges into the existing directory without overwriting anything there.
+- **There's no `zed` command.** `/var/lib/flatpak/exports/bin` is not on PATH in krytis's
+  login shell, so neither `zed` nor `dev.zed.Zed` resolves. Use
+  `flatpak run dev.zed.Zed`. That was the owner's call too: no `/usr/bin/zed` wrapper.
+- **The Wayland app_id is `dev.zed.Zed`** (`niri msg windows`). `files/niri/rules.kdl`'s
+  `match app-id="zed"` still matches, because niri matches app-id as an unanchored regex.
+- **`agent refused operation?` on a Git-panel commit is not the Flatpak.** Once it showed up
+  while another session was waiting on the same FIDO2 key for its PIN and touch, and the
+  retry succeeded. Diagnose it as for any commit: `docs/skills/workflow.md` § `agent refused
+  operation` is a missed touch window, not a broken setup.
 
 ## Apps launched from noctalia share its cgroup — one app's OOM kills the shell
 

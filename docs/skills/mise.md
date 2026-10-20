@@ -1335,6 +1335,12 @@ and the human answers there. Seen 2026-10-14 (#1216): `generate-disk` ran end to
 this way. Earlier sessions concluded "no sudo available" from the `sudo -n` failure
 and fell back to stale `--reuse-disk` images.
 
+The pty has to be in the foreground. A `boot-test` started as a **backgrounded** pty job
+(the agent's `async` option) died at once with `sudo: A terminal is required to
+authenticate` on 2026-10-20 (#1319). The same command run synchronously in a pty prompted
+for the PIN and passed. Give it a long timeout instead: a `boot-test` that installs Flatpaks
+at first boot ran for about 10 minutes.
+
 Run the root step once, then iterate unprivileged: `generate-disk --disk /var/tmp/<name>.raw`
 followed by `--reuse-disk /var/tmp/<name>.raw` on each test. Each test copies the disk or
 boots it without installing, so one install serves `boot-test` and `oomd-test` alike.

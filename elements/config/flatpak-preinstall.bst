@@ -1,5 +1,6 @@
-# flatpak-preinstall: installs initial system Flatpak apps on first boot.
-# The service retries on subsequent boots if the network was unavailable.
+# flatpak-preinstall: installs krytis's system Flatpak apps, each at most once
+# per system (per-app ledger, so additions reach existing installs, #1319).
+# The service retries on later boots if the network was unavailable.
 # Flatpak binary is already present transitively via xdg-desktop-portal.
 # Closes #66.
 #
@@ -7,7 +8,7 @@
 # XCURSOR_PATH override so sandboxed X11 apps can find the host's cursor
 # themes (#949). Same element because both are "system Flatpak configuration
 # applied at boot" and share this files/ directory; different units because
-# the preinstall is network-gated and runs once, while the override is local
+# the preinstall is network-gated and records each app once, while the override is local
 # and reasserts every boot. See the script header for why an override is the
 # only mechanism that works.
 kind: manual

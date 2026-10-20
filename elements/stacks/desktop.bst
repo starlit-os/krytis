@@ -279,9 +279,10 @@ depends:
   - config/noctalia-assets.bst
 
   # ── Flatpak pre-install ─────────────────────────────────────────────────
-  # Installs initial system Flatpak apps (Bazaar app store, …) on
-  # first boot. Retries if the network was unavailable; marker file at
-  # /var/lib/flatpak/.krytis-preinstall-done gates re-execution.
+  # Installs krytis's system Flatpak apps (Bazaar, Zed). Each app is
+  # installed at most once per system: a per-app ledger in
+  # /var/lib/flatpak/.krytis-preinstalled/ lets a newly added app reach
+  # existing installs while an uninstalled one stays gone (#1319).
   # The bootc-installer flatpak (org.bootcinstaller.Installer) is never
   # added to the OCI image — it only lives in the live ISO overlay — so no
   # removal service is needed. Closes #66; resolves #175 installer concern.
