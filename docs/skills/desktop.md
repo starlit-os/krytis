@@ -530,8 +530,10 @@ reports every runtime dep as "not found" regardless of whether the graph is
 correct. Verify against the actually composed rootfs instead:
 `bst artifact checkout oci/krytis/filesystem.bst`, then `ldd` the binary there.
 
-`desktop/stb.bst` notes: upstream `nothings/stb` has **no release tags**, so it uses
-`track: refs/heads/master` (branch tracking; the git-describe ref-format falls back
+`desktop/stb.bst` notes: it has two sources, `nothings/stb` and (since stb moved
+`stb_image_resize2.h` out on 2026-10-19) `nothings/stb_image_resize`, both installed
+flat into `/usr/include/stb/`. Neither has **release tags**, so both use branch tracking
+(`refs/heads/master` and `refs/heads/main`; the git-describe ref-format falls back
 to a plain SHA when no tag is reachable). Manual-kind elements built on
 `runtime-minimal` must set `strip-binaries: ""` — the default strip-commands call
 `freedesktop-sdk-stripper`, which runtime-minimal doesn't ship (exit 127 at the
