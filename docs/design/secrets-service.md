@@ -211,7 +211,7 @@ daemon-restart prompts happen in the user's running niri session, which noctalia
 the long-term goal of upstreaming it or shipping it as a noctalia plugin.
 
 **Why noctalia is a good fit, not just the only option:**
-- v5 (krytis was on `v5.0.0-beta.7` when this was written; `v5.2.1` as of 2026-10-11) is a from-scratch native C++23 rewrite with **no Qt or
+- v5 (krytis was on `v5.0.0-beta.7` when this was written; `v5.3.0` as of 2026-10-20) is a from-scratch native C++23 rewrite with **no Qt or
   GTK dependency at all** — confirmed via upstream's own README and `libsodium.bst`/`stb.bst`
   comments in this repo. This removes the QML/Quickshell integration problem entirely; there
   is no JS/GObject-introspection bridge to fight.
@@ -328,7 +328,7 @@ Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`. Ori
 `ba821c7da` on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`); **rebased 2026-08-17 onto
 upstream `main` `87b203c68` (`v5.0.0-beta.8-135`)** and re-pinned in PR #606. The branch has
 been followed forward since — `elements/desktop/noctalia.bst` pins
-`v5.2.1-3-g1047f8fd` as of 2026-10-11, still on `track: feat/system-prompter`. **No PR or issue
+`v5.3.0-2-g1aab2f2f` as of 2026-10-20, still on `track: feat/system-prompter`. **No PR or issue
 has been opened against `noctalia-dev/noctalia`** — per AGENTS.md's Upstream Gate that needs
 an explicit instruction naming that action. The branch loses nothing by waiting.
 
