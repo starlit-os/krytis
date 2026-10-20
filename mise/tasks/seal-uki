@@ -7,6 +7,12 @@ if [ ! -f files/boot-keys/db.key ]; then
     mise run pull-keys
 fi
 
+# Keys already on disk skip pull-keys, so check the pairs here too: a mismatched
+# pair signs without error and only fails at boot under enforcement (#1327).
+# shellcheck source=mise/lib/boot-keys.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/boot-keys.sh"
+require_key_pairs files/boot-keys
+
 # NOTE ON ENGINE VERSIONS — do not re-add a minimum-version check here without
 # evidence. #524 added `podman >= 5` on the theory that the two-phase squash was
 # only ever verified on 5.x. That was wrong: every sealed image this project has

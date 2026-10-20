@@ -16,22 +16,8 @@ declare -A KEYS=(
     [DB_KEY]=db.key    [DB_CRT]=db.crt
 )
 
-file_ok() {
-    # $1 = path, $2 = kind (key|crt) — present, non-empty, and openssl-valid
-    [ -s "$1" ] || return 1
-    case "$2" in
-        key) openssl rsa -check -in "$1" -noout >/dev/null 2>&1 || openssl ec -check -in "$1" -noout >/dev/null 2>&1 ;;
-        crt) openssl x509 -noout -in "$1" >/dev/null 2>&1 ;;
-    esac
-}
-
-pair_matches() {
-    # $1 = private key, $2 = cert — cert's public key matches the private key
-    local kpub cpub
-    kpub=$(openssl pkey -in "$1" -pubout 2>/dev/null) || return 1
-    cpub=$(openssl x509 -in "$2" -pubkey -noout 2>/dev/null) || return 1
-    [ "$kpub" = "$cpub" ]
-}
+# shellcheck source=mise/lib/boot-keys.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/boot-keys.sh"
 
 # --- On-disk state ---------------------------------------------------------
 on_disk=()   # complete, valid, matching .key + .crt pairs

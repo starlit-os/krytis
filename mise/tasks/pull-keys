@@ -19,13 +19,10 @@ done
 chmod 600 files/boot-keys/*.key
 chmod 644 files/boot-keys/*.crt
 
-# Validate keys round-trip cleanly from Proton Pass
-for key in PK KEK db; do
-    openssl rsa -check -in "files/boot-keys/${key}.key" -noout 2>/dev/null || \
-        openssl ec -check -in "files/boot-keys/${key}.key" -noout 2>/dev/null || \
-        { echo "ERROR: ${key}.key failed validation"; exit 1; }
-    openssl x509 -noout -in "files/boot-keys/${key}.crt" || \
-        { echo "ERROR: ${key}.crt failed validation"; exit 1; }
-done
+# Validate keys round-trip cleanly from Proton Pass, and that each .key is the
+# private key for its .crt (#1327)
+# shellcheck source=mise/lib/boot-keys.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/boot-keys.sh"
+require_key_pairs files/boot-keys
 
 echo "==> Keys pulled and validated in files/boot-keys/"

@@ -44,6 +44,33 @@ Freedesktop SDK has no public `elements/components/sbsigntools.bst`. The real na
 
 `mise/tasks/generate-keys` and `mise/tasks/pull-keys` both write `PK.key`/`PK.crt`, `KEK.key`/`KEK.crt`, `db.key`/`db.crt` — mixed case, not a uniform convention. Any task or Containerfile step that reads these files (e.g. `mise/tasks/seal-uki`'s `--secret src=` paths) must match this exact casing or silently miss the file on case-sensitive filesystems.
 
+## A key and a cert can each be valid and still not be a pair — check them together
+
+`openssl rsa -check` on the `.key` and `openssl x509 -noout` on the `.crt` both pass when the two
+come from different key pairs, for example a Proton Pass item where one field was rotated and
+the other wasn't. `sbsign` then signs without complaint, and the image fails only at boot under
+enforcement, because the signatures don't verify against the `db.crt` baked into `db.auth`.
+The only check that catches this compares public keys:
+
+```bash
+[ "$(openssl pkey -in db.key -pubout)" = "$(openssl x509 -in db.crt -pubkey -noout)" ]
+```
+
+`mise/lib/boot-keys.sh` holds it (`pair_matches`, plus `require_key_pairs <dir>` for all of
+PK/KEK/db). Every path that hands keys to a signer runs it (#1327):
+
+- `mise/tasks/pull-keys`, after the vault round-trip.
+- `mise/tasks/seal-uki`, before building. Keys already on disk skip `pull-keys`, so a stale
+  `.crt` left from an earlier key set would otherwise get through.
+- The `SEAL_SECURE_BOOT` `RUN` in `Containerfile`, for `db` only, so a hand-run
+  `podman build --secret …` that bypasses the mise tasks still fails before `sbsign`.
+- `mise/tasks/generate-keys` classifies a mismatched on-disk pair as `partial` and refuses
+  to continue.
+
+A new task or workflow that signs with these keys should source the lib rather than
+re-validating each file on its own. Prior art: dakota's `files/boot-keys/sign.sh` runs the
+same comparison before every signing (projectbluefin/dakota#1781).
+
 ## `bootc container ukify` needs a separate rootfs, not the active build layer
 
 `bootc container ukify --rootfs /` (the default) fails with `Computing composefs digest: Cannot operate on active root filesystem; mount separate target instead` when run in a single-stage `RUN` step. This is a deliberate guard in bootc (confirmed on v1.16.6) — composefs digest computation refuses to hash the currently-building, mutable overlay layer. `--allow-missing-verity` does **not** bypass this; the guard is unrelated to fs-verity support.
