@@ -63,8 +63,6 @@ command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 no
 TEST_USER="oomdtest"
 WORKDIR=$(mktemp -d /var/tmp/krytis-oomd-test.XXXXXX)
 DISK="${WORKDIR}/test.raw"
-SSH_PORT=2342
-while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT + 1)); done
 
 QEMU_PID=""
 cleanup() {
@@ -106,21 +104,27 @@ cred_b64() { base64 -w0 < "$1"; }
 OVMF_CODE=$(ovmf_code_plain)
 cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"
 
-qemu-system-x86_64 \
-    -enable-kvm -m "${VM_RAM:-8192}" -cpu host -smp "${VM_CPUS:-4}" \
-    -machine q35 \
-    -drive "file=${DISK},format=raw,if=virtio" \
-    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
-    -device virtio-net-pci,netdev=net0 \
-    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
-    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")" \
-    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")" \
-    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")" \
-    -smbios "type=11,value=io.systemd.credential.binary:krytis.oomdtest_root_keys=$(cred_b64 "${WORKDIR}/id_root.pub")" \
-    -display none \
-    -serial "file:${WORKDIR}/serial.log" \
-    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+# SSH port picked at launch, not at startup, and retried if QEMU still loses
+# the bind: scripts/qemu-hostfwd.sh (#1373).
+launch_qemu() {
+    qemu-system-x86_64 \
+        -enable-kvm -m "${VM_RAM:-8192}" -cpu host -smp "${VM_CPUS:-4}" \
+        -machine q35 \
+        -drive "file=${DISK},format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+        -device virtio-net-pci,netdev=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:krytis.oomdtest_root_keys=$(cred_b64 "${WORKDIR}/id_root.pub")" \
+        -display none \
+        -serial "file:${WORKDIR}/serial.log" \
+        -daemonize -pidfile "${WORKDIR}/qemu.pid"
+}
+. scripts/qemu-hostfwd.sh
+qemu_launch_hostfwd 2342 launch_qemu
 QEMU_PID=$(cat "${WORKDIR}/qemu.pid")
 
 SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null

@@ -1299,3 +1299,40 @@ Two constraints to preserve when editing the lists:
   that emits no serial output at all rather than an error (#414).
 - **`.fd` before `.qcow2`.** Every caller passes `format=raw`, which silently
   misreads a qcow2; the resolver warns if only a qcow2 is available.
+
+## Pick the SSH forward port at launch, through `scripts/qemu-hostfwd.sh`
+
+VM tasks run side by side: two sessions each running `mise run boot-test`, or a
+boot-test next to `oomd-test`. Each starts its port search at a fixed number (2299,
+2322, 2342). `boot-test` used to pick its port at startup and bind it only when QEMU
+launched, after `generate-disk`, about 14 minutes later. A second boot-test starting
+in that window probed the same port, found it free and took it first. The first run's
+QEMU then died with `Could not set up host forwarding rule 'tcp:127.0.0.1:2299-:22'`,
+and its `EXIT` trap deleted a disk that had cost a sudo install (#1373).
+
+A probe can never reserve a port, so moving it next to the launch narrows the window
+but doesn't close it. The helper does both: it probes right before calling QEMU, and
+relaunches on the next free port when QEMU loses the bind anyway. Wrap the QEMU
+command in a function that reads `${SSH_PORT}`:
+
+```bash
+launch_qemu() { qemu-system-x86_64 … -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" … -daemonize -pidfile "${WORKDIR}/qemu.pid"; }
+. scripts/qemu-hostfwd.sh
+qemu_launch_hostfwd 2299 launch_qemu   # sets SSH_PORT
+```
+
+- **It relies on `-daemonize`.** A daemonized QEMU exits non-zero, with the error on
+  stderr, when the forward can't bind. Without `-daemonize` the failure shows up only
+  as an SSH timeout minutes later. Only that error triggers a retry; any other launch
+  failure is returned at once.
+- **Match the port exactly.** The old probe, `ss -tunalp | grep -q ":${SSH_PORT}"`,
+  was a substring match, so a listener on `:22990` made 2299 count as busy.
+  `hostfwd_port_free` runs `ss -Htln "sport = :<port>"`, which matches the port on any
+  address.
+- **Retry costs nothing in WORKDIR.** QEMU unlinks a stale unix socket before binding
+  its `-monitor`/serial sockets, and a successful launch overwrites the pidfile, so the
+  second attempt starts clean. Verified 2026-10-21 by having the launch function grab
+  its own port before the first QEMU start: QEMU failed on 2299, the helper relaunched
+  it on 2300, and `ss` showed QEMU holding 2300.
+- `tpm-install-test` uses only `hostfwd_port_free`: it already probes right before
+  each launch, and a relaunch would also have to restart its swtpm.

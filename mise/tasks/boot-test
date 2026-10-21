@@ -115,8 +115,6 @@ trap 'rm -rf "${WORKDIR}"' EXIT
 
 DISK="${WORKDIR}/test.raw"
 MONITOR_SOCK="${WORKDIR}/monitor.sock"
-SSH_PORT=2299
-while ss -tunalp 2>/dev/null | grep -q ":${SSH_PORT}"; do SSH_PORT=$((SSH_PORT + 1)); done
 
 # --secure boots against the db key enrolled in .ovmf-vars-secure.fd, so the
 # image has to carry the signed UKI that `mise run seal-uki` bakes at
@@ -356,21 +354,29 @@ else
 fi
 
 echo "==> [2/5] Booting headless (secure=${SECURE:-false})..."
-qemu-system-x86_64 \
-    -enable-kvm -m "${VM_RAM}" -cpu host -smp "${VM_CPUS}" \
-    ${MACHINE_ARGS:+-machine "${MACHINE_ARGS}"} \
-    "${FLASH_SECURE_ARGS[@]}" \
-    -drive "file=${DISK},format=raw,if=virtio" \
-    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
-    -device virtio-net-pci,netdev=net0 \
-    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
-    "${CRED_ARGS[@]}" \
-    "${LUKS_ARGS[@]}" \
-    -display none \
-    "${SERIAL_ARGS[@]}" \
-    -monitor "unix:${MONITOR_SOCK},server,nowait" \
-    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+# The SSH port is picked here, at launch, not at startup: picking it before the
+# install let a second boot-test take it during generate-disk (#1373).
+# scripts/qemu-hostfwd.sh sets SSH_PORT and retries if QEMU still loses the bind.
+launch_qemu() {
+    qemu-system-x86_64 \
+        -enable-kvm -m "${VM_RAM}" -cpu host -smp "${VM_CPUS}" \
+        ${MACHINE_ARGS:+-machine "${MACHINE_ARGS}"} \
+        "${FLASH_SECURE_ARGS[@]}" \
+        -drive "file=${DISK},format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+        -device virtio-net-pci,netdev=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+        "${CRED_ARGS[@]}" \
+        "${LUKS_ARGS[@]}" \
+        -display none \
+        "${SERIAL_ARGS[@]}" \
+        -monitor "unix:${MONITOR_SOCK},server,nowait" \
+        -daemonize -pidfile "${WORKDIR}/qemu.pid"
+}
+. scripts/qemu-hostfwd.sh
+qemu_launch_hostfwd 2299 launch_qemu
+echo "    SSH forward: 127.0.0.1:${SSH_PORT}"
 
 # Read the pidfile into a variable straight away and never rely on the file
 # again. Teardown used to test `[ -f "${WORKDIR}/qemu.pid" ]`, so anything that

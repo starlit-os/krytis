@@ -258,6 +258,7 @@ printf '[Service]\nExecStart=\nExecStart=/usr/bin/true\nRestart=no\n' > "${WORKD
 cred() { echo "type=11,value=io.systemd.credential.binary:$1=$(base64 -w0 < "$2")"; }
 
 . scripts/ovmf-paths.sh
+. scripts/qemu-hostfwd.sh   # hostfwd_port_free (#1373)
 OVMF_CODE=$(ovmf_code_plain)
 cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"   # one varstore for both boots, like one machine
 
@@ -325,7 +326,10 @@ FACTS
 # writes ${WORKDIR}/facts-<n>.txt.
 boot() {
     local n="$1" port=2330 serial="${WORKDIR}/serial-$1.log" sock="${WORKDIR}/serial-$1.sock"
-    while ss -tunalp 2>/dev/null | grep -q ":${port}"; do port=$((port + 1)); done
+    # Probed right before the launch already, so the window is seconds; only the
+    # exact-port match comes from scripts/qemu-hostfwd.sh. Not wrapped in
+    # qemu_launch_hostfwd, because a retry would also have to restart swtpm.
+    while ! hostfwd_port_free "${port}"; do port=$((port + 1)); done
     start_swtpm "${n}"
     qemu-system-x86_64 \
         -enable-kvm -m 4096 -cpu host -smp 4 -machine q35 \
