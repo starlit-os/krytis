@@ -12,7 +12,7 @@ kind: manual
 # still not enabled by default: it only does anything with Logitech HID++
 # hardware attached.
 #
-# Five patches, all under patches/noctalia-plugin-mx-control/, applied in order:
+# Four patches, all under patches/noctalia-plugin-mx-control/, applied in order:
 # - accept-pro-device-names: the backend's device-name filter accepts
 #   Logitech's PRO-series mice ("PRO X Wireless"). Without it the panel never
 #   lists them, and DPI never shows.
@@ -23,8 +23,6 @@ kind: manual
 #   `settings: []` (#1292).
 # - lightspeed-asleep-is-offline: on top of that backport. An asleep
 #   Lightspeed device counts as offline instead of being re-read every 2 s.
-# - stop-serve-by-interpreter-path: disabling the plugin actually stops its
-#   serve helper (#1313).
 #
 # community-plugins has no tags, so this tracks main. Every commit to any
 # plugin there, including the bot's "update plugin catalog" commits, moves the
@@ -51,7 +49,7 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/community-plugins.git
   track: refs/heads/main
-  ref: 552843c2d3e73a34066a6efba735353748008bc6
+  ref: 04bc4d167e7b11d21307c52c812b0cedf48ee5fa
 - kind: patch
   path: patches/noctalia-plugin-mx-control/accept-pro-device-names.patch
 - kind: patch
@@ -60,5 +58,3 @@ sources:
   path: patches/noctalia-plugin-mx-control/retry-empty-settings.patch
 - kind: patch
   path: patches/noctalia-plugin-mx-control/lightspeed-asleep-is-offline.patch
-- kind: patch
-  path: patches/noctalia-plugin-mx-control/stop-serve-by-interpreter-path.patch

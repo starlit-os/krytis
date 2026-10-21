@@ -1991,13 +1991,16 @@ fetch reproduced and caught the failure. The mechanism is dakota's account and h
 re-checked on krytis: BuildStream 2 writes the element's combined, patched sources to its
 source cache during fetch.
 
-**Krytis exposure** (2026-10-14; `grep -rlE 'kind: (patch|patch_queue)$' elements` against
-the `track` matrix in `.github/workflows/track-bst-sources.yml`). Five tracked elements
+**Krytis exposure** (2026-10-21; `grep -rlE 'kind: (patch|patch_queue)$' elements` against
+the `track` matrix in `.github/workflows/track-bst-sources.yml`). Seven tracked elements
 carry `kind: patch` sources:
 
 - `core/efitools.bst`: two patches and `track: master`, so every upstream commit is a
-  candidate. It is the most exposed.
+  candidate.
+- `desktop/noctalia-plugin-mx-control.bst`: four patches and `track: refs/heads/main` on
+  community-plugins, where every catalog-bot commit moves the ref. The most exposed.
 - `desktop/ananicy-cpp.bst`
+- `desktop/noctalia.bst`
 - `desktop/oo7.bst`
 - `desktop/xwayland-satellite.bst`
 - `overrides/vim.bst`
@@ -2010,6 +2013,36 @@ The same holds for patched elements that a task updates instead of `bst source t
 tracking PR, so a patch that no longer applies turns that check red. It is not a required
 check (its header says so), though, and nothing on the PR says the red check is a patch
 failure rather than a build break.
+
+**Read the `patch` output in the failed fetch before rebasing anything.** `Reversed (or
+previously applied) patch detected!  Assume -R? [n]` followed by `Skipping patch` means
+upstream already has those hunks: the carry was upstreamed, and the fix is to delete the
+patch, not refresh it. Confirm by diffing the upstream commit against the patch, then
+follow `docs/design/carried-patches.md` (row out, § Historical carries in). #1360 is the
+worked example: noctalia-dev/community-plugins#1073 merged, and the track bump's build
+failed this way on `stop-serve-by-interpreter-path.patch`. A real conflict shows `Hunk #N
+FAILED` instead.
+
+**A patch that applies at an offset still leaves junk.** When upstream adds lines above a
+hunk, `patch` reports `Hunk #1 succeeded at 318 (offset 2 lines)` and, by default, keeps
+the pre-patch file as `<file>.orig` in the staged source. An install step that copies a
+directory (`cp -r mx-control …`) then ships it: bumping past `b6879c1a` put `shared.luau.orig` and
+`tests/shared_test.lua.orig` into `/usr/share/noctalia/plugins/mx-control/`. The build stays
+green, so check `bst artifact checkout` for `*.orig`. Fix it by regenerating the patch
+against the new ref (apply it there, `git diff`, keep the comment header), not by deleting
+the file in the install step.
+
+**Fix a failing track PR in its own PR, never on the `auto/` branch.** Every run that pushes
+(a new candidate during the cooldown, or the newer one cooling) rebuilds the branch from
+`main`, through `scripts/commit-tracking-update.sh`, with only the element path, so a commit
+pushed on top is gone within the hour (the job runs at `:13`). It is worse before that: a
+hand commit becomes the PR head, and `scripts/tracking-cooldown.sh` reads the held update
+from `HEAD^..HEAD`. That diff has your fix but not the ref bump, and it has no
+`Tracking-First-Seen` trailer. The run replays it onto `main` as the old ref minus the
+dropped patch, which builds green and ships without the fix. Open a branch outside `auto/`
+from `main` with the bump plus the fix, leave the bot's PR on its own commit, and close it
+once the fix merges. The fix PR skips the cooldown, so don't merge it before the bot PR's
+`Ready-At`. #1360 was fixed this way.
 
 **Optional cheap pre-check (not implemented in krytis).** After the track step, run
 `bst source fetch --deps none <element>` for elements that carry `kind: patch`. If it fails,
