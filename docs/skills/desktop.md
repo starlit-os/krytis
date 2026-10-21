@@ -3325,7 +3325,8 @@ touching the image: `scripts/omp-seance.js` is an omp extension that drives sean
 `seance ctl pi-hook`. Install it with `mise run omp-seance:install [--profile <name>]` and
 exercise it with `mise run omp-seance:test` (real omp, stub seance, spends model tokens). The
 design and the verification record are in `docs/plans/2026-09-30-omp-seance-user-extension.md`.
-What was non-obvious (checked against omp 18.4.3 and seance 0.1.7):
+What was non-obvious (checked against omp 18.4.3 and seance 0.1.7; `omp-seance:test` re-passed
+on omp 18.12.3 on 2026-10-21):
 
 - **omp extensions must be ES modules.** The CommonJS `module.exports = function (pi)` that
   seance's own `pi` wrapper writes fails in omp with `Extension does not export a valid
@@ -3355,8 +3356,17 @@ What was non-obvious (checked against omp 18.4.3 and seance 0.1.7):
   `@oh-my-pi/pi-coding-agent/config/registry` against `pi.pi.settings` (the singleton omp's
   event controller reads). It only does this when `isConfigured` is false, and only in the
   tracked main session.
+- **`/new` and `/fork` are not a session end in omp.** They switch session inside the running
+  process and fire `session_before_switch` / `session_switch` (`reason` `new` / `fork`), never
+  `session_shutdown` or `session_start` (omp 18.12.3, RPC `new_session` / `fork`). So the
+  extension's `session-end` on `session_shutdown` does not wipe the pane's status mid-session.
+  This is where omp differs from Pi, whose `/new` does fire `session_shutdown`
+  (no1msd/seance#21). A future handler on `session_switch` must not send `session-end`; the
+  harness's `new_session` / `fork` checks go red if it does.
 - **Testing:** `omp --mode rpc` with `{"type":"get_state"}` on stdin loads extensions and
-  fires `session_start` / `session_shutdown` without a model call. `omp -p ""` is not
-  model-free: an empty prompt still starts a turn. seance drops notifications for a
-  **visible** pane, so move the pane off-screen before counting `seance ctl --json
-  list-notifications`.
+  fires `session_start` / `session_shutdown` without a model call; `new_session` and `fork`
+  are model-free too. Under `--no-session`, `fork` is a silent no-op (`session_before_switch`
+  fires, `session_switch` never does), so session-switch tests need `--session-dir <tmp>`.
+  `omp -p ""` is not model-free: an empty prompt still starts a turn. seance drops
+  notifications for a **visible** pane, so move the pane off-screen before counting
+  `seance ctl --json list-notifications`.
