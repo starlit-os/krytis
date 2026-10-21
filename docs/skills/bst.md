@@ -1511,11 +1511,12 @@ lists before this and kept them. Branch-tracking sources (`refs/heads/main`, `ma
 `gnome-51`) and single-tag pins (`efibootmgr` `18`) need none.
 
 **Junction mirrors are the exception: leave their `track:` exactly as upstream wrote it,
-with no added `exclude:`.** `elements/overrides/{rust-bindgen,btrfs-progs,libdisplay-info,libdecor,libportal}.bst`
+with no added `exclude:`.** `elements/overrides/{rust-bindgen,btrfs-progs,libdisplay-info,libdecor,libportal,python3-pil}.bst`
 copy an fdsdk or gnome-build-meta element verbatim. They are deliberately kept out of the
-track matrix and are pinned to the junction's ref; their `track:` exists only so the copy
-matches upstream's element. An added `exclude:` protects nothing there, and it fails
-`mise run rust-bindgen-check` and `mise run btrfs-progs-check`, which compare the whole
+track matrix and are pinned to the junction's ref (python3-pil runs one release ahead of it);
+their `track:` exists only so the copy matches upstream's element. An added `exclude:`
+protects nothing there, and it fails `mise run rust-bindgen-check`, `mise run
+btrfs-progs-check` and `mise run python3-pil-check`, which compare the whole
 source list against the junction's element. `gtk3-mirror-check` and
 `libdisplay-info-check` happened not to notice. Before adding an `exclude:`, read the element
 header's "Update path" line.

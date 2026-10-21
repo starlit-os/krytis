@@ -296,6 +296,37 @@ tokio-macros -> 2.5.0 for tokio's own `~2.5.0` requirement). **Lesson: after any
 `cargo update -p <crate>` vuln fix, re-run `mise run vuln-scan` against the result before
 trusting it closed — don't infer closure from the version bump alone.**
 
+### A genuine Critical in a junction component: run fdsdk's pending bump as an override
+
+2026-10-21: the scheduled publish stopped at the pre-build gate on GHSA-8g5g-8vmr-9782
+(Pillow ≤ 12.3.0, Critical, published the evening before; fixed in 13.0.0). It was
+no false positive: Pillow is a `python3-*` element matched under the python namespace,
+and the live image has `/usr/lib/python3.14/site-packages/pillow-12.3.0.dist-info`. So
+the fix is a version bump, never a `.grype.yaml` rule. What worked:
+
+- **Find the consumer first.** `bst show --format '%{runtime-deps}'` prints each
+  dependency list as multi-line YAML, so a line-oriented filter finds nothing. Prefix
+  each record with a sentinel (`--format '@@%{name}|||%{runtime-deps}|||%{build-deps}'`)
+  and split on `@@`. For Pillow the only dependent was fdsdk's `components/fwupd.bst`,
+  a runtime dependency.
+- **fdsdk's autoupdater has usually done the bump already.** It opens one MR per
+  branch, master and `release/<series>`, titled `Update components/<name>.bst`. Search
+  with `https://gitlab.com/api/v4/projects/freedesktop-sdk%2Ffreedesktop-sdk/merge_requests?search=<name>&state=all`.
+  Here master had merged it (!35018) and the 26.08 one (!35059) was waiting on approval.
+  A merged master MR with a green pipeline is the evidence that consumers still build.
+- **Mirror the MR head, patches included.** Take the element and any `patches/<name>/`
+  file from the MR's head SHA (`/-/raw/<sha>/…`). Pillow's carried `drop-pybind.patch`
+  had to be regenerated for 13.0.0, so the junction's copy would not have applied. The
+  layout matches fdsdk's, so `path: patches/<name>/…` is the same string in both, and
+  only the `freedesktop-sdk.bst:` prefixes differ.
+- **Gate the exit, not just drift.** `mise run python3-pil-check` diffs everything
+  except `ref:`. Like `libdisplay-info-check`, it also fails once the junction's
+  version reaches the held one. Without that, the override would quietly pin Pillow
+  *behind* the next fdsdk bump.
+
+The patch counts as a carry, so it needs a row in `docs/design/carried-patches.md`
+and the element path in the freedesktop-sdk row of `docs/design/upstream-ai-policies.md`.
+
 ### `--fail-on` / severity gating
 
 Both `mise run vuln-scan --fail-on <severity>` and `mise run push --fail-on <severity>` pass straight through to Grype's own `-f/--fail-on` flag (`negligible|low|medium|high|critical`) — Grype exits 2 when a match at or above that severity exists; the wrapping task turns that into a normal non-zero exit. **No flag = warn-only** (report generated and attached either way, never blocks). **`mise run push`'s ordering (#392):** SBOM generation and the vuln scan run *before* login/tag/push — a `--fail-on` breach aborts there, before anything reaches the registry. This is possible because `buildstream-sbom` reads static element/source metadata via `bst show`, which does not require the image to be built (verified: `bst show` reports `oci/krytis/image.bst waiting` — not cached — in a checkout that still produces a complete, accurate SBOM). `.github/workflows/publish.yml` additionally runs `mise run vuln-scan --fail-on <severity>` as its own standalone step *before* `mise run build`, so a blocking finding skips the ~20-25 minute BST build entirely, not just the push — `mise run push`'s own scan-before-push is the defense-in-depth guarantee for the case where that earlier gate is skipped or `mise run push` is run standalone. Before #392, the image was already pushed by the time the scan ran, so `--fail-on` only failed the job after the fact (the same non-blocking shape as dakota's `publish-sbom` job, `continue-on-error: true`) — that ordering is no longer how this works.

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#MISE description="Verify overrides/python3-pil.bst still mirrors freedesktop-sdk's element and is still needed"
+
+# elements/overrides/python3-pil.bst runs Pillow 13.0.0 ahead of the junction
+# for GHSA-8g5g-8vmr-9782 (Critical, JPEG decoder heap overflow, fixed in
+# 13.0.0). It is freedesktop-sdk's own pending bump (freedesktop-sdk!35059).
+#
+# Two ways the copy goes wrong without a signal:
+#   1. A junction bump changes the upstream element's build config while the
+#      copy keeps building the old one. This task diffs everything but the
+#      Pillow `ref:` against the junction's element, then checks the vendored
+#      patch still applies to the pinned ref.
+#   2. The junction reaches 13.0.0 itself, and the override becomes dead
+#      weight that would hold Pillow back on the next upstream bump. This task
+#      fails as soon as the junction's Pillow is >= the held one.
+#
+# When it fails on (1), resync the copy. When it fails on (2), delete the
+# override element, patches/python3-pil/, this task and the overrides entry in
+# elements/freedesktop-sdk.bst.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+OVERRIDE="elements/overrides/python3-pil.bst"
+UPSTREAM_PATH="elements/components/python3-pil.bst"
+PATCH="patches/python3-pil/drop-pybind.patch"
+CLONE_URL="https://github.com/python-pillow/Pillow.git"
+
+if [ ! -f "$OVERRIDE" ]; then
+    echo "==> $OVERRIDE is gone — nothing to check."
+    exit 0
+fi
+
+REF="$(grep -oP '^\s*ref:\s*\K\S+' elements/freedesktop-sdk.bst | head -1)"
+SHA="${REF##*-g}"
+if [ -z "$SHA" ] || [ "$SHA" = "$REF" ]; then
+    echo "==> Could not read a git-describe ref from elements/freedesktop-sdk.bst" >&2
+    exit 1
+fi
+
+URL="https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/raw/${SHA}/${UPSTREAM_PATH}"
+echo "==> Comparing $OVERRIDE against freedesktop-sdk ${SHA:0:12}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if ! curl -fsSL --retry 3 --retry-delay 10 "$URL" -o "$TMP/upstream.bst"; then
+    echo "==> Could not fetch $URL" >&2
+    exit 1
+fi
+
+HELD_REF="$(grep -oP '^\s*ref:\s*\K\S+' "$OVERRIDE")"
+HELD="${HELD_REF%%-*}"
+JUNCTION_REF="$(grep -oP '^\s*ref:\s*\K\S+' "$TMP/upstream.bst")"
+JUNCTION="${JUNCTION_REF%%-*}"
+echo "==> Override holds Pillow ${HELD}; the junction would supply ${JUNCTION}"
+
+# Exit condition first: once the junction catches up, nothing else matters.
+if [ "$(printf '%s\n%s\n' "$HELD" "$JUNCTION" | sort -V | tail -1)" = "$JUNCTION" ]; then
+    echo
+    echo "==> The junction's Pillow ${JUNCTION} is >= the held ${HELD}; the override is"
+    echo "    obsolete. Delete $OVERRIDE, patches/python3-pil/, this task and the"
+    echo "    overrides entry in elements/freedesktop-sdk.bst."
+    exit 1
+fi
+
+# Comments, blank lines and the Pillow `ref:` may differ; sibling
+# dependencies carry a `freedesktop-sdk.bst:` prefix because a bare
+# `components/foo.bst` only resolves inside freedesktop-sdk's own namespace.
+normalise() {
+    grep -vE '^\s*#|^\s*$|^\s*ref:' | sed 's/^- freedesktop-sdk\.bst:/- /'
+}
+
+normalise <"$TMP/upstream.bst" >"$TMP/upstream.norm"
+normalise <"$OVERRIDE" >"$TMP/override.norm"
+
+FAILED=0
+
+if ! diff -u --label "freedesktop-sdk/$UPSTREAM_PATH" "$TMP/upstream.norm" \
+        --label "$OVERRIDE" "$TMP/override.norm"; then
+    echo
+    echo "==> python3-pil-check FAILED — the override has drifted from the junction."
+    FAILED=1
+fi
+
+echo "==> Checking $PATCH applies to Pillow ${HELD}"
+
+CLONE="$TMP/pillow"
+if ! git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$HELD" \
+        "$CLONE_URL" "$CLONE"; then
+    echo "==> Could not clone Pillow at $HELD" >&2
+    FAILED=1
+else
+    CLONED_SHA="$(git -C "$CLONE" rev-parse HEAD)"
+    if [ "${HELD_REF##*-g}" != "$CLONED_SHA" ]; then
+        echo "==> $HELD resolved to $CLONED_SHA, expected ${HELD_REF##*-g}" >&2
+        FAILED=1
+    fi
+    if ! git -C "$CLONE" apply --check "$ROOT/$PATCH"; then
+        echo "==> $PATCH no longer applies cleanly to Pillow $HELD." >&2
+        FAILED=1
+    fi
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    echo
+    echo "    Resync $OVERRIDE against freedesktop-sdk's element."
+    exit 1
+fi
+
+echo "==> python3-pil-check passed."
