@@ -64,7 +64,7 @@ config:
     # and the login secret is dropped with no error logged on either side.
     #
     # Belt and braces with patches/oo7/login-helper-connect-retry.patch. The
-    # patch carries the fix inside the daemon and is what would go upstream;
+    # patch carries the fix inside the daemon (proposed as oo7#615);
     # this drop-in keeps the ordering guarantee if an oo7 re-pin ever drops the
     # patch. Both budgets are 500 ms, so the worst case — no helper coming, as
     # on a manual `systemctl --user restart oo7-daemon` — is 1 s of startup

@@ -729,6 +729,24 @@ for the skip, then delete the carry's entry from the element header and
 `docs/design/carried-patches.md`. If the rebase *conflicts* on it instead, upstream changed the
 fix before releasing it. Take upstream's version and drop the cherry-pick.
 
+## Re-run a Parked Upstream Draft Before Filing It
+
+An "upstream-ready" report left in a krytis issue while it waits for the Upstream Gate
+goes stale in ways a re-read won't show. #585's 2026-08-15 draft for oo7 had picked up
+two errors by the time it was filed as linux-credentials/oo7#614 on 2026-10-21:
+
+- **A command that no longer runs.** `secret-tool lock --collection=login` fails on
+  libsecret 0.21.8 with `collection must be a full path, or the 'default' alias`. Only
+  running the repro found it.
+- **A suggested fix that was wrong from the start.** "Return locked items as unmatched
+  candidates" would make libsecret hand an app another item's secret. Reading the client
+  code the draft itself quoted (`on_lookup_unlocked`) shows this.
+
+Before filing: run every command in the draft against current upstream `main` on an
+isolated bus or scratch directory, and read the code path behind any proposed fix
+through to the caller. Then fix the krytis docs and issue comments that repeated the
+draft, in the same session.
+
 ## Archiving an Upstream Freezes Its PRs — Deleting the Head Fork Is the Only Exit
 
 A PR whose **base** repo gets archived becomes immutable for everyone, author included.

@@ -24,9 +24,10 @@
 # paid only when no helper is coming (a manual `systemctl --user restart`), not
 # on the login path, where the helper appears within tens of milliseconds.
 #
-# Not yet submitted upstream (Upstream Gate) -- carried downstream to verify in
-# real use first. If this stops applying after an oo7 bump, check whether
-# upstream has grown its own retry before re-basing it.
+# Proposed upstream as linux-credentials/oo7#615 (2026-10-21); that branch adds
+# two unit tests this patch leaves out. If this stops applying after an oo7
+# bump, check whether #615 merged, or upstream grew its own retry, before
+# re-basing it.
 --- a/server/src/main.rs
 +++ b/server/src/main.rs
 @@ -18,8 +18,9 @@
