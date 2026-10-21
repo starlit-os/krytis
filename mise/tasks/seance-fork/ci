@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="Run upstream seance's CI suites against a kitten-lily/seance checkout in an Ubuntu 24.04 container (#1018)"
+#USAGE flag "--checkout <path>" required=#true help="kitten-lily/seance checkout or worktree (ghostty submodule initialised)"
+#USAGE flag "--with-e2e" help="Also run `zig build e2e` (2 of 24 checks time out in this container on untouched upstream v0.1.7)"
+
+# The fork's GitHub workflows are disabled, so this is where its branch gets
+# tested before `mise run seance-fork:export-patch`. The suites are the ones in
+# upstream's .github/workflows/ci.yml. e2e is opt-in: on untouched no1msd/seance
+# v0.1.7, `surface.send_text + read_screen` and `surface.send_key` time out
+# under xvfb in this container (checked twice, 2026-10-21), so by default it
+# would only ever report that.
+set -euo pipefail
+
+CHECKOUT="$(cd "${usage_checkout}" && pwd -P)"
+[[ -f "$CHECKOUT/build.zig" && -f "$CHECKOUT/ghostty/build.zig" ]] ||
+  { echo "ERROR: ${CHECKOUT} is not a seance checkout with its ghostty submodule (git submodule update --init)" >&2; exit 1; }
+
+IMAGE=localhost/krytis-seance-build:ubuntu24.04
+podman build -q -t "$IMAGE" -f "${MISE_PROJECT_ROOT}/mise/lib/seance-build.Containerfile" "${MISE_PROJECT_ROOT}/mise/lib" >/dev/null
+ZIG_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/krytis-seance-zig"
+mkdir -p "$ZIG_CACHE"
+
+E2E=""
+[[ "${usage_with_e2e:-false}" == "true" ]] && E2E=1
+
+podman run --rm --security-opt label=disable \
+  -v "$CHECKOUT:/src" -v "$ZIG_CACHE:/root/.cache/zig" -w /src -e E2E="$E2E" \
+  "$IMAGE" bash -c '
+set -uo pipefail
+failed=()
+step() { local name="$1"; shift; echo "==> $name"; "$@" || failed+=("$name"); }
+# As in ci.yml: the plain python step runs without SEANCE_TEST_BINARY (the
+# binary-driven suites skip there and run in their own steps below).
+BIN=SEANCE_TEST_BINARY=/src/zig-out/bin/seance
+echo "==> zig build"; zig build || { echo "FAILED: zig build"; exit 1; }
+step "unit tests" env G_DEBUG=fatal-criticals GTK_A11Y=none xvfb-run -a zig build test
+step "ghostty shutdown tests" bash -c "cd ghostty && zig build test -Dapp-runtime=none -Dskip-macos-artifacts=true \
+  -Dtest-filter=\"basic push and pop\" -Dtest-filter=\"timed push\" -Dtest-filter=\"cancelled push\" \
+  -Dtest-filter=\"undelivered surface messages\""
+step "python suite" python3 -m unittest discover -s tests -v
+for p in test_ghostty_integration test_socket_server test_shell_integration; do
+  step "$p" env "$BIN" xvfb-run -a python3 -m unittest discover -s tests -p "$p.py" -v
+done
+for p in test_keyboard_remaps test_pane_close test_fullscreen test_ime; do
+  step "$p" env "$BIN" python3 -m unittest discover -s tests -p "$p.py" -v
+done
+[[ -n "$E2E" ]] && step "e2e" xvfb-run zig build e2e
+if ((${#failed[@]})); then printf "FAILED: %s\n" "${failed[@]}"; exit 1; fi
+echo "==> all suites passed"
+'

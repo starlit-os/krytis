@@ -6,9 +6,10 @@ variables:
   strip-binaries: ""
 
 # Séance — GTK4/libadwaita scrolling terminal multiplexer that tracks AI coding
-# agent sessions (Claude Code, Codex, OpenCode, Pi, Antigravity). Terminal
-# emulation comes from libghostty: seance vendors ghostty as a git submodule and
-# builds it with `app-runtime = none`, driving GTK itself.
+# agent sessions (Claude Code, Codex, OpenCode, Pi, Antigravity, and oh-my-pi
+# through the carried patch below). Terminal emulation comes from libghostty:
+# seance vendors ghostty as a git submodule and builds it with
+# `app-runtime = none`, driving GTK itself.
 #
 # Built from source rather than shipping upstream's AppImage on purpose. That
 # AppImage is produced by linuxdeploy-plugin-gtk, whose AppRun hook contains an
@@ -67,6 +68,16 @@ sources:
     url: github_files:no1msd/seance/releases/download/v0.1.7/seance-0.1.7-src.tar.gz
     ref: 3e3cb0dbb6a18bdc90f8dd1f7bad2ad15244e8ba55a9427447f145e15142119e
     base-dir: 'seance-*'
+
+  # oh-my-pi (omp) agent tracking: a `share/seance/bin/omp` wrapper, a bundled
+  # extension and an `omp-hook` agent, plus lowercase tool names in sidebar
+  # labels. Written by `mise run seance-fork:export-patch` from kitten-lily/seance
+  # `feat/omp-integration`: the fork's own commits, one per feature. Not proposed upstream yet.
+  # Every `seance-update` bump needs the branch rebased onto the new tag and
+  # this file re-exported; a stale patch fails `bst build` at the source
+  # stage. See krytis#1018 and kitten-lily/seance#1.
+  - kind: patch
+    path: patches/seance/omp-integration.patch
 
   # Zig package dependencies — generated, do not hand-edit.
   # Regenerate with the element's `-update` mise task.

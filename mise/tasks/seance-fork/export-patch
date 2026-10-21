@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#MISE description="Re-export patches/seance/omp-integration.patch from a kitten-lily/seance fork branch (#1018)"
+#USAGE flag "--checkout <path>" required=#true help="Local kitten-lily/seance checkout (remotes: upstream = no1msd/seance, origin = the fork)"
+#USAGE flag "--branch <name>" default="feat/omp-integration" help="Fork branch carrying the feature commits"
+
+# krytis builds seance from upstream's release tarball and applies the fork's
+# commits as one `kind: patch` source (elements/desktop/seance.bst). After a
+# `seance-update` bump, rebase the fork branch onto the new tag (or onto
+# upstream main, if that is where the PR branch lives), then run this.
+#
+# The patch holds only the fork's own commits: everything reachable from the
+# pinned tag or from upstream/main is excluded. Exporting `TAG..BRANCH` is not
+# enough when the branch sits on upstream main past the tag: v0.1.7 is
+# 2138a31, upstream main was f3b7441 (one Arch packaging commit later), and a
+# TAG..BRANCH export silently carried that upstream commit too. Whether the
+# result applies to the release tarball is checked by `bst build`.
+# Lesson and procedure: docs/skills/desktop.md § seance: omp (oh-my-pi) sessions
+# through the carried kitten-lily/seance patch (#1018).
+set -euo pipefail
+
+ELEMENT="${MISE_PROJECT_ROOT}/elements/desktop/seance.bst"
+PATCH="${MISE_PROJECT_ROOT}/patches/seance/omp-integration.patch"
+CHECKOUT="${usage_checkout}"
+BRANCH="${usage_branch:-feat/omp-integration}"
+
+VERSION="$(grep -oP 'seance/releases/download/v\K[0-9][^/]*(?=/)' "$ELEMENT" | head -1)"
+[[ -n "$VERSION" ]] || { echo "ERROR: no seance release URL in $ELEMENT" >&2; exit 1; }
+TAG="v${VERSION}"
+
+git -C "$CHECKOUT" fetch -q upstream "refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null || true
+git -C "$CHECKOUT" fetch -q upstream main 2>/dev/null || true
+git -C "$CHECKOUT" rev-parse -q --verify upstream/main >/dev/null ||
+  { echo "ERROR: ${CHECKOUT} has no upstream/main (git remote add upstream https://github.com/no1msd/seance.git)" >&2; exit 1; }
+git -C "$CHECKOUT" rev-parse -q --verify "${TAG}^{commit}" >/dev/null ||
+  { echo "ERROR: ${CHECKOUT} has no tag ${TAG}" >&2; exit 1; }
+git -C "$CHECKOUT" rev-parse -q --verify "${BRANCH}^{commit}" >/dev/null ||
+  { echo "ERROR: ${CHECKOUT} has no branch ${BRANCH}" >&2; exit 1; }
+if ! git -C "$CHECKOUT" merge-base --is-ancestor "$TAG" "$BRANCH"; then
+  echo "ERROR: ${BRANCH} is not based on ${TAG}, the version seance.bst pins." >&2
+  echo "       Rebase it first: git -C ${CHECKOUT} rebase ${TAG} ${BRANCH}" >&2
+  exit 1
+fi
+
+# --no-signature drops the trailing git version line, so the file only changes
+# when the commits do. The `From <sha>` headers name the fork commits.
+mkdir -p "$(dirname "$PATCH")"
+git -C "$CHECKOUT" format-patch --stdout --no-signature "$BRANCH" --not "$TAG" upstream/main >"$PATCH.tmp"
+mv "$PATCH.tmp" "$PATCH"
+echo "==> Wrote ${PATCH#"$MISE_PROJECT_ROOT"/}: $(grep -c '^From [0-9a-f]\{40\} ' "$PATCH") commit(s) on ${TAG}"
+grep '^Subject: ' "$PATCH" | sed 's/^/    /'
+echo "    Next: mise run bst --pull build desktop/seance.bst"
