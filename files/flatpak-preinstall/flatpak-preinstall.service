@@ -6,7 +6,11 @@ Documentation=https://github.com/starlit-os/krytis/issues/66
 # installs (#1319). network-online.target is already pulled in on every boot by
 # starlit-update.service and others, so running each boot costs nothing extra.
 Wants=network-online.target
-After=network-online.target
+# After flatpak-cursor-path.service as well: on an empty /var the first
+# `flatpak --system` process creates /var/lib/flatpak/repo non-atomically, and a
+# concurrent one fails opening it (#1371). bazaar-host-etc.service orders itself
+# before this unit for the same reason.
+After=network-online.target flatpak-cursor-path.service
 
 [Service]
 Type=oneshot

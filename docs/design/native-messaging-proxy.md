@@ -98,7 +98,9 @@ All three pieces are needed; any one alone does nothing.
    request it. Set it with `flatpak override --system … <app-id>` from a boot-time
    oneshot, the way `files/bazaar/bazaar-host-etc.sh` sets Bazaar's `host-etc:ro`.
    Never symlink the override file into `/usr`; `docs/skills/bst.md` § Bazaar curated
-   config and the host-etc permission explains the `EROFS` this causes.
+   config and the host-etc permission explains the `EROFS` this causes. Order the unit
+   into the boot-time `flatpak --system` chain, or it races the others to create the
+   repo on a fresh `/var`; see `docs/skills/bst.md` § Flatpak Pre-install Service Pattern.
 3. **The pref.** `widget.use-xdg-desktop-portal.native-messaging-proxy` defaults to 0
    (never); 2 auto-detects. Under Flatpak, Gecko reads system prefs from
    `/app/etc/<app name>/defaults/pref/*.js` (`xpcom/io/SpecialSystemDirectory.cpp` in

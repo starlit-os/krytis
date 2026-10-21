@@ -23,8 +23,11 @@
 # Reasserted every boot, unlike flatpak-preinstall.sh's once-per-app installs: the override lives in /var,
 # so a `bootc` rollback or a wiped /var must be able to restore it, and the
 # operation is local, offline and sub-second. Idempotent: re-running rewrites
-# the same key. No ordering against flatpak-preinstall.service is needed,
-# because `flatpak override` succeeds for an app that isn't installed yet.
+# the same key. `flatpak override` succeeds for an app that isn't installed
+# yet, so this doesn't need Bazaar installed first. The unit is still ordered
+# against flatpak-cursor-path.service and flatpak-preinstall.service, because
+# on an empty /var concurrent `flatpak --system` processes race to create the
+# repo (#1371).
 set -euo pipefail
 
 flatpak override --system --filesystem=host-etc:ro io.github.kolunmi.Bazaar
