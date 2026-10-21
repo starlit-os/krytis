@@ -78,7 +78,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | Flathub (Zen manifest) | `github.com/flathub/app.zen_browser.zen` | flathub/app.zen_browser.zen#109 and flathub/app.zen_browser.zen#57 block #1237. | Yes | Flathub-wide: **manifests must not contain AI-generated or AI-assisted content**. Other generated material must be disclosed. AI must not open submission PRs or write their commit messages, descriptions or replies. |
 | arboard | `github.com/1Password/arboard` | 1Password/arboard#209 (Wayland clipboard backend), `docs/design/proton-pass-flatpak.md`. | No | No contributor docs. |
 | umbriel | `github.com/noctalia-dev/umbriel` | noctalia-dev/umbriel#259 (XWayland grabs), tracked in #1055. | No | No rule. Conventional Commits. |
-| seance | `github.com/no1msd/seance` | no1msd/seance#21 and no1msd/seance#13, tracked in #1120. | No | No rule. Bigger features go to a Discussion first. |
+| seance | `github.com/no1msd/seance` | no1msd/seance#21, cited in #1018 (stage 3: upstreaming the `kitten-lily/seance` omp integration). no1msd/seance#13 moved with the session-restore work to kitten-lily/seance#3. | No | No rule. Bigger features go to a Discussion first. |
 | Rust | `github.com/rust-lang/rust` | rust-lang/rust#150123 and rust-lang/rust#156675 (aarch64 Windows PGO), cited in #681. | Yes | LLMs may "analyze, … check, suggest, review. But not to **create**". No LLM-written comments or docs. LLM code only if pre-arranged, well reviewed, **with disclosure**. |
 
 ## What krytis's `Assisted-by:` trailer meets

@@ -601,6 +601,41 @@ Report obsolete branches to the user rather than deleting them — they are the 
 Worktrees for fork work live beside the fork, not in krytis:
 `<parent>/<fork-name>.worktrees/<branch-leaf>`.
 
+### Writing a feature on a fork: upstream-shaped from the first commit
+
+A feature written on a `kitten-lily/*` fork has two jobs: krytis carries it on every upstream
+bump until upstream has it, and it should be a PR upstream can take without a rewrite. Both want
+the same shape, so write the PR from the start rather than a krytis patch to clean up later.
+
+- **One feature per branch, one commit per feature**, from `upstream/main` (the PR's base).
+  A feature that needs another stacks on that branch and stays its own branch, PR and krytis
+  patch file. Then an upstream merge deletes exactly one patch. kitten-lily/seance#2 and
+  kitten-lily/seance#3 build on kitten-lily/seance#1 this way.
+- **Copy upstream's own pattern for the same kind of change.** A new seance agent follows the
+  OpenCode / Antigravity integration (wrapper, resources, `AgentConfig`, Settings toggle, tests,
+  README/CONTRIBUTING). Use upstream's formatter, test layout and commit style. Read its
+  CONTRIBUTING and `docs/design/upstream-ai-policies.md`'s row before the first commit; seance
+  wants an issue or Discussion before a larger feature.
+- **No krytis in the fork.** No krytis paths, issue numbers, mise tasks or image layout in code,
+  comments or commit messages. krytis policy (defaults, seeded config) stays in krytis elements
+  and `files/`. Under AGENTS.md's cross-repo exception, the krytis commit cites the fork SHA, not
+  the other way round.
+- **Stay additive at the hot spots.** New logic goes in new files. Upstream's shared tables
+  (seance: `ctl.zig`'s agent table, `pane.zig`'s `env_vars` array, `settings.zig`) get the
+  smallest edit that wires it in, because every upstream addition touches them and they conflict
+  on each rebase.
+- **Don't change behaviour for anyone else** beyond what the feature needs. A side improvement
+  (seance: lowercase tool names in `toolDescription`, which also helps Pi) is a separate commit,
+  so upstream can take or drop it on its own.
+- **If the pinned release lags `upstream/main`, carry a second branch.** The PR branch stays on
+  `main`; a rebase onto the pinned tag is what krytis builds. noctalia did this: it proposed
+  `feat/native-system-prompter` (on `main`) while `elements/desktop/noctalia.bst` pinned
+  `feat/system-prompter` (on v5.3.0); see `docs/design/carried-patches.md`.
+
+**Fork CI may be off.** `kitten-lily/seance` has its workflows disabled (by the owner,
+2026-10-21). Run upstream's CI commands locally before calling a branch green, and never push a
+`v*` tag to a fork whose `release.yml` you re-enable.
+
 ### Auditing the fork inventory (which forks are live, and how far they've drifted)
 
 "Which forks are we on?" is answered by the element sources, not by the fork list: a fork
