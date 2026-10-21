@@ -35,9 +35,10 @@ These notes come from comparing Bluefin's setup with krytis's. They aren't in th
   warning people away from. **Resolved:** every one of those rows is dropped (see
   *Decided*). If Bluefin adds an IDE, check whether its hooks intercept it before
   proposing it.
-- **krytis already ships some of these natively.** Zed (`elements/desktop/zed.bst`)
-  duplicates `dev.zed.Zed`, so `files/bazaar/blocklist.yaml` hides that Flatpak and it
-  can't go on krytis's page (see *Contract with the wiring* below). Zen
+- **krytis already ships or preinstalls some of these.** Zed shipped natively as
+  `desktop/zed.bst` until #1319 replaced it with `dev.zed.Zed`, which the image's
+  first-boot script now preinstalls (see *Currently preinstalled by krytis*). Like
+  Bazaar, a preinstalled app doesn't need a recommendation. Zen
   (`elements/desktop/zen-browser.bst`) sits beside the Browsers row. And Bluefin's
   `app.drey.Warp` is a file-transfer app, **not** the Warp terminal krytis shipped until
   #1005 dropped it.
@@ -76,8 +77,8 @@ each `appids.list`. Every list change has to satisfy five rules:
    Memorize was caught.
 2. No ID is also in `files/bazaar/blocklist.yaml`, because the blocklist wins and the
    tile never renders. It blocks Flatpaks krytis already ships natively
-   (`me.proton.Pass`, `dev.zed.Zed`, `app.zen_browser.zen`, `org.vim.Vim`,
-   `org.freedesktop.fwupd`), plus Bazaar itself and `com.discordapp.Discord`. Vim and
+   (`me.proton.Pass`, `app.zen_browser.zen`, `org.vim.Vim`, `org.freedesktop.fwupd`),
+   plus Bazaar itself and `com.discordapp.Discord`. Vim and
    fwupd were agreed in
    [this reply](https://github.com/starlit-os/krytis/issues/245#issuecomment-5888011213).
 3. The modern schema only.
@@ -88,18 +89,21 @@ each `appids.list`. Every list change has to satisfy five rules:
 ## Currently preinstalled by krytis
 
 These are listed so they can be weighed against the curated page: keep one
-preinstalled, or move it to a recommendation. None of them is in Bluefin's curated list
-above.
+preinstalled, or move it to a recommendation. Only Zed is also in Bluefin's curated list
+above, and its row there is dropped because it's preinstalled.
 
 krytis preinstalls Flatpaks through two paths, and they don't install the same set:
 
 | Path | File | What gets it |
 |---|---|---|
-| Image first boot | `files/flatpak-preinstall/flatpak-preinstall.sh` | Every krytis system, including one reached by `bootc switch`. It installs **only Bazaar**. |
+| Image first boot | `files/flatpak-preinstall/flatpak-preinstall.sh` | Every krytis system, including one reached by `bootc switch`. It installs **Bazaar and Zed**. Each app is installed once per system, so an app added to `APPS` also reaches existing installs (#1319). |
 | Live ISO | `live/src/flatpaks`, baked into the squashfs by `live/src/install-flatpaks.sh` | The live session, and installs made from the ISO. The file header says the installer copies them to the target offline (`flatpak_var_path` in `live/src/configure-live-krytis.sh`). |
 
-So a system installed from the ISO has all 12 entries (Bazaar included), while a system that reached krytis by
-`bootc switch` has only Bazaar. `live/src/flatpaks` came over with the dakota-iso fork's
+So a system installed from the ISO has all 12 entries (Bazaar included) plus Zed from its
+first boot, while a system that reached krytis by `bootc switch` has only Bazaar and Zed.
+Zed is deliberately left out of the ISO list: the first-boot script reaches ISO installs
+anyway, and the ISO would otherwise carry Zed's `org.freedesktop.Sdk` runtime.
+`live/src/flatpaks` came over with the dakota-iso fork's
 Bluefin list. Nothing in `files/` or `elements/`
 depends on any entry in it: no MIME default or config references them.
 The "no native …" notes below come from the image's `.desktop` inventory:
@@ -108,6 +112,7 @@ The "no native …" notes below come from the image's `.desktop` inventory:
 | App | Summary | Path | Notes | Links |
 |---|---|---|---|---|
 | **Bazaar** | Flatpak app store † | image + ISO | The store itself, so it can't be a recommendation. Bluefin's blocklist hides it for that reason. | [Flathub](https://flathub.org/apps/io.github.kolunmi.Bazaar) · `io.github.kolunmi.Bazaar` |
+| **Zed** | Code editor | image | Replaced the native `desktop/zed.bst` (#1319). Same upstream binary; its CLI leaves the sandbox at startup, so it runs unconfined on the host. | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
 | **adw-gtk3** / **adw-gtk3-dark** | The libadwaita theme ported to GTK 3 | ISO | Runtime extensions, not apps, so they don't fit a curated app row. They theme Flatpak GTK 3 apps; the host copy is `elements/desktop/adw-gtk3.bst`. | [Flathub](https://flathub.org/apps/org.gtk.Gtk3theme.adw-gtk3) · `org.gtk.Gtk3theme.adw-gtk3`, `org.gtk.Gtk3theme.adw-gtk3-dark` |
 | **Papers** | Document (PDF) viewer † | ISO | The image has no native PDF viewer, though Zen's built-in viewer can open PDFs. | [Flathub](https://flathub.org/apps/org.gnome.Papers) · `org.gnome.Papers` |
 | **Loupe** (Image Viewer) | View images † | ISO | The image has no native image viewer. | [Flathub](https://flathub.org/apps/org.gnome.Loupe) · `org.gnome.Loupe` |
@@ -145,7 +150,7 @@ it keeps mirroring Bluefin, struck through so a refresh doesn't propose them aga
 | **Sudoku** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/io.github.sepehr_rs.Sudoku) · `io.github.sepehr_rs.Sudoku` |
 | **Battle for Wesnoth** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.wesnoth.Wesnoth) · `org.wesnoth.Wesnoth` |
 | **Threadbare** | Dropped: an individual game. krytis recommends only games the maintainer has played, and single titles are too narrow for the page. | [Flathub](https://flathub.org/apps/org.endlessaccess.threadbare) · `org.endlessaccess.threadbare` |
-| **Zed** | Dropped: krytis ships Zed natively (`elements/desktop/zed.bst`), and the wiring's `blocklist.yaml` blocks the Flatpak. | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
+| **Zed** | Dropped: krytis preinstalls `dev.zed.Zed` (#1319). Before that it shipped natively as `desktop/zed.bst`, and the wiring's `blocklist.yaml` blocked the Flatpak. | [Flathub](https://flathub.org/apps/dev.zed.Zed) · `dev.zed.Zed` |
 | **VSCodium** | Dropped. | [Flathub](https://flathub.org/apps/com.vscodium.codium) · `com.vscodium.codium` |
 | **IntelliJ IDEA** | Dropped. | [Flathub](https://flathub.org/apps/com.jetbrains.IntelliJ-IDEA-Community) · `com.jetbrains.IntelliJ-IDEA-Community` |
 | **Builder** | Dropped: too narrow a focus (GNOME/Flatpak app development). | [Flathub](https://flathub.org/apps/org.gnome.Builder) · `org.gnome.Builder` |

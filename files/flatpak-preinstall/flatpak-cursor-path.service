@@ -1,7 +1,7 @@
 [Unit]
 Description=Put host cursor themes on the Flatpak XCursor search path
 Documentation=https://github.com/starlit-os/krytis/issues/949
-# No ConditionPathExists gate, unlike flatpak-preinstall.service: this writes
+# Reasserted every boot, unlike flatpak-preinstall's once-per-app installs: this writes
 # into /var, needs no network, and must reassert itself if /var is reset.
 # Ordered before the graphical session so the first app launched already sees
 # the override.

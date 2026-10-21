@@ -35,7 +35,7 @@ set -euo pipefail
 XCURSOR_PATH='/run/host/share/icons:/run/host/user-share/icons:~/.local/share/icons:~/.icons'
 
 # Idempotent: re-running rewrites the same key to the same value. This is not
-# marker-gated like flatpak-preinstall.sh on purpose — the override lives in
+# done once per app like flatpak-preinstall.sh's installs, on purpose — the override lives in
 # /var, so a `bootc` rollback or a wiped /var must be able to restore it, and
 # the operation is local, offline and sub-second.
 flatpak override --system --env="XCURSOR_PATH=${XCURSOR_PATH}"

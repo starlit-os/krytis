@@ -183,9 +183,9 @@ nothing else leaves.
   floor list in `docs/plans/2026-09-30-gtk3-realistic-floor.md`
 - the open issue bodies that state the floor or cite the `.deb`: #641 and #1237
 - how users get it: add it to `APPS` in `files/flatpak-preinstall/flatpak-preinstall.sh`,
-  add a Bazaar tile, or ship a release note. The preinstall script stops running once
-  `/var/lib/flatpak/.krytis-preinstall-done` exists, so existing installs would never get
-  it. Whichever route is chosen, `/usr/bin/proton-pass` disappears on the next
+  add a Bazaar tile, or ship a release note. Since #1319 the preinstall script records
+  each app once per system, so an app added to `APPS` reaches existing installs on their
+  next boot. Whichever route is chosen, `/usr/bin/proton-pass` disappears on the next
   `bootc upgrade`.
 
 **Re-scope to past tense** (the way #1005 and #1194 did it), citing the element by its

@@ -20,7 +20,7 @@
 # `:ro` rather than plain host-etc, because Bazaar only reads. With `:ro`,
 # `touch /run/host/etc/probe` inside the sandbox fails "Read-only file system".
 #
-# Not marker-gated, unlike flatpak-preinstall.sh: the override lives in /var,
+# Reasserted every boot, unlike flatpak-preinstall.sh's once-per-app installs: the override lives in /var,
 # so a `bootc` rollback or a wiped /var must be able to restore it, and the
 # operation is local, offline and sub-second. Idempotent: re-running rewrites
 # the same key. No ordering against flatpak-preinstall.service is needed,

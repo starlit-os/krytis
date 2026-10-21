@@ -101,7 +101,7 @@ gaming packages should start from that ref rather than re-porting from upstream.
   `docs/skills/bst.md` § Flatpak sandboxing: Discord RPC and game detection,
   and `docs/design/presence-bridge.md` for the host-side detector that covers them.
 - **App pre-installs have a home already**: `elements/config/flatpak-preinstall.bst`
-  (marker-file-gated oneshot, see `docs/skills/bst.md` § Flatpak Pre-install
+  (oneshot that installs each app once per system, see `docs/skills/bst.md` § Flatpak Pre-install
   Service Pattern) and the Flathub remote via
   `gnome-build-meta.bst:gnomeos-deps/flathub-config.bst`. A gaming app set is
   a list change there, not a new subsystem. dakota's `gaming-full` public stack

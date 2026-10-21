@@ -3,7 +3,7 @@ kind: manual
 # Zen Browser: Firefox-based browser focused on privacy/customization (https://zen-browser.app).
 # Pre-built binary release — upstream publishes x86_64 and aarch64 tarballs (Firefox-style
 # unpacked binary tree: no .desktop entry, no icon-theme install, no update-policy file —
-# all three are hand-authored below). RPATH is $ORIGIN-relative like zed.bst, so the whole
+# all three are hand-authored below). RPATH is $ORIGIN-relative like the removed desktop/zed.bst's, so the whole
 # tree is installed to /usr/lib/zen-browser/ and /usr/bin/zen symlinks to the launcher inside.
 # DisableAppUpdate is set because Zen's built-in updater can't write into a read-only bootc
 # image — updates flow through the mise-managed pin instead.
