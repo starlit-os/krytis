@@ -189,8 +189,8 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
 ### krytis side
 
 - `patches/seance/omp-integration.patch`: `git format-patch --stdout v0.1.7..feat/omp-integration`
-  from the fork, one file per fork feature branch (kitten-lily/seance#2 and kitten-lily/seance#3
-  add their own later, applied after this one). It is applied as a `kind: patch` source **after** the `kind: tar`
+  from the fork, one file per fork feature branch (kitten-lily/seance#2, kitten-lily/seance#11 and
+  kitten-lily/seance#3 add their own later, applied after this one in that dependency order). It is applied as a `kind: patch` source **after** the `kind: tar`
   source in `elements/desktop/seance.bst`, with a comment naming the fork branch and #1018 (the
   `ghostty.bst:44-49` precedent).
 - **`mise/tasks/seance-update` must preserve the patch.** Today it rewrites the whole `sources:`

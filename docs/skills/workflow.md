@@ -609,8 +609,14 @@ the same shape, so write the PR from the start rather than a krytis patch to cle
 
 - **One feature per branch, one commit per feature**, from `upstream/main` (the PR's base).
   A feature that needs another stacks on that branch and stays its own branch, PR and krytis
-  patch file. Then an upstream merge deletes exactly one patch. kitten-lily/seance#2 and
-  kitten-lily/seance#3 build on kitten-lily/seance#1 this way.
+  patch file. Then an upstream merge deletes exactly one patch. kitten-lily/seance#2 builds on
+  kitten-lily/seance#1 this way.
+- **Split a general mechanism from the one use krytis needs.** If a feature designed for one case
+  works for every case, the general mechanism is its own feature, opt-in, and the krytis case
+  stacks on it. Restoring omp after a seance restart turned out to be session restore for every
+  agent: kitten-lily/seance#11 holds that mechanism, and kitten-lily/seance#3 is only omp's
+  resume command on top of it and kitten-lily/seance#1. Upstream can take the general one even
+  if it never wants omp.
 - **Copy upstream's own pattern for the same kind of change.** A new seance agent follows the
   OpenCode / Antigravity integration (wrapper, resources, `AgentConfig`, Settings toggle, tests,
   README/CONTRIBUTING). Use upstream's formatter, test layout and commit style. Read its
