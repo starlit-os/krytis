@@ -7,6 +7,13 @@ Documentation=https://github.com/starlit-os/krytis/issues/245
 # Bazaar launch, including the bazaar-daemon spawned at session start,
 # already sees its config.
 Before=graphical.target
+# Serialised with the other boot-time `flatpak --system` writers (#1371). On an
+# empty /var the first of them creates /var/lib/flatpak/repo, and that is not
+# atomic: a second flatpak process started alongside it finds the directory
+# without objects/ and fails "opendir(objects): No such file or directory".
+# Runs after flatpak-cursor-path.service and before flatpak-preinstall.service.
+After=flatpak-cursor-path.service
+Before=flatpak-preinstall.service
 
 [Service]
 Type=oneshot

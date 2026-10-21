@@ -6,6 +6,9 @@ Documentation=https://github.com/starlit-os/krytis/issues/949
 # Ordered before the graphical session so the first app launched already sees
 # the override.
 Before=graphical.target
+# First of the boot-time `flatpak --system` writers: bazaar-host-etc.service and
+# flatpak-preinstall.service order themselves after this unit, because on an
+# empty /var concurrent flatpak processes race to create the repo (#1371).
 
 [Service]
 Type=oneshot
