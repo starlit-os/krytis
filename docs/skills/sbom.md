@@ -333,6 +333,10 @@ the fix is a version bump, never a `.grype.yaml` rule. What worked:
 
 The patch counts as a carry, so it needs a row in `docs/design/carried-patches.md`
 and the element path in the freedesktop-sdk row of `docs/design/upstream-ai-policies.md`.
+A new `overrides:` entry also needs its row in `docs/design/image-inventory.md`: run
+`mise run image-inventory --write`, then fill in the empty description cell. CI's
+`image-inventory --check` fails until that's done, and none of the other checks above
+notice the missing row.
 
 ### `--fail-on` / severity gating
 
