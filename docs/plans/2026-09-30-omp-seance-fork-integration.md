@@ -1,7 +1,8 @@
 # omp sessions in seance — stage 2: `kitten-lily/seance` fork, carried as a krytis patch
 
-**Issue:** #1018 (stage 2 of 3) · **Branch:** `1018-omp-seance-stage-2-plan`, stacked on
-`1018-track-omp-sessions-in-seance` (#1020) · **Status: ready, not started.**
+**Issue:** #1018 (stage 2 of 3, krytis side) and kitten-lily/seance#1 (seance side) · **Branch:**
+`1018-omp-seance-stage-2-plan`, stacked on `1018-track-omp-sessions-in-seance` (#1020) ·
+**Status: ready, not started.**
 
 **Entry gate.** Do not start until the stage-1 evaluation
 (`docs/plans/2026-09-30-omp-seance-user-extension.md` § 6. Evaluation period) has run for a while and its findings
@@ -188,7 +189,8 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
 ### krytis side
 
 - `patches/seance/omp-integration.patch`: `git format-patch --stdout v0.1.7..feat/omp-integration`
-  from the fork, one file. It is applied as a `kind: patch` source **after** the `kind: tar`
+  from the fork, one file per fork feature branch (kitten-lily/seance#2, kitten-lily/seance#11 and
+  kitten-lily/seance#3 add their own later, applied after this one in that dependency order). It is applied as a `kind: patch` source **after** the `kind: tar`
   source in `elements/desktop/seance.bst`, with a comment naming the fork branch and #1018 (the
   `ghostty.bst:44-49` precedent).
 - **`mise/tasks/seance-update` must preserve the patch.** Today it rewrites the whole `sources:`
@@ -218,11 +220,16 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
 ### 1. Fork and branch
 
 - [ ] Fold stage-1 evaluation findings from #1018 into *Design*.
-- [ ] `gh repo fork no1msd/seance --clone=false` under `kitten-lily`. Allowed without asking:
-      AGENTS.md permits forking and branching. Enable Actions on the fork so upstream's
-      `ci.yml` runs on pushes.
-- [ ] Branch `feat/omp-integration` from tag **`v0.1.7`** (what krytis pins, so the exported
-      patch applies to the release tarball). Stage 3 would rebase onto `main`.
+- [x] `gh repo fork no1msd/seance --clone=false` under `kitten-lily`. Allowed without asking:
+      AGENTS.md permits forking and branching. Done 2026-10-21, with issues enabled, since the
+      seance-side issues live there (kitten-lily/seance#1–#3). **The fork's workflows are
+      disabled** (`ci.yml` and `release.yml`, by the owner on 2026-10-21), so upstream CI does not
+      run on pushes: run its commands locally (step 3).
+- [ ] Branch `feat/omp-integration` from `upstream/main`, the base an upstream PR would use,
+      following `docs/skills/workflow.md` § Writing a feature on a fork: upstream-shaped from
+      the first commit. As of 2026-10-21 `upstream/main` is `f3b7441`, the `v0.1.7` tag krytis
+      pins, so the exported patch applies to the release tarball as-is. If they diverge before
+      stage 2 lands, carry a rebase onto the pinned tag on a separate branch.
 - [ ] Build environment: this host is a krytis image with no `zig` or `pkg-config`. Use a
       `distrobox` on `ubuntu:24.04` (upstream CI's runner) with CI's `apt-get` list
       (`ci.yml:27-42`) and Zig 0.16.0. Build with `git submodule update --init` then
@@ -266,7 +273,8 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
       stage 1's RPC harness (`mise/tasks/omp-seance/test`), including its subagent and
       print-mode scenarios, to drive the installed wrapper.
 - [ ] `zig build`, `G_DEBUG=fatal-criticals GTK_A11Y=none xvfb-run -a zig build test`,
-      `python3 -m unittest discover -s tests -v`, all green in the distrobox and on the fork's CI.
+      `python3 -m unittest discover -s tests -v`, all green in the distrobox (the fork's own CI
+      is disabled; see step 1).
 
 ### 4. Live check (fork build, isolated instance)
 
@@ -311,8 +319,8 @@ Then repeat stage 1's step-4 table, with these expected differences:
       **does** change image content, so the AGENTS.md verification gate applies in full.
 - [ ] After merge, on the updated image: re-run the step-4 checklist against the image's
       `/usr/share/seance/bin/omp`, and record the results in the PR / #1018.
-- [ ] Skill entry for anything new (cross-repo exception: the fork commit message cites the
-      krytis skill entry, or vice versa).
+- [ ] Skill entry for anything new. Cross-repo exception: the krytis commit cites the fork
+      commit SHA, not the other way round, so the fork commit stays a clean upstream PR.
 
 ### 6. Hand-off to stage 3 (not part of this stage)
 
@@ -324,8 +332,9 @@ rebased onto upstream `main`. Nothing is posted without that explicit yes.
 
 - **Patch rot on every seance bump.** `ctl.zig`, `pane.zig` and `settings.zig` are touched by
   every upstream agent addition, and `pane.zig`'s `env_vars` array size conflicts every time.
-  Keep the patch as one commit, and rebase the fork on each `seance-update` before bumping the
-  element. The `bst build` failure is the tripwire.
+  Keep each feature one commit on its own branch, keep the edits to those shared files minimal
+  and additive, and rebase the fork on each `seance-update` before bumping the element. The
+  `bst build` failure is the tripwire.
 - **`omp-hook` / `toolDescription` diverging from upstream's choices** if upstream adds its own
   omp support meanwhile. Check upstream's changelog at each bump; if it lands, drop the patch
   in favour of it.

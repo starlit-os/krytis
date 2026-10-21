@@ -214,8 +214,40 @@ gh api repos/starlit-os/krytis/issues/<blocker>/dependencies/blocking --jq '.[].
 
 One POST sets both directions. Remove with
 `gh api -X DELETE repos/starlit-os/krytis/issues/<blocked>/dependencies/blocked_by/<blocker-id>`.
-Use it only for krytis-to-krytis blocks; an upstream wait stays in the sizing comment with
-the `upstream` label.
+Use it for blocks between repos we own (krytis and the `kitten-lily/*` forks); an upstream
+wait stays in the sizing comment with the `upstream` label.
+
+---
+
+## Move an issue to a `kitten-lily/*` fork
+
+Work that belongs in a component fork (e.g. seance-side omp integration) is tracked on the
+fork, not in krytis. **`gh issue transfer` cannot do it**: GitHub only transfers issues between
+repositories owned by the same account
+([docs](https://docs.github.com/en/issues/tracking-your-work-with-issues/administering-issues/transferring-an-issue-to-another-repository)),
+and krytis is `starlit-os`, the forks are `kitten-lily`. Recreate instead, as done on
+2026-10-21 for #1049 / #1120 → kitten-lily/seance#2 / kitten-lily/seance#3:
+
+1. **Enable issues on the fork.** GitHub forks come with them off (`kitten-lily/noctalia` is
+   `has_issues=false`): `gh repo edit kitten-lily/<fork> --enable-issues`.
+2. **Rewrite bare refs before posting.** A bare `#641` in the copied body resolves against the
+   fork, so rewrite each to `starlit-os/krytis#641`. Add a sentence saying which paths
+   (`docs/`, `scripts/`, `mise/`, `elements/`) are krytis's, since the fork has a `src/` and
+   `tests/` of its own.
+3. **Copy labels.** `mise run labels-sync` only manages krytis, so create the `effort:*` labels
+   the issues carry on the fork with `gh label create` (same name, colour, description).
+4. **Copy the sizing comment** with a "copied from starlit-os/krytis#N" line, and add a dated
+   status line to the body for anything it states that the move made stale.
+5. **Move the native links.** Sub-issue and `blocked_by` links work across owners with the
+   REST calls above (verified 2026-10-21: kitten-lily/seance#1–#3 under #1018, and
+   kitten-lily/seance#2 blocked by #641). Add the new links first, then `DELETE` the
+   original's, so the parent's progress doesn't count closed copies.
+6. **Close the original as `not planned`**, with a comment linking the new issue.
+
+**Moving an issue can make `mise run upstream-policy-check` report STALE.** The check counts
+upstream refs only in krytis docs and *open krytis* issue bodies. A ref cited only in the moved
+issue drops out of the scan. If krytis still has a stake upstream, cite the ref where that
+stake is tracked (here: no1msd/seance#21 in #1018's stage 3). Run the check after the move.
 
 ---
 
