@@ -54,7 +54,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. The kernel's policy (no agent `Signed-off-by`, `Assisted-by: LLM [tools]`) is context [INFERENCE]. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
 | Ghostty | `github.com/ghostty-org/ghostty` | Own patch `elements/desktop/ghostty.bst`. | Yes | AI allowed. **Disclose the tool and its extent.** The human must fully understand the code. No AI media. Slop gets you on a public denounce list. PRs need a vouch and a pre-accepted issue. Its `AGENTS.md` tells agents never to open issues or PRs. |
-| oo7 | `github.com/linux-credentials/oo7` | Own patch `elements/desktop/oo7.bst`. Waits on oo7#506. | No | No contributor docs, and the org `.github` has none either. |
+| oo7 | `github.com/linux-credentials/oo7` | Own patch `elements/desktop/oo7.bst`, proposed as linux-credentials/oo7#615. Waits on oo7#506 and on linux-credentials/oo7#614 (krytis#585). | No | No contributor docs, and the org `.github` has none either. |
 | xwayland-satellite | `github.com/Supreeeme/xwayland-satellite` | Patch `elements/desktop/xwayland-satellite.bst`. | Yes | Pinned issue Supreeeme/xwayland-satellite#512: AI-assisted PRs are fine if you understand them. **No pasted LLM issues, comments, PR descriptions or review replies.** |
 | GNOME (gnome-build-meta) | `gitlab.gnome.org/GNOME/gnome-build-meta` | `elements/desktop/xwayland-satellite.bst` bypasses its `sdk/xwayland-satellite.bst`. | No | gnome-build-meta has no rule, and there is no GNOME-wide one. Extensions, Circle and Discourse ban AI-generated work, and many modules (Loupe, Calendar, …) ban LLM contributions outright. Check the module's own CONTRIBUTING. |
 | gnome-disk-utility | `gitlab.gnome.org/GNOME/gnome-disk-utility` | GNOME/gnome-disk-utility#505 (whether the GTK4 51 release slipped) gates step 3 of `docs/plans/2026-09-30-gtk3-realistic-floor.md` (#1033). `elements/desktop/gnome-disk-utility.bst` mirrors its gnome-build-meta element. | No | Nothing in the tree (`HACKING` covers only commit-message format). No issue or MR mentions an AI rule. The GNOME-wide notes on the gnome-build-meta row apply as context. |
@@ -220,7 +220,15 @@ nothing was found, so an absence is evidenced and not assumed.
 - The repo has only `.github/workflows` and dependabot. The org
   [profile](https://github.com/linux-credentials/.github/blob/main/profile/README.md) points
   to Matrix and Issues, with no AI text. The maintainers are GNOME people, but GNOME
-  policy isn't referenced.
+  policy isn't referenced. Re-checked 2026-10-21: still no CONTRIBUTING, AGENTS or AI text
+  in the tree.
+- linux-credentials/oo7#614 and linux-credentials/oo7#615 (2026-10-21) disclosed the
+  tool in their bodies, and #615's commit carries an `Assisted-by:` trailer.
+- CI runs `cargo +nightly fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, and `cargo test` per crate, once per crypto backend. The `openssl_crypto`
+  variant needs OpenSSL headers, which a krytis host doesn't have. `server/src/tests.rs`
+  is compiled into both the `oo7_daemon` lib and the `oo7-daemon` bin, so a test of a
+  function in `main.rs` has to sit in an inline module in `main.rs`.
 
 ### xwayland-satellite
 

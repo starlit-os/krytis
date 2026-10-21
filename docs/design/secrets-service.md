@@ -114,11 +114,11 @@ oo7 + noctalia's native prompter now, carrying two known defects and two workaro
 
 | Accepted | Consequence | Workaround in tree | Exit condition |
 |---|---|---|---|
-| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | upstream reports locked items from `SearchItems` |
+| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | upstream reports locked items from `SearchItems`. Reported as linux-credentials/oo7#614 |
 | ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
 | **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
-| **#806** — the login secret is lost to a startup race | `pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers | `patches/oo7/login-helper-connect-retry.patch` (500 ms retry in the daemon) plus an `ExecStartPre` drop-in on `oo7-daemon.service`; gated by `mise run oo7-login-race-test` | upstream grows its own retry — the patch is carried downstream first to verify in real use |
+| **#806** — the login secret is lost to a startup race | `pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers | `patches/oo7/login-helper-connect-retry.patch` (500 ms retry in the daemon) plus an `ExecStartPre` drop-in on `oo7-daemon.service`; gated by `mise run oo7-login-race-test` | linux-credentials/oo7#615 (the patch, proposed 2026-10-21) merges, or upstream grows its own retry |
 
 **The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
 *usual* way the collection ends up locked, not the only one. A mid-session
@@ -446,8 +446,11 @@ which is 221 commits behind upstream `main` — see the staleness caveat at the 
 - **#585 reproduces exactly, and is narrower than first written.** The locked item still
   answers `Item.Locked = b true` by object path and appears in the collection's `Items`
   property; only `SearchItems` drops it, because attribute matching needs the collection key.
-  oo7 could return locked items as unmatched candidates — all libsecret needs to trigger an
-  unlock — without decrypting anything.
+  This entry used to say oo7 could fix it by returning locked items as unmatched
+  candidates. That is unsafe: libsecret's lookup unlocks `locked[0]` and returns *that*
+  item's secret without searching again (`docs/skills/pam.md` § A locked oo7 collection
+  returns "no such secret", not a prompt), so an unmatched candidate hands the app another
+  item's secret.
 - **New, and the most serious operational finding: #586.** oo7 serves
   `/org/freedesktop/secrets/aliases/default` for introspection and property reads, but
   Service-level method calls against that path fail (`Object: … does not exist`). Go's
@@ -530,12 +533,12 @@ read-shaped and easy to miss in casual testing.
 
 This is the real mechanism behind the Ghostty instability recorded in
 `docs/skills/pam.md` § oo7 `default` alias on a locked collection (the alias itself resolves while locked; measured 2026-10-02), and it is
-**unfixed upstream as of 2026-10-11** (oo7 `main`'s `search_inner_items` still returns empty for a locked keyring). It should be treated as a second, independent hold
+**unfixed upstream as of 2026-10-21**: oo7 `main` `901e7406`'s `search_inner_items` still returns empty for a locked keyring, and the repro above gave the same `aoao 0 0` that day on an isolated bus. It should be treated as a second, independent hold
 reason alongside oo7#506 — accepting the FIDO2 gap is no longer sufficient to unblock #84,
 because even a user who is willing to unlock manually gets no opportunity to.
 
-Not reported upstream: AGENTS.md's Upstream Gate requires an explicit instruction before
-opening anything against `linux-credentials/oo7`.
+Reported upstream on 2026-10-21 as linux-credentials/oo7#614, with the repro above and the
+libsecret reason a candidate-list fix would be unsafe.
 
 ## 2026-08-16 re-pin: `0.7.0.alpha` → `main` (`c2aa2315`)
 
