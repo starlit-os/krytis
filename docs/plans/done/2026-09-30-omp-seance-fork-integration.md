@@ -1,13 +1,13 @@
 # omp sessions in seance — stage 2: `kitten-lily/seance` fork, carried as a krytis patch
 
 **Issue:** #1018 (stage 2 of 3, krytis side) and kitten-lily/seance#1 (seance side) · **Branch:**
-`1018-omp-seance-stage-2-plan`, stacked on `1018-track-omp-sessions-in-seance` (#1020) ·
-**Status: ready, not started.**
+`1018-carry-seance-omp-integration` (krytis), `feat/omp-integration` (fork) ·
+**Status: done 2026-10-21; archived with the krytis PR that carries it.** Results are recorded
+inline under *Steps*.
 
-**Entry gate.** Do not start until the stage-1 evaluation
-(`docs/plans/2026-09-30-omp-seance-user-extension.md` § 6. Evaluation period) has run for a while and its findings
-are logged on #1018. Fold those findings into this plan before step 1. This plan was written
-before stage 1 (#1020) merged, so it has not been tested against real use yet.
+**Entry gate (met 2026-10-21).** The owner gave the go after stage 1's evaluation; the stage 1
+findings on #1018 were the omp 18.12.3 re-test and the `/new` / `/fork` probe (#1367). Both are
+folded into *Design* and `docs/skills/desktop.md`.
 
 Stage 1 drives seance's `pi-hook` from a user-installed omp extension. That leaves five limits:
 
@@ -39,7 +39,10 @@ krytis PR.
 
 ## Reference: what the seance source looks like (`no1msd/seance@v0.1.7`)
 
-Checked in `/var/home/lily/Projects/seance` at `f3b7441`, the tag krytis pins.
+Checked in `/var/home/lily/Projects/seance` at `f3b7441`, upstream `main`. **Correction
+(2026-10-21):** this used to call `f3b7441` "the tag krytis pins". It is not: `v0.1.7` is
+`2138a31`, and `f3b7441` is one later commit that only touches `pkg/arch/` (`PKGBUILD`,
+`.SRCINFO`). The source references below are unaffected.
 
 | Concern | Where | Notes |
 |---|---|---|
@@ -188,8 +191,9 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
 
 ### krytis side
 
-- `patches/seance/omp-integration.patch`: `git format-patch --stdout v0.1.7..feat/omp-integration`
-  from the fork, one file per fork feature branch (kitten-lily/seance#2, kitten-lily/seance#11 and
+- `patches/seance/omp-integration.patch`, written by `mise run seance-fork:export-patch` from
+  the fork's commits only (a plain `git format-patch v0.1.7..feat/omp-integration` also
+  exported upstream's `f3b7441`; see step 5). One file per fork feature branch (kitten-lily/seance#2, kitten-lily/seance#11 and
   kitten-lily/seance#3 add their own later, applied after this one in that dependency order). It is applied as a `kind: patch` source **after** the `kind: tar`
   source in `elements/desktop/seance.bst`, with a comment naming the fork branch and #1018 (the
   `ghostty.bst:44-49` precedent).
@@ -219,33 +223,37 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
 
 ### 1. Fork and branch
 
-- [ ] Fold stage-1 evaluation findings from #1018 into *Design*.
+- [x] Fold stage-1 evaluation findings from #1018 into *Design*. `/new` and `/fork` fire
+      `session_switch`, never `session_shutdown` (omp 18.12.3), so nothing changed in *Design*.
 - [x] `gh repo fork no1msd/seance --clone=false` under `kitten-lily`. Allowed without asking:
       AGENTS.md permits forking and branching. Done 2026-10-21, with issues enabled, since the
       seance-side issues live there (kitten-lily/seance#1–#3). **The fork's workflows are
       disabled** (`ci.yml` and `release.yml`, by the owner on 2026-10-21), so upstream CI does not
       run on pushes: run its commands locally (step 3).
-- [ ] Branch `feat/omp-integration` from `upstream/main`, the base an upstream PR would use,
-      following `docs/skills/workflow.md` § Writing a feature on a fork: upstream-shaped from
-      the first commit. As of 2026-10-21 `upstream/main` is `f3b7441`, the `v0.1.7` tag krytis
-      pins, so the exported patch applies to the release tarball as-is. If they diverge before
-      stage 2 lands, carry a rebase onto the pinned tag on a separate branch.
-- [ ] Build environment: this host is a krytis image with no `zig` or `pkg-config`. Use a
-      `distrobox` on `ubuntu:24.04` (upstream CI's runner) with CI's `apt-get` list
-      (`ci.yml:27-42`) and Zig 0.16.0. Build with `git submodule update --init` then
-      `zig build`.
+- [x] Branch `feat/omp-integration` from `upstream/main` = `f3b7441` (`v0.1.7` = `2138a31` plus
+      one `pkg/arch/` commit), following
+      `docs/skills/workflow.md` § Writing a feature on a fork: upstream-shaped from the first
+      commit. Two commits: lowercase tool names in `toolDescription`, then the omp integration.
+- [x] Build environment: a podman image, not a distrobox. `distrobox create` on `ubuntu:24.04`
+      failed in its init: `update-locale: Error: invalid locale settings: LC_ALL=en_SE.UTF-8`
+      (the host locale is not generated in the image). The image is
+      `mise/lib/seance-build.Containerfile`, run by `mise run seance-fork:ci`.
 
 ### 2. Implement in the fork
 
-- [ ] Zig side: `ctl.zig`, `config.zig`, `default_config.toml`, `pane.zig`, `settings.zig`,
-      `build.zig` per *Design*. Run `zig fmt`.
-- [ ] `resources/bin/omp`, `resources/omp/seance.mjs`.
-- [ ] README and CONTRIBUTING entries.
+- [x] Zig side: `ctl.zig`, `config.zig`, `default_config.toml`, `pane.zig`, `settings.zig`,
+      `build.zig` per *Design*. `zig fmt --check` clean.
+- [x] `resources/bin/omp`, `resources/omp/seance.mjs`. Deviations: the subcommand list was
+      refreshed from omp 18.12.3 (`anonymize`, `auth`, `session` added) and `--alias` passes
+      through; only label fields of a tool input are forwarded (`path`, `file_path`, `command`,
+      `pattern`, `query`, `description`), never file bodies; an open `ask`/approval is
+      re-reported as `Needs input` when a sibling tool finishes.
+- [x] README and CONTRIBUTING entries.
 
 ### 3. Tests in the fork
 
-- [ ] `tests/omp_extension.test.mjs` (node, fake `pi` object and fake `seance` binary, modelled
-      on `tests/opencode_plugin.test.mjs`):
+- [x] `tests/omp_extension.test.mjs`: 9 tests, the cases below. The fake `seance` is `/bin/sh`:
+      a Node one exceeded the 750 ms hook timeout under load and lost events.
       - no-op when `hasUI` is false;
       - plain sequence;
       - concurrent tools keep the running sibling's label;
@@ -253,28 +261,21 @@ Stage 1's `scripts/omp-seance.js`, with these changes:
       - `session_stop` payload;
       - `session_shutdown` drains within budget;
       - a failing or hanging `seance` never rejects a handler.
-- [ ] `tests/test_omp.py` (modelled on `tests/test_opencode.py`, fake `omp` that records argv
-      and env), covering:
-      - every pass-through condition in the wrapper's step 2;
-      - injection (`-e <prefix>/share/seance/omp/seance.mjs` first, `SEANCE_OMP_BIN`, `SEANCE_OMP_PID`,
-        child `SEANCE_OMP_HOOKS_DISABLED=1`);
-      - the exit code is preserved;
-      - `EXIT` trap `omp-hook session-end` on a normal exit, a non-zero exit, and SIGTERM;
-      - a prefix with spaces and quotes;
-      - also runs the node suite.
-- [ ] ctl-level cases against the real binary and a socket stub (the `tests/test_antigravity.py`
-      fixture):
-      - `omp-hook pre-tool-use` with `{"tool_name":"read","tool_input":{"path":"/a/b.txt"}}` →
-        `workspace.set_status` value `Reading b.txt`, key `omp-<surface>`;
-      - `notification` with `notification_type: "input"` → `Needs input` plus
-        `notification.create` titled `oh-my-pi`;
-      - `session-end` → `workspace.clear_status`.
-- [ ] Optional real-omp test gated on `SEANCE_TEST_OMP` (like `SEANCE_TEST_OPENCODE`). Port
-      stage 1's RPC harness (`mise/tasks/omp-seance/test`), including its subagent and
-      print-mode scenarios, to drive the installed wrapper.
-- [ ] `zig build`, `G_DEBUG=fatal-criticals GTK_A11Y=none xvfb-run -a zig build test`,
-      `python3 -m unittest discover -s tests -v`, all green in the distrobox (the fork's own CI
-      is disabled; see step 1).
+- [x] `tests/test_omp.py`: every pass-through condition, injection and env, exit code, the
+      `EXIT` trap on normal/non-zero/SIGTERM/SIGHUP/SIGINT exits, a prefix with spaces and
+      quotes, and the node suite.
+- [x] ctl-level cases against the real binary and a socket stub (`Reading b.txt` under key
+      `omp-<surface>`, `Needs input` + `notification.create` titled `oh-my-pi`, `session-end` →
+      `workspace.clear_status`). Commit 1 has its own `tests/test_tool_description.py`.
+- [x] Optional real-omp test, `OmpInstalledTests` gated on `SEANCE_TEST_OMP`: 3 tests passed on
+      the host against omp 18.12.3 (read turn, subagent turn, print mode). The wrapper passes
+      `--mode rpc` through, so those checks run omp with `-e <installed extension>` directly.
+- [x] `mise run seance-fork:ci`: all suites passed (python suite `Ran 84 tests … OK
+      (skipped=38)`; ghostty_integration 3, socket_server 2, shell_integration 3,
+      keyboard_remaps 4, pane_close 9, fullscreen 3, ime 8). `zig build e2e` is opt-in: 2 of 24
+      checks time out in the container on untouched `f3b7441` too. Mutation checks: dropping the
+      wrapper's child `SEANCE_OMP_HOOKS_DISABLED=1`, its `TERM` trap or its `-p` pass-through,
+      or the extension's in-flight logic or `hasUI` gate, each turns tests red.
 
 ### 4. Live check (fork build, isolated instance)
 
@@ -288,39 +289,55 @@ does:
   relative to `XDG_RUNTIME_DIR` otherwise;
 - the real `HOME`, so omp keeps its auth.
 
-The GTK behaviour with an absolute `WAYLAND_DISPLAY` is `[INFERENCE]`; confirm it first.
+Confirmed: GTK runs fine with an absolute `WAYLAND_DISPLAY`. Run 2026-10-21 against the bst
+artifact of `desktop/seance.bst` with the patch (`bst artifact checkout`), real omp 18.12.3 and
+haiku. A logging shim in place of the artifact's `usr/bin/seance` recorded every `omp-hook`
+call; sidebar labels were read from `niri msg action screenshot-window` captures.
 
-Then repeat stage 1's step-4 table, with these expected differences:
-
-- [ ] the sidebar reads **omp: …**;
-- [ ] `ask` gives **omp: Needs input** plus a seance notification titled `oh-my-pi`, and no
-      omp-native "Waiting for input" duplicate;
-- [ ] concurrent tools keep the long tool's label;
-- [ ] exactly one completion notification per turn (move the pane off-screen to count; seance
-      drops notifications for a visible pane);
-- [ ] a subagent turn never clears or idles the status early;
-- [ ] `/exit`, Ctrl+C **and `kill -9`** all clear the status (via the `EXIT` trap);
-- [ ] `omp --profile <p>` is tracked with no per-profile install;
-- [ ] the Settings toggle off → a new pane runs `omp` untracked;
-- [ ] `omp -p`, `omp commit`, and an `omp` nested inside omp's `!` shell are untracked;
-- [ ] Pi labels (if Pi is installed) now read `Reading x` rather than `read`.
+- [x] the sidebar reads **omp: Running sleep 15** during a `bash sleep 15`;
+- [x] `ask` gives **omp: Needs input** plus one seance notification titled `oh-my-pi`
+      ("Waiting: Do you want to continue?"), and no omp-native duplicate;
+- [x] concurrent tools: `read` finishing during `bash sleep 6` re-sent the bash label;
+- [x] exactly one completion notification per turn ("Completed in krytis"), with the pane on
+      another workspace;
+- [ ] a subagent turn live. Not run; covered by `OmpInstalledTests` and the node suite.
+- [x] `/exit`, double Ctrl+C **and `kill -9`** all sent `session-end` (the `EXIT` trap; for
+      `/exit` and Ctrl+C the extension's shutdown sends one too). bash prints a `Killed` line
+      after `kill -9`, like the OpenCode wrapper.
+- [x] `/new` sent nothing (no `session-end` mid-session).
+- [ ] `omp --profile <p>` live. Not run; `-e` under `--profile` is covered by stage 1's
+      evidence and the wrapper tests.
+- [ ] the Settings toggle live. Not run; the pane env is covered by `test_antigravity_pane.py`
+      and the config parse test.
+- [x] `omp --version` passed through with no hook call; inside omp's bash tool
+      `SEANCE_OMP_HOOKS_DISABLED` read `1`, so a nested omp passes through. The installed
+      stage 1 `~/.omp/agent/extensions/seance.js` stayed inert (no `Pi:` row).
+- [ ] Pi labels live. Pi is not installed here; covered by `tests/test_tool_description.py`.
 
 ### 5. krytis PR
 
-- [ ] New worktree/branch for #1018 stage 2.
-- [ ] `patches/seance/omp-integration.patch` + `kind: patch` source in `seance.bst`.
-- [ ] `seance-update` preserves patch sources; `mise run seance-update -- --regenerate` leaves
-      the element byte-identical, `kind: patch` block included.
-- [ ] Stage-1 removal and doc rewrite (see *krytis side*); `mise run docs-links`.
-- [ ] `mise run bst build desktop/seance.bst` (with `--pull`/`--push` per `docs/skills/mise.md`).
-      Check the artifact (`bst artifact list-contents`) has `usr/share/seance/bin/omp` and
-      `usr/share/seance/omp/seance.mjs`.
-- [ ] `mise run build` (includes lint + umbriel-config-validate) and `mise boot-test`. This one
-      **does** change image content, so the AGENTS.md verification gate applies in full.
+- [x] New worktree/branch for #1018 stage 2: `1018-carry-seance-omp-integration`.
+- [x] `patches/seance/omp-integration.patch` + `kind: patch` source in `seance.bst`, exported
+      by the new `mise run seance-fork:export-patch`. Its first version exported
+      `v0.1.7..feat/omp-integration` and wrote **3** commits: upstream's `f3b7441`
+      (`pkg/arch/` checksum) came along, because the branch sits on upstream `main`, one commit
+      past the tag. The task now exports `feat/omp-integration --not v0.1.7 upstream/main`: the
+      two fork commits, `b7d7207` and `3c3e046`.
+- [x] `seance-update` preserves patch sources: `mise run seance-update -- --regenerate` left
+      the element byte-identical (`cmp`), `kind: patch` block included.
+- [x] Stage-1 removal and doc rewrite (see *krytis side*); `mise run docs-links`.
+- [x] `mise run bst --pull build desktop/seance.bst`: "Applying local patch:
+      patches/seance/omp-integration.patch", build 5m55s. The image has
+      `/usr/share/seance/bin/omp` (mode 0755) and `/usr/share/seance/omp/seance.mjs`.
+- [x] `mise run build --pull --force` passed (lint 14 checks, umbriel-config-validate,
+      cracklib-dict-check, portal-routing-check) and `mise run boot-test` PASSED, both on the
+      image carrying the two-commit patch. The first `build` died with `no space left on
+      device` while committing the sealed layer; `podman image prune -f` freed 29 GB.
 - [ ] After merge, on the updated image: re-run the step-4 checklist against the image's
-      `/usr/share/seance/bin/omp`, and record the results in the PR / #1018.
-- [ ] Skill entry for anything new. Cross-repo exception: the krytis commit cites the fork
-      commit SHA, not the other way round, so the fork commit stays a clean upstream PR.
+      `/usr/share/seance/bin/omp`, and record the results on #1018.
+- [x] Skill entry: `docs/skills/desktop.md` § seance: omp (oh-my-pi) sessions through the
+      carried kitten-lily/seance patch (#1018). The krytis commit cites the fork commit SHAs;
+      the fork commits do not mention krytis.
 
 ### 6. Hand-off to stage 3 (not part of this stage)
 

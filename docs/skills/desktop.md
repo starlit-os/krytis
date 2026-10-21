@@ -3317,20 +3317,52 @@ alongside this, for any account-creation path that bypasses skel copy; it is
 not removed.
 
 
-## seance: tracking omp (oh-my-pi) sessions with a user extension (#1018)
+## seance: omp (oh-my-pi) sessions through the carried kitten-lily/seance patch (#1018)
 
-seance ships agent wrappers (`/usr/share/seance/bin/{claude,codex,pi,opencode,agy}`) that
-report status to its sidebar. There is none for omp. Stage 1 of #1018 fills the gap without
-touching the image: `scripts/omp-seance.js` is an omp extension that drives seance's existing
-`seance ctl pi-hook`. Install it with `mise run omp-seance:install [--profile <name>]` and
-exercise it with `mise run omp-seance:test` (real omp, stub seance, spends model tokens). The
-design and the verification record are in `docs/plans/2026-09-30-omp-seance-user-extension.md`.
-What was non-obvious (checked against omp 18.4.3 and seance 0.1.7):
+seance ships agent wrappers in `/usr/share/seance/bin/` (`claude`, `codex`, `pi`, `opencode`,
+`agy`) and puts that directory first on every pane's `PATH`. krytis adds `omp` to them with
+`patches/seance/omp-integration.patch`, a `kind: patch` source on `elements/desktop/seance.bst`
+exported from `kitten-lily/seance` branch `feat/omp-integration` (kitten-lily/seance#1). The
+wrapper runs the real `omp` with `-e /usr/share/seance/omp/seance.mjs`, and that extension
+reports through `seance ctl omp-hook`. Settings → Integrations → **oh-my-pi Integration**
+(`omp-hooks` under `[behavior]`) turns it off for new panes. Stage 1 did the same from a
+user-installed extension that borrowed `pi-hook` (plan and verification record:
+`docs/plans/done/2026-09-30-omp-seance-user-extension.md`); stage 2 removed it.
+
+**Carrying the patch across a seance bump.** `mise run seance-update` keeps the `kind: patch`
+block (it passes `preserved=`, like `ghostty-update`), but the patch itself must follow the new
+tag:
+
+```bash
+git -C <fork> fetch upstream --tags && git -C <fork> rebase v<new> feat/omp-integration
+mise run seance-fork:ci --checkout <fork>            # upstream's CI suites, Ubuntu 24.04 container
+mise run seance-fork:export-patch --checkout <fork>  # rewrites patches/seance/omp-integration.patch
+mise run bst --pull build desktop/seance.bst
+```
+
+A patch that no longer applies fails `bst build` at the source stage. The fork's GitHub
+workflows are disabled, so `seance-fork:ci` is the only CI the branch gets. It leaves
+`zig build e2e` out by default (`--with-e2e`): two of its 24 checks time out in that container
+on untouched upstream `f3b7441` too.
+
+**Upstream `main` is not the tag.** krytis pins the release tarball of `v0.1.7` (`2138a31`), and
+the fork branch sits on upstream `main` (`f3b7441`, one `pkg/arch/` commit later) because that
+is the PR base. `git format-patch v0.1.7..feat/omp-integration` therefore exported three
+commits, upstream's included (caught by its `From` count, before any build).
+`seance-fork:export-patch` exports `feat/omp-integration --not v0.1.7 upstream/main`, so only
+the fork's commits land in the file. Count the `From <sha>` lines after every export.
+
+**A stage 1 install left behind is inert.** The wrapper exports `SEANCE_OMP_HOOKS_DISABLED=1` to
+omp, which the old `~/.omp/agent/extensions/seance.js` honours. Delete it by hand; it starts
+with a `// krytis omp-seance` marker.
+
+What was non-obvious (omp 18.4.3–18.12.3, seance 0.1.7):
 
 - **omp extensions must be ES modules.** The CommonJS `module.exports = function (pi)` that
   seance's own `pi` wrapper writes fails in omp with `Extension does not export a valid
-  factory function`. The auto-scanned `~/.omp/agent/extensions/` only picks up `.ts` / `.js`,
-  so the file is `seance.js` containing `export default`. `.mjs` works only via `-e`.
+  factory function`. The auto-scanned `~/.omp/agent/extensions/` only picks up `.ts` / `.js`;
+  `.mjs` loads only through `-e`, which is how the wrapper passes it. `-e` is honoured under
+  `--no-extensions` and any `--profile`, so profiles need nothing extra.
 - **Subagents run your extension too.** A `task` subagent reuses the parent's extension
   paths and fires its own `session_start`, `tool_call` and `session_shutdown`. Unguarded,
   a subagent's shutdown clears the pane's status mid-turn. Every handler returns early on
@@ -3339,24 +3371,36 @@ What was non-obvious (checked against omp 18.4.3 and seance 0.1.7):
 - **Signal "done" with `session_stop`, not `agent_end`.** omp never emits `session_stop`
   for subagent sessions. The handler must resolve to `undefined`; `{continue: true}` starts
   another turn.
+- **`/new` and `/fork` are not a session end in omp.** They switch session inside the running
+  process and fire `session_before_switch` / `session_switch` (`reason` `new` / `fork`), never
+  `session_shutdown` or `session_start` (omp 18.12.3). So `session-end` on `session_shutdown`
+  does not wipe the pane's status mid-session. Pi differs: its `/new` does fire
+  `session_shutdown` (no1msd/seance#21). Never send `session-end` from a `session_switch`
+  handler.
 - **A throw in a `tool_call` handler blocks the tool** (omp fails closed). Wrap handlers,
-  and never `execSync` from one. Here the calls go through one serial queue of `Bun.spawn`
-  children, so omp never waits and the pre/post order holds.
+  and never block in one. The extension queues `execFile` calls (750 ms timeout, `SIGKILL`) on
+  one promise chain, so omp never waits and the pre/post order holds.
 - **Concurrent tools need in-flight tracking.** omp emits every `tool_call` before any
   finishes. The first sibling's `tool_result` must re-report the still-running one (a long
-  `bash`) rather than reset the status to Running.
-- **seance shows an unknown `tool_name` verbatim.** Sending `pre-tool-use` with
-  `{"tool_name":"Needs input"}` on omp's `ask` tool yields a **Needs input** status even
-  though `pi-hook` has no `notification` event. omp's own `ask.notify` supplies the
-  notification.
-- **De-duplicating notifications.** seance already turns omp's own OSC notifications into
-  entries. To keep one completion notification per turn, the extension overrides
-  `completion.notify` to `off` via `lookup(...)` from
-  `@oh-my-pi/pi-coding-agent/config/registry` against `pi.pi.settings` (the singleton omp's
-  event controller reads). It only does this when `isConfigured` is false, and only in the
-  tracked main session.
+  `bash`, an open `ask`) rather than reset the status to Running.
+- **The wrapper, not the extension, owns opt-out and cleanup.** It passes through outside a
+  seance pane, under `SEANCE_OMP_HOOKS_DISABLED=1`, for print/export/non-`text` modes and for
+  omp's subcommands. It exports `SEANCE_OMP_HOOKS_DISABLED=1` to the child, so an `omp` started
+  from omp's shell tool cannot take over the pane. Its `EXIT` trap sends `session-end`, which
+  clears the status even after `kill -9` of omp. A missing subcommand in its list is harmless:
+  omp still dispatches the subcommand with an unused `-e`.
+- **De-duplicating notifications.** seance turns omp's own OSC notifications into entries,
+  and the hook sends its own. The extension overrides `completion.notify` and `ask.notify` to
+  `off` via `lookup(...)` from `@oh-my-pi/pi-coding-agent/config/registry` against
+  `pi.pi.settings`, only when `isConfigured` is false, and imports the registry dynamically so
+  the extension still loads where the package does not resolve (plain `node --test`).
+- **`pane.zig`'s `env_vars` array is full.** omp's `SEANCE_OMP_HOOKS_DISABLED` took it to 20
+  slots, and a pane with every integration off uses all of them. The next agent must grow it.
 - **Testing:** `omp --mode rpc` with `{"type":"get_state"}` on stdin loads extensions and
-  fires `session_start` / `session_shutdown` without a model call. `omp -p ""` is not
-  model-free: an empty prompt still starts a turn. seance drops notifications for a
-  **visible** pane, so move the pane off-screen before counting `seance ctl --json
-  list-notifications`.
+  fires `session_start` / `session_shutdown` without a model call; `new_session` and `fork`
+  are model-free too. Under `--no-session`, `fork` is a silent no-op (`session_before_switch`
+  fires, `session_switch` never does), so session-switch tests need `--session-dir <tmp>`.
+  `omp -p ""` is not model-free: an empty prompt still starts a turn. A fake `seance` in a test
+  must be a `/bin/sh` script: under load, Node's startup exceeded the 750 ms hook timeout and
+  events went missing. seance drops notifications for a **visible** pane, so move the pane
+  off-screen before counting `seance ctl --json list-notifications`.

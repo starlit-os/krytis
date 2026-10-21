@@ -108,13 +108,17 @@ def main() -> None:
         entries = zig_zon.resolve_closure(zon_texts, tmpdir, UA)
         print(f"    {len(entries)} deps")
 
+    element_text = ELEMENT.read_text()
     aliased_src = zig_zon.apply_alias(src_url(new_ver))
     new_sources = zig_zon.render_sources(
         (aliased_src, src_sha), entries,
         "seance source tarball (vendors the ghostty submodule)",
         base_dir="seance-*",
+        # The carried kitten-lily/seance patch must survive every bump; it
+        # needs a rebase onto the new tag, which a failing `bst build` flags.
+        preserved=zig_zon.extract_source_blocks(element_text, "patch"),
     )
-    ELEMENT.write_text(zig_zon.replace_sources_block(ELEMENT.read_text(), new_sources))
+    ELEMENT.write_text(zig_zon.replace_sources_block(element_text, new_sources))
     print(f"==> Updated {ELEMENT}: {cur_ver} → {new_ver} ({len(entries)} deps)")
 
     if min_zig:
