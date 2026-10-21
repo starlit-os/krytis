@@ -323,6 +323,13 @@ the fix is a version bump, never a `.grype.yaml` rule. What worked:
   except `ref:`. Like `libdisplay-info-check`, it also fails once the junction's
   version reaches the held one. Without that, the override would quietly pin Pillow
   *behind* the next fdsdk bump.
+- **Re-pin the version-pinned rules for that package in the same PR.** The bump made
+  `.grype.yaml`'s two `bitnami` Pillow rules, pinned to 12.3.0, match nothing, and both
+  CVEs came back at 13.0.0 (Medium/High, so the Critical gate still passed). The
+  false-positive judgment has to be re-checked against the new version, not carried
+  over: `gh api "/advisories?cve_id=<CVE>"` gives `first_patched_version` (10.3.0 and
+  11.3.0, both below 13.0.0), and only then is the pin moved. That change still needs
+  the human approval that `vuln-scan-triage` requires.
 
 The patch counts as a carry, so it needs a row in `docs/design/carried-patches.md`
 and the element path in the freedesktop-sdk row of `docs/design/upstream-ai-policies.md`.

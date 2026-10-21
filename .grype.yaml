@@ -171,18 +171,20 @@ ignore:
 
   # ── bitnami namespace: right project, cited fix predates what we ship ──
   # Version-pinned on purpose: the claim is about this exact installed version.
-  # Pillow: python3-pillow (components/python3-pillow.bst) — Grype's "bitnami"
-  # namespace stock-matcher (no purl) matches CVEs whose cited fixed version
-  # is far below the actually-installed version (12.3.0 is newer than every
-  # fixed-in version below; the CVE was already fixed before this pin).
+  # Pillow: elements/overrides/python3-pil.bst (fdsdk's components/python3-pil.bst,
+  # run ahead at 13.0.0) — Grype's "bitnami" namespace stock-matcher (no purl)
+  # matches CVEs whose real fixed version is far below the installed one.
+  # GitHub's advisories: CVE-2024-28219 (GHSA-44wm-f244-xhp3) fixed in 10.3.0,
+  # CVE-2025-48379 (GHSA-xg8h-j46f-w952) fixed in 11.3.0. Re-pinned from 12.3.0
+  # on 2026-10-21 when the override moved Pillow to 13.0.0.
   - vulnerability: BIT-pillow-2024-28219
     package:
       name: Pillow
-      version: "12.3.0"
+      version: "13.0.0"
   - vulnerability: BIT-pillow-2025-48379
     package:
       name: Pillow
-      version: "12.3.0"
+      version: "13.0.0"
   # sqlite: components/sqlite.bst — same "bitnami" stock-matcher issue as
   # Pillow above: installed 3.53.4 postdates every fixed-in version cited.
   - vulnerability: BIT-sqlite-2025-6965
