@@ -53,9 +53,9 @@ worktree, dakota and Tailscale upstream). All twelve findings are folded in belo
 **Files:** `include/aliases.yml`, `elements/core/tailscale.bst` (new),
 `elements/stacks/base-system.bst`.
 
-- [ ] Add `tailscale_pkgs: https://pkgs.tailscale.com/stable/` to the file-alias block of
+- [x] Add `tailscale_pkgs: https://pkgs.tailscale.com/stable/` to the file-alias block of
   `include/aliases.yml`.
-- [ ] Create `elements/core/tailscale.bst`, `kind: manual`, modelled on
+- [x] Create `elements/core/tailscale.bst`, `kind: manual`, modelled on
   `elements/core/pangolin-cli.bst` (header comment carries the why, the update path and
   `Closes #1384`). Keep version strings **out of the header comment**: the updater reads
   only `url:` lines, but a stale version in a comment still misleads readers.
@@ -92,7 +92,7 @@ worktree, dakota and Tailscale upstream). All twelve findings are folded in belo
   - Do **not** install `tailscaled.defaults`, `tailscale-online.target` or
     `tailscale-wait-online.service` (nothing orders after the tailnet). Do not create
     anything under `/var/lib/tailscale`.
-- [ ] Add `core/tailscale.bst` to `elements/stacks/base-system.bst` directly after
+- [x] Add `core/tailscale.bst` to `elements/stacks/base-system.bst` directly after
   `core/pangolin-cli.bst`.
 
 ## Task 2 — `tailscale-update` with checksum + distsign verification
@@ -100,12 +100,12 @@ worktree, dakota and Tailscale upstream). All twelve findings are folded in belo
 **Files:** `mise/tasks/tailscale-update` (new), `mise/lib/tailscale-distsign-roots.pem`
 (new), `.github/workflows/track-bst-sources.yml`.
 
-- [ ] `mise/lib/tailscale-distsign-roots.pem`: both root public keys copied from tailscale
+- [x] `mise/lib/tailscale-distsign-roots.pem`: both root public keys copied from tailscale
   `clientupdate/distsign/roots/` (`distsign-prod-root-1-pub.pem`, `crawshaw-root.pem`),
   with a header comment naming the upstream path + commit they were copied from. A root
   rotation upstream must surface as a verification failure and a reviewed edit to this
   file, never as a silent trust change.
-- [ ] `mise/tasks/tailscale-update` (bash, `set -euo pipefail`, `#MISE hide=true`, same
+- [x] `mise/tasks/tailscale-update` (bash, `set -euo pipefail`, `#MISE hide=true`, same
   shape as `mise/tasks/pangolin-update`). Two explicit constants, never derived from the
   feed or the alias:
   ```text
@@ -140,19 +140,19 @@ worktree, dakota and Tailscale upstream). All twelve findings are folded in belo
   - Verification implementation: `openssl pkeyutl -verify -pubin -keyform DER -rawin`, keys
     wrapped as SPKI DER, BLAKE2s via `openssl dgst -blake2s256 -binary`, length via
     `python3 -c 'struct.pack("<Q", …)'` — the exact recipe the prototype proved.
-- [ ] Run `mise run tailscale-update --verify-current` against the initial 1.104.2 pin
+- [x] Run `mise run tailscale-update --verify-current` against the initial 1.104.2 pin
   **before the first commit**: this is the only positive evidence for the arm64 tarball,
   since a scheduled run on an unchanged version exits before verifying anything.
-- [ ] `track-bst-sources.yml`: add `tailscale` to the `workflow_dispatch` `group` options
+- [x] `track-bst-sources.yml`: add `tailscale` to the `workflow_dispatch` `group` options
   and a `track-tailscale` job copied from `track-pangolin` (same pinned action SHAs, same
   `scripts/tracking-cooldown.sh`, `scripts/commit-tracking-update.sh`,
   `scripts/tracking-pr.sh` calls). Read the version for the PR title with the same
   `url:`-line extraction as step 1, not a whole-file grep. The PR body links
   `https://tailscale.com/changelog`.
-- [ ] Negative check (throwaway, not committed): run the verification against a tampered
+- [x] Negative check (throwaway, not committed): run the verification against a tampered
   tarball copy and a tampered `distsign.pub` copy and confirm a non-zero exit with the
   element untouched.
-- [ ] Branch smoke of the CI job (`docs/skills/bst.md` § Verifying the CI job before merge):
+- [x] Branch smoke of the CI job (`docs/skills/bst.md` § Verifying the CI job before merge):
   ```sh
   gh workflow run track-bst-sources.yml --ref 1384-add-tailscale-to-the-image --field group=tailscale
   gh run watch <run-id> --exit-status
@@ -169,8 +169,8 @@ Kept out of `core/tailscale.bst` so the tracked element only ever changes by
 `tailscale-update`'s `url`/`ref` edits (mirrors dakota's `tailscale.bst` /
 `tailscale-setup.bst` split).
 
-- [ ] **[verify]** `sudo env | grep '^SUDO_'` on krytis lists `SUDO_UID` and `SUDO_USER`.
-- [ ] `files/tailscale/krytis-tailscale-authorize` → `/usr/libexec/krytis-tailscale-authorize`
+- [x] **[verify]** `sudo env | grep '^SUDO_'` on krytis lists `SUDO_UID` and `SUDO_USER`.
+- [x] `files/tailscale/krytis-tailscale-authorize` → `/usr/libexec/krytis-tailscale-authorize`
   (mode 0755, `#!/usr/bin/python3 -I`, stdlib only), a port of dakota's
   `files/tailscale/dakota-tailscale-authorize`:
   - refuse unless `euid == 0`, no arguments, and `SUDO_UID` is a positive integer;
@@ -188,7 +188,7 @@ Kept out of `core/tailscale.bst` so the tracked element only ever changes by
   - if `OperatorUser` is set to someone else → exit 1 with dakota's message; never replace it.
   - `tailscale set --operator=<name>`, then re-read prefs and require
     `OperatorUser == <name>`.
-- [ ] `files/tailscale/setup` → `/etc/mise/tasks/tailscale/setup` (mode 0755, bash,
+- [x] `files/tailscale/setup` → `/etc/mise/tasks/tailscale/setup` (mode 0755, bash,
   `set -euo pipefail`, `#MISE description=…` header):
   1. Refuse to run as root.
   2. `sudo /usr/libexec/krytis-tailscale-authorize`.
@@ -200,10 +200,10 @@ Kept out of `core/tailscale.bst` so the tracked element only ever changes by
   5. `wait` for `tailscale up` and propagate its exit status.
   6. Print `tailscale status` and a one-line pointer to the `davemhammer/tailscale`
      community plugin (decision 3).
-- [ ] `files/tailscale/tailscale.toml` → `/etc/mise/conf.d/tailscale.toml` declaring
+- [x] `files/tailscale/tailscale.toml` → `/etc/mise/conf.d/tailscale.toml` declaring
   `[tasks."tailscale:setup"]` with `run = "/etc/mise/tasks/tailscale/setup"` and
   `description =`. Do not touch `/etc/mise/config.toml` (owned by `config/fido2-tasks.bst`).
-- [ ] `elements/config/tailscale-setup.bst`: `kind: manual`, `kind: local` source
+- [x] `elements/config/tailscale-setup.bst`: `kind: manual`, `kind: local` source
   `files/tailscale`, and
   ```yaml
   depends:
@@ -214,7 +214,7 @@ Kept out of `core/tailscale.bst` so the tracked element only ever changes by
   ```
   Installs the three files, `%{install-extra}` last. Add it to `base-system.bst` after
   `core/tailscale.bst`.
-- [ ] `docs/skills/bst.md`: an entry next to § sudo-rs Cmnd Args matching has no
+- [x] `docs/skills/bst.md`: an entry next to § sudo-rs Cmnd Args matching has no
   substring/glob support inside a single arg / § Passwordless sudo for a client that
   self-elevates — the root-only helper pattern: identity from the authenticated
   `SUDO_UID`, homed-aware `pwd.getpwuid`, read/check/set serialized under a lock, the
@@ -223,51 +223,54 @@ Kept out of `core/tailscale.bst` so the tracked element only ever changes by
 
 ## Task 4 — build gates
 
-- [ ] `mise run build` (ends with lint, `umbriel-config-validate`, `cracklib-dict-check`,
+- [x] `mise run build` (ends with lint, `umbriel-config-validate`, `cracklib-dict-check`,
   `portal-routing-check`). Stop and ask if it starts compiling the toolchain (Toolchain Gate).
-- [ ] Inside `localhost/krytis:latest`:
+- [x] Inside `localhost/krytis:latest`:
   - `systemctl is-enabled tailscaled.service` → `disabled`; no
     `/etc/systemd/system/multi-user.target.wants/tailscaled.service`.
   - `/var/lib/tailscale` absent; `tailscale version` matches the pin.
   - `mise tasks ls` (system) lists `tailscale:setup`.
-- [ ] `mise run generate-fakecap-manifest`, `mise run vuln-scan --fail-on critical`.
+- [x] `mise run generate-fakecap-manifest`, `mise run vuln-scan --fail-on critical`.
 
 ## Task 5 — `boot-test` assertion
 
 **File:** `mise/tasks/boot-test`.
 
-- [ ] Next to the polkit/Bazaar assertions, assert all three, with a failure message naming
+- [x] Next to the polkit/Bazaar assertions, assert all three, with a failure message naming
   #1384 and the preset fall-through:
   - `systemctl is-enabled tailscaled.service` → `disabled`
   - `systemctl is-active tailscaled.service` → `inactive`
   - `ss -H -lun 'sport = :41641'` → no rows
-- [ ] `mise run boot-test` (pty; FIDO2 PIN at the sudo prompt). It builds its own disk.
+- [x] `mise run boot-test` (pty; FIDO2 PIN at the sudo prompt). It builds its own disk.
 
 ## Task 6 — live acceptance on real hardware (homed user)
 
 Install the built image on a krytis machine (`bootc switch`/`upgrade` to the local image)
 and walk #1384 § Acceptance:
 
-- [ ] Fresh boot: daemon disabled + inactive, UDP 41641 closed.
-- [ ] `mise tailscale:setup` as the homed user: FIDO2 sudo prompt → operator set → URL
+- [x] Fresh boot: daemon disabled + inactive, UDP 41641 closed.
+- [x] `mise tailscale:setup` as the homed user: FIDO2 sudo prompt → operator set → URL
   printed and opened → sign-in → `tailscale status` works **without sudo**.
-- [ ] `journalctl -u tailscaled`: `TS_DEBUG_FIREWALL_MODE set, overriding firewall mode`,
+- [x] `journalctl -u tailscaled`: `TS_DEBUG_FIREWALL_MODE set, overriding firewall mode`,
   no `kernel does not support IPv6 policy routing`; with the node up, `ts-*` chains appear
   in `nft list ruleset` and `iptables-legacy-save | grep -c ts-` is `0`.
-- [ ] MagicDNS name of a peer resolves (`resolvectl query <peer>`), via resolved.
-- [ ] Second account runs `mise tailscale:setup` → refused, operator unchanged.
-- [ ] Reboot → daemon comes back enabled and connected.
+  **Correction:** the `set, overriding` line never appeared. The evidence line is
+  `router: netfilter running in nftables mode, v6 = true`; see Results.
+- [x] MagicDNS name of a peer resolves (`resolvectl query <peer>`), via resolved.
+- [x] Second account runs `mise tailscale:setup` → refused, operator unchanged.
+- [x] Reboot → daemon comes back enabled and connected.
 - [ ] **bootc update:** record the `multi-user.target.wants/tailscaled.service` symlink,
   deploy a subsequent local image, reboot, re-check the symlink, `is-enabled` and the
   connection. If this step is skipped, the PR says update persistence is **[unverified]**
   and cites the `/etc` merge mechanism instead of claiming it was tested.
+  **Skipped, [unverified]:** only reboot persistence was tested.
 
 ## Task 7 — docs (same commits as the code they describe)
 
-- [ ] `docs/design/deferred-from-dakota.md`: `tailscale.bst` row → **ported**, pointing at
+- [x] `docs/design/deferred-from-dakota.md`: `tailscale.bst` row → **ported**, pointing at
   `core/tailscale.bst` + `config/tailscale-setup.bst`, noting the deliberate differences
   (disabled preset, nftables mode, mise task instead of GTK app → #1385).
-- [ ] `docs/skills/bst.md`: new entries —
+- [x] `docs/skills/bst.md`: new entries —
   - vendor prebuilt that ships a systemd unit: rewrite checklist (`/usr/sbin`,
     `EnvironmentFile`, defaults the removed file used to supply, in-element assertion);
   - `/usr/bin/iptables` is legacy on krytis → daemons that program netfilter must be told
@@ -277,33 +280,62 @@ and walk #1384 § Acceptance:
     `mise/lib/`, `--verify-current` for the initial pin, "rotation must fail loudly");
   - extend § Element Update Path with `tailscale-update`;
   - the operator-helper entry (Task 3).
-- [ ] `docs/skills/dakota.md`: record which dakota lessons were applied and the two places
+- [x] `docs/skills/dakota.md`: record which dakota lessons were applied and the two places
   krytis deliberately diverges (disabled-by-default after the idle measurement; nftables
   firewall mode — dakota has the same legacy-iptables exposure).
-- [ ] Image inventory, after every element is wired: `mise run image-inventory --write`,
+- [x] Image inventory, after every element is wired: `mise run image-inventory --write`,
   fill the new rows' descriptions in `docs/design/image-inventory.md`, then
   `mise run image-inventory --check`.
-- [ ] Grep open issues for stale statements (`gh issue list --state open --search
+- [x] Grep open issues for stale statements (`gh issue list --state open --search
   'tailscale in:body'`) and edit any that now state the old version.
-- [ ] `git mv docs/plans/2026-10-22-tailscale.md docs/plans/done/` in the final commit of
+- [x] `git mv docs/plans/2026-10-22-tailscale.md docs/plans/done/` in the final commit of
   this PR (AGENTS.md § Plan & Design Docs: archive in the same PR).
-- [ ] `mise run docs-links` as the last docs check, after the move.
+- [x] `mise run docs-links` as the last docs check, after the move.
 
 ## Commit plan
 
-0. `docs(plans): add tailscale implementation plan` — this file.
-1. `feat(tailscale): add tailscale element, disabled by default` — Task 1 + bst.md unit /
-   firewall entries + deferred-from-dakota row.
-2. `ci(tailscale): track pkgs.tailscale.com with distsign verification` — Task 2 + bst.md
-   signature entry + update-path doc.
-3. `feat(tailscale): add mise tailscale:setup` — Task 3 + bst.md operator-helper entry +
-   dakota.md.
-4. `test(boot-test): assert tailscaled ships disabled` — Task 5.
-5. `chore(tailscale): regenerate inventories and archive the plan` — fakecap manifest,
-   image inventory, plan moved to `docs/plans/done/`.
+Commits as landed (all signed):
 
-Each commit carries `Assisted-by:`; PR body links #1384, the boot-test output, the branch
-dispatch run and the Task 6 live results.
+0. `a65b5d6` `docs(plans): add tailscale implementation plan` — this file.
+1. `8c90381` `feat(tailscale): ship tailscale disabled, with mise tailscale:setup` — Tasks 1
+   and 3, the bst.md unit / netfilter / operator-helper entries, and the
+   deferred-from-dakota row. Planned commits 1 and 3 were merged into this one, because
+   `stacks/base-system.bst` names both elements.
+2. `a5381a7` `ci(tailscale): track pkgs.tailscale.com with distsign verification` — Task 2,
+   the bst.md signature entry, and dakota.md.
+3. `46eed45` `test(boot-test): assert tailscaled ships disabled` — Task 5.
+4. `9a34339` `chore(tailscale): regenerate fakecap manifest and image inventory`.
+5. `565d99d` `fix(tailscale): detach xdg-open in tailscale:setup` — the Task 6 finding
+   below, plus the journal-line correction in bst.md.
+6. Archive commit: these results, with the plan moved to `docs/plans/done/`.
+
+## Results (2026-10-22)
+
+| Check | Result |
+|---|---|
+| `tailscale-update --verify-current` | amd64 `512f613e…` and arm64 `5776aaa9…`: sha256 + distsign OK. Also passes in `ubuntu:26.04` (OpenSSL 3.5.5) |
+| Negative checks | Tampered tarball (with a consistent `.sha256`) → `distsign signature does not verify`. Tampered `distsign.pub` → `does not verify against any root`. Wrong pinned `ref:` → fails. The element was untouched each time |
+| Update path | Element pinned back to 1.104.1 → task rewrote it to 1.104.2, byte-identical to the hand pin |
+| `mise run build` | Passed, including every image gate. Image `9dc139065ba2` |
+| Image contents | `is-enabled` = `disabled`, no wants symlink, no `/var/lib/tailscale`, 1.104.2, `mise tasks ls` lists `tailscale:setup` |
+| `vuln-scan --fail-on critical` | Passed. 0 grype matches under Tailscale paths |
+| `boot-test --image localhost/krytis:gh1384` | PASSED: "tailscaled is disabled, inactive and not listening" |
+| Branch dispatch | Run 39769484359: `track-tailscale` success, `has_changes=false`, PR steps skipped |
+| sudo-rs `SUDO_UID` | `env SUDO_UID=4242 SUDO_USER=mallory sudo env` → `SUDO_UID=60339`, `SUDO_USER=lily` |
+| Live, fresh boot (sealed `localhost/krytis:sealed`, homed user `lily`, absent from `/etc/passwd`) | `disabled`, `inactive`, no UDP 41641 listener, no wants symlink |
+| Live, after `mise tailscale:setup` | `enabled`/`active`, symlink created, `OperatorUser` = `lily`, `tailscale status` works without sudo |
+| Live, firewall | `envknob: TS_DEBUG_FIREWALL_MODE="nftables"`, `router: netfilter running in nftables mode, v6 = true`; 6 `ts-*` chains in nft, 0 legacy rules; IPv6 policy rules present, no policy-routing warning |
+| Live, MagicDNS | `resolvectl query work.werewolf-stonecat.ts.net` → `100.114.54.8` on `tailscale0` |
+| Live, second user | `sudo env SUDO_UID=65534 /usr/libexec/krytis-tailscale-authorize` → refused, exit 1, operator still `lily` |
+| Live, reboot | Still enabled and active, same symlink, nftables mode, node connected |
+| Live, bootc update persistence | **[unverified]** |
+
+**Finding fixed during Task 6:** `mise tailscale:setup` did not exit after sign-in. No
+browser was running, so `xdg-open` started Zen and blocked until it exited, with Zen in the
+task's process group (Ctrl-C would have killed the browser). Fixed in `565d99d` with
+`setsid -f xdg-open … </dev/null`. The mechanism was checked (`setsid -f` returns at once
+and the child gets its own session), but the fixed script has not been re-run in an
+image: the tested image predates the fix.
 
 ## Risks
 
