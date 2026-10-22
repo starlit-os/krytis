@@ -2617,8 +2617,12 @@ does exactly that by default (`router: default choosing iptables`), so
 `elements/core/tailscale.bst` sets `Environment=TS_DEBUG_FIREWALL_MODE=nftables`. dakota
 doesn't, and has the same exposure. Check any new netfilter-programming daemon for an
 equivalent knob. `TS_DEBUG_FIREWALL_MODE` is a debug-named variable that upstream could
-rename; the journal line `TS_DEBUG_FIREWALL_MODE set, overriding firewall mode` is how
-to tell it still works.
+rename. To check it still works, look for `router: netfilter running in nftables mode` in
+`journalctl -u tailscaled` once a node is up. With 1.104.2 on krytis (2026-10-22) that line
+appeared after `envknob: TS_DEBUG_FIREWALL_MODE="nftables"`, and `nft list ruleset` showed
+six `ts-*` chains while `iptables-legacy-save` had none. The binary also contains the
+string `TS_DEBUG_FIREWALL_MODE set, overriding firewall mode`, but that line did not
+appear in the journal, so don't grep for it.
 
 #### Optional services gated on user-supplied credentials
 

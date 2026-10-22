@@ -53,8 +53,12 @@ if [ "$(field BackendState)" != "Running" ]; then
             *) echo "Refusing a sign-in URL that is not https: ${url}" >&2; exit 1 ;;
         esac
         echo "==> Sign in to your tailnet: ${url}"
+        # Detached, never waited on: when no browser is running, xdg-open
+        # starts one and blocks until it exits, and the browser would join this
+        # task's process group, so Ctrl-C here would kill it too. setsid -f
+        # puts it in its own session and returns at once (#1384 live test).
         if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null; then
-            xdg-open "${url}" >/dev/null 2>&1 || true
+            setsid -f xdg-open "${url}" </dev/null >/dev/null 2>&1 || true
         fi
         echo "    Waiting for sign-in (5 min). Your tailnet may also require device approval."
     fi
