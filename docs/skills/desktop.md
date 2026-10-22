@@ -3363,11 +3363,15 @@ What was non-obvious (omp 18.4.3–18.12.3, seance 0.1.7):
   factory function`. The auto-scanned `~/.omp/agent/extensions/` only picks up `.ts` / `.js`;
   `.mjs` loads only through `-e`, which is how the wrapper passes it. `-e` is honoured under
   `--no-extensions` and any `--profile`, so profiles need nothing extra.
-- **Subagents run your extension too.** A `task` subagent reuses the parent's extension
-  paths and fires its own `session_start`, `tool_call` and `session_shutdown`. Unguarded,
-  a subagent's shutdown clears the pane's status mid-turn. Every handler returns early on
-  `!ctx.hasUI`: subagents (and `omp -p`, `--mode rpc --no-ui`) have it false, and the main
-  session in the TUI or `--mode rpc` has it true.
+- **Subagents run your extension too, and `ctx.hasUI` alone does not tell them apart.** A
+  `task` subagent reuses the parent's extension paths and fires its own `session_start`,
+  `tool_call` and `session_shutdown`; unguarded, its shutdown clears the pane's status
+  mid-turn. Task subagents, `omp -p` and `--mode rpc --no-ui` have `ctx.hasUI` false. An
+  **advisor** does not: its tool calls reach the main session's handlers with the main UI and
+  `ctx.agent = { kind: "sub", id: "advisor" }` (omp 18.12.3 `extensibility/extensions/types.ts`),
+  so a `hasUI`-only gate let advisor reads overwrite the pane and a late advisor `tool_result`
+  flip an idle pane back to Running. Every handler now needs `ctx.hasUI` **and**
+  `ctx.agent?.kind !== "sub"` (the `?.` keeps contexts without `agent` tracked).
 - **Signal "done" with `session_stop`, not `agent_end`.** omp never emits `session_stop`
   for subagent sessions. The handler must resolve to `undefined`; `{continue: true}` starts
   another turn.
@@ -3383,12 +3387,18 @@ What was non-obvious (omp 18.4.3–18.12.3, seance 0.1.7):
 - **Concurrent tools need in-flight tracking.** omp emits every `tool_call` before any
   finishes. The first sibling's `tool_result` must re-report the still-running one (a long
   `bash`, an open `ask`) rather than reset the status to Running.
+- **A denied or aborted approval has no `tool_result`.** omp sends
+  `tool_approval_resolved` with `approved: false` and then throws before the tool runs
+  (omp 18.12.3 `extensibility/extensions/wrapper.ts`). Forget the tool's in-flight entry there
+  too, or the next status update re-shows the denied tool as running.
 - **The wrapper, not the extension, owns opt-out and cleanup.** It passes through outside a
   seance pane, under `SEANCE_OMP_HOOKS_DISABLED=1`, for print/export/non-`text` modes and for
   omp's subcommands. It exports `SEANCE_OMP_HOOKS_DISABLED=1` to the child, so an `omp` started
   from omp's shell tool cannot take over the pane. Its `EXIT` trap sends `session-end`, which
   clears the status even after `kill -9` of omp. A missing subcommand in its list is harmless:
-  omp still dispatches the subcommand with an unused `-e`.
+  omp still dispatches the subcommand with an unused `-e`. A missing **flag** is not:
+  `--trusted-extension` refuses any `-e` and exits 2, so the wrapper passes those launches
+  through untracked.
 - **De-duplicating notifications.** seance turns omp's own OSC notifications into entries,
   and the hook sends its own. The extension overrides `completion.notify` and `ask.notify` to
   `off` via `lookup(...)` from `@oh-my-pi/pi-coding-agent/config/registry` against

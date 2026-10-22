@@ -156,7 +156,7 @@ index 0000000..2da7255
 +            with self.subTest(tool=tool_name):
 +                self.assertEqual(self.label('claude-hook', tool_name, tool_input), expected)
 
-From 3c3e0466d4c4b20b24308e419ac5436097b1026d Mon Sep 17 00:00:00 2001
+From bdea54c560ab6a0efe5bb935f6821c8c2d791cd7 Mon Sep 17 00:00:00 2001
 From: Lily <20535390+kitten-lily@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 13:06:39 +0200
 Subject: [PATCH 2/2] add oh-my-pi (omp) agent tracking with a bundled
@@ -176,17 +176,17 @@ Assisted-by: Claude Opus 5.5
  CONTRIBUTING.md                |  18 ++
  README.md                      |  16 +-
  build.zig                      |   1 +
- resources/bin/omp              |  68 ++++++
- resources/omp/seance.mjs       | 159 +++++++++++++
+ resources/bin/omp              |  70 ++++++
+ resources/omp/seance.mjs       | 164 +++++++++++++
  src/config.zig                 |   9 +
  src/ctl.zig                    |  20 ++
  src/default_config.toml        |   1 +
  src/pane.zig                   |   6 +-
  src/settings.zig               |   4 +
- tests/omp_extension.test.mjs   | 201 ++++++++++++++++
+ tests/omp_extension.test.mjs   | 223 ++++++++++++++++++
  tests/test_antigravity_pane.py |   8 +-
- tests/test_omp.py              | 417 +++++++++++++++++++++++++++++++++
- 13 files changed, 921 insertions(+), 7 deletions(-)
+ tests/test_omp.py              | 418 +++++++++++++++++++++++++++++++++
+ 13 files changed, 951 insertions(+), 7 deletions(-)
  create mode 100755 resources/bin/omp
  create mode 100644 resources/omp/seance.mjs
  create mode 100644 tests/omp_extension.test.mjs
@@ -276,10 +276,10 @@ index 20ca2ca..31185fe 100644
      b.installDirectory(.{
 diff --git a/resources/bin/omp b/resources/bin/omp
 new file mode 100755
-index 0000000..51587f7
+index 0000000..174ea19
 --- /dev/null
 +++ b/resources/bin/omp
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,70 @@
 +#!/usr/bin/env bash
 +# Load the bundled extension for this invocation; omp's own settings stay untouched.
 +set -euo pipefail
@@ -308,10 +308,12 @@ index 0000000..51587f7
 +
 +# Only the interactive TUI is tracked: print, export and machine-readable modes
 +# have no pane status to show, and subcommands never start a session.
++# --trusted-extension is an exact extension allowlist that omp refuses to
++# combine with -e, so those launches run untracked.
 +prev=""
 +for arg in "$@"; do
 +    case "$arg" in
-+        -h|--help|-v|--version|-p|--print|--export|--export=*|--alias|--alias=*) exec "$REAL_OMP" "$@" ;;
++        -h|--help|-v|--version|-p|--print|--export|--export=*|--alias|--alias=*|--trusted-extension|--trusted-extension=*) exec "$REAL_OMP" "$@" ;;
 +        --mode=text) ;;
 +        --mode=*) exec "$REAL_OMP" "$@" ;;
 +    esac
@@ -350,10 +352,10 @@ index 0000000..51587f7
 +exit "$rc"
 diff --git a/resources/omp/seance.mjs b/resources/omp/seance.mjs
 new file mode 100644
-index 0000000..560d5f7
+index 0000000..7f4ea59
 --- /dev/null
 +++ b/resources/omp/seance.mjs
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,164 @@
 +import { execFile } from "node:child_process";
 +
 +// omp caps session_shutdown handlers at 2 s.
@@ -402,10 +404,12 @@ index 0000000..560d5f7
 +
 +  // Subagents run this extension too and fire their own session and tool
 +  // events; they, print mode and headless RPC have no UI and are not tracked.
++  // An advisor shares the main session's UI but reports itself as a subagent,
++  // so its tool calls are skipped too.
 +  function on(event, handler) {
 +    pi.on(event, async (data, ctx) => {
 +      try {
-+        if (ctx?.hasUI) await handler(data ?? {}, ctx);
++        if (ctx?.hasUI && ctx.agent?.kind !== "sub") await handler(data ?? {}, ctx);
 +      } catch {}
 +      return undefined;
 +    });
@@ -439,8 +443,11 @@ index 0000000..560d5f7
 +    enqueue("notification", { notification_type: "permission", message: `Approve ${event.toolName}` });
 +  });
 +
++  // A denied or aborted approval stops the tool before it runs, so no
++  // tool_result follows: forget the tool along with its approval.
 +  on("tool_approval_resolved", (event) => {
 +    inflight.delete(`approval:${event.toolCallId}`);
++    if (event.approved === false) inflight.delete(event.toolCallId);
 +    showInflight();
 +  });
 +
@@ -671,10 +678,10 @@ index 456abcb..baaa180 100644
      saveAndReload();
 diff --git a/tests/omp_extension.test.mjs b/tests/omp_extension.test.mjs
 new file mode 100644
-index 0000000..bf64fad
+index 0000000..2e5fe74
 --- /dev/null
 +++ b/tests/omp_extension.test.mjs
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,223 @@
 +import test from 'node:test';
 +import assert from 'node:assert/strict';
 +import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
@@ -750,6 +757,16 @@ index 0000000..bf64fad
 +  assert.deepEqual(await f.events(1), [['prompt-submit', {}]]);
 +});
 +
++test('advisor tool calls in the main UI are not tracked', async (t) => {
++  const f = await fixture(t);
++  const advisor = { hasUI: true, cwd: f.cwd, agent: { kind: 'sub', id: 'advisor', name: 'advisor', depth: 0 } };
++  await f.emit('tool_call', { toolName: 'read', toolCallId: 'a', input: { path: '/x' } }, advisor);
++  await f.emit('tool_result', { toolCallId: 'a' }, advisor);
++  const main = { hasUI: true, cwd: f.cwd, agent: { kind: 'main', id: 'Main', name: 'main', depth: 0 } };
++  await f.emit('agent_start', {}, main);
++  assert.deepEqual(await f.events(1), [['prompt-submit', {}]]);
++});
++
 +test('plain turn reports labels and the last assistant message', async (t) => {
 +  const f = await fixture(t);
 +  await f.emit('session_start');
@@ -812,6 +829,18 @@ index 0000000..bf64fad
 +    ['pre-tool-use', { tool_name: 'read', tool_input: { path: 'a.txt' } }],
 +    ['pre-tool-use', { tool_name: 'Needs input' }],
 +    bash,
++    ['post-tool-use', {}],
++  ]);
++});
++
++test('a denied approval forgets the tool, which never reports a result', async (t) => {
++  const f = await fixture(t);
++  await f.emit('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'rm -r build' } });
++  await f.emit('tool_approval_requested', { toolName: 'bash', toolCallId: 'b' });
++  await f.emit('tool_approval_resolved', { toolName: 'bash', toolCallId: 'b', approved: false });
++  assert.deepEqual(await f.events(3), [
++    ['pre-tool-use', { tool_name: 'bash', tool_input: { command: 'rm -r build' } }],
++    ['notification', { notification_type: 'permission', message: 'Approve bash' }],
 +    ['post-tool-use', {}],
 +  ]);
 +});
@@ -901,10 +930,10 @@ index b7d232e..2de6e57 100644
 +            '1', '1', str(Path(self.binary).parent.parent / 'share/seance/bin/agy')])
 diff --git a/tests/test_omp.py b/tests/test_omp.py
 new file mode 100644
-index 0000000..08d5a4f
+index 0000000..727a8bc
 --- /dev/null
 +++ b/tests/test_omp.py
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,418 @@
 +"""oh-my-pi (omp) wrapper, extension, and socket-boundary regressions.
 +
 +Node runs the extension unit tests; the integration itself uses omp's runtime.
@@ -1072,6 +1101,7 @@ index 0000000..08d5a4f
 +    def test_print_export_machine_modes_and_subcommands_pass_through(self):
 +        for args in [('-p', 'hi'), ('--print', 'hi'), ('-h',), ('--help',), ('-v',), ('--version',),
 +                     ('--export', 'session.jsonl'), ('--export=session.jsonl',), ('--alias', 'work'),
++                     ('--trusted-extension', 'ext.ts'), ('--trusted-extension=ext.ts',),
 +                     ('--mode', 'json', 'hi'), ('--mode=rpc',), ('--mode', 'rpc-ui'),
 +                     ('commit',), ('completions', 'bash'), ('config', 'list'), ('plugin', 'list'),
 +                     ('stats',), ('session', 'pack'), ('anonymize', 'x'), ('update',), ('acp',)]:
