@@ -3362,14 +3362,101 @@ What was non-obvious (omp 18.4.3–18.12.3, seance 0.1.7):
   factory function`. The auto-scanned `~/.omp/agent/extensions/` only picks up `.ts` / `.js`;
   `.mjs` loads only through `-e`, which is how the wrapper passes it. `-e` is honoured under
   `--no-extensions` and any `--profile`, so profiles need nothing extra.
-- **Subagents run your extension too.** A `task` subagent reuses the parent's extension
-  paths and fires its own `session_start`, `tool_call` and `session_shutdown`. Unguarded,
-  a subagent's shutdown clears the pane's status mid-turn. Every handler returns early on
-  `!ctx.hasUI`: subagents (and `omp -p`, `--mode rpc --no-ui`) have it false, and the main
-  session in the TUI or `--mode rpc` has it true.
-- **Signal "done" with `session_stop`, not `agent_end`.** omp never emits `session_stop`
-  for subagent sessions. The handler must resolve to `undefined`; `{continue: true}` starts
-  another turn.
+- **Subagents run your extension too, and `ctx.hasUI` alone does not tell them apart.** A
+  `task` subagent reuses the parent's extension paths and fires its own `session_start`,
+  `tool_call` and `session_shutdown`; unguarded, its shutdown clears the pane's status
+  mid-turn. Task subagents, `omp -p` and `--mode rpc --no-ui` have `ctx.hasUI` false. An
+  **advisor** does not: its tool calls reach the main session's handlers with the main UI and
+  `ctx.agent = { kind: "sub", id: "advisor" }` (omp 18.12.3 `extensibility/extensions/types.ts`),
+  so a `hasUI`-only gate let advisor reads overwrite the pane and a late advisor `tool_result`
+  flip an idle pane back to Running. Every handler now needs `ctx.hasUI` **and**
+  `ctx.agent?.kind !== "sub"` (the `?.` keeps contexts without `agent` tracked).
+- **Approval events carry no agent identity, so the context gate can't filter them.** omp
+  18.12.3 passes the agent to `tool_call` / `tool_result` (`emitToolCall(..., this.#agent)`) but
+  emits `tool_approval_requested` / `tool_approval_resolved` through `runner.emit` without it,
+  so an advisor's approval arrives looking like the main session's. Gate on tracked state: follow
+  a request only if `inflight` already holds its `toolCallId`, and a resolution only if its
+  `approval:` marker exists. A context-only gate let an advisor's `bash` approval notify and then
+  flip an idle pane to Running.
+- **"Done" takes `session_stop` *and* the `agent_end` after it.** `session_stop` carries the
+  final message and never fires for subagent sessions, but it isn't final: another
+  extension's handler may return `{continue: true}`, and omp then emits `agent_end` with
+  `willContinue: true` and starts another turn (omp 18.12.3 `session/agent-session.ts:4868`).
+  Sending `stop` straight from `session_stop` gave a premature Idle and two completion
+  notifications (reproduced with a second extension continuing once). The extension holds the
+  completion and sends it from the next `agent_end` unless `willContinue` is set; compaction,
+  todo reminders and async waits also settle with `willContinue`. Our own `session_stop`
+  handler must resolve to `undefined`.
+- **Not every run ends in `session_stop`.** omp skips it when the user aborts (Esc) and on
+  errors in the middle of a tool batch, and emits a final `agent_end` alone
+  (`session/agent-session.ts:4727-4734`, `:4822-4830`). `/new` and `/resume` abort the running
+  turn after detaching its listeners, so that run emits nothing at all
+  (`session/agent-session.ts:10292`). Before this was handled, all three left **omp: Running**
+  until the next prompt (reproduced with RPC `abort` and `new_session`). The extension now sets
+  Idle without a notification on a final `agent_end` with no held completion, and on
+  `session_switch` with reason `new` or `resume`. `/fork` keeps the run going, so it is left
+  alone. Silent Idle reuses the `state` hook upstream added for OpenCode
+  (`agentHookOpenCodeState`); `stop` always notifies, `post-tool-use` means Running, and
+  `session-end` drops the row.
+- **Ignore everything once `session_shutdown` starts.** omp emits it before cancelling
+  post-prompt work, and a late `agent_end` would then send a completion after `session-end`
+  cleared the row.
+- **The extension's `agent_end` can arrive after the next run started.** omp publishes the
+  run's end, then fires the extension `agent_end` without awaiting it
+  (`session/agent-session.ts:5367-5404`). Extensions run in load order, and a slow earlier
+  handler can hold ours past the next `agent_start`, even past the next run's `session_stop`.
+  So a held completion is bound to its run by **object identity**: omp passes `session_stop`
+  the run's `activeMessages` and the matching `agent_end` a shallow copy of the same array
+  (`session/agent-session.ts:4864-4869`, `:5373-5404`). The extension keeps the final message
+  object and accepts only an end whose `messages` include it. A message *count* is not enough:
+  two first turns on either side of a `/new` both have two messages. `agent_start` also drops
+  a completion still held for the previous run.
+- **`ctx.isIdle()` is no "this run is over" signal.** It is `!session.isStreaming`, and
+  streaming lasts until the prompt unwinds. On omp 18.12.3 it is `false` at a normal final
+  `agent_end`, at `session_stop` and at an error's `agent_end`, but `true` at an abort's
+  `agent_end` and at `session_switch` (probe extension, real omp). Gating completions on it
+  would drop every one, and checking it once at an unfinished run's `agent_end` left error
+  endings stuck on Running.
+- **A non-final `agent_end` has no guaranteed follow-up.** omp can cancel a scheduled
+  retry, compaction or todo continuation before its `agent_start`, and background work can
+  drain without a wake; omp's own TUI runs a settle watcher for this
+  (`modes/controllers/event-controller.ts` `#finishWhenRunSettles`). The extension does the
+  same after every accepted `agent_end` that is not a completion: it polls (200 ms) until
+  `ctx.isIdle()`, no `ctx.hasPendingMessages()`, no auto-retry in progress and no
+  `ctx.getAsyncJobSnapshot()` job running or awaiting delivery, then goes Idle silently. A
+  `willContinue` end first gives the continuation 2 s to start. Every accepted run start or
+  end and every switch bumps an epoch that cancels older watchers. A watcher waiting only on
+  omp's streaming gives up after 30 s; one waiting on background jobs keeps going.
+- **Plan review and idle compaction happen outside a turn.** Plan mode aborts its turn
+  before opening the review (`modes/interactive-mode.ts`), so the pane settled to Idle while
+  omp waited for the user. An open review must **outrank every other status**, and it can't
+  live with the per-run tool state: a background job's delivery starts a new turn behind the
+  open review, and opt-in idle compaction can run during it, and each of those reset or
+  overwrote the status. The extension keeps the review separately, asks
+  `ctx.getPendingPlanReview()` whether it is still unanswered, and while it is, follows every
+  status change with Needs input (one notification in total). `plan_review_resolved` means the
+  overlay closed, not that a choice was made: "Approve and compact context" compacts behind
+  the overlay after the choice, so `session_before_compact` with the review no longer pending
+  shows Running. On close, an approved plan's turn starts within the continuation grace; a
+  dismissed one settles to Idle. Opt-in idle auto-compaction (`auto_compaction_start`/`_end`
+  while `ctx.isIdle()`) shows Running; compaction inside a turn is left to the turn's events.
+- **Known limits that need omp support.** `ExtensionContext` (omp 18.12.3) exposes neither
+  `hasAdmittedSubmission` nor pending extension UI requests. So the watcher can idle while omp
+  preprocesses an accepted prompt for more than the 2 s grace after a continuation end (slash
+  handling, image normalization), or while a *later* extension's `agent_end` handler holds a
+  dialog open. Both are narrow; fixing them means asking omp for that state.
+- **A `/new` or `/resume` can abort the run and then fail.** omp aborts the old run after
+  `session_before_switch` and emits `session_switch` only on success; a broken session file
+  rolls back silently. The extension checks 1 s after `session_before_switch` (via
+  `ctx.setTimeout`) and idles if omp is idle and nothing newer happened. A switch vetoed by
+  another extension keeps streaming and is left alone.
+- **Known limit: an `ask` that another extension blocks still notifies.** For extension-run
+  tools omp emits `tool_call`, `tool_execution_start`, then `tool_execution_end` with no
+  `tool_result` when a later `tool_call` handler blocks (observed on omp 18.12.3 with a probe
+  extension), so neither event says "this really runs" before the user would be prompted, and
+  omp has no event after all `tool_call` handlers have agreed. Moving the notification to
+  `tool_execution_start` was tried and did not help. The status is still cleared via
+  `tool_execution_end`. Only an extension that blocks `ask` triggers it.
 - **`/new` and `/fork` are not a session end in omp.** They switch session inside the running
   process and fire `session_before_switch` / `session_switch` (`reason` `new` / `fork`), never
   `session_shutdown` or `session_start` (omp 18.12.3). So `session-end` on `session_shutdown`
@@ -3382,19 +3469,41 @@ What was non-obvious (omp 18.4.3–18.12.3, seance 0.1.7):
 - **Concurrent tools need in-flight tracking.** omp emits every `tool_call` before any
   finishes. The first sibling's `tool_result` must re-report the still-running one (a long
   `bash`, an open `ask`) rather than reset the status to Running.
+- **A denied or aborted approval has no `tool_result`.** omp sends
+  `tool_approval_resolved` with `approved: false` and then throws before the tool runs
+  (omp 18.12.3 `extensibility/extensions/wrapper.ts`). Forget the tool's in-flight entry there
+  too, or the next status update re-shows the denied tool as running.
+- **Not every finished tool gets a `tool_result`.** A call blocked by another extension's
+  `tool_call` handler, rejected for invalid arguments, or aborted before it starts is finished
+  by the agent loop (omp 18.12.3 `packages/agent/src/agent-loop.ts`), which emits only
+  `tool_execution_end`. Tracking only `tool_result` left the pane on **Reading note.txt** until
+  `session_stop` (reproduced with a second extension blocking `read`). Completed tools emit
+  `tool_result` and then `tool_execution_end`, so handle the latter only when it still removes
+  a tracked call, or every tool reports twice.
 - **The wrapper, not the extension, owns opt-out and cleanup.** It passes through outside a
   seance pane, under `SEANCE_OMP_HOOKS_DISABLED=1`, for print/export/non-`text` modes and for
-  omp's subcommands. It exports `SEANCE_OMP_HOOKS_DISABLED=1` to the child, so an `omp` started
-  from omp's shell tool cannot take over the pane. Its `EXIT` trap sends `session-end`, which
-  clears the status even after `kill -9` of omp. A missing subcommand in its list is harmless:
-  omp still dispatches the subcommand with an unused `-e`.
+  omp's subcommands, and stops looking at options after `--` (message text to omp). It exports
+  `SEANCE_OMP_HOOKS_DISABLED=1` to the child, so an `omp` started from omp's shell tool cannot
+  take over the pane. Because of that, **every pane sets the variable explicitly** (`0` when
+  the integration is on): a Séance launched from a tracked omp would otherwise hand the
+  inherited `1` to all its panes. Its `EXIT` trap sends `session-end`, which clears the status
+  even after `kill -9` of omp. A missing subcommand in its list is harmless: omp still
+  dispatches the subcommand with an unused `-e`. A missing **flag** is not:
+  `--trusted-extension` refuses any `-e` and exits 2, so the wrapper passes those launches
+  through untracked. Known limit: the wrapper does not skip option *values*, so
+  `omp --system-prompt --print hi` is treated as print mode and runs untracked. omp computes
+  its string-valued flag set (`cli/flag-tables.ts`), and a copy here would drift.
 - **De-duplicating notifications.** seance turns omp's own OSC notifications into entries,
   and the hook sends its own. The extension overrides `completion.notify` and `ask.notify` to
   `off` via `lookup(...)` from `@oh-my-pi/pi-coding-agent/config/registry` against
   `pi.pi.settings`, only when `isConfigured` is false, and imports the registry dynamically so
   the extension still loads where the package does not resolve (plain `node --test`).
 - **`pane.zig`'s `env_vars` array is full.** omp's `SEANCE_OMP_HOOKS_DISABLED` took it to 20
-  slots, and a pane with every integration off uses all of them. The next agent must grow it.
+  slots; it is now always set, so it occupies its slot in every pane, and a pane with every
+  integration off uses all 20. The next agent must grow it.
+- **Upstream CI never runs `tests/test_antigravity_pane.py` against the binary.** `ci.yml`'s
+  binary-backed steps list specific files and this is not one of them, yet it is the only test
+  of the per-pane `SEANCE_*_HOOKS_DISABLED` env. `mise run seance-fork:ci` adds it.
 - **Testing:** `omp --mode rpc` with `{"type":"get_state"}` on stdin loads extensions and
   fires `session_start` / `session_shutdown` without a model call; `new_session` and `fork`
   are model-free too. Under `--no-session`, `fork` is a silent no-op (`session_before_switch`

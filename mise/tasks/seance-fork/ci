@@ -38,7 +38,10 @@ step "ghostty shutdown tests" bash -c "cd ghostty && zig build test -Dapp-runtim
   -Dtest-filter=\"basic push and pop\" -Dtest-filter=\"timed push\" -Dtest-filter=\"cancelled push\" \
   -Dtest-filter=\"undelivered surface messages\""
 step "python suite" python3 -m unittest discover -s tests -v
-for p in test_ghostty_integration test_socket_server test_shell_integration; do
+# test_antigravity_pane is not in the upstream ci.yml, but it is the only test of
+# the per-pane integration env (SEANCE_*_HOOKS_DISABLED), so run it here.
+# (No apostrophes in this block: it is one single-quoted bash -c argument.)
+for p in test_ghostty_integration test_socket_server test_shell_integration test_antigravity_pane; do
   step "$p" env "$BIN" xvfb-run -a python3 -m unittest discover -s tests -p "$p.py" -v
 done
 for p in test_keyboard_remaps test_pane_close test_fullscreen test_ime; do

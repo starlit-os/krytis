@@ -642,6 +642,17 @@ the same shape, so write the PR from the start rather than a krytis patch to cle
 2026-10-21). Run upstream's CI commands locally before calling a branch green, and never push a
 `v*` tag to a fork whose `release.yml` you re-enable.
 
+**Review with the other model family.** The owner's rule for seance work (2026-10-22): changes
+written with a Claude model are reviewed by GPT-5.6 Sol, and changes written with a GPT model
+by Claude Opus 5.5. omp's `task` tool only takes a `model` for the `seance` agent, so run the
+reviewer as its own headless omp in the fork checkout:
+`omp -p --no-session --model openai-codex/gpt-5.6-sol "$(cat prompt.md)" > review.md`.
+On this workstation the provider is `openai-codex` (the ChatGPT login); `openai/gpt-5.6-sol`
+fails with `No API key found for openai`. A `usage_limit_reached` error means the Codex quota
+is spent until it resets. Ask for evidence per finding (source line plus reproduction) and
+verify each one against the real tool before fixing. On `feat/omp-integration` the attempted
+fix for a blocked `ask` looked right in the omp source and was disproved by real omp.
+
 ### Auditing the fork inventory (which forks are live, and how far they've drifted)
 
 "Which forks are we on?" is answered by the element sources, not by the fork list: a fork
