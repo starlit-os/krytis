@@ -156,7 +156,7 @@ index 0000000..2da7255
 +            with self.subTest(tool=tool_name):
 +                self.assertEqual(self.label('claude-hook', tool_name, tool_input), expected)
 
-From bdea54c560ab6a0efe5bb935f6821c8c2d791cd7 Mon Sep 17 00:00:00 2001
+From 0bd5400f95bd25e4b0da874b8aac8d0a78587acc Mon Sep 17 00:00:00 2001
 From: Lily <20535390+kitten-lily@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 13:06:39 +0200
 Subject: [PATCH 2/2] add oh-my-pi (omp) agent tracking with a bundled
@@ -176,17 +176,17 @@ Assisted-by: Claude Opus 5.5
  CONTRIBUTING.md                |  18 ++
  README.md                      |  16 +-
  build.zig                      |   1 +
- resources/bin/omp              |  70 ++++++
- resources/omp/seance.mjs       | 164 +++++++++++++
+ resources/bin/omp              |  72 ++++++
+ resources/omp/seance.mjs       | 214 ++++++++++++++++
  src/config.zig                 |   9 +
- src/ctl.zig                    |  20 ++
+ src/ctl.zig                    |  22 +-
  src/default_config.toml        |   1 +
- src/pane.zig                   |   6 +-
+ src/pane.zig                   |   7 +-
  src/settings.zig               |   4 +
- tests/omp_extension.test.mjs   | 223 ++++++++++++++++++
- tests/test_antigravity_pane.py |   8 +-
- tests/test_omp.py              | 418 +++++++++++++++++++++++++++++++++
- 13 files changed, 951 insertions(+), 7 deletions(-)
+ tests/omp_extension.test.mjs   | 328 +++++++++++++++++++++++++
+ tests/test_antigravity_pane.py |  22 +-
+ tests/test_omp.py              | 432 +++++++++++++++++++++++++++++++++
+ 13 files changed, 1138 insertions(+), 8 deletions(-)
  create mode 100755 resources/bin/omp
  create mode 100644 resources/omp/seance.mjs
  create mode 100644 tests/omp_extension.test.mjs
@@ -276,10 +276,10 @@ index 20ca2ca..31185fe 100644
      b.installDirectory(.{
 diff --git a/resources/bin/omp b/resources/bin/omp
 new file mode 100755
-index 0000000..174ea19
+index 0000000..2a6d86b
 --- /dev/null
 +++ b/resources/bin/omp
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,72 @@
 +#!/usr/bin/env bash
 +# Load the bundled extension for this invocation; omp's own settings stay untouched.
 +set -euo pipefail
@@ -310,9 +310,11 @@ index 0000000..174ea19
 +# have no pane status to show, and subcommands never start a session.
 +# --trusted-extension is an exact extension allowlist that omp refuses to
 +# combine with -e, so those launches run untracked.
++# Everything after `--` is message text to omp, not options.
 +prev=""
 +for arg in "$@"; do
 +    case "$arg" in
++        --) break ;;
 +        -h|--help|-v|--version|-p|--print|--export|--export=*|--alias|--alias=*|--trusted-extension|--trusted-extension=*) exec "$REAL_OMP" "$@" ;;
 +        --mode=text) ;;
 +        --mode=*) exec "$REAL_OMP" "$@" ;;
@@ -352,10 +354,10 @@ index 0000000..174ea19
 +exit "$rc"
 diff --git a/resources/omp/seance.mjs b/resources/omp/seance.mjs
 new file mode 100644
-index 0000000..7f4ea59
+index 0000000..6e6f2c6
 --- /dev/null
 +++ b/resources/omp/seance.mjs
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,214 @@
 +import { execFile } from "node:child_process";
 +
 +// omp caps session_shutdown handlers at 2 s.
@@ -402,6 +404,10 @@ index 0000000..7f4ea59
 +    else enqueue("post-tool-use");
 +  }
 +
++  // After session_shutdown starts nothing else may reach Séance: a late
++  // agent_end would otherwise send a completion after the status was cleared.
++  let shuttingDown = false;
++
 +  // Subagents run this extension too and fire their own session and tool
 +  // events; they, print mode and headless RPC have no UI and are not tracked.
 +  // An advisor shares the main session's UI but reports itself as a subagent,
@@ -409,10 +415,18 @@ index 0000000..7f4ea59
 +  function on(event, handler) {
 +    pi.on(event, async (data, ctx) => {
 +      try {
-+        if (ctx?.hasUI && ctx.agent?.kind !== "sub") await handler(data ?? {}, ctx);
++        if (ctx?.hasUI && ctx.agent?.kind !== "sub" && !shuttingDown) await handler(data ?? {}, ctx);
 +      } catch {}
 +      return undefined;
 +    });
++  }
++
++  // Idle without a completion notification: for runs that ended without
++  // finishing (aborted, failed, replaced by /new or /resume).
++  function idle() {
++    inflight.clear();
++    pendingStop = undefined;
++    enqueue("state", { state: "Idle" });
 +  }
 +
 +  on("session_start", () => quietNativeNotifications(pi));
@@ -438,7 +452,19 @@ index 0000000..7f4ea59
 +    showInflight();
 +  });
 +
++  // A call blocked by another extension, rejected for invalid arguments or
++  // aborted before it ran is finished by the agent loop alone: there is no
++  // tool_result, only tool_execution_end. Completed tools emit both, so only
++  // update the status when this call was still tracked.
++  on("tool_execution_end", (event) => {
++    if (inflight.delete(event.toolCallId)) showInflight();
++  });
++
++  // Approval events carry no agent identity: an advisor's approvals arrive
++  // with the main session's context. Only follow approvals for tool calls this
++  // session is tracking, which leaves out the advisor's (skipped above).
 +  on("tool_approval_requested", (event) => {
++    if (!inflight.has(event.toolCallId)) return;
 +    inflight.set(`approval:${event.toolCallId}`, NEEDS_INPUT);
 +    enqueue("notification", { notification_type: "permission", message: `Approve ${event.toolName}` });
 +  });
@@ -446,19 +472,45 @@ index 0000000..7f4ea59
 +  // A denied or aborted approval stops the tool before it runs, so no
 +  // tool_result follows: forget the tool along with its approval.
 +  on("tool_approval_resolved", (event) => {
-+    inflight.delete(`approval:${event.toolCallId}`);
++    if (!inflight.delete(`approval:${event.toolCallId}`)) return;
 +    if (event.approved === false) inflight.delete(event.toolCallId);
 +    showInflight();
 +  });
 +
-+  // session_stop, not agent_end: omp does not emit it for subagent sessions.
-+  // The handler must resolve to undefined; { continue: true } starts another turn.
++  // session_stop supplies the final message: omp does not emit it for
++  // subagent sessions. Another extension may still ask to continue, so the
++  // completion waits for the agent_end that follows and is dropped when that
++  // says willContinue. The handler must resolve to undefined; { continue: true }
++  // would start another turn.
++  let pendingStop;
 +  on("session_stop", (event, ctx) => {
 +    inflight.clear();
-+    enqueue("stop", { cwd: ctx.cwd, last_assistant_message: lastAssistantText(event) });
++    pendingStop = { cwd: ctx.cwd, last_assistant_message: lastAssistantText(event) };
++  });
++
++  // A final agent_end without a session_stop is a run that did not finish:
++  // omp skips session_stop for aborts (Esc) and for errors mid tool batch.
++  on("agent_end", (event) => {
++    if (event.willContinue) {
++      pendingStop = undefined;
++      return;
++    }
++    const stop = pendingStop;
++    pendingStop = undefined;
++    if (stop) enqueue("stop", stop);
++    else idle();
++  });
++
++  // /new and /resume abort the running turn after detaching its listeners, so
++  // that run never reports an agent_end. /fork keeps the run going.
++  on("session_switch", (event) => {
++    if (event.reason === "new" || event.reason === "resume") idle();
 +  });
 +
 +  on("session_shutdown", async () => {
++    shuttingDown = true;
++    inflight.clear();
++    pendingStop = undefined;
 +    let timer;
 +    await Promise.race([
 +      enqueue("session-end"),
@@ -568,7 +620,7 @@ index ce48976..c04949c 100644
  }
  
 diff --git a/src/ctl.zig b/src/ctl.zig
-index e290603..7d318c4 100644
+index e290603..e3f1c5b 100644
 --- a/src/ctl.zig
 +++ b/src/ctl.zig
 @@ -145,6 +145,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
@@ -586,7 +638,7 @@ index e290603..7d318c4 100644
 +const omp_agent = AgentConfig{
 +    .name = "omp",
 +    .display_name = "oh-my-pi",
-+    .usage = "usage: omp-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|notification|stop>\n",
++    .usage = "usage: omp-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|notification|stop|state>\n",
 +    .pid_env = "SEANCE_OMP_PID",
 +    .response = "OK\n",
 +    .status_key_prefix = "omp",
@@ -600,6 +652,15 @@ index e290603..7d318c4 100644
  fn cmdAntigravityConfig(ctx: Ctx) u8 {
      if (ctx.rest.len != 1) return 1;
      @import("antigravity.zig").install(ctx.alloc, ctx.rest[0]) catch |err| {
+@@ -1418,7 +1433,7 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
+         if (agent.has_notification_hook) return agentHookNotification(h);
+     }
+     if (eql(hook_cmd, "stop")) return agentHookStop(h);
+-    if (eql(agent.name, "OpenCode") and eql(hook_cmd, "state")) return agentHookOpenCodeState(h);
++    if ((eql(agent.name, "OpenCode") or eql(agent.name, "omp")) and eql(hook_cmd, "state")) return agentHookOpenCodeState(h);
+ 
+     wfmt("seance: unknown hook '{s}'\n", .{hook_cmd});
+     return 1;
 @@ -2225,5 +2240,10 @@ fn printUsage() void {
          \\  antigravity-hook <state|session-end>  Track Antigravity CLI status
          \\  antigravity-config <settings.json>   Install its status callback
@@ -607,7 +668,7 @@ index e290603..7d318c4 100644
 +        \\oh-my-pi Hooks:
 +        \\  omp-hook <event>        Handle an oh-my-pi lifecycle event from the bundled extension
 +        \\    Events: session-start, session-end, prompt-submit, pre-tool-use,
-+        \\            post-tool-use, notification, stop
++        \\            post-tool-use, notification, stop, state
 +        \\
      );
  }
@@ -624,7 +685,7 @@ index d312d7c..96f53b1 100644
  [notifications]
  # sound = "default"              # "default", "none", or path to .wav/.ogg file
 diff --git a/src/pane.zig b/src/pane.zig
-index fc2e791..b7f4a48 100644
+index fc2e791..dc68101 100644
 --- a/src/pane.zig
 +++ b/src/pane.zig
 @@ -801,7 +801,7 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
@@ -636,14 +697,15 @@ index fc2e791..b7f4a48 100644
      var env_count: usize = 0;
  
      env_vars[env_count] = .{ .key = ws_key, .value = ws_val };
-@@ -848,6 +848,10 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
+@@ -848,6 +848,11 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
          env_vars[env_count] = .{ .key = "SEANCE_ANTIGRAVITY_HOOKS_DISABLED", .value = "1" };
          env_count += 1;
      }
-+    if (!cfg.omp_hooks) {
-+        env_vars[env_count] = .{ .key = "SEANCE_OMP_HOOKS_DISABLED", .value = "1" };
-+        env_count += 1;
-+    }
++    // Always set, not only when disabled: a tracked omp exports `1` to its
++    // children, and a Séance started from one would otherwise hand that to
++    // every new pane and leave omp untracked there.
++    env_vars[env_count] = .{ .key = "SEANCE_OMP_HOOKS_DISABLED", .value = if (cfg.omp_hooks) "0" else "1" };
++    env_count += 1;
      env_vars[env_count] = .{ .key = "SEANCE_SHELL_INTEGRATION", .value = "1" };
      env_count += 1;
      env_vars[env_count] = .{ .key = "TERM_PROGRAM", .value = "ghostty" };
@@ -678,10 +740,10 @@ index 456abcb..baaa180 100644
      saveAndReload();
 diff --git a/tests/omp_extension.test.mjs b/tests/omp_extension.test.mjs
 new file mode 100644
-index 0000000..2e5fe74
+index 0000000..9f90b2f
 --- /dev/null
 +++ b/tests/omp_extension.test.mjs
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,328 @@
 +import test from 'node:test';
 +import assert from 'node:assert/strict';
 +import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
@@ -767,6 +829,20 @@ index 0000000..2e5fe74
 +  assert.deepEqual(await f.events(1), [['prompt-submit', {}]]);
 +});
 +
++test('approvals for an advisor tool are ignored even though they arrive with the main context', async (t) => {
++  const f = await fixture(t);
++  const advisor = { hasUI: true, cwd: f.cwd, agent: { kind: 'sub', id: 'advisor', name: 'advisor', depth: 0 } };
++  const main = { hasUI: true, cwd: f.cwd, agent: { kind: 'main', id: 'Main', name: 'main', depth: 0 } };
++  // omp passes the advisor identity to tool_call/tool_result only; approval
++  // events go through the main runner without it.
++  await f.emit('tool_call', { toolName: 'bash', toolCallId: 'adv', input: { command: 'ls' } }, advisor);
++  await f.emit('tool_approval_requested', { toolName: 'bash', toolCallId: 'adv' }, main);
++  await f.emit('tool_approval_resolved', { toolName: 'bash', toolCallId: 'adv', approved: true }, main);
++  await f.emit('tool_result', { toolCallId: 'adv' }, advisor);
++  await f.emit('agent_start', {}, main);
++  assert.deepEqual(await f.events(1), [['prompt-submit', {}]]);
++});
++
 +test('plain turn reports labels and the last assistant message', async (t) => {
 +  const f = await fixture(t);
 +  await f.emit('session_start');
@@ -783,6 +859,7 @@ index 0000000..2e5fe74
 +    { role: 'user', content: [{ type: 'text', text: 'question' }] },
 +    { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: reply }] },
 +  ] });
++  await f.emit('agent_end', { messages: [] });
 +  assert.deepEqual(await f.events(8), [
 +    ['prompt-submit', {}],
 +    ['pre-tool-use', { tool_name: 'read', tool_input: { path: '/a/b.txt' } }],
@@ -845,16 +922,105 @@ index 0000000..2e5fe74
 +  ]);
 +});
 +
++test('a tool the loop finishes without an extension tool_result is forgotten once', async (t) => {
++  const f = await fixture(t);
++  // Blocked by another extension, invalid arguments, or aborted: omp emits
++  // only tool_execution_end. A normal tool emits tool_result, then tool_execution_end.
++  await f.emit('tool_call', { toolName: 'bash', toolCallId: 'long', input: { command: 'sleep 60' } });
++  await f.emit('tool_call', { toolName: 'read', toolCallId: 'blocked', input: { path: 'a.txt' } });
++  await f.emit('tool_execution_end', { toolCallId: 'blocked', toolName: 'read', isError: true });
++  await f.emit('tool_result', { toolCallId: 'long' });
++  await f.emit('tool_execution_end', { toolCallId: 'long', toolName: 'bash', isError: false });
++  const bash = ['pre-tool-use', { tool_name: 'bash', tool_input: { command: 'sleep 60' } }];
++  assert.deepEqual(await f.events(4), [
++    bash,
++    ['pre-tool-use', { tool_name: 'read', tool_input: { path: 'a.txt' } }],
++    bash,
++    ['post-tool-use', {}],
++  ]);
++  await new Promise((resolve) => setTimeout(resolve, 300));
++  assert.equal((await f.read()).length, 4, 'tool_execution_end after tool_result must not report again');
++});
++
 +test('a new turn and a stop forget tools that never reported a result', async (t) => {
 +  const f = await fixture(t);
 +  await f.emit('tool_call', { toolName: 'bash', toolCallId: 'lost', input: { command: 'make' } });
 +  await f.emit('session_stop', { last_assistant_message: { content: [{ type: 'text', text: 'aborted' }] } });
++  await f.emit('agent_end', { messages: [] });
 +  await f.emit('agent_start');
 +  await f.emit('tool_call', { toolName: 'grep', toolCallId: 'g', input: { pattern: 'x' } });
 +  await f.emit('tool_result', { toolCallId: 'g' });
 +  const seen = await f.events(5);
 +  assert.deepEqual(seen[1], ['stop', { cwd: f.cwd, last_assistant_message: 'aborted' }]);
 +  assert.deepEqual(seen.at(-1), ['post-tool-use', {}]);
++});
++
++test('a stop that another extension continues is not a completion', async (t) => {
++  const f = await fixture(t);
++  const said = (text) => ({ messages: [{ role: 'assistant', content: [{ type: 'text', text }] }] });
++  await f.emit('agent_start');
++  await f.emit('session_stop', said('first'));
++  await f.emit('agent_end', { messages: [], willContinue: true });
++  await f.emit('agent_start');
++  await f.emit('session_stop', said('continued'));
++  await f.emit('agent_end', { messages: [] });
++  // Compaction, todo reminders and async waits settle with willContinue and no session_stop.
++  await f.emit('agent_end', { messages: [], willContinue: true });
++  assert.deepEqual(await f.events(3), [
++    ['prompt-submit', {}],
++    ['prompt-submit', {}],
++    ['stop', { cwd: f.cwd, last_assistant_message: 'continued' }],
++  ]);
++  await new Promise((resolve) => setTimeout(resolve, 300));
++  assert.equal((await f.read()).length, 3);
++});
++
++test('an aborted or failed run goes idle without a completion', async (t) => {
++  const f = await fixture(t);
++  // Esc: omp ends the run with agent_end and skips session_stop.
++  await f.emit('agent_start');
++  await f.emit('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'make' } });
++  await f.emit('agent_end', { messages: [] });
++  await f.emit('tool_call', { toolName: 'read', toolCallId: 'r', input: { path: 'a' } });
++  await f.emit('tool_result', { toolCallId: 'r' });
++  assert.deepEqual(await f.events(5), [
++    ['prompt-submit', {}],
++    ['pre-tool-use', { tool_name: 'bash', tool_input: { command: 'make' } }],
++    ['state', { state: 'Idle' }],
++    ['pre-tool-use', { tool_name: 'read', tool_input: { path: 'a' } }],
++    ['post-tool-use', {}],
++  ]);
++});
++
++test('/new and /resume idle the pane, /fork keeps the running turn', async (t) => {
++  const f = await fixture(t);
++  await f.emit('agent_start');
++  await f.emit('session_switch', { reason: 'fork' });
++  await f.emit('session_switch', { reason: 'new' });
++  await f.emit('agent_start');
++  await f.emit('session_stop', { messages: [] });
++  await f.emit('session_switch', { reason: 'resume' });
++  // Even a stray agent_end from the replaced run must not complete it.
++  await f.emit('agent_end', { messages: [] });
++  const seen = await f.events(5);
++  assert.deepEqual(seen.slice(0, 4), [
++    ['prompt-submit', {}],
++    ['state', { state: 'Idle' }],
++    ['prompt-submit', {}],
++    ['state', { state: 'Idle' }],
++  ]);
++  assert.ok(!seen.some(([hook]) => hook === 'stop'), JSON.stringify(seen));
++});
++
++test('nothing reaches Séance after shutdown starts', async (t) => {
++  const f = await fixture(t);
++  await f.emit('session_stop', { messages: [] });
++  await f.emit('session_shutdown');
++  await f.emit('agent_end', { messages: [] });
++  await f.emit('agent_end', { messages: [], willContinue: true });
++  await f.emit('agent_start');
++  await new Promise((resolve) => setTimeout(resolve, 300));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)), ['session-end']);
 +});
 +
 +test('shutdown clears the status and drains within its budget', async (t) => {
@@ -898,6 +1064,7 @@ index 0000000..2e5fe74
 +  assert.equal(await f.emit('tool_call', undefined), undefined);
 +  assert.equal(await f.emit('tool_call', { toolName: 'ask', toolCallId: 'q', input: { questions: 'x' } }), undefined);
 +  assert.equal(await f.emit('session_stop', { messages: 'nope' }), undefined);
++  assert.equal(await f.emit('agent_end', undefined), undefined);
 +  assert.equal(await f.emit('agent_start', {}, null), undefined);
 +  await f.emit('tool_result', { toolCallId: 'sentinel' });
 +  const seen = await f.events(4);
@@ -906,10 +1073,10 @@ index 0000000..2e5fe74
 +  assert.deepEqual(seen[3], ['post-tool-use', {}]);
 +});
 diff --git a/tests/test_antigravity_pane.py b/tests/test_antigravity_pane.py
-index b7d232e..2de6e57 100644
+index b7d232e..c9a3055 100644
 --- a/tests/test_antigravity_pane.py
 +++ b/tests/test_antigravity_pane.py
-@@ -7,14 +7,14 @@ import test_ghostty_integration as integration
+@@ -7,14 +7,28 @@ import test_ghostty_integration as integration
  
  class AntigravityPaneTests(integration.GhosttyTestCase):
      config_extra = ('claude-code-hooks = false\ncodex-hooks = false\npi-hooks = false\n'
@@ -928,12 +1095,26 @@ index b7d232e..2de6e57 100644
          self.assertEqual(output.read_text().splitlines(), [
 -            '1', str(Path(self.binary).parent.parent / 'share/seance/bin/agy')])
 +            '1', '1', str(Path(self.binary).parent.parent / 'share/seance/bin/agy')])
++
++
++class OmpInheritedGuardPaneTests(integration.GhosttyTestCase):
++    # A Séance started from inside a tracked omp inherits the wrapper's
++    # nested-session guard; the pane must reset it when the integration is on.
++    env_extra = {'SEANCE_OMP_HOOKS_DISABLED': '1'}
++
++    def test_enabled_integration_overrides_an_inherited_guard(self):
++        self.wait(lambda: self.call('surface.read_screen').get('text'), 'shell startup')
++        output = self.root / 'omp-env'
++        self.call('surface.send_text', {'text':
++            'printf "%s\\n" "$SEANCE_OMP_HOOKS_DISABLED" > ' + shlex.quote(str(output)) + '\n'})
++        self.wait(lambda: output.exists() and output.read_text().strip(), 'omp pane environment')
++        self.assertEqual(output.read_text().strip(), '0')
 diff --git a/tests/test_omp.py b/tests/test_omp.py
 new file mode 100644
-index 0000000..727a8bc
+index 0000000..b8a8e8d
 --- /dev/null
 +++ b/tests/test_omp.py
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,432 @@
 +"""oh-my-pi (omp) wrapper, extension, and socket-boundary regressions.
 +
 +Node runs the extension unit tests; the integration itself uses omp's runtime.
@@ -1110,6 +1291,13 @@ index 0000000..727a8bc
 +                _, call = self.invoke(*args)
 +                self.assert_passed_through(call, args)
 +
++    def test_options_after_separator_are_message_text(self):
++        for args in [('--', '--help'), ('--', '-p', 'hi'), ('--', '--trusted-extension', 'x')]:
++            with self.subTest(args=args):
++                self.events.unlink(missing_ok=True)
++                _, call = self.invoke(*args)
++                self.assert_tracked(call, args)
++
 +    def test_symlinked_wrapper_in_path_does_not_recurse(self):
 +        links = self.root / 'links'
 +        links.mkdir()
@@ -1222,12 +1410,14 @@ index 0000000..727a8bc
 +            {'args': ['ctl', 'omp-hook', 'session-end'], 'input': {}},
 +            {'probe': {'completion.notify': 'off', 'ask.notify': 'off'}},
 +        ])
-+        # /new and /fork switch sessions inside one process; the pane's status must survive.
-+        # fork is a no-op under --no-session, so these need a session directory.
-+        for command in ('new_session', 'fork'):
++        # /new and /fork switch sessions inside one process, so neither ends the pane's session
++        # (only the shutdown's session-end). /new abandons any running turn and goes idle
++        # silently; /fork keeps the run. fork is a no-op under --no-session, so these need a
++        # session directory.
++        for command, hooks in (('new_session', ['state', 'session-end']), ('fork', ['session-end'])):
 +            with self.subTest(command=command):
 +                calls = self.rpc(state + [{'type': command}], extra=('--session-dir', str(self.root / 'sessions')))
-+                self.assertEqual(self.hooks(calls), ['session-end'])
++                self.assertEqual(self.hooks(calls), hooks)
 +        self.assertEqual(self.rpc(state, extra=('--no-session', '--no-ui')), [], 'headless sessions are untracked')
 +        outside = {k: v for k, v in self.env.items() if k != 'SEANCE_OMP_BIN'}
 +        self.assertEqual(self.rpc(state, env=outside), [], 'inert outside the wrapper')
@@ -1346,6 +1536,11 @@ index 0000000..727a8bc
 +        requests = self.hook('session-end')
 +        self.assertEqual(requests[-1]['method'], 'workspace.clear_status')
 +        self.assertEqual(requests[-1]['params'], {'workspace_id': 7, 'key': 'omp-3'})
++
++    def test_state_idle_sets_idle_without_a_notification(self):
++        requests = self.hook('state', {'state': 'Idle'})
++        self.assertEqual(self.status(requests), 'Idle')
++        self.assertEqual(self.notifications(requests), [])
 +
 +    def test_usage(self):
 +        result = subprocess.run([str(BINARY), 'ctl', 'omp-hook'], env=self.env, text=True,
