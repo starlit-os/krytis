@@ -2991,15 +2991,14 @@ show the id as `[local]`. noctalia hot-reloads a path source's Luau files when t
 (journal: `hot reload: reloaded service`), so UI patches show up at once. The plugin's
 Python helper does not reload. To pick up a backend change, run `noctalia msg plugins
 disable <id>` then `enable <id>`. Disable stops serve, and enable launches a fresh one from
-the current copy. That works only with `stop-serve-by-interpreter-path.patch` (#1313),
-proposed upstream as noctalia-dev/community-plugins#1073 (open as of 2026-10-19).
-Upstream's `onExit` runs `pkill -TERM -f '^python3 [^ ]*/mxctl\.py serve$'`, but serve's
-command line starts with `/usr/bin/python3`, so the pattern matches nothing. The old serve
-keeps the helper lock and a fresh heartbeat, and each serve the re-enabled service launches
-exits on that lock. On 2026-10-17, before the patch, a serve from a deleted local copy
-survived three disable/enable cycles and went away only on relogin. **The patch is in the
-image copy's Luau only.** A local copy made from the community materialization has the
-unpatched pattern, so on a local copy kill serve instead: `pkill -f 'mxctl\.py serve'`.
+the current copy. That needs mx-control 0.2.3 or later, which merged
+noctalia-dev/community-plugins#1073 (#1313; krytis carried it as a patch until 2026-10-21).
+Before 0.2.3, `onExit` ran `pkill -TERM -f '^python3 [^ ]*/mxctl\.py serve$'`, but serve's
+command line starts with `/usr/bin/python3`, so the pattern matched nothing. The old serve
+kept the helper lock and a fresh heartbeat, and each serve the re-enabled service launched
+exited on that lock. On 2026-10-17 a serve from a deleted local copy survived three
+disable/enable cycles and went away only on relogin. With a copy older than 0.2.3 running,
+kill serve instead: `pkill -f 'mxctl\.py serve'`.
 The service relaunches serve from the current copy once `status.json`'s `ts` is more than
 90 s old (`HELPER_RESTART_SEC`; checked every 10 s). Measured: killed 17:30:43, relaunched
 17:32:14. Confirm the path with `pgrep -af 'mxctl.py serve'`. The `[plugins]` log shows each
@@ -3007,7 +3006,7 @@ scan loading the community copy first and the local copy overriding it; the loca
 the one that runs. **A new local copy doesn't replace the running service.** `plugins list`
 shows `[local]` as soon as the copy lands, but the service that is already running keeps the
 previous copy's Luau until the plugin is disabled. That first disable runs the *old* copy's
-`onExit`. On 2026-10-19 the image's unpatched pattern left serve running after the first
+`onExit`. On 2026-10-19 the image's then-unpatched pattern left serve running after the first
 disable. The journal logged `started service` only on the following enable, and every
 disable after that killed serve. So run one disable/enable before testing anything in
 `onExit`. mx-control's `tests/shared_test.lua` runs with plain `lua` (`/usr/bin/lua`) from

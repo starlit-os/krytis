@@ -14,10 +14,10 @@
 # Krytis feature request, not proposed upstream (Upstream Gate). Remove when
 # the plugin's own tooltip lists every device.
 diff --git a/mx-control/shared.luau b/mx-control/shared.luau
-index ee3fe38..5afc10e 100644
+index 563c803..60563b0 100644
 --- a/mx-control/shared.luau
 +++ b/mx-control/shared.luau
-@@ -316,6 +316,24 @@ function M.batteryText(device)
+@@ -318,6 +318,24 @@ function M.batteryText(device)
      return "--"
  end
  
@@ -43,10 +43,10 @@ index ee3fe38..5afc10e 100644
  
  local MODIFIERS = { CTRL = "CTRL", CONTROL = "CTRL", ALT = "ALT", SHIFT = "SHIFT", SUPER = "SUPER", META = "SUPER" }
 diff --git a/mx-control/tests/shared_test.lua b/mx-control/tests/shared_test.lua
-index b0d588a..723e003 100644
+index b4877b1..e186407 100644
 --- a/mx-control/tests/shared_test.lua
 +++ b/mx-control/tests/shared_test.lua
-@@ -202,6 +202,21 @@ check("healthy battery keeps the default colour", shared.levelRole(90) == nil)
+@@ -212,6 +212,21 @@ check("healthy battery keeps the default colour", shared.levelRole(90) == nil)
  check("batteryText prefers the level", shared.batteryText({ online = true, battery = { level = 90 } }) == "90%")
  check("batteryText for an offline device", shared.batteryText({ online = false }) == "--")
  
