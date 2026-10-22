@@ -72,7 +72,7 @@ sources:
   # oh-my-pi (omp) agent tracking: a `share/seance/bin/omp` wrapper, a bundled
   # extension and an `omp-hook` agent, plus lowercase tool names in sidebar
   # labels. Written by `mise run seance-fork:export-patch` from kitten-lily/seance
-  # `feat/omp-integration`: the fork's own commits, one per feature. Not proposed upstream yet.
+  # `feat/omp-integration`: the fork's own commits, one per feature. Proposed as no1msd/seance#23.
   # Every `seance-update` bump needs the branch rebased onto the new tag and
   # this file re-exported; a stale patch fails `bst build` at the source
   # stage. See krytis#1018 and kitten-lily/seance#1.
