@@ -12,11 +12,20 @@ what lets these PRs merge now that `main` enforces `required_signatures`
 purely how the commit object gets created. Verified on PRs #721 (`1ea80673`)
 and #723 (`83df8ec3`): `committer: GitHub`, `verification.verified: true`.
 
-`automergeStrategy` must track the repo's enabled merge method — `"merge"`
-since #697 disabled squash and rebase. Renovate does adapt on its own if it
-disagrees (#721 automerged as a merge commit while the config still said
-`squash`), so a mismatch is stale documentation rather than a broken
-automerge, but fix it anyway.
+`automergeStrategy` must track the repo's enabled merge method, using
+**Renovate's** enum name: `"merge-commit"` since #697 disabled squash and
+rebase. The allowed values are `auto`, `fast-forward`, `merge-commit`,
+`rebase`, `rebase-merge` and `squash`. GitHub's REST `merge_method` value
+`"merge"` is not among them. #697's follow-up wrote `"merge"` on 2026-09-03.
+On 2026-10-22 the hosted app rejected the config, filed #1386 and stopped
+opening PRs until the value was fixed.
+
+A *valid* strategy that disagrees with the repo settings costs nothing:
+#721 automerged as a merge commit while the config still said `squash`.
+An *invalid* value halts all of Renovate. No CI job runs the validator, so
+run `mise run renovate-check` before pushing any `renovate.json5` change.
+It pulls the same always-latest image the hosted app uses, and it reproduced
+the #1386 error on the unfixed config.
 
 ## Current coverage
 

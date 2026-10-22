@@ -98,10 +98,10 @@
       "automerge": true,
       "automergeType": "pr",
       // Must match the repo's only enabled merge method (#697 disabled squash
-      // and rebase). Renovate adapted on its own when this still said
-      // "squash" — PR #721 automerged as a merge commit — but the mismatch
-      // read as if squash automerge were still in play.
-      "automergeStrategy": "merge",
+      // and rebase). Renovate's name for it is "merge-commit"; GitHub's
+      // merge_method value "merge" is not in Renovate's enum, and an invalid
+      // value halts every Renovate PR (#1386).
+      "automergeStrategy": "merge-commit",
     },
     {
       // Some updates carry no release timestamp at the branch stage:
