@@ -156,7 +156,7 @@ index 0000000..2da7255
 +            with self.subTest(tool=tool_name):
 +                self.assertEqual(self.label('claude-hook', tool_name, tool_input), expected)
 
-From 0bd5400f95bd25e4b0da874b8aac8d0a78587acc Mon Sep 17 00:00:00 2001
+From a468c5fe8044afe91cbaf09418839ee82764b046 Mon Sep 17 00:00:00 2001
 From: Lily <20535390+kitten-lily@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 13:06:39 +0200
 Subject: [PATCH 2/2] add oh-my-pi (omp) agent tracking with a bundled
@@ -176,17 +176,17 @@ Assisted-by: Claude Opus 5.5
  CONTRIBUTING.md                |  18 ++
  README.md                      |  16 +-
  build.zig                      |   1 +
- resources/bin/omp              |  72 ++++++
- resources/omp/seance.mjs       | 214 ++++++++++++++++
+ resources/bin/omp              |  72 +++++
+ resources/omp/seance.mjs       | 346 +++++++++++++++++++++
  src/config.zig                 |   9 +
  src/ctl.zig                    |  22 +-
  src/default_config.toml        |   1 +
  src/pane.zig                   |   7 +-
  src/settings.zig               |   4 +
- tests/omp_extension.test.mjs   | 328 +++++++++++++++++++++++++
+ tests/omp_extension.test.mjs   | 544 +++++++++++++++++++++++++++++++++
  tests/test_antigravity_pane.py |  22 +-
- tests/test_omp.py              | 432 +++++++++++++++++++++++++++++++++
- 13 files changed, 1138 insertions(+), 8 deletions(-)
+ tests/test_omp.py              | 432 ++++++++++++++++++++++++++
+ 13 files changed, 1486 insertions(+), 8 deletions(-)
  create mode 100755 resources/bin/omp
  create mode 100644 resources/omp/seance.mjs
  create mode 100644 tests/omp_extension.test.mjs
@@ -354,14 +354,22 @@ index 0000000..2a6d86b
 +exit "$rc"
 diff --git a/resources/omp/seance.mjs b/resources/omp/seance.mjs
 new file mode 100644
-index 0000000..6e6f2c6
+index 0000000..d1b89d1
 --- /dev/null
 +++ b/resources/omp/seance.mjs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,346 @@
 +import { execFile } from "node:child_process";
 +
 +// omp caps session_shutdown handlers at 2 s.
 +const SHUTDOWN_BUDGET_MS = 1500;
++// How long after /new or /resume starts to look whether the old run stopped.
++const SWITCH_SETTLE_MS = 1000;
++// After an unfinished run, poll for omp to settle; while only omp's own
++// streaming keeps it busy, give up after 30 s.
++const SETTLE_POLL_MS = 200;
++const SETTLE_TRIES = 150;
++// How long a scheduled continuation gets to start before the pane goes idle.
++const CONTINUE_GRACE_MS = 2000;
 +const NEEDS_INPUT = { hook: "pre-tool-use", payload: { tool_name: "Needs input" } };
 +// The fields Séance labels tool calls with; file contents and edits stay in omp.
 +const LABEL_FIELDS = ["path", "file_path", "command", "pattern", "query", "description"];
@@ -388,9 +396,25 @@ index 0000000..6e6f2c6
 +    });
 +  }
 +
++  // While a plan review waits for the user, it outranks every other status:
++  // a background job's turn, its completion, or an idle compaction can run
++  // behind the open review, and the pane must still say Needs input.
 +  function enqueue(command, payload = {}) {
 +    queue = queue.then(() => hook(command, payload)).catch(() => {});
++    if (payload !== NEEDS_INPUT.payload && command !== "notification" && command !== "session-end" && reviewOpen()) {
++      queue = queue.then(() => hook(NEEDS_INPUT.hook, NEEDS_INPUT.payload)).catch(() => {});
++    }
 +    return queue;
++  }
++
++  // Plan mode ends its turn before opening the review. The review stays open
++  // until omp stops reporting it as pending (the user chose) and is finished
++  // by plan_review_resolved; it lives outside `inflight`, which each run resets.
++  let review;
++  function reviewOpen() {
++    if (!review) return false;
++    const pending = review.ctx.getPendingPlanReview;
++    return typeof pending === "function" ? pending.call(review.ctx)?.reviewId === review.id : true;
 +  }
 +
 +  // omp runs independent tool calls concurrently and emits every tool_call
@@ -431,8 +455,17 @@ index 0000000..6e6f2c6
 +
 +  on("session_start", () => quietNativeNotifications(pi));
 +
++  // Bumped by every run start and end and by a completed session switch, so a
++  // later check can tell whether something newer already set the status.
++  let epoch = 0;
++
 +  on("agent_start", () => {
++    epoch++;
 +    inflight.clear();
++    // A completion still held for the previous run is moot once a new run
++    // starts; its agent_end may arrive late (other extensions run first).
++    pendingStop = undefined;
++    retrying = false;
 +    enqueue("prompt-submit");
 +  });
 +
@@ -482,29 +515,124 @@ index 0000000..6e6f2c6
 +  // completion waits for the agent_end that follows and is dropped when that
 +  // says willContinue. The handler must resolve to undefined; { continue: true }
 +  // would start another turn.
++  //
++  // omp hands agent_end to extensions without waiting for them, so a slow
++  // extension ahead of this one can deliver an end after the next run began.
++  // A held completion therefore keeps its run's final message object: omp
++  // passes session_stop and the matching agent_end the same message objects,
++  // so an end whose messages do not include it belongs to another run and
++  // leaves the completion alone.
 +  let pendingStop;
 +  on("session_stop", (event, ctx) => {
 +    inflight.clear();
-+    pendingStop = { cwd: ctx.cwd, last_assistant_message: lastAssistantText(event) };
++    pendingStop = {
++      payload: { cwd: ctx.cwd, last_assistant_message: lastAssistantText(event) },
++      last: lastMessage(event),
++    };
 +  });
 +
-+  // A final agent_end without a session_stop is a run that did not finish:
-+  // omp skips session_stop for aborts (Esc) and for errors mid tool batch.
-+  on("agent_end", (event) => {
-+    if (event.willContinue) {
-+      pendingStop = undefined;
-+      return;
-+    }
-+    const stop = pendingStop;
++  on("agent_end", (event, ctx) => {
++    const held = pendingStop;
++    if (held && held.last !== undefined && Array.isArray(event.messages) && !event.messages.includes(held.last)) return;
++    epoch++;
 +    pendingStop = undefined;
-+    if (stop) enqueue("stop", stop);
-+    else idle();
++    if (event.willContinue) return idleWhenSettled(ctx, CONTINUE_GRACE_MS);
++    if (held) return enqueue("stop", held.payload);
++    idleWhenSettled(ctx, 0);
 +  });
++
++  let retrying = false;
++  on("auto_retry_start", () => { retrying = true; });
++  on("auto_retry_end", () => { retrying = false; });
++
++  on("plan_review_requested", (event, ctx) => {
++    epoch++;
++    review = { id: event.reviewId, ctx };
++    enqueue("notification", { notification_type: "input", message: `Review plan: ${event.title || "plan"}` });
++  });
++
++  // "Approve and compact context" compacts behind the still-open overlay,
++  // after the choice is made, so show the work as Running.
++  on("session_before_compact", () => {
++    if (!review || reviewOpen()) return;
++    epoch++;
++    enqueue("state", { state: "Running" });
++  });
++
++  // Resolved means the overlay closed: an approved plan starts its turn within
++  // the continuation grace, a dismissed one settles to Idle.
++  on("plan_review_resolved", (event, ctx) => {
++    if (review?.id !== event.reviewId) return;
++    review = undefined;
++    epoch++;
++    if (inflight.size) showInflight();
++    else idleWhenSettled(ctx, CONTINUE_GRACE_MS);
++  });
++
++  // Automatic compaction while omp is otherwise idle runs a model call after
++  // the turn already completed. Compaction inside a run is covered by that
++  // run's own events.
++  let compacting = false;
++  on("auto_compaction_start", (event, ctx) => {
++    if (ctx.isIdle?.() === false) return;
++    compacting = true;
++    epoch++;
++    enqueue("state", { state: "Running" });
++  });
++
++  on("auto_compaction_end", (event, ctx) => {
++    if (!compacting) return;
++    compacting = false;
++    epoch++;
++    idleWhenSettled(ctx, CONTINUE_GRACE_MS);
++  });
++
++  // A run can stop without finishing: omp skips session_stop for aborts (Esc)
++  // and errors mid tool batch, and a scheduled continuation (retry,
++  // compaction, todo reminder) or background-work wake can be cancelled
++  // without ever starting. omp is still streaming while a run's prompt unwinds
++  // (isIdle() is false at an error's agent_end, true at an abort's), so wait
++  // until it is idle, nothing is queued or retrying, and no background job is
++  // running or awaiting delivery, then go idle without a notification. A
++  // continuation gets `grace` ms to start first. Anything newer (a run start
++  // or end, a switch) cancels the wait; a wait that sees only omp streaming
++  // gives up after SETTLE_TRIES polls.
++  function idleWhenSettled(ctx, grace) {
++    const seen = epoch;
++    const from = Date.now();
++    const later = typeof ctx.setTimeout === "function" ? ctx.setTimeout.bind(ctx) : setTimeout;
++    let tries = 0;
++    const check = () => {
++      if (shuttingDown || epoch !== seen) return;
++      const jobs = ctx.getAsyncJobSnapshot?.();
++      const background = (jobs?.running?.length ?? 0) > 0 || (jobs?.delivery?.queued ?? 0) > 0;
++      const busy = background || retrying || ctx.hasPendingMessages?.() === true || ctx.isIdle?.() === false;
++      if (Date.now() - from >= grace && !busy) return idle();
++      if (background || ++tries < SETTLE_TRIES) later(check, SETTLE_POLL_MS)?.unref?.();
++    };
++    check();
++  }
 +
 +  // /new and /resume abort the running turn after detaching its listeners, so
 +  // that run never reports an agent_end. /fork keeps the run going.
 +  on("session_switch", (event) => {
-+    if (event.reason === "new" || event.reason === "resume") idle();
++    if (event.reason === "new" || event.reason === "resume") {
++      epoch++;
++      idle();
++    }
++  });
++
++  // A switch that fails after omp aborted the run (a broken session file)
++  // emits no session_switch, so look again shortly after it begins. A switch
++  // another extension vetoes keeps the run streaming and is left alone.
++  on("session_before_switch", (event, ctx) => {
++    if (event.reason !== "new" && event.reason !== "resume") return;
++    const seen = epoch;
++    const later = typeof ctx.setTimeout === "function" ? ctx.setTimeout.bind(ctx) : setTimeout;
++    const timer = later(() => {
++      if (!shuttingDown && epoch === seen && ctx.isIdle?.() !== false) idle();
++    }, SWITCH_SETTLE_MS);
++    timer?.unref?.();
 +  });
 +
 +  on("session_shutdown", async () => {
@@ -545,6 +673,10 @@ index 0000000..6e6f2c6
 +    .filter((block) => block?.type === "text" && typeof block.text === "string")
 +    .map((block) => block.text)
 +    .join("");
++}
++
++function lastMessage(event) {
++  return Array.isArray(event.messages) ? event.messages.at(-1) : undefined;
 +}
 +
 +function lastAssistantText(event) {
@@ -740,10 +872,10 @@ index 456abcb..baaa180 100644
      saveAndReload();
 diff --git a/tests/omp_extension.test.mjs b/tests/omp_extension.test.mjs
 new file mode 100644
-index 0000000..9f90b2f
+index 0000000..5dcc73e
 --- /dev/null
 +++ b/tests/omp_extension.test.mjs
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,544 @@
 +import test from 'node:test';
 +import assert from 'node:assert/strict';
 +import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
@@ -854,12 +986,14 @@ index 0000000..9f90b2f
 +  await f.emit('tool_call', { toolName: 'edit', toolCallId: 'c', input: { input: 'intro\n[src/main.zig#1A2B]\nPUT 3:\n+x' } });
 +  await f.emit('tool_result', { toolCallId: 'c' });
 +  const reply = "Done: 'quoted' $(touch /tmp/never) `literal`";
-+  await f.emit('session_stop', { messages: [
++  // omp passes session_stop and its agent_end the same messages.
++  const messages = [
 +    { role: 'assistant', content: [{ type: 'text', text: 'earlier' }] },
 +    { role: 'user', content: [{ type: 'text', text: 'question' }] },
 +    { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: reply }] },
-+  ] });
-+  await f.emit('agent_end', { messages: [] });
++  ];
++  await f.emit('session_stop', { messages });
++  await f.emit('agent_end', { messages });
 +  assert.deepEqual(await f.events(8), [
 +    ['prompt-submit', {}],
 +    ['pre-tool-use', { tool_name: 'read', tool_input: { path: '/a/b.txt' } }],
@@ -955,17 +1089,20 @@ index 0000000..9f90b2f
 +  assert.deepEqual(seen.at(-1), ['post-tool-use', {}]);
 +});
 +
++// omp passes a run's session_stop and agent_end the same message objects.
++const run = (text, n) => ({ messages: Array.from({ length: n }, (_, i) =>
++  ({ role: i % 2 ? 'assistant' : 'user', content: [{ type: 'text', text: i === n - 1 ? text : 'x' }] })) });
++
 +test('a stop that another extension continues is not a completion', async (t) => {
 +  const f = await fixture(t);
-+  const said = (text) => ({ messages: [{ role: 'assistant', content: [{ type: 'text', text }] }] });
++  const first = run('first', 2);
++  const continued = { messages: [...first.messages, ...run('continued', 2).messages] };
 +  await f.emit('agent_start');
-+  await f.emit('session_stop', said('first'));
-+  await f.emit('agent_end', { messages: [], willContinue: true });
++  await f.emit('session_stop', first);
++  await f.emit('agent_end', { ...first, willContinue: true });
 +  await f.emit('agent_start');
-+  await f.emit('session_stop', said('continued'));
-+  await f.emit('agent_end', { messages: [] });
-+  // Compaction, todo reminders and async waits settle with willContinue and no session_stop.
-+  await f.emit('agent_end', { messages: [], willContinue: true });
++  await f.emit('session_stop', continued);
++  await f.emit('agent_end', continued);
 +  assert.deepEqual(await f.events(3), [
 +    ['prompt-submit', {}],
 +    ['prompt-submit', {}],
@@ -973,6 +1110,132 @@ index 0000000..9f90b2f
 +  ]);
 +  await new Promise((resolve) => setTimeout(resolve, 300));
 +  assert.equal((await f.read()).length, 3);
++});
++
++test('a continuation that never starts goes idle after a grace period', async (t) => {
++  const f = await fixture(t);
++  await f.emit('agent_start');
++  await f.emit('agent_end', { ...run('x', 2), willContinue: true });
++  // A scheduled continuation that does start cancels it.
++  const g = await fixture(t);
++  await g.emit('agent_end', { ...run('x', 2), willContinue: true });
++  await new Promise((resolve) => setTimeout(resolve, 500));
++  await g.emit('agent_start');
++  await new Promise((resolve) => setTimeout(resolve, 1500));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)), ['prompt-submit'], 'not before the grace ends');
++  assert.deepEqual(await f.events(2), [['prompt-submit', {}], ['state', { state: 'Idle' }]]);
++  assert.deepEqual((await g.read()).map((e) => e.args.at(-1)), ['prompt-submit']);
++});
++
++test('a background wait stays Running while jobs run, then goes idle when they drain', async (t) => {
++  const f = await fixture(t);
++  let running = [{ id: 'job' }];
++  const ctx = { hasUI: true, cwd: f.cwd, isIdle: () => true, getAsyncJobSnapshot: () => ({ running, delivery: { queued: 0 } }) };
++  await f.emit('agent_start');
++  await f.emit('agent_end', { ...run('x', 2), willContinue: true, awaitingAsyncWork: true }, ctx);
++  await new Promise((resolve) => setTimeout(resolve, 2400));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)), ['prompt-submit'], 'job still running');
++  running = [];
++  assert.deepEqual((await f.events(2)).at(-1), ['state', { state: 'Idle' }]);
++});
++
++test('an open plan review needs input; resolving it starts the plan or settles idle', async (t) => {
++  const notification = ['notification', { notification_type: 'input', message: 'Review plan: Ship it' }];
++  // Plan mode aborts its turn, then opens the review.
++  const f = await fixture(t);
++  await f.emit('agent_start');
++  await f.emit('agent_end', { messages: [] });
++  await f.emit('plan_review_requested', { reviewId: 'r', title: 'Ship it' });
++  await new Promise((resolve) => setTimeout(resolve, 2400));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)).at(-1), 'notification', 'still waiting after the grace');
++  // Approved: the plan's turn starts within the grace, so no Idle in between.
++  await f.emit('plan_review_resolved', { reviewId: 'r', choice: 'approve' });
++  await f.emit('agent_start');
++  await new Promise((resolve) => setTimeout(resolve, 2400));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)).slice(-2), ['notification', 'prompt-submit']);
++
++  // Dismissed: nothing starts, so it settles to Idle once.
++  const g = await fixture(t);
++  await g.emit('plan_review_requested', { reviewId: 'r', title: 'Ship it' });
++  await g.emit('plan_review_resolved', { reviewId: 'r', choice: undefined });
++  await g.emit('plan_review_resolved', { reviewId: 'r', choice: undefined });
++  assert.deepEqual(await g.events(2), [notification, ['state', { state: 'Idle' }]]);
++});
++
++test('an unanswered plan review stays Needs input through background turns and idle compaction', async (t) => {
++  const needsInput = ['pre-tool-use', { tool_name: 'Needs input' }];
++  const reviewing = (f, state) => ({ hasUI: true, cwd: f.cwd, isIdle: () => true,
++    getPendingPlanReview: () => (state.open ? { reviewId: 'r' } : undefined) });
++  const f = await fixture(t);
++  const state = { open: true };
++  const ctx = reviewing(f, state);
++  await f.emit('plan_review_requested', { reviewId: 'r', title: 'Ship it' }, ctx);
++  // A background job's delivery wakes the session behind the open review.
++  const bg = run('background result handled', 2);
++  await f.emit('agent_start', {}, ctx);
++  await f.emit('session_stop', bg, ctx);
++  await f.emit('agent_end', bg, ctx);
++  // Opt-in idle compaction fires while the user is still reading.
++  await f.emit('auto_compaction_start', {}, ctx);
++  await f.emit('auto_compaction_end', {}, ctx);
++  await new Promise((resolve) => setTimeout(resolve, 2400));
++  const seen = (await f.read()).map((e) => [e.args.at(-1), e.payload]);
++  assert.equal(seen.filter(([hook]) => hook === 'notification').length, 1, JSON.stringify(seen));
++  assert.deepEqual(seen.at(-1), needsInput, JSON.stringify(seen));
++  // Answered and closed with nothing to run: one Idle, no Needs input after it.
++  state.open = false;
++  await f.emit('plan_review_resolved', { reviewId: 'r', choice: undefined }, ctx);
++  await new Promise((resolve) => setTimeout(resolve, 2400));
++  assert.deepEqual((await f.read()).map((e) => [e.args.at(-1), e.payload]).slice(seen.length), [['state', { state: 'Idle' }]]);
++});
++
++test('"approve and compact" shows Running while it compacts behind the review', async (t) => {
++  const f = await fixture(t);
++  const state = { open: true };
++  const ctx = { hasUI: true, cwd: f.cwd, isIdle: () => true,
++    getPendingPlanReview: () => (state.open ? { reviewId: 'r' } : undefined) };
++  await f.emit('plan_review_requested', { reviewId: 'r', title: 'Ship it' }, ctx);
++  // Compaction before the choice is made does not override the review.
++  await f.emit('session_before_compact', {}, ctx);
++  state.open = false;
++  await f.emit('session_before_compact', {}, ctx);
++  await f.emit('plan_review_resolved', { reviewId: 'r', choice: 'approve_compact' }, ctx);
++  await f.emit('agent_start', {}, ctx);
++  await new Promise((resolve) => setTimeout(resolve, 2400));
++  assert.deepEqual((await f.read()).map((e) => [e.args.at(-1), e.payload]), [
++    ['notification', { notification_type: 'input', message: 'Review plan: Ship it' }],
++    ['state', { state: 'Running' }],
++    ['prompt-submit', {}],
++  ]);
++});
++
++test('automatic compaction while idle shows Running until it settles', async (t) => {
++  const f = await fixture(t);
++  await f.emit('auto_compaction_start', {}, { hasUI: true, cwd: f.cwd, isIdle: () => true });
++  await new Promise((resolve) => setTimeout(resolve, 300));
++  await f.emit('auto_compaction_end', {});
++  assert.deepEqual(await f.events(2), [['state', { state: 'Running' }], ['state', { state: 'Idle' }]]);
++  // Compaction inside a run is left to that run's own events.
++  const g = await fixture(t);
++  await g.emit('auto_compaction_start', {}, { hasUI: true, cwd: g.cwd, isIdle: () => false });
++  await g.emit('auto_compaction_end', {});
++  await new Promise((resolve) => setTimeout(resolve, 300));
++  assert.deepEqual(await g.read(), []);
++});
++
++test('a newer continuation end cancels an older pending idle check', async (t) => {
++  const f = await fixture(t);
++  let streaming = true;
++  const ctx = { hasUI: true, cwd: f.cwd, isIdle: () => !streaming };
++  await f.emit('agent_start');
++  // A stale end without a completion starts polling while another run streams...
++  await f.emit('agent_end', { messages: [] }, ctx);
++  // ...then that run pauses for a continuation, and omp is briefly idle.
++  await f.emit('agent_end', { ...run('x', 2), willContinue: true }, ctx);
++  streaming = false;
++  await new Promise((resolve) => setTimeout(resolve, 1000));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)), ['prompt-submit'], 'the old poll must not idle inside the grace');
++  assert.deepEqual(await f.events(2), [['prompt-submit', {}], ['state', { state: 'Idle' }]]);
 +});
 +
 +test('an aborted or failed run goes idle without a completion', async (t) => {
@@ -1010,6 +1273,91 @@ index 0000000..9f90b2f
 +    ['state', { state: 'Idle' }],
 +  ]);
 +  assert.ok(!seen.some(([hook]) => hook === 'stop'), JSON.stringify(seen));
++});
++
++test('a late agent_end from the previous run leaves the new run alone', async (t) => {
++  const f = await fixture(t);
++  const streaming = { hasUI: true, cwd: f.cwd, isIdle: () => false };
++  // Run A completes, but its agent_end is delayed past run B's start.
++  await f.emit('agent_start');
++  await f.emit('session_stop', { messages: [] });
++  await f.emit('agent_start');
++  await f.emit('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'sleep 30' } });
++  await f.emit('agent_end', { messages: [] }, streaming);
++  // An aborted run's late end while B streams is dropped as well.
++  await f.emit('agent_end', { messages: [] }, streaming);
++  await new Promise((resolve) => setTimeout(resolve, 300));
++  assert.deepEqual((await f.read()).map((e) => e.args.at(-1)), ['prompt-submit', 'prompt-submit', 'pre-tool-use']);
++  // B's own abort, with omp idle, still goes idle.
++  await f.emit('agent_end', { messages: [] }, { hasUI: true, cwd: f.cwd, isIdle: () => true });
++  assert.deepEqual((await f.events(4)).at(-1), ['state', { state: 'Idle' }]);
++});
++
++test('an error end goes idle once omp settles, unless a newer run starts first', async (t) => {
++  // An error mid tool batch skips session_stop, and omp is still streaming at its agent_end.
++  const settling = () => {
++    let streaming = true;
++    setTimeout(() => { streaming = false; }, 500);
++    return { isIdle: () => !streaming };
++  };
++  const f = await fixture(t);
++  await f.emit('agent_start');
++  await f.emit('agent_end', { messages: [] }, { hasUI: true, cwd: f.cwd, ...settling() });
++  assert.deepEqual(await f.events(2), [['prompt-submit', {}], ['state', { state: 'Idle' }]]);
++
++  const g = await fixture(t);
++  await g.emit('agent_end', { messages: [] }, { hasUI: true, cwd: g.cwd, ...settling() });
++  await g.emit('agent_start');
++  await new Promise((resolve) => setTimeout(resolve, 900));
++  assert.deepEqual((await g.read()).map((e) => e.args.at(-1)), ['prompt-submit']);
++});
++
++test('a delayed end from an earlier run never takes the next run\'s completion', async (t) => {
++  for (const willContinue of [true, false]) {
++    const f = await fixture(t);
++    // Both runs have two messages: first turns on each side of a /new.
++    const a = run('A', 2);
++    const b = run('B', 2);
++    await f.emit('agent_start');
++    await f.emit('session_stop', a);
++    await f.emit('session_switch', { reason: 'new' });
++    // A's agent_end is held back by a slow extension until B has stopped too.
++    await f.emit('agent_start');
++    await f.emit('session_stop', b);
++    await f.emit('agent_end', { ...a, willContinue });
++    await f.emit('agent_end', b);
++    // A later handler appending to the shared array does not unmatch the run.
++    const c = run('C', 2);
++    await f.emit('agent_start');
++    await f.emit('session_stop', c);
++    await f.emit('agent_end', { messages: [...c.messages, { role: 'custom' }] });
++    assert.deepEqual((await f.events(6)).filter(([hook]) => hook !== 'prompt-submit'), [
++      ['state', { state: 'Idle' }],
++      ['stop', { cwd: f.cwd, last_assistant_message: 'B' }],
++      ['stop', { cwd: f.cwd, last_assistant_message: 'C' }],
++    ], `A willContinue=${willContinue}`);
++    await new Promise((resolve) => setTimeout(resolve, 300));
++    assert.equal((await f.read()).length, 6, `no Idle after the completions (A willContinue=${willContinue})`);
++  }
++});
++
++test('a /new or /resume that fails after aborting the run still goes idle; a vetoed one does not', async (t) => {
++  const idleCtx = (f) => ({ hasUI: true, cwd: f.cwd, isIdle: () => true });
++  const failed = await fixture(t);
++  await failed.emit('agent_start');
++  await failed.emit('session_before_switch', { reason: 'resume' }, idleCtx(failed));
++  assert.deepEqual(await failed.events(2), [['prompt-submit', {}], ['state', { state: 'Idle' }]]);
++
++  const vetoed = await fixture(t);
++  await vetoed.emit('agent_start');
++  await vetoed.emit('session_before_switch', { reason: 'new' }, { hasUI: true, cwd: vetoed.cwd, isIdle: () => false });
++  // A successful switch idles at once; its delayed check must not repeat it.
++  const ok = await fixture(t);
++  await ok.emit('session_before_switch', { reason: 'new' }, idleCtx(ok));
++  await ok.emit('session_switch', { reason: 'new' });
++  await new Promise((resolve) => setTimeout(resolve, 1400));
++  assert.deepEqual((await vetoed.read()).map((e) => e.args.at(-1)), ['prompt-submit']);
++  assert.deepEqual((await ok.read()).map((e) => e.args.at(-1)), ['state']);
 +});
 +
 +test('nothing reaches Séance after shutdown starts', async (t) => {

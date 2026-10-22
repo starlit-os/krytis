@@ -3402,6 +3402,55 @@ What was non-obvious (omp 18.4.3–18.12.3, seance 0.1.7):
 - **Ignore everything once `session_shutdown` starts.** omp emits it before cancelling
   post-prompt work, and a late `agent_end` would then send a completion after `session-end`
   cleared the row.
+- **The extension's `agent_end` can arrive after the next run started.** omp publishes the
+  run's end, then fires the extension `agent_end` without awaiting it
+  (`session/agent-session.ts:5367-5404`). Extensions run in load order, and a slow earlier
+  handler can hold ours past the next `agent_start`, even past the next run's `session_stop`.
+  So a held completion is bound to its run by **object identity**: omp passes `session_stop`
+  the run's `activeMessages` and the matching `agent_end` a shallow copy of the same array
+  (`session/agent-session.ts:4864-4869`, `:5373-5404`). The extension keeps the final message
+  object and accepts only an end whose `messages` include it. A message *count* is not enough:
+  two first turns on either side of a `/new` both have two messages. `agent_start` also drops
+  a completion still held for the previous run.
+- **`ctx.isIdle()` is no "this run is over" signal.** It is `!session.isStreaming`, and
+  streaming lasts until the prompt unwinds. On omp 18.12.3 it is `false` at a normal final
+  `agent_end`, at `session_stop` and at an error's `agent_end`, but `true` at an abort's
+  `agent_end` and at `session_switch` (probe extension, real omp). Gating completions on it
+  would drop every one, and checking it once at an unfinished run's `agent_end` left error
+  endings stuck on Running.
+- **A non-final `agent_end` has no guaranteed follow-up.** omp can cancel a scheduled
+  retry, compaction or todo continuation before its `agent_start`, and background work can
+  drain without a wake; omp's own TUI runs a settle watcher for this
+  (`modes/controllers/event-controller.ts` `#finishWhenRunSettles`). The extension does the
+  same after every accepted `agent_end` that is not a completion: it polls (200 ms) until
+  `ctx.isIdle()`, no `ctx.hasPendingMessages()`, no auto-retry in progress and no
+  `ctx.getAsyncJobSnapshot()` job running or awaiting delivery, then goes Idle silently. A
+  `willContinue` end first gives the continuation 2 s to start. Every accepted run start or
+  end and every switch bumps an epoch that cancels older watchers. A watcher waiting only on
+  omp's streaming gives up after 30 s; one waiting on background jobs keeps going.
+- **Plan review and idle compaction happen outside a turn.** Plan mode aborts its turn
+  before opening the review (`modes/interactive-mode.ts`), so the pane settled to Idle while
+  omp waited for the user. An open review must **outrank every other status**, and it can't
+  live with the per-run tool state: a background job's delivery starts a new turn behind the
+  open review, and opt-in idle compaction can run during it, and each of those reset or
+  overwrote the status. The extension keeps the review separately, asks
+  `ctx.getPendingPlanReview()` whether it is still unanswered, and while it is, follows every
+  status change with Needs input (one notification in total). `plan_review_resolved` means the
+  overlay closed, not that a choice was made: "Approve and compact context" compacts behind
+  the overlay after the choice, so `session_before_compact` with the review no longer pending
+  shows Running. On close, an approved plan's turn starts within the continuation grace; a
+  dismissed one settles to Idle. Opt-in idle auto-compaction (`auto_compaction_start`/`_end`
+  while `ctx.isIdle()`) shows Running; compaction inside a turn is left to the turn's events.
+- **Known limits that need omp support.** `ExtensionContext` (omp 18.12.3) exposes neither
+  `hasAdmittedSubmission` nor pending extension UI requests. So the watcher can idle while omp
+  preprocesses an accepted prompt for more than the 2 s grace after a continuation end (slash
+  handling, image normalization), or while a *later* extension's `agent_end` handler holds a
+  dialog open. Both are narrow; fixing them means asking omp for that state.
+- **A `/new` or `/resume` can abort the run and then fail.** omp aborts the old run after
+  `session_before_switch` and emits `session_switch` only on success; a broken session file
+  rolls back silently. The extension checks 1 s after `session_before_switch` (via
+  `ctx.setTimeout`) and idles if omp is idle and nothing newer happened. A switch vetoed by
+  another extension keeps streaming and is left alone.
 - **Known limit: an `ask` that another extension blocks still notifies.** For extension-run
   tools omp emits `tool_call`, `tool_execution_start`, then `tool_execution_end` with no
   `tool_result` when a later `tool_call` handler blocks (observed on omp 18.12.3 with a probe
