@@ -1,0 +1,3 @@
+[tasks."tailscale:setup"]
+run = "/etc/mise/tasks/tailscale/setup"
+description = "Opt in to Tailscale: enable tailscaled, make you its operator, and sign in"

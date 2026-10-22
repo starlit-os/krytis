@@ -36,6 +36,9 @@ depends:
   - config/ssh-auth-policy.bst
   - freedesktop-sdk.bst:components/wpa-supplicant.bst
   - core/pangolin-cli.bst
+  # Tailscale, shipped disabled; `mise tailscale:setup` opts a user in (#1384).
+  - core/tailscale.bst
+  - config/tailscale-setup.bst
 
   # ── Network config ─────────────────────────────────────────────────
   - freedesktop-sdk.bst:vm/config/networkd.bst

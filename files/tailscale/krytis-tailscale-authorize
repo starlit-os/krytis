@@ -1,0 +1,99 @@
+#!/usr/bin/python3 -I
+"""Opt the invoking sudo user in to Tailscale and make them its operator.
+
+Run only as `sudo /usr/libexec/krytis-tailscale-authorize`, by
+`mise tailscale:setup` (/etc/mise/tasks/tailscale/setup). Ported from dakota's
+files/tailscale/dakota-tailscale-authorize (#1384), with three changes:
+
+- the user comes from SUDO_UID, which sudo-rs sets from the authenticated
+  caller and does not let the caller override;
+- tailscaled is enabled as well as started, because krytis ships it disabled
+  and the opt-in has to survive reboots;
+- read/check/set runs under an exclusive lock, so two concurrent setups cannot
+  both see an empty operator and overwrite each other.
+
+It never replaces an operator that belongs to someone else.
+"""
+
+import fcntl
+import http.client
+import json
+import os
+import pwd
+import socket
+import subprocess
+import sys
+import time
+
+SOCKET = "/run/tailscale/tailscaled.sock"
+LOCK = "/run/krytis-tailscale-authorize.lock"
+SYSTEMCTL = "/usr/bin/systemctl"
+TAILSCALE = "/usr/bin/tailscale"
+
+
+class LocalAPI(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(SOCKET)
+
+
+def operator_user(deadline):
+    """OperatorUser from tailscaled's prefs, retrying until the socket answers."""
+    while True:
+        connection = LocalAPI("local-tailscaled.sock", timeout=10)
+        try:
+            connection.request("GET", "/localapi/v0/prefs")
+            response = connection.getresponse()
+            body = response.read()
+            if response.status != 200:
+                raise RuntimeError(f"tailscaled refused the prefs request ({response.status}).")
+            return json.loads(body).get("OperatorUser", "")
+        except (OSError, http.client.HTTPException):
+            if time.monotonic() > deadline:
+                raise RuntimeError("tailscaled did not answer on its socket in time.")
+            time.sleep(1)
+        finally:
+            connection.close()
+
+
+def main():
+    if os.geteuid() != 0 or len(sys.argv) != 1:
+        raise RuntimeError("Run this through `mise tailscale:setup`, without arguments.")
+    try:
+        uid = int(os.environ.get("SUDO_UID", ""))
+    except ValueError:
+        uid = 0
+    if uid <= 0:
+        raise RuntimeError("Run this through sudo as the user who should control Tailscale.")
+    username = pwd.getpwuid(uid).pw_name  # NSS: finds systemd-homed users too
+
+    fd = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        subprocess.run(
+            [SYSTEMCTL, "enable", "--now", "tailscaled.service"], check=True, timeout=90
+        )
+        operator = operator_user(time.monotonic() + 30)
+        if operator and operator != username:
+            raise RuntimeError(
+                f"{operator} already controls Tailscale on this computer. "
+                "Setup will not replace another user's operator assignment."
+            )
+        if operator != username:
+            subprocess.run(
+                [TAILSCALE, "set", f"--operator={username}"], check=True, timeout=30
+            )
+        if operator_user(time.monotonic() + 10) != username:
+            raise RuntimeError("tailscaled did not record the operator change.")
+    finally:
+        os.close(fd)
+    print(f"{username} can now control Tailscale without sudo.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        print(f"krytis-tailscale-authorize: {error}", file=sys.stderr)
+        sys.exit(1)

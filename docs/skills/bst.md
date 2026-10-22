@@ -2525,15 +2525,67 @@ sudo's `#includedir /etc/sudoers.d` (installed by `core/sudo-rs.bst`) reads file
 
 **Fix:** name any narrow NOPASSWD carve-out file so it sorts *after* `wheel` — e.g. `zz-pangolin-cli` instead of `pangolin-cli`. Check this any time a new sudoers.d drop-in grants a permission narrower than an existing group-wide rule; a `zz-` prefix is the cheapest way to guarantee last-match without tracking every other file that might land in `/etc/sudoers.d`.
 
+### A root-only opt-in helper behind plain `sudo` (no sudoers carve-out)
+
+When a privileged one-time step must record *who* asked, such as making a user
+tailscaled's operator, don't scope a NOPASSWD rule the way `core/pangolin-cli.bst` has to.
+Ship a root-only helper and have a system mise task call `sudo <helper>`. The ordinary
+`%wheel` rule (password or FIDO2) is the authorization.
+`files/tailscale/krytis-tailscale-authorize` (#1384, ported from dakota's
+`dakota-tailscale-authorize` helper) shows the parts that matter:
+
+- **Identity from `SUDO_UID`, nothing else.** sudo-rs sets it from the authenticated
+  caller and ignores a caller-supplied value: on krytis (2026-10-22),
+  `env SUDO_UID=4242 SUDO_USER=mallory sudo env` printed `SUDO_UID=60339`,
+  `SUDO_USER=lily`. Refuse uid 0 and any arguments.
+- **Resolve the name through NSS** (`pwd.getpwuid`). krytis users are systemd-homed and
+  absent from `/etc/passwd`, which is what broke pangolin's pure-Go lookup (#915).
+  Tailscale's own lookups fall back to `getent` (tailscale `util/osuser/user.go`), so the
+  operator name resolves on its side too.
+- **Serialize read, check and set under an exclusive `flock`** on a root-owned file in
+  `/run`, and re-read after setting. Otherwise two concurrent setups both see "no operator"
+  and the second silently overwrites the first.
+- **Never replace someone else's assignment.** If the operator is set to another user,
+  stop and say so.
+- **Absolute paths and timeouts** on every subprocess (`/usr/bin/systemctl`,
+  `/usr/bin/tailscale`). The helper runs as root with whatever `PATH` sudo leaves.
+
 ### Systemd service installation
 
 **System services** need three things:
 
 | What | Path | Notes |
 |------|------|-------|
-| Service file | `%{indep-libdir}/systemd/system/<name>.service` | Fix `/usr/sbin` → `/usr/bin`; remove `EnvironmentFile=/etc/default/` lines |
-| Preset file | `%{indep-libdir}/systemd/system-preset/80-<name>.preset` | Content: `enable <name>.service` |
+| Service file | `%{indep-libdir}/systemd/system/<name>.service` | Fix `/usr/sbin` → `/usr/bin`; remove `EnvironmentFile=/etc/default/` lines, then supply what that file defined (§ Vendor unit rewrites below) |
+| Preset file | `%{indep-libdir}/systemd/system-preset/80-<name>.preset` | Content: `enable <name>.service`, or `disable <name>.service` to ship it off. Leaving the file out does **not** mean off (§ The fall-through applies to the package's other units too, not just the template) |
 | Binaries | `%{bindir}` | Never `/usr/sbin` — freedesktop-sdk uses merged-usr |
+
+#### Vendor unit rewrites: replace what the removed `EnvironmentFile` supplied, and assert the result
+
+Deleting `EnvironmentFile=/etc/default/<name>` also deletes the variables it defined.
+Tailscale's unit runs `ExecStart=… --port=${PORT} $FLAGS`, and its
+`tailscaled.defaults` is what set `PORT="41641"` and `FLAGS=""`. dakota shipped the
+rewrite without them for two months (dakota `4940fa6`). Put the defaults back as
+`Environment=` lines right after `[Service]`. Then make the element assert its own output
+(`elements/core/tailscale.bst`): count the lines that must and must not be there, and
+match the exact rewritten `ExecStart`. A `sed` rewrite of someone else's file that no
+longer matches would otherwise ship a unit that cannot start. `grep` is not in
+`runtime-gnu`, so add `components/grep.bst` to `build-depends`. Keep the assertions before
+`%{install-extra}`.
+
+#### Daemons that program netfilter: tell them to use nftables
+
+`/usr/bin/iptables` on krytis is the **legacy** backend: it resolves to
+`xtables-legacy-multi`, and `iptables -V` prints `(legacy)` (fdsdk `components/iptables.bst`,
+checked live 2026-10-22). Podman's netavark meanwhile uses nftables (`table inet netavark`).
+A daemon that picks "iptables" therefore writes into the legacy tables. Those rules are
+invisible to `nft list ruleset`, and the system runs two backends at once. tailscaled
+does exactly that by default (`router: default choosing iptables`), so
+`elements/core/tailscale.bst` sets `Environment=TS_DEBUG_FIREWALL_MODE=nftables`. dakota
+doesn't, and has the same exposure. Check any new netfilter-programming daemon for an
+equivalent knob. `TS_DEBUG_FIREWALL_MODE` is a debug-named variable that upstream could
+rename; the journal line `TS_DEBUG_FIREWALL_MODE set, overriding firewall mode` is how
+to tell it still works.
 
 #### Optional services gated on user-supplied credentials
 

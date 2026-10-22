@@ -21,6 +21,10 @@ aliases:
   proton_me: https://proton.me/
   pypi: https://files.pythonhosted.org/packages/
   qemu: https://download.qemu.org/
+  # Tailscale's own package host. Stable Linux tarballs only; GitHub releases
+  # carry no assets. distsign.pub lives at the host root, not under stable/
+  # (mise/tasks/tailscale-update).
+  tailscale_pkgs: https://pkgs.tailscale.com/stable/
 
   # git aliases
   codeberg: https://codeberg.org/

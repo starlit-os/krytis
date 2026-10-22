@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#MISE description="Opt in to Tailscale: enable tailscaled, make you its operator, and sign in"
+#
+# Shipped by elements/config/tailscale-setup.bst as /etc/mise/tasks/tailscale/setup
+# and declared in /etc/mise/conf.d/tailscale.toml (#1384).
+#
+# tailscaled ships disabled. This is the user's opt-in: the root helper enables
+# it and makes the caller its operator (refusing to replace someone else), then
+# sign-in runs as the user.
+#
+# `tailscale up` prints the sign-in URL and then BLOCKS until the node is
+# Running, so it runs in the background while the URL is read from
+# `tailscale status --json` and opened. It names --operator explicitly: a bare
+# `up` keeps the operator only when $USER equals it (applyImplicitPrefs in
+# tailscale's cmd/tailscale/cli/up.go) and otherwise refuses with "changing
+# settings via 'tailscale up' requires mentioning all non-default flags".
+
+set -euo pipefail
+
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Run this as your own user, not as root: mise tailscale:setup" >&2
+    exit 1
+fi
+me="$(id -un)"
+
+echo "==> Enabling tailscaled and making ${me} its operator (administrator approval needed)"
+sudo /usr/libexec/krytis-tailscale-authorize
+
+field() { # field <BackendState|AuthURL>
+    tailscale status --json 2>/dev/null \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1]) or "")' "$1" \
+        || true
+}
+
+if [ "$(field BackendState)" != "Running" ]; then
+    log="$(mktemp)"
+    tailscale up --operator="${me}" --timeout=5m >"${log}" 2>&1 &
+    up_pid=$!
+    trap 'kill "${up_pid}" 2>/dev/null || true; rm -f "${log}"' EXIT
+    trap 'exit 130' INT TERM
+
+    url=""
+    for _ in $(seq 60); do
+        kill -0 "${up_pid}" 2>/dev/null || break
+        url="$(field AuthURL)"
+        [ -n "${url}" ] && break
+        sleep 1
+    done
+
+    if [ -n "${url}" ]; then
+        case "${url}" in
+            https://*) ;;
+            *) echo "Refusing a sign-in URL that is not https: ${url}" >&2; exit 1 ;;
+        esac
+        echo "==> Sign in to your tailnet: ${url}"
+        if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null; then
+            xdg-open "${url}" >/dev/null 2>&1 || true
+        fi
+        echo "    Waiting for sign-in (5 min). Your tailnet may also require device approval."
+    fi
+
+    if ! wait "${up_pid}"; then
+        echo "tailscale up failed:" >&2
+        cat "${log}" >&2
+        exit 1
+    fi
+fi
+
+echo
+tailscale status
+echo
+echo "Optional: a Tailscale bar widget for noctalia is in its community plugins"
+echo "(davemhammer/tailscale). Add it from noctalia's plugin settings."
