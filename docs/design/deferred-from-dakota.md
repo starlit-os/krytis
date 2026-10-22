@@ -26,7 +26,7 @@ Zirconium-hawaii does NOT use any of these — they are dakota/Bluefin-specific 
 | `efibootmgr.bst` | **ported** | `elements/core/efibootmgr.bst`. |
 | `tealdeer` | **covered differently** | not a BST element — `elements/config/mise-aliases.bst` (#153) exposes it as a `[tool_alias]` so a user can `mise use tealdeer`. |
 | `bootc-install-config.bst` | still deferred | Install-time configuration for `bootc install`. |
-| `tailscale.bst` | still deferred | VPN. |
+| `tailscale.bst` | **ported** | `elements/core/tailscale.bst` + `elements/config/tailscale-setup.bst` (#1384). Ships **disabled**; users opt in with `mise tailscale:setup`. Differs from dakota in the preset, firewall mode, setup UI and update verification. The GUI setup is #1385. Details in `docs/skills/dakota.md` § Tailscale: what krytis took from dakota and where it diverges (#1384). |
 | `network.bst` | still deferred | Network config drop-ins. |
 | `firstboot-date.bst` / `firstboot-services.bst` | **superseded** | krytis ships its own first-boot wizard instead — `files/systemd-firstboot/krytis-firstboot.service` (#487), see `docs/design/first-boot-setup.md`. |
 | `fzf.bst` | still deferred | Fuzzy finder. |

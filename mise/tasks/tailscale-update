@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#MISE description="Update core/tailscale.bst to the latest stable release, verifying .sha256 and the distsign signature"
+#MISE hide=true
+#USAGE flag "--verify-current" help="Verify the pinned tarballs (sha256 + distsign) against the element's refs; never edits"
+#
+# Tailscale publishes Linux tarballs only on pkgs.tailscale.com (GitHub
+# releases have no assets). Each tarball has a .sha256 and a distsign .sig:
+#   .sig            = ed25519( BLAKE2s-256(file) || uint64_le(len(file)) )
+#   distsign.pub    = PEM bundle of raw ed25519 signing keys, at the HOST ROOT
+#   distsign.pub.sig= ed25519(distsign.pub) by one of the root keys pinned in
+#                     mise/lib/tailscale-distsign-roots.pem
+# (tailscale/tailscale clientupdate/distsign/distsign.go). Nothing is written
+# to the element unless both architectures pass both checks, and the new refs
+# are computed from the very bytes that were verified.
+#
+# A scheduled run on an unchanged version exits before verifying anything, so
+# --verify-current exists to give positive evidence for the pinned refs (run it
+# whenever the element or the pinned roots are edited by hand).
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+ELEMENT="elements/core/tailscale.bst"
+ROOTS="mise/lib/tailscale-distsign-roots.pem"
+# Fixed on purpose: never derived from the feed or from include/aliases.yml.
+DIST_BASE="https://pkgs.tailscale.com"
+ASSET_BASE="https://pkgs.tailscale.com/stable"
+UA="krytis/1.0 (+https://github.com/starlit-os/krytis)"
+
+VERIFY_CURRENT="${usage_verify_current:-false}"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+fetch() { curl -fsSL --retry 3 --retry-delay 10 -A "$UA" "$1" -o "$2"; }
+
+for tool in curl openssl python3 sha256sum; do
+    command -v "$tool" >/dev/null || die "$tool not found"
+done
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# ── 1. Current pin, from url: lines only ────────────────────────────────────
+# A stale version in a comment once broke tarball-update's whole-file grep
+# (docs/skills/ci-runner.md § `track-bst-sources.yml` per-job gotchas).
+cur_amd64="" cur_arm64="" n_urls=0
+while read -r u; do
+    n_urls=$((n_urls + 1))
+    [[ "$u" =~ ^tailscale_pkgs:tailscale_([0-9]+\.[0-9]+\.[0-9]+)_(amd64|arm64)\.tgz$ ]] \
+        || die "unexpected url: line in ${ELEMENT}: ${u}"
+    case "${BASH_REMATCH[2]}" in
+        amd64) cur_amd64="${BASH_REMATCH[1]}" ;;
+        arm64) cur_arm64="${BASH_REMATCH[1]}" ;;
+    esac
+done < <(grep -oP '^\s*url:\s*\K\S+' "$ELEMENT")
+[ "$n_urls" -eq 2 ] || die "expected exactly 2 url: lines in ${ELEMENT}, found ${n_urls}"
+[ -n "$cur_amd64" ] && [ "$cur_amd64" = "$cur_arm64" ] \
+    || die "amd64 (${cur_amd64:-none}) and arm64 (${cur_arm64:-none}) pins differ"
+CUR="$cur_amd64"
+echo "==> Current: ${CUR}"
+
+# ref: that follows the given arch conditional.
+cur_ref() {
+    awk -v want="arch == \"$1\"" 'index($0, want) { f = 1 } f && $1 == "ref:" { print $2; exit }' "$ELEMENT"
+}
+
+# ── 2./3. Target version ─────────────────────────────────────────────────────
+if [ "$VERIFY_CURRENT" = "true" ]; then
+    VER="$CUR"
+    echo "==> Verifying the pinned ${VER} (no edits)"
+else
+    fetch "${ASSET_BASE}/?mode=json" "$TMP/feed.json"
+    read -r f_amd64 f_arm64 < <(python3 - "$TMP/feed.json" <<'PY'
+import json, sys
+t = json.load(open(sys.argv[1])).get("Tarballs") or {}
+print(t.get("amd64") or "-", t.get("arm64") or "-")
+PY
+)
+    re='^tailscale_([0-9]+\.[0-9]+\.[0-9]+)_(amd64|arm64)\.tgz$'
+    [[ "$f_amd64" =~ $re ]] && [ "${BASH_REMATCH[2]}" = amd64 ] || die "feed Tarballs.amd64 is malformed: ${f_amd64}"
+    v_amd64="${BASH_REMATCH[1]}"
+    [[ "$f_arm64" =~ $re ]] && [ "${BASH_REMATCH[2]}" = arm64 ] || die "feed Tarballs.arm64 is malformed: ${f_arm64}"
+    v_arm64="${BASH_REMATCH[1]}"
+    [ "$v_amd64" = "$v_arm64" ] || die "feed versions differ: amd64 ${v_amd64}, arm64 ${v_arm64}"
+    VER="$v_amd64"
+    echo "==> Latest:  ${VER}"
+    if [ "$VER" = "$CUR" ]; then
+        echo "==> Already up to date (${CUR})"
+        exit 0
+    fi
+    newest="$(printf '%s\n%s\n' "$CUR" "$VER" | sort -V | tail -1)"
+    [ "$newest" = "$VER" ] || die "feed version ${VER} is older than the pinned ${CUR}; refusing to downgrade"
+fi
+
+# ── Key handling ─────────────────────────────────────────────────────────────
+# Split PEM blocks with the given label into SubjectPublicKeyInfo DER files
+# (<prefix>N.der) that openssl accepts. Strict: every block must carry exactly
+# the expected label and decode to exactly 32 bytes; with --strict nothing but
+# blocks and blank lines may appear (downloaded bundle); without it, lines
+# outside blocks are ignored (the commented pinned roots file).
+pem_to_der() {
+    python3 - "$@" <<'PY'
+import base64, binascii, sys
+args = sys.argv[1:]
+strict = args[0] == "--strict"
+if strict:
+    args = args[1:]
+label, path, prefix = args
+SPKI = bytes.fromhex("302a300506032b6570032100")
+keys, block = [], None
+for n, line in enumerate(open(path, encoding="ascii"), 1):
+    line = line.strip()
+    if block is None:
+        if line == f"-----BEGIN {label}-----":
+            block = []
+        elif line.startswith("-----"):
+            sys.exit(f"{path}:{n}: unexpected PEM marker {line!r}")
+        elif strict and line:
+            sys.exit(f"{path}:{n}: data outside a PEM block")
+    elif line == f"-----END {label}-----":
+        try:
+            raw = base64.b64decode("".join(block), validate=True)
+        except binascii.Error as e:
+            sys.exit(f"{path}:{n}: bad base64: {e}")
+        if len(raw) != 32:
+            sys.exit(f"{path}:{n}: key is {len(raw)} bytes, want 32")
+        keys.append(raw)
+        block = None
+    elif line.startswith("-----"):
+        sys.exit(f"{path}:{n}: unexpected PEM marker {line!r} inside a block")
+    else:
+        block.append(line)
+if block is not None:
+    sys.exit(f"{path}: unterminated PEM block")
+if not keys:
+    sys.exit(f"{path}: no {label} blocks")
+for i, k in enumerate(keys):
+    open(f"{prefix}{i}.der", "wb").write(SPKI + k)
+PY
+}
+
+# verify_any <message-file> <sig-file> <der-key>...
+verify_any() {
+    local msg="$1" sig="$2" k
+    shift 2
+    [ "$(stat -c %s "$sig")" -eq 64 ] || die "$(basename "$sig") is $(stat -c %s "$sig") bytes, want 64"
+    for k in "$@"; do
+        openssl pkeyutl -verify -pubin -keyform DER -inkey "$k" -rawin \
+            -in "$msg" -sigfile "$sig" >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
+# ── 4. Signing keys, verified against the pinned roots ──────────────────────
+mkdir -p "$TMP/keys"
+pem_to_der "ROOT PUBLIC KEY" "$ROOTS" "$TMP/keys/root" || die "cannot parse ${ROOTS}"
+fetch "${DIST_BASE}/distsign.pub" "$TMP/distsign.pub"
+fetch "${DIST_BASE}/distsign.pub.sig" "$TMP/distsign.pub.sig"
+verify_any "$TMP/distsign.pub" "$TMP/distsign.pub.sig" "$TMP"/keys/root*.der \
+    || die "distsign.pub does not verify against any root in ${ROOTS} (root rotation, or tampering)"
+pem_to_der --strict "SIGNING PUBLIC KEY" "$TMP/distsign.pub" "$TMP/keys/signing" \
+    || die "cannot parse distsign.pub"
+echo "==> Signing-key bundle verified against the pinned roots"
+
+# ── 5. Both tarballs: .sha256 and .sig ───────────────────────────────────────
+declare -A NEW_REF
+for arch in amd64 arm64; do
+    f="tailscale_${VER}_${arch}.tgz"
+    echo "==> ${f}"
+    fetch "${ASSET_BASE}/${f}" "$TMP/${f}"
+    fetch "${ASSET_BASE}/${f}.sha256" "$TMP/${f}.sha256"
+    fetch "${ASSET_BASE}/${f}.sig" "$TMP/${f}.sig"
+
+    want="$(tr -d '\n' < "$TMP/${f}.sha256")"
+    [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "${f}.sha256 is not a bare sha256 digest"
+    got="$(sha256sum "$TMP/${f}" | cut -d' ' -f1)"
+    [ "$got" = "$want" ] || die "${f}: sha256 ${got} != published ${want}"
+
+    python3 - "$TMP/${f}" "$TMP/${f}.msg" <<'PY'
+import hashlib, os, struct, sys
+src, out = sys.argv[1:]
+h = hashlib.blake2s(digest_size=32)
+with open(src, "rb") as fh:
+    for chunk in iter(lambda: fh.read(1 << 20), b""):
+        h.update(chunk)
+open(out, "wb").write(h.digest() + struct.pack("<Q", os.path.getsize(src)))
+PY
+    verify_any "$TMP/${f}.msg" "$TMP/${f}.sig" "$TMP"/keys/signing*.der \
+        || die "${f}: distsign signature does not verify"
+    echo "    sha256 + distsign OK  ${got}"
+    NEW_REF[$arch]="$got"
+done
+
+# ── 6. Compare or rewrite ────────────────────────────────────────────────────
+old_amd64="$(cur_ref x86_64)"
+old_arm64="$(cur_ref aarch64)"
+[[ "$old_amd64" =~ ^[0-9a-f]{64}$ && "$old_arm64" =~ ^[0-9a-f]{64}$ ]] \
+    || die "cannot read the current x86_64/aarch64 refs from ${ELEMENT}"
+
+if [ "$VERIFY_CURRENT" = "true" ]; then
+    [ "${NEW_REF[amd64]}" = "$old_amd64" ] || die "x86_64 ref ${old_amd64} != verified ${NEW_REF[amd64]}"
+    [ "${NEW_REF[arm64]}" = "$old_arm64" ] || die "aarch64 ref ${old_arm64} != verified ${NEW_REF[arm64]}"
+    echo "==> Pinned ${VER} refs match the verified tarballs"
+    exit 0
+fi
+
+echo "==> Updating ${ELEMENT}: ${CUR} -> ${VER}"
+sed -i -E "/^\s*url:/ s#tailscale_${CUR//./\\.}_(amd64|arm64)\.tgz#tailscale_${VER}_\1.tgz#" "$ELEMENT"
+sed -i "s|ref: ${old_amd64}|ref: ${NEW_REF[amd64]}|" "$ELEMENT"
+sed -i "s|ref: ${old_arm64}|ref: ${NEW_REF[arm64]}|" "$ELEMENT"
+
+[ "$(cur_ref x86_64)" = "${NEW_REF[amd64]}" ] && [ "$(cur_ref aarch64)" = "${NEW_REF[arm64]}" ] \
+    || die "rewrite of ${ELEMENT} did not land; inspect it with git diff"
+[ "$(grep -cP "^\s*url:\s*tailscale_pkgs:tailscale_${VER//./\\.}_(amd64|arm64)\.tgz$" "$ELEMENT")" -eq 2 ] \
+    || die "url: rewrite of ${ELEMENT} did not land; inspect it with git diff"
+echo "==> Done. Run 'mise run validate' to verify."

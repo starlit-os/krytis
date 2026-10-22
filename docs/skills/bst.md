@@ -1304,8 +1304,41 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | Source kind | Update mechanism |
 |---|---|
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
-| `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps) and `falcond-update` are the standing examples |
+| `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps), `falcond-update`, and `tailscale-update` (two arch-conditional tarballs plus signature verification, § Verify the vendor's own signature in a bespoke update task) are the standing examples |
 | `kind: anitya` (release tarball listed on release-monitoring.org) | Add a matrix entry to the `track` job, the same as `git_repo`. `bst source track` resolves it. `anitya` must be registered in `project.conf` first; see § `kind: anitya` tracks release tarballs |
+
+### Verify the vendor's own signature in a bespoke update task
+
+A `ref:` sha256 proves the artifact didn't change after we pinned it. It says nothing about
+whether the bytes we pinned are the ones the vendor built. If the vendor signs its releases,
+the update task is the place to check that, because it is the only step that ever sees a
+new artifact. `mise/tasks/tailscale-update` (#1384) is the worked example for Tailscale's
+distsign scheme (tailscale/tailscale `clientupdate/distsign/distsign.go`):
+
+- **Pin the roots in the repo, never fetch them.** `mise/lib/tailscale-distsign-roots.pem`
+  carries the root public keys copied from the upstream source tree, with the commit
+  they came from. A root rotation then fails the tracking job loudly, and the fix is a
+  reviewed edit to that file. It is never a silent trust change. As of 2026-10-22,
+  `distsign.pub` verifies against `crawshaw-root`, not `distsign-prod-root-1`, so pinning
+  only the "prod" key would have failed from the first run.
+- **Plain `openssl` is enough.** Tailscale's PEM blocks hold raw 32-byte ed25519 keys under
+  their own labels (`ROOT PUBLIC KEY`, `SIGNING PUBLIC KEY`). Prefix the bytes with the
+  SubjectPublicKeyInfo header `302a300506032b6570032100` and `openssl pkeyutl -verify
+  -pubin -keyform DER -rawin` accepts them. A package `.sig` signs `BLAKE2s-256(file) ‖
+  uint64_le(len(file))`, not the file itself; Python's `hashlib.blake2s` builds that
+  message.
+- **Know where each file lives.** The signing-key bundle is at the host root
+  (`https://pkgs.tailscale.com/distsign.pub`), the packages under `/stable/`.
+  `/stable/distsign.pub` is a 404, so a task that derives both from one base URL fails
+  every run.
+- **Fail closed and write last.** Validate the feed filename with a strict regex and build
+  the URL on a fixed host, require exact sizes (64-byte signatures, 32-byte keys, a bare
+  64-hex `.sha256`), verify every architecture, and only then compute the new `ref:`s from
+  the same downloaded bytes and edit the element.
+- **Give the initial pin positive evidence.** A scheduled run on an unchanged version
+  exits before verifying anything, so the hand-written first pin would otherwise never be
+  checked. `mise run tailscale-update --verify-current` verifies the pinned refs without
+  editing. Run it whenever the element or the pinned roots change by hand.
 
 ### `kind: anitya` tracks release tarballs
 
@@ -2558,15 +2591,71 @@ sudo's `#includedir /etc/sudoers.d` (installed by `core/sudo-rs.bst`) reads file
 
 **Fix:** name any narrow NOPASSWD carve-out file so it sorts *after* `wheel` — e.g. `zz-pangolin-cli` instead of `pangolin-cli`. Check this any time a new sudoers.d drop-in grants a permission narrower than an existing group-wide rule; a `zz-` prefix is the cheapest way to guarantee last-match without tracking every other file that might land in `/etc/sudoers.d`.
 
+### A root-only opt-in helper behind plain `sudo` (no sudoers carve-out)
+
+When a privileged one-time step must record *who* asked, such as making a user
+tailscaled's operator, don't scope a NOPASSWD rule the way `core/pangolin-cli.bst` has to.
+Ship a root-only helper and have a system mise task call `sudo <helper>`. The ordinary
+`%wheel` rule (password or FIDO2) is the authorization.
+`files/tailscale/krytis-tailscale-authorize` (#1384, ported from dakota's
+`dakota-tailscale-authorize` helper) shows the parts that matter:
+
+- **Identity from `SUDO_UID`, nothing else.** sudo-rs sets it from the authenticated
+  caller and ignores a caller-supplied value: on krytis (2026-10-22),
+  `env SUDO_UID=4242 SUDO_USER=mallory sudo env` printed `SUDO_UID=60339`,
+  `SUDO_USER=lily`. Refuse uid 0 and any arguments.
+- **Resolve the name through NSS** (`pwd.getpwuid`). krytis users are systemd-homed and
+  absent from `/etc/passwd`, which is what broke pangolin's pure-Go lookup (#915).
+  Tailscale's own lookups fall back to `getent` (tailscale `util/osuser/user.go`), so the
+  operator name resolves on its side too.
+- **Serialize read, check and set under an exclusive `flock`** on a root-owned file in
+  `/run`, and re-read after setting. Otherwise two concurrent setups both see "no operator"
+  and the second silently overwrites the first.
+- **Never replace someone else's assignment.** If the operator is set to another user,
+  stop and say so.
+- **Absolute paths and timeouts** on every subprocess (`/usr/bin/systemctl`,
+  `/usr/bin/tailscale`). The helper runs as root with whatever `PATH` sudo leaves.
+
 ### Systemd service installation
 
 **System services** need three things:
 
 | What | Path | Notes |
 |------|------|-------|
-| Service file | `%{indep-libdir}/systemd/system/<name>.service` | Fix `/usr/sbin` → `/usr/bin`; remove `EnvironmentFile=/etc/default/` lines |
-| Preset file | `%{indep-libdir}/systemd/system-preset/80-<name>.preset` | Content: `enable <name>.service` |
+| Service file | `%{indep-libdir}/systemd/system/<name>.service` | Fix `/usr/sbin` → `/usr/bin`; remove `EnvironmentFile=/etc/default/` lines, then supply what that file defined (§ Vendor unit rewrites below) |
+| Preset file | `%{indep-libdir}/systemd/system-preset/80-<name>.preset` | Content: `enable <name>.service`, or `disable <name>.service` to ship it off. Leaving the file out does **not** mean off (§ The fall-through applies to the package's other units too, not just the template) |
 | Binaries | `%{bindir}` | Never `/usr/sbin` — freedesktop-sdk uses merged-usr |
+
+#### Vendor unit rewrites: replace what the removed `EnvironmentFile` supplied, and assert the result
+
+Deleting `EnvironmentFile=/etc/default/<name>` also deletes the variables it defined.
+Tailscale's unit runs `ExecStart=… --port=${PORT} $FLAGS`, and its
+`tailscaled.defaults` is what set `PORT="41641"` and `FLAGS=""`. dakota shipped the
+rewrite without them for two months (dakota `4940fa6`). Put the defaults back as
+`Environment=` lines right after `[Service]`. Then make the element assert its own output
+(`elements/core/tailscale.bst`): count the lines that must and must not be there, and
+match the exact rewritten `ExecStart`. A `sed` rewrite of someone else's file that no
+longer matches would otherwise ship a unit that cannot start. `grep` is not in
+`runtime-gnu`, so add `components/grep.bst` to `build-depends`. Keep the assertions before
+`%{install-extra}`.
+
+#### Daemons that program netfilter: tell them to use nftables
+
+`/usr/bin/iptables` on krytis is the **legacy** backend: it resolves to
+`xtables-legacy-multi`, and `iptables -V` prints `(legacy)` (fdsdk `components/iptables.bst`,
+checked live 2026-10-22). Podman's netavark meanwhile uses nftables (`table inet netavark`).
+A daemon that picks "iptables" therefore writes into the legacy tables. Those rules are
+invisible to `nft list ruleset`, and the system runs two backends at once. tailscaled
+does exactly that by default (`router: default choosing iptables`), so
+`elements/core/tailscale.bst` sets `Environment=TS_DEBUG_FIREWALL_MODE=nftables`. dakota
+doesn't, and has the same exposure. Check any new netfilter-programming daemon for an
+equivalent knob. `TS_DEBUG_FIREWALL_MODE` is a debug-named variable that upstream could
+rename. To check it still works, look for `router: netfilter running in nftables mode` in
+`journalctl -u tailscaled` once a node is up. With 1.104.2 on krytis (2026-10-22) that line
+appeared after `envknob: TS_DEBUG_FIREWALL_MODE="nftables"`, and `nft list ruleset` showed
+six `ts-*` chains while `iptables-legacy-save` had none. The binary also contains the
+string `TS_DEBUG_FIREWALL_MODE set, overriding firewall mode`, but that line did not
+appear in the journal, so don't grep for it.
 
 #### Optional services gated on user-supplied credentials
 

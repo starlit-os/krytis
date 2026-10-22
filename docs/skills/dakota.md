@@ -409,6 +409,38 @@ trailers as well as the files, and also skips PR edits that would change only th
 link. Full writeup in
 `docs/skills/bst.md` § Tracking cooldown: 24h per update.
 
+### Tailscale: what krytis took from dakota and where it diverges (#1384)
+
+*Source: dakota `testing` at `c32fdb1` (2026-10-22): `elements/bluefin/tailscale.bst`,
+`elements/bluefin/tailscale-setup.bst`, `files/tailscale/*`, `scripts/update_sources.py`,
+plus commits `cd32827`, `4940fa6`, `2f000f3`, `865e340`, `256981a`.*
+
+Taken as-is, in `elements/core/tailscale.bst`:
+
+- **Source from `pkgs.tailscale.com`, not GitHub** (`cd32827`). Tailscale's GitHub releases
+  carry no assets (v1.104.2 had 0 on 2026-10-22). Read the version from the feed's
+  `Tarballs` filenames and rebuild the URL on the fixed host (`tailscale_release_tag`).
+- **The upstream unit needs rewriting:** `/usr/sbin` → `/usr/bin`, drop `EnvironmentFile`,
+  and put back the `PORT`/`FLAGS` defaults that file supplied (`4940fa6`).
+- **Never hold below 1.96.4** (`865e340`): 1.94.2 silently drops WireGuard data over IPv6
+  link-local.
+- **The operator is set explicitly, by an admin, and never replaced** (dakota's
+  `dakota-tailscale-authorize`).
+
+Already satisfied in krytis: `2f000f3` patches dakota's FDSDK kernel for
+`CONFIG_IPV6_MULTIPLE_TABLES`. The CachyOS kernel has it, and tailscaled installed its IPv6
+policy rules on a live krytis host. `256981a`'s no-`/dev/stdin` rule is § `/dev/stdin`
+inline-file-write fails under remote execution above.
+
+Deliberate divergences:
+
+| dakota | krytis | Why |
+|---|---|---|
+| `enable tailscaled.service` preset | `disable` preset; `mise tailscale:setup` runs `systemctl enable --now` | Measured on krytis: an idle, never-logged-in tailscaled binds UDP 41641 on every address, adds policy-routing rules and uploads logs to `log.tailscale.com` (#1384 § Idle daemon check) |
+| Firewall mode left to tailscaled (`iptables`) | `TS_DEBUG_FIREWALL_MODE=nftables` | `/usr/bin/iptables` is legacy in both images while netavark uses nftables (`docs/skills/bst.md` § Daemons that program netfilter: tell them to use nftables) |
+| GTK setup app, polkit action, `pkexec` helper | system mise task, `sudo` helper with a lock around read/check/set | GUI deferred to #1385; the lock closes a race dakota's helper also has |
+| Version from the feed, checksum by BST tracking | `tailscale-update` also verifies `.sha256` and distsign `.sig` against pinned roots | `docs/skills/bst.md` § Verify the vendor's own signature in a bespoke update task |
+
 ## Referencing This Project
 
 Copy patterns from `../dakota/` and adapt — don't symlink or junction into dakota from krytis. Independent BST artifact caches and element trees, same as the `zirconium-hawaii.md` convention.

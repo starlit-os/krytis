@@ -64,6 +64,8 @@ element does, its row's text is a review question.
 | `config/subuid-provision.bst` | Boot-time oneshot that gives every local login account a subuid/subgid range, so rootless podman works for homed users. |
 | `config/ssh-auth-policy.bst` | sshd drop-in: key-only authentication, no passwords. |
 | `core/pangolin-cli.bst` | Pangolin reverse-proxy/VPN client. Prebuilt binary. |
+| `core/tailscale.bst` | Tailscale client and daemon. Prebuilt binaries; tailscaled ships disabled. |
+| `config/tailscale-setup.bst` | `mise tailscale:setup`: enables tailscaled, makes the user its operator, signs in. |
 | `config/networkd-mask.bst` | Masks systemd-networkd and its wait-online unit, because NetworkManager owns the interfaces. |
 | `core/composefs-loop-udisks-ignore.bst` | udev rule hiding composefs erofs loop mounts from UDisks and Nautilus. |
 | `config/u2f-config.bst` | Wires pam_u2f into the sudo, greeter and sshd PAM stacks. |

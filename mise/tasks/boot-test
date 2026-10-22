@@ -721,6 +721,23 @@ case "${BAZAAR_OVERRIDE}" in
         ;;
 esac
 
+# tailscaled ships disabled (#1384): an idle, never-logged-in daemon binds UDP
+# 41641 on every address, changes routing policy and uploads logs. "Disabled"
+# rests on an explicit `disable` preset in core/tailscale.bst; lose that rule
+# and the global preset step enables the unit on every machine (docs/skills/
+# bst.md § The fall-through applies to the package's other units too, not
+# just the template). Users opt in with `mise tailscale:setup`.
+TS_ENABLED=$(SSH systemctl is-enabled tailscaled.service 2>/dev/null || true)
+TS_ACTIVE=$(SSH systemctl is-active tailscaled.service 2>/dev/null || true)
+TS_LISTEN=$(SSH ss -H -lun 'sport = :41641' 2>/dev/null || true)
+if [ "${TS_ENABLED}" = "disabled" ] && [ "${TS_ACTIVE}" = "inactive" ] && [ -z "${TS_LISTEN}" ]; then
+    echo "    tailscaled is disabled, inactive and not listening"
+else
+    echo "    FAIL: tailscaled must ship disabled (#1384): is-enabled=${TS_ENABLED:-<none>} is-active=${TS_ACTIVE:-<none>}" >&2
+    [ -z "${TS_LISTEN}" ] || printf '      %s\n' "${TS_LISTEN}" >&2
+    FAILED=1
+fi
+
 # The live-ISO installer (fisherman) leaves two things on the physical root that
 # config/fisherman-cleanup.bst deletes: a plain-text LUKS passphrase under
 # /sysroot/etc (#1280, TPM-machine installs) and ~11G of scratch at
