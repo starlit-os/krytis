@@ -1304,8 +1304,41 @@ Every element must have a defined update path. **`bst source track` is a no-op o
 | Source kind | Update mechanism |
 |---|---|
 | `git_repo` with `track:` glob | Add a matrix entry to the `track` job in `.github/workflows/track-bst-sources.yml` |
-| `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps) and `falcond-update` are the standing examples |
+| `kind: tar` / `kind: remote` (tarball-pinned) | Add a row to `TARGETS` in `mise/tasks/tarball-update` and the name to the `track-tarball` matrix. Write a bespoke `<name>-update` task only when the element genuinely does not fit a provider — `ghostty-update` (33 Zig deps), `falcond-update`, and `tailscale-update` (two arch-conditional tarballs plus signature verification, § Verify the vendor's own signature in a bespoke update task) are the standing examples |
 | `kind: anitya` (release tarball listed on release-monitoring.org) | Add a matrix entry to the `track` job, the same as `git_repo`. `bst source track` resolves it. `anitya` must be registered in `project.conf` first; see § `kind: anitya` tracks release tarballs |
+
+### Verify the vendor's own signature in a bespoke update task
+
+A `ref:` sha256 proves the artifact didn't change after we pinned it. It says nothing about
+whether the bytes we pinned are the ones the vendor built. If the vendor signs its releases,
+the update task is the place to check that, because it is the only step that ever sees a
+new artifact. `mise/tasks/tailscale-update` (#1384) is the worked example for Tailscale's
+distsign scheme (tailscale/tailscale `clientupdate/distsign/distsign.go`):
+
+- **Pin the roots in the repo, never fetch them.** `mise/lib/tailscale-distsign-roots.pem`
+  carries the root public keys copied from the upstream source tree, with the commit
+  they came from. A root rotation then fails the tracking job loudly, and the fix is a
+  reviewed edit to that file. It is never a silent trust change. As of 2026-10-22,
+  `distsign.pub` verifies against `crawshaw-root`, not `distsign-prod-root-1`, so pinning
+  only the "prod" key would have failed from the first run.
+- **Plain `openssl` is enough.** Tailscale's PEM blocks hold raw 32-byte ed25519 keys under
+  their own labels (`ROOT PUBLIC KEY`, `SIGNING PUBLIC KEY`). Prefix the bytes with the
+  SubjectPublicKeyInfo header `302a300506032b6570032100` and `openssl pkeyutl -verify
+  -pubin -keyform DER -rawin` accepts them. A package `.sig` signs `BLAKE2s-256(file) ‖
+  uint64_le(len(file))`, not the file itself; Python's `hashlib.blake2s` builds that
+  message.
+- **Know where each file lives.** The signing-key bundle is at the host root
+  (`https://pkgs.tailscale.com/distsign.pub`), the packages under `/stable/`.
+  `/stable/distsign.pub` is a 404, so a task that derives both from one base URL fails
+  every run.
+- **Fail closed and write last.** Validate the feed filename with a strict regex and build
+  the URL on a fixed host, require exact sizes (64-byte signatures, 32-byte keys, a bare
+  64-hex `.sha256`), verify every architecture, and only then compute the new `ref:`s from
+  the same downloaded bytes and edit the element.
+- **Give the initial pin positive evidence.** A scheduled run on an unchanged version
+  exits before verifying anything, so the hand-written first pin would otherwise never be
+  checked. `mise run tailscale-update --verify-current` verifies the pinned refs without
+  editing. Run it whenever the element or the pinned roots change by hand.
 
 ### `kind: anitya` tracks release tarballs
 
