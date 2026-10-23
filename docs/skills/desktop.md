@@ -1510,6 +1510,66 @@ boot-time oneshot.
 path (`~/.local/share/icons/<Theme>` is already covered by the override), the name in
 `cursor { }`, and the name in `90-krytis-session.conf`.
 
+## Flatpak GTK apps only get noctalia's colours through an `xdg-config` grant
+
+noctalia's `gtk3`/`gtk4` theme templates (`builtin.toml` `[templates.gtk3]`/`[templates.gtk4]`,
+`/usr/share/noctalia/assets/templates/gtk/apply.sh`) write `~/.config/gtk-{3,4}.0/noctalia.css`
+and append `@import url("noctalia.css");` to the `gtk.css` beside it. Native GTK apps
+pick that up. Sandboxed ones didn't, and rendered stock Adwaita with the portal's system
+accent (#1400):
+
+- **GTK reads `$XDG_CONFIG_HOME/gtk-4.0/gtk.css`, and Flatpak remaps `$XDG_CONFIG_HOME`**
+  to `~/.var/app/<id>/config`. That directory has no `gtk-4.0`.
+- **`filesystems=host` doesn't fix it.** Loupe has `host`, sees `~/.config/gtk-4.0`
+  just fine, and still renders stock colours, because nothing points GTK there.
+- **Dark mode isn't the problem.** The Settings portal returns `color-scheme=1`
+  inside the sandbox, and libadwaita reports `dark=True`. Only the palette is missing.
+
+**The fix is `--filesystem=xdg-config/gtk-3.0:ro --filesystem=xdg-config/gtk-4.0:ro` on
+the global override.** For an `xdg-config/<dir>` grant, flatpak also bind-mounts the host
+directory onto `$XDG_CONFIG_HOME/<dir>` *inside the app's own config dir*. That
+mirroring is what makes the relative `@import` resolve. Grant the directories, since the
+`gtk.css` that holds the import and the `noctalia.css` it pulls in sit side by side.
+`:ro` is enough: inside the sandbox, `touch` on the mirrored directory fails with "Read-only
+file system". `files/flatpak-preinstall/flatpak-cursor-path.sh`
+merges the grants in the same `flatpak override --system` call as `XCURSOR_PATH`. It
+doesn't use a new unit, because every boot-time `flatpak --system` writer has to join
+the #1371 ordering chain (`bst.md` § Flatpak Pre-install Service Pattern). It also keeps
+the old unit name, because renaming an enabled unit strands its enablement on existing
+installs.
+
+**Verify with computed colours, not a screenshot.** Umbriel has no screenshot action.
+Read the colours from a libadwaita probe run inside the app's sandbox (GNOME Platform
+ships `python3` and PyGObject):
+
+```sh
+flatpak run --command=python3 org.gnome.Loupe -c '
+import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1")
+from gi.repository import Gtk, Adw, GLib
+def act(app):
+    w = Adw.ApplicationWindow(application=app); l = Gtk.Label(label="x"); l.add_css_class("accent")
+    w.set_content(l); w.present()
+    GLib.timeout_add(800, lambda: (print(l.get_color().to_string()), app.quit()))
+a = Adw.Application(application_id="org.gnome.Loupe.Probe"); a.connect("activate", act); a.run(None)'
+```
+
+Measured 2026-10-23: the `.accent` label printed `rgb(234,154,151)`, which is the
+`accent_color` `#ea9a97` from `noctalia.css`, with the grant, and the portal's stock blue
+without it. A probe launched from
+an environment without `DBUS_SESSION_BUS_ADDRESS` fails differently: libadwaita logs
+"Settings portal not found: Cannot autolaunch D-Bus without X11 $DISPLAY" and falls back
+to *light* mode. That is a broken probe, not a theming bug.
+
+**Coverage.** libadwaita/GTK4 apps are covered. GTK3 apps should be too, because
+noctalia's GTK3 CSS targets adw-gtk3, and Flatpak resolves that through the
+`org.gtk.Gtk3theme.adw-gtk3{,-dark}` runtime extensions. It hasn't been probed. Electron
+and other non-GTK apps ignore `gtk.css`. Qt Flatpaks can't use the `qt` template either,
+since the runtimes ship no qt6ct. KDE-runtime apps would need a separate
+`xdg-config/kdeglobals:ro` grant for the `kcolorscheme` template. To leave one app
+unthemed, run `flatpak override --user --nofilesystem=xdg-config/gtk-4.0 <app-id>`, and
+the same for `gtk-3.0`. `mise run boot-test` asserts both grants and `XCURSOR_PATH` in
+`/var/lib/flatpak/overrides/global`.
+
 ## Sandboxed apps can't reach the clipboard through Xwayland without an X11 window in focus
 
 Password managers built on Electron (Proton Pass, Bitwarden) copy with the Rust `arboard`

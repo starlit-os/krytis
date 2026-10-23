@@ -721,6 +721,27 @@ case "${BAZAAR_OVERRIDE}" in
         ;;
 esac
 
+# Sandboxed GTK apps only load noctalia's theme CSS through the read-only
+# xdg-config/gtk-{3,4}.0 grants flatpak-cursor-path.service merges into the
+# global override (#1400). Without them every Flatpak silently renders stock
+# Adwaita. Same reasoning as the Bazaar check: a failed unit shows up above,
+# this catches the unit succeeding without the grants landing.
+GLOBAL_OVERRIDE=$(SSH cat /var/lib/flatpak/overrides/global 2>/dev/null || true)
+GLOBAL_MISSING=""
+for want in "xdg-config/gtk-3.0:ro" "xdg-config/gtk-4.0:ro" "XCURSOR_PATH="; do
+    case "${GLOBAL_OVERRIDE}" in
+        *"${want}"*) ;;
+        *) GLOBAL_MISSING="${GLOBAL_MISSING}${GLOBAL_MISSING:+, }${want}" ;;
+    esac
+done
+if [ -z "${GLOBAL_MISSING}" ]; then
+    echo "    global Flatpak override has the GTK theme grants and XCURSOR_PATH"
+else
+    echo "    FAIL: /var/lib/flatpak/overrides/global lacks ${GLOBAL_MISSING} — Flatpaks miss noctalia's GTK theme (#1400) or the host cursors (#949)" >&2
+    printf '%s\n' "${GLOBAL_OVERRIDE:-<missing>}" | sed 's/^/      /' >&2
+    FAILED=1
+fi
+
 # tailscaled ships disabled (#1384): an idle, never-logged-in daemon binds UDP
 # 41641 on every address, changes routing policy and uploads logs. "Disabled"
 # rests on an explicit `disable` preset in core/tailscale.bst; lose that rule
