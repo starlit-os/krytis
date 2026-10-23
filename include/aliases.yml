@@ -1,6 +1,9 @@
 aliases:
   # file aliases (tarballs, single-file downloads)
-  cachyos: https://cdn77.cachyos.org/
+  # CachyOS's live x86_64_v3 pacman repo. It holds only the newest build of
+  # each package, so a pinned file 404s here once a newer pkgver/pkgrel lands;
+  # the `cachyos-archive` mirror below picks it up from there.
+  cachyos_v3: https://cdn77.cachyos.org/repo/x86_64_v3/cachyos-v3/
   crates: https://static.crates.io/
   ghostty_deps: https://deps.files.ghostty.org/
   ghostty_releases: https://release.files.ghostty.org/
@@ -35,3 +38,19 @@ aliases:
   gnome_gitlab: https://gitlab.gnome.org/
   kernel: https://git.kernel.org/pub/scm/
   sourcehut: https://git.sr.ht/
+
+# BuildStream tries every mirror URI before the alias's own URI, falling
+# through on any fetch error (Source.__do_fetch). For cachyos_v3 that means:
+# a current pin gets the archive's HTTP 200 HTML placeholder (it never 404s),
+# fails the sha256 check, then downloads from cdn77; a superseded
+# pin downloads from the archive. The archive holds the same files (sha256
+# identical), so the ref never changes when a build moves there. It does not
+# yet hold the current build, which is why it cannot replace the alias.
+# mirror.cachyos.org and cdn.cachyos.org are no fallback: both answer a
+# package URL with HTTP 200 and an HTML placeholder page (as of 2026-10-22).
+# See docs/skills/bst.md § CachyOS removes superseded builds from its repo.
+mirrors:
+- name: cachyos-archive
+  aliases:
+    cachyos_v3:
+    - https://archive.cachyos.org/archive/cachyos-v3/
