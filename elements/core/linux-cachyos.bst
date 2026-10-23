@@ -5,11 +5,11 @@ sources:
   # cachyos_v3 falls back to archive.cachyos.org once this build is superseded
   # (include/aliases.yml `mirrors:`).
   url: cachyos_v3:linux-cachyos-%{version}-%{pkgrel}-x86_64_v3.pkg.tar.zst
-  ref: 6f5834a767d9f20d15f4965d7f2c7f11212598f8a13231200d6f099bcd6c1463
+  ref: f9468c103a0870eaa20abbe780001aa51fa6091e9d54786035d38d3b49a1b11d
 
 variables:
-  version: "7.2.11"
-  pkgrel: "1"
+  version: "7.3.0"
+  pkgrel: "3"
   strip-binaries: ""
 
 build-depends:
