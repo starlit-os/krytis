@@ -23,8 +23,7 @@ default.
 |------|---------|-------------|
 | GitHub Actions `uses:` | `github-actions` | Yes (digest/patch/minor) |
 | `pyproject.toml` + `uv.lock` | `pep621` | Yes, except `click`/`dulwich`/`buildstream*` (held for review) and `requires-python`/`buildstream-sbom` (disabled) |
-| `mise.toml` `[tools]` + `mise.lock` | `mise` | No — the lockfile needs `mise run mise-lock` first |
-| `pass-cli` pin in `mise.toml` | `custom.regex` | No — same lockfile reason |
+| `mise.toml` `[tools]` + `mise.lock` | `mise` | Yes (digest/pin/patch/minor) — the manager refreshes `mise.lock` in the same commit |
 | `RUNNER_VERSION` in `mise.toml` + `Containerfile.runner` | `custom.regex` | Yes (patch/minor) |
 | `jdx/mise-action` SHA pins in every workflow | `custom.regex` | Yes (digest/patch/minor) — `mise run mise-pin-check` asserts every step agrees |
 
@@ -50,13 +49,20 @@ Two tools do not fit the plain pattern:
 - `python` is capped below 3.13 — the pin tracks `pyproject.toml`'s
   `requires-python = ">=3.12"`, so patch bumps are routine and the minor
   boundary is a human call.
-- `pass-cli` is absent from the mise registry (the repo resolves it through
-  `[tool_alias]` to the `github:` backend), so Renovate's `mise` manager cannot
-  derive a datasource for it and a `custom.regex` manager covers the line.
+- `pass-cli` is absent from the mise registry, so its `[tools]` key names the
+  backend (`"github:protonpass/pass-cli"`). Renovate reads the backend from the
+  key and handles it like any other tool. It used to be a `[tool_alias]` short
+  name plus a `custom.regex` manager, whose lock refresh passed the regex
+  depName (`mise lock protonpass/pass-cli`) to mise. That became a silent
+  no-op from the 2.4.2 bump on, so each bump needed a manual relock until the
+  2026-10-23 switch. Details: `docs/skills/renovate.md` § The `mise` manager.
 
-`mise.lock` cannot be refreshed by Renovate on the hosted app — mise lockfile
-updates are an unsafe execution only a self-hosted admin can enable — so tool
-bumps are not auto-merged; the reviewer runs `mise run mise-lock` first.
+Renovate refreshes `mise.lock` itself on the hosted app: `88ee76e` (uv 0.13.5)
+is a typical bot commit touching both files. Its `mise` manager runs
+`mise lock <tool>`, and when `mise` is not in the self-hosted
+`allowedUnsafeExecutions` list it runs it in mise's safe mode (`MISE_SAFE=1`)
+instead of skipping the step (Renovate's `lib/modules/manager/mise/artifacts.ts`).
+Tool bumps therefore auto-merge like every other manager's.
 
 `RUNNER_VERSION` also lives in `mise.toml`, but in `[env]` rather than
 `[tools]`, so the `mise` manager will never see it — it is covered by a
@@ -105,8 +111,8 @@ understood.
 1. ~~Pin mise tool versions + commit `mise.lock` (prerequisite for mise
    manager).~~ Done in #24.
 2. ~~Add `mise` to `enabledManagers`; add a `packageRule` for mise tools.~~
-   Done in #25 — plus a `custom.regex` manager for `pass-cli`, which the mise
-   registry does not know about.
+   Done in #25 — plus a `custom.regex` manager for `pass-cli`, later replaced
+   by naming its `github:` backend in the `[tools]` key (2026-10-23).
 3. ~~Add `pep621` to `enabledManagers` for Python deps; exclude `click` and
    `dulwich` from auto-merge.~~ Done in #26.
 4. ~~Add a `regexManager` for `RUNNER_VERSION` (see

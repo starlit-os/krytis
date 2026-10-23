@@ -33,8 +33,8 @@ the #1386 error on the unfixed config.
 |---|---|---|
 | `github-actions` | `.github/workflows/*.yml` | digest/pin/patch/minor |
 | `pep621` | `pyproject.toml` (+ `uv.lock`) | patch/minor, except the packages listed below |
-| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | digest/pin/patch/minor — except `pass-cli` (see below), which is never |
-| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `pass-cli` pin; the `version:` pin on every `jdx/mise-action` step | patch/minor; `pass-cli` never |
+| `mise` | `mise.toml` `[tools]` (+ `mise.lock`) | digest/pin/patch/minor |
+| `custom.regex` | `RUNNER_VERSION` in `mise.toml` and `Containerfile.runner`; the `version:` pin on every `jdx/mise-action` step | patch/minor |
 
 Everything else is tracked by the `track-bst-sources.yml` CI matrix, not Renovate — see [`bst.md`](bst.md) § Element update path.
 
@@ -89,22 +89,22 @@ Two extraction behaviours that need explicit rules:
 
 Reads `mise.toml` `[tools]` only — `[env]` values need a custom manager (see below) — and picks each tool's datasource out of the [mise registry](https://mise.jdx.dev/registry.html), so any registry tool on a supported backend works without configuration. It also reads `mise.lock`, reporting each tool's `lockedVersion` alongside the pin.
 
-**The native manager auto-merges patch/minor/digest bumps; the `pass-cli` custom-regex pin does not.** Renovate's `mise` manager updates `mise.lock` in the same commit as the `mise.toml` bump when it changes a dependency — reliable across every native-manager PR from 2026-08 through 2026-09-10 — so it inherits the repo's default `automerge: true` for digest/patch/minor. `pass-cli` comes from a `custom.regex` manager instead (see below) and does *not* get that lockfile treatment: two of its PRs (2026-08-25, 2026-08-27) landed with a stale `mise.lock` entry and failed CI's `mise install --locked` step, needing a manual force-push fix — so that rule stays `automerge: false`. Either way, CI's `mise install --locked` (`checks.yml`, via `jdx/mise-action`) …
+**The native manager auto-merges patch/minor/digest bumps, because it refreshes `mise.lock` itself.** Renovate's `mise` manager runs `mise lock <depName>` for each tool it bumps and commits the lockfile in the same commit as the `mise.toml` change (`88ee76e`, uv 0.13.5, is a typical one), so it inherits the repo's default `automerge: true`. CI's `mise install --locked` (`checks.yml`, via `jdx/mise-action`) and `Check mise.lock is in sync` still fail any PR whose lock drifted, so a bad refresh cannot merge unattended. **A `custom.regex` pin in `mise.toml` gets the refresh only by accident, and it stopped working.** Renovate runs the artifact step of every manager that extracted a changed file, so the `mise` manager's step also runs when a regex manager edits `mise.toml`. It is handed the *regex* dep, though, so it runs `mise lock <regex depName>`; for `pass-cli` that was `mise lock protonpass/pass-cli`, which is not a mise tool name. With mise `2026.10.17` that command exits 0 and changes nothing (reproduced 2026-10-23 against the old alias config). The six regex-tracked `pass-cli` bumps through 2.4.1 (`75a6267`, 2026-09-21) did carry a lock change. The three after it (`43f0dbd` 2.4.2, `ad3fb25` 2.5.0, #1391 2.5.1) did not, and each needed a manual `mise run mise-lock` push. Keep `[tools]` pins on the native manager.
 
 **A green `mise-lock --check` at PR-creation time is not permanent — the `mise` binary CI runs on still moves.** It used to move invisibly: no `checks.yml` step pinned a `version:` input, so every run bootstrapped whatever `mise` shipped most recently. Since #897 all 31 `jdx/mise-action` steps pin one Renovate-tracked version (see § Pinning the mise version), so the move is now a commit you can point at — but it is still a move, and the PR that performs it runs `mise-lock --check` with the *new* binary against a lockfile the old one wrote. `mise/tasks/mise-lock --check` regenerates `mise.lock` with that binary and diffs it against the committed copy — so a `mise` release that changes what it *writes* to the lockfile (not what it resolves) can fail `Static gates` on a PR whose `mise.toml`/`mise.lock` diff is otherwise correct and unrelated. Observed on PR #808 (`uv` 0.12.12 → 0.12.13, 2026-09-11): `mise` v2026.9.5 started emitting a `signer = "sigstore-oidc:…"` line for `github-attestations`-provenance tools (`fnox`, `usage`) that the lockfile committed under v2026.9.4 didn't have — a diff in two tools the PR never touched. Fix is the same either way: `mise run mise-lock` (no `--check`) with the CI-current `mise` regenerates the full file correctly; commit and push it. Renovate's own PRs don't self-heal this — its `mise` manager only rewrites the entries for the dependency it's bumping, so a human/agent push onto the Renovate branch is required.
 
 **That push ends Renovate's auto-merge for the PR.** A commit on the branch from anyone else marks it modified, and Renovate then neither rebases it nor merges it (`prAutomergeBlockReason: "BranchModified"` in `lib/workers/repository/update/pr/automerge.ts`, Renovate 44.149.1). Merge it by hand once `Static gates` is green. #1166, the CI mise bump to `2026.10.5`, went this way: see [`mise.md`](mise.md) § `mise.lock` for what that release changed and how to relock with a specific mise.
 
-Two tools need rules of their own:
+Two tools need special handling:
 
 - **`python` is capped at `allowedVersions: "<3.13"`.** It resolves to `python/cpython` on the `github-tags` datasource, so without a ceiling Renovate offers the newest CPython tag. The pin tracks `pyproject.toml`'s `requires-python = ">=3.12"`, so patch bumps are routine and the minor boundary is a human decision.
-- **`pass-cli` is not in the mise registry.** The manager extracts it (`depType: "tools"`, `lockedVersion` and all) but gives up with `skipReason: "unsupported-datasource"` — the `[tool_alias]` pointing at the `github:` backend is a mise-side detail Renovate does not read. A `custom.regex` manager covers that one line instead.
+- **`pass-cli` is not in the mise registry, so its `[tools]` key names the backend: `"github:protonpass/pass-cli" = "<version>"`.** Renovate takes the backend from the key: `depName` is the whole key, `packageName` is `protonpass/pass-cli`, and the datasource is `github-releases` (`createGithubToolConfig` in Renovate's `lib/modules/manager/mise/backends.ts`). Its lock step then runs `mise lock github:protonpass/pass-cli`, which mise accepts. Do not shorten the key to `pass-cli` through a `[tool_alias]`: Renovate does not read `[tool_alias]`, so it extracts the short name, finds nothing in the registry, and skips it with `skipReason: "unsupported-datasource"`. That is what forced the old `custom.regex` workaround and its stale lockfiles. Changing the key also renames the lock entry, and `mise lock` does not delete the orphaned old one; see [`mise.md`](mise.md) § `mise.lock`.
 
 A tool pinned to `"latest"` is extracted with nothing to compare against, so it is invisible to the update loop. Pinning every tool (#24) is what makes this manager useful at all.
 
 ## Custom regex managers
 
-Three pins need one: `RUNNER_VERSION`, which lives in `mise.toml`'s `[env]` block that the `mise` manager does not read; `pass-cli`, which is in `[tools]` but absent from the mise registry; and the `version:` input on every `jdx/mise-action` step, which the `github-actions` manager *does* extract natively and then silently discards (see § Pinning the mise version). Four things about custom managers are easy to get wrong:
+Two pins need one: `RUNNER_VERSION`, which lives in `mise.toml`'s `[env]` block that the `mise` manager does not read; and the `version:` input on every `jdx/mise-action` step, which the `github-actions` manager *does* extract natively and then silently discards (see § Pinning the mise version). Never use one for a `[tools]` pin that the `mise` manager could own instead: the lock refresh a custom manager's bump gets passes the regex depName to `mise lock`, which silently does nothing (see § The `mise` manager). Four things about custom managers are easy to get wrong:
 
 1. **`enabledManagers` must list `"custom.regex"`.** With an allowlist in place, `customManagers` is silently skipped otherwise — no error, no PR, nothing in the log to notice.
 2. **The config keys are `customManagers` + `customType: "regex"` + `managerFilePatterns`.** `regexManagers` and `fileMatch` are the old spellings; `renovate-config-validator --strict` fails on them.
@@ -116,19 +116,6 @@ Three pins need one: `RUNNER_VERSION`, which lives in `mise.toml`'s `[env]` bloc
 The runner version is pinned twice — `mise.toml` `[env]` (what `mise run runner/build` passes as `--build-arg`) and the `ARG RUNNER_VERSION` default in `Containerfile.runner` (what a direct `podman build -f Containerfile.runner` uses). Both `managerFilePatterns` and both `matchStrings` live in a *single* custom manager so the two deps come out with the same `depName` and `currentValue`, which puts them on one branch: Renovate rewrites both files in one PR instead of bumping one and leaving the other to rot.
 
 If the two pins ever drift apart, Renovate will open *two* branches (one per `currentValue`) — that is the drift showing up, not a config bug.
-
-### Match the version, not every line with that key
-
-`pass-cli` appears twice in `mise.toml` — once under `[tool_alias]` mapping the short name to the `github:` backend, once under `[tools]` as the pin:
-
-```toml
-[tool_alias]
-pass-cli = "github:protonpass/pass-cli"
-[tools]
-pass-cli = "2.3.3"
-```
-
-`pass-cli = "(?<currentValue>[^"]+)"` matches both, and the alias line yields a dep whose "version" is `github:protonpass/pass-cli`. Requiring a leading digit — `"(?<currentValue>\d[^"]*)"` — pins the match to the real version without needing lookahead, which RE2 does not have anyway.
 
 ### Prove the round trip, not just the match
 
