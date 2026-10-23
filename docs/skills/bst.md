@@ -2615,6 +2615,12 @@ Ship a root-only helper and have a system mise task call `sudo <helper>`. The or
   stop and say so.
 - **Absolute paths and timeouts** on every subprocess (`/usr/bin/systemctl`,
   `/usr/bin/tailscale`). The helper runs as root with whatever `PATH` sudo leaves.
+- **The user-side task must never wait silently.** The first `mise tailscale:setup` on a
+  published image printed nothing while `tailscale up` sat ~50 s waiting on Tailscale's
+  servers, and it was taken for a hang (2026-10-22). Driving progress off the sign-in
+  URL is not enough: a machine that still has a node key in `/var/lib/tailscale`, for
+  example from before a rollback, never gets one. `files/tailscale/setup` reports each
+  `BackendState` change and a "still …" line every 15 s.
 
 ### Systemd service installation
 

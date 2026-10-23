@@ -26,42 +26,66 @@ me="$(id -un)"
 echo "==> Enabling tailscaled and making ${me} its operator (administrator approval needed)"
 sudo /usr/libexec/krytis-tailscale-authorize
 
-field() { # field <BackendState|AuthURL>
+# One `tailscale status --json` read: "<BackendState>|<AuthURL>". Not a tab:
+# `read` collapses an empty leading field when IFS is whitespace.
+snapshot() {
     tailscale status --json 2>/dev/null \
-        | python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1]) or "")' "$1" \
-        || true
+        | python3 -c 'import json, sys; d = json.load(sys.stdin); print((d.get("BackendState") or "") + "|" + (d.get("AuthURL") or ""))' \
+        || echo "|"
 }
 
-if [ "$(field BackendState)" != "Running" ]; then
+describe() {
+    case "$1" in
+        NoState|Starting|Stopped|"") echo "connecting to Tailscale's servers" ;;
+        NeedsLogin) echo "waiting for you to sign in" ;;
+        NeedsMachineAuth) echo "signed in; waiting for a tailnet admin to approve this device" ;;
+        Running) echo "connected" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+if [ "$(snapshot | cut -d'|' -f1)" != "Running" ]; then
     log="$(mktemp)"
     tailscale up --operator="${me}" --timeout=5m >"${log}" 2>&1 &
     up_pid=$!
     trap 'kill "${up_pid}" 2>/dev/null || true; rm -f "${log}"' EXIT
     trap 'exit 130' INT TERM
 
-    url=""
-    for _ in $(seq 60); do
-        kill -0 "${up_pid}" 2>/dev/null || break
-        url="$(field AuthURL)"
-        [ -n "${url}" ] && break
-        sleep 1
-    done
-
-    if [ -n "${url}" ]; then
-        case "${url}" in
-            https://*) ;;
-            *) echo "Refusing a sign-in URL that is not https: ${url}" >&2; exit 1 ;;
-        esac
-        echo "==> Sign in to your tailnet: ${url}"
-        # Detached, never waited on: when no browser is running, xdg-open
-        # starts one and blocks until it exits, and the browser would join this
-        # task's process group, so Ctrl-C here would kill it too. setsid -f
-        # puts it in its own session and returns at once (#1384 live test).
-        if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null; then
-            setsid -f xdg-open "${url}" </dev/null >/dev/null 2>&1 || true
+    # Report every state change, so the wait is never silent. A machine that
+    # already has a node key (e.g. kept in /var/lib/tailscale across a
+    # rollback) needs no sign-in URL at all, and the first contact with
+    # Tailscale's servers has been seen to take ~50 s; with no output that
+    # looked like a hang and invited a Ctrl-C.
+    echo "==> Connecting to Tailscale (gives up after 5 min)"
+    shown="" shown_url="" waited=0
+    while kill -0 "${up_pid}" 2>/dev/null; do
+        IFS='|' read -r state url < <(snapshot)
+        now="$(describe "${state}")"
+        if [ "${now}" != "${shown}" ]; then
+            echo "    ${now}"
+            shown="${now}"
         fi
-        echo "    Waiting for sign-in (5 min). Your tailnet may also require device approval."
-    fi
+        if [ -n "${url}" ] && [ "${url}" != "${shown_url}" ]; then
+            case "${url}" in
+                https://*) ;;
+                *) echo "Refusing a sign-in URL that is not https: ${url}" >&2; exit 1 ;;
+            esac
+            echo "==> Sign in to your tailnet: ${url}"
+            # Detached, never waited on: when no browser is running, xdg-open
+            # starts one and blocks until it exits, and the browser would join
+            # this task's process group, so Ctrl-C here would kill it too.
+            # setsid -f puts it in its own session and returns at once (#1384).
+            if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null; then
+                setsid -f xdg-open "${url}" </dev/null >/dev/null 2>&1 || true
+            fi
+            shown_url="${url}"
+        fi
+        sleep 1
+        waited=$((waited + 1))
+        if [ $((waited % 15)) -eq 0 ]; then
+            echo "    still ${now} after ${waited}s; \`journalctl -u tailscaled -f\` shows what tailscaled is doing"
+        fi
+    done
 
     if ! wait "${up_pid}"; then
         echo "tailscale up failed:" >&2
