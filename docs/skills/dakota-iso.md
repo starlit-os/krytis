@@ -200,8 +200,8 @@ krytis's other third-party image was already pinned the same way:
 
 **What makes a pin durable** is still the part worth carrying. Renovate cannot see either
 ref: they live in bash task scripts rather than a manifest, and `.github/renovate.json5`'s
-custom regex managers cover only `mise.toml` + `Containerfile.runner` (`actions/runner`),
-`mise.toml` (`protonpass/pass-cli`) and `.github/workflows/*.yml` (`jdx/mise`). A digest
+custom regex managers cover only `mise.toml` + `Containerfile.runner` (`actions/runner`)
+and `.github/workflows/*.yml` (`jdx/mise`). A digest
 with no update path trades a supply-chain hole for a rot hole. So each pin comes with a
 `<name>-update` task and a tracking job: `mise/tasks/chunkah-update` + `track-chunkah`, and
 `mise/tasks/qemu-image-update` + `track-qemu-image`, both in

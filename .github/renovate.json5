@@ -44,19 +44,6 @@
       "extractVersionTemplate": "^v(?<version>.+)$",
     },
     {
-      // pass-cli is not in the mise registry — the repo resolves the short name
-      // through [tool_alias] to the github: backend — so the mise manager
-      // cannot derive a datasource for it. `\d` anchors the match to the
-      // version pin in [tools]; without it the [tool_alias] line
-      // (`pass-cli = "github:protonpass/pass-cli"`) matches too.
-      "customType": "regex",
-      "description": "pass-cli pin in mise.toml [tools] (absent from the mise registry)",
-      "managerFilePatterns": ["/^mise\\.toml$/"],
-      "matchStrings": ["pass-cli = \"(?<currentValue>\\d[^\"]*)\""],
-      "depNameTemplate": "protonpass/pass-cli",
-      "datasourceTemplate": "github-releases",
-    },
-    {
       // The mise binary CI runs on. `jdx/mise-action` is SHA-pinned by the
       // github-actions manager, but the *mise version it installs* was
       // unpinned, and the action only installs/self-updates when a version is
@@ -163,21 +150,6 @@
       "matchManagers": ["pep621"],
       "matchPackageNames": ["buildstream-sbom"],
       "enabled": false,
-    },
-    {
-      // pass-cli comes from the custom manager above (not the native mise
-      // manager), and its mise.lock refresh has proven unreliable there:
-      // two Renovate-authored bumps (2026-08-25, 2026-08-27) landed with a
-      // stale lockfile entry, failing CI's `mise install --locked` step
-      // (`pass-cli@X.Y.Z is not in the lockfile`) and needing a manual
-      // force-push fix before merge. The native mise manager has had zero
-      // such failures over the same period — see `renovate.md` § The mise
-      // manager — so this rule stays manual while that one does not.
-      "matchDepNames": ["protonpass/pass-cli"],
-      "automerge": false,
-      "prBodyNotes": [
-        ":warning: Run `mise run mise-lock` on this branch and commit the refreshed `mise.lock` before merging — Renovate cannot update it.",
-      ],
     },
     {
       // The python pin tracks pyproject.toml's `requires-python = ">=3.12"`,
