@@ -3368,7 +3368,7 @@ File downloaded from .../linux-cachyos-7.2.4-3-x86_64_v3.pkg.tar.zst has sha256s
 Two independent upstream behaviours combine here, and both break naive version-based tracking:
 
 1. **Same pkgver-pkgrel, new content.** CachyOS rebuilds a package in place rather than bumping `pkgrel`. `7.2.4-3` was re-uploaded (`last-modified: Sat, 12 Sep 2026 03:04:17 GMT`) well after it was first pinned.
-2. **The `.db` keeps advertising the superseded hash.** Verified against two mirrors — `cdn77.cachyos.org` and `mirror.cachyos.org` both serve `fe432d84...`, while the database still said `a4a2ffea...` hours later. The database is not a reliable source for the checksum; only the artifact is.
+2. **The `.db` keeps advertising the superseded hash.** Verified against two mirrors — `cdn77.cachyos.org` and `mirror.cachyos.org` both serve `fe432d84...`, while the database still said `a4a2ffea...` hours later. The database is not a reliable source for the checksum; only the artifact is. (`mirror.cachyos.org` has since stopped serving packages; see § CachyOS removes superseded builds from its repo below.)
 
 Consequences for `kernel-update`, both now fixed:
 
@@ -3376,6 +3376,30 @@ Consequences for `kernel-update`, both now fixed:
 - It pinned the **database's** `SHA256SUM`. It now downloads the artifact, hashes it, warns loudly when the two disagree, and pins what the mirror actually serves.
 
 **The general rule for `kind: remote` sources: pin what the server sends, not what its index claims it will send.** Any upstream that rebuilds in place defeats a version-equality staleness check — the content hash is the only honest signal. Worth checking wherever a `*-update` task derives a ref from a metadata file rather than from the bytes it describes.
+
+### CachyOS removes superseded builds from its repo
+
+`repo/x86_64_v3/cachyos-v3/` is a plain pacman repo: it holds **only the newest build** of each package. When `7.3.0-3` landed (db `%BUILDDATE%` 2026-10-22 17:29Z), `7.3.0-2` and the `7.2.11-1` on `main` both started returning `404 NoSuchKey` from cdn77's `cachyos-eu` bucket. PR #1387 was committed at 18:33Z with the already-superseded `7.3.0-2` and failed its own CI build on the 404. The tracker's 24h cooldown makes this the normal case for any element pinned to a fast-moving rolling repo, not an edge case: the pin usually goes stale before merge, and every pin goes stale eventually.
+
+Superseded builds move to `https://archive.cachyos.org/archive/cachyos-v3/` **byte-identical** (both pins above hashed to their `ref`), but only *after* being superseded — the current build is not there. So neither host works alone. The fix is a BuildStream mirror on a dedicated alias (`include/aliases.yml`):
+
+```yaml
+aliases:
+  cachyos_v3: https://cdn77.cachyos.org/repo/x86_64_v3/cachyos-v3/
+mirrors:
+- name: cachyos-archive
+  aliases:
+    cachyos_v3:
+    - https://archive.cachyos.org/archive/cachyos-v3/
+```
+
+- **Mirrors are tried before the alias URI, and any fetch error falls through** (`Project.get_alias_uris` then `Source.__do_fetch` in BuildStream 2.7.0). A superseded pin downloads from the archive. A current pin is not in the archive yet. The archive does **not** 404 for it: it answers HTTP 200 with a 988-byte `text/html` placeholder (measured 2026-10-23, for `7.3.0-3` and for a made-up `9.9.9-1`). BuildStream downloads that page, rejects it on the sha256 (`File downloaded from … has sha256sum …, not …`), and goes on to cdn77. The `ref` never changes.
+- **So the miss logs `SUCCESS`.** The HTML download really does succeed, and the checksum check that rejects it runs afterwards, outside the logged activity. A fetch log showing `SUCCESS Fetching https://archive…` immediately followed by `START Fetching https://cdn77…` is that fallthrough, not a double download. If both hosts fail, the error shown is cdn77's, because it is the last one tried.
+- **The alias needed its own path prefix.** The archive's layout (`archive/cachyos-v3/`) differs from the repo's (`repo/x86_64_v3/cachyos-v3/`), and a mirror substitutes only the alias prefix, so the old host-root `cachyos:` alias could not be mirrored. Renaming it re-keys `core/linux-cachyos.bst` and its reverse deps: `DownloadableFileSource.get_unique_key` hashes the *aliased* `url`.
+- **`mirror.cachyos.org` and `cdn.cachyos.org` are not fallbacks** (as of 2026-10-22): both answer a package URL with HTTP 200 and a ~1 KB "Welcome to our server" HTML page. With BuildStream that turns into a sha256 mismatch, not a 404.
+- **The archive is not permanent.** On 2026-10-23 `archive/cachyos-v3/` held three kernels: `7.2.9-2` (2026-10-09), `7.2.11-1` (2026-10-18) and `7.3.0-2` (2026-10-22). That is about two weeks of history. A pin older than that is fetchable only from the bow source cache, so builds with `--pull` keep working and builds without it don't. The mirror covers the tracker's cooldown window and recent pins; it doesn't replace keeping the kernel current.
+
+Verified 2026-10-23 with `mise run bst source fetch` on `7.2.11-1` and `7.3.0-2` (served from the archive) and `7.3.0-3` (archive placeholder rejected, then cdn77), all checksum-clean.
 
 **Package layout:** CachyOS packages install the kernel at `/usr/lib/modules/<kver>/vmlinuz` (already bootc-compatible; no path adjustment needed).
 
