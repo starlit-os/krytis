@@ -9,7 +9,6 @@
 #
 # Upstream binds krytis deliberately leaves in place (no niri counterpart, and
 # a table merge cannot remove a key):
-#   Mod          launcher (duplicates niri's Mod+Space, which is also bound)
 #   Mod+T        window-toggle-floating   (niri uses Mod+V, also bound)
 #   Mod+Shift+T  window-focus-switch-floating (niri uses Mod+Shift+V)
 #   Mod+P        window-toggle-pinned
@@ -67,6 +66,17 @@
 # niri: `Mod+Space { spawn-sh "noctalia msg panel-toggle launcher"; }`.
 # OVERRIDE: upstream binds Mod+Space to scratchpad-toggle.
 "Mod+Space" = { action = "spawn:noctalia msg panel-toggle launcher", repeat = false }
+
+# OVERRIDE: upstream binds a bare Mod tap (fires on release when nothing else
+# was pressed) to the same launcher; niri had no such bind. A table merge
+# cannot delete the key, so it is re-pointed at a no-op and Mod+Space above
+# stays the launcher key. The bind still consumes the bare-Super release, as
+# upstream's did.
+"Mod" = "spawn:true"
+
+# niri: `Mod+Alt+L { spawn-sh "noctalia msg session lock"; }`. Upstream leaves
+# the key free.
+"Mod+Alt+L" = { action = "spawn:noctalia msg session lock", repeat = false }
 
 "XF86AudioPlay" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
 "XF86AudioNext" = { action = "spawn:noctalia msg media next", allow_when_locked = true }

@@ -305,15 +305,22 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   io.github.kolunmi.Bazaar --no-window'`. The niri equivalent was a
   `spawn-at-startup` with separate argv tokens.
 - **`[keybinds]` merges by key, so upstream's binds survive.** The port can
-  override a key but cannot *remove* one. Every upstream bind krytis has no
-  niri counterpart for is still live — `Mod` (launcher), `Mod+T`, `Mod+P`,
-  `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad trio. They are enumerated in
-  `files/umbriel/binds.toml`'s header so the divergence is auditable.
-- **Five upstream binds mean something different under niri and are overridden:**
-  `Mod+Space` (scratchpad → launcher), `Mod+Escape` (quit → shortcuts-inhibit),
-  `Mod+F` (fullscreen → maximize), `Mod+Shift+<dir>` (move → focus output), and
-  `Mod+Wheel<Up|Down>` (window focus → workspace). Re-binding `Mod+Space` leaves
-  `scratchpad-toggle` with no key; the other three scratchpad binds remain.
+  override a key but cannot *remove* one: there is no unbind syntax, and an
+  invalid action only logs `ignoring keybind` (verified against umbriel's
+  `src/config/fields_keybinds.cpp` and `config_merge.cpp` at the pinned ref).
+  To switch an upstream bind off, re-point it at a no-op (`spawn:true`). Every
+  upstream bind krytis has no niri counterpart for is still live — `Mod+T`,
+  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad trio. They are
+  enumerated in `files/umbriel/binds.toml`'s header so the divergence is
+  auditable.
+- **Six upstream binds are overridden.** Five mean something different under
+  niri: `Mod+Space` (scratchpad → launcher), `Mod+Escape` (quit →
+  shortcuts-inhibit), `Mod+F` (fullscreen → maximize), `Mod+Shift+<dir>` (move
+  → focus output), and `Mod+Wheel<Up|Down>` (window focus → workspace).
+  Re-binding `Mod+Space` leaves `scratchpad-toggle` with no key; the other three
+  scratchpad binds remain. The sixth, bare `Mod` (launcher, fired on release when
+  nothing else was pressed), has no niri counterpart and is re-pointed at a
+  no-op, so `Mod+Space` is the only launcher key.
 - **Upstream's packaged config enables a hot corner.** niri has
   `gestures { hot-corners { off } }`; umbriel's default config turns top-left
   into overview-open after 500 ms. `input.toml` disables it explicitly — dropping
@@ -1399,10 +1406,13 @@ Current binds of note (see `binds.kdl` / `binds/*.kdl` for the full set):
 |---|---|
 | `Mod+Return` | ghostty (terminal) |
 | `Mod+Space` | noctalia launcher (`noctalia msg panel-toggle launcher`) |
+| `Mod+Alt+L` | lock screen (`noctalia msg session lock`) |
 | `Mod+E` | nautilus (file manager) |
 
-There is no dedicated screen-lock bind in this config (dropped `Super+Alt+L`/swaylock
-from the old upstream-derived config — noctalia handles lock via its own panel).
+The lock bind calls noctalia's IPC rather than a separate locker: noctalia is the
+lock screen (see `docs/skills/pam.md` § The lock screen authenticates through `login`, not
+`greetd` — and only its first password prompt is answered). umbriel's
+`files/umbriel/binds.toml` binds the same key to the same command.
 
 ## Packaging Firefox-derivative browser tarballs (Zen Browser, #314)
 
