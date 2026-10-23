@@ -4,13 +4,14 @@
 # Flatpak binary is already present transitively via xdg-desktop-portal.
 # Closes #66.
 #
-# Also carries flatpak-cursor-path, a second oneshot that writes a system-wide
-# XCURSOR_PATH override so sandboxed X11 apps can find the host's cursor
-# themes (#949). Same element because both are "system Flatpak configuration
-# applied at boot" and share this files/ directory; different units because
-# the preinstall is network-gated and records each app once, while the override is local
-# and reasserts every boot. See the script header for why an override is the
-# only mechanism that works.
+# Also carries flatpak-cursor-path, a second oneshot that writes krytis's
+# system-wide Flatpak override: an XCURSOR_PATH so sandboxed X11 apps can find
+# the host's cursor themes (#949), and read-only xdg-config/gtk-{3,4}.0 grants
+# so sandboxed GTK apps load noctalia's theme CSS (#1400). Same element because
+# both are "system Flatpak configuration applied at boot" and share this files/
+# directory; different units because the preinstall is network-gated and
+# records each app once, while the override is local and reasserts every boot.
+# See the script header for why an override is the only mechanism that works.
 kind: manual
 
 depends:
