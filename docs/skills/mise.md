@@ -795,8 +795,13 @@ bow is reachable **only over the tailnet**: the cache is a Tailscale Service
 (`svc:bst-cache`, materia issue #163), so the machine running bst must be a tailnet node
 with MagicDNS, or `bst-cache.werewolf-stonecat.ts.net` does not resolve. krytis-runner is
 joined by materia (host-side MagicDNS via systemd-resolved); a workstation needs the
-Tailscale client logged in to the same tailnet. The old public name `bst-cache.ririi.dev`
-no longer serves the cache.
+Tailscale client logged in to the same tailnet. A hosted runner (`publish.yml` on
+Blacksmith) joins per job with `tailscale/github-action` through workload identity
+federation: an ephemeral `tag:ci` node, no stored Tailscale secret, client ID and audience
+in the `TS_OAUTH_CLIENT_ID`/`TS_AUDIENCE` repo variables, and a credential that accepts
+only `repo:starlit-os/krytis:ref:refs/heads/*`. Any new hosted-runner job that pulls from
+bow needs the same "Join tailnet" step before its first cache use. The old public name
+`bst-cache.ririi.dev` no longer serves the cache.
 
 **An unreachable bow fails the task; BuildStream alone would only warn (#1113).** When a
 remote can't be initialised, bst logs `WARNING Failed to initialize remote

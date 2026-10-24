@@ -172,6 +172,41 @@ jobs:
       - name: Enable unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
+      - name: Join tailnet (bow cache)
+        # bow's Buildbarn is reachable only as the Tailscale Service
+        # bst-cache.werewolf-stonecat.ts.net (materia#163, krytis#1410), so a
+        # hosted runner has to join the tailnet before the cache steps below.
+        # Workload identity federation: the action trades this job's GitHub
+        # OIDC token (id-token: write, above) for an ephemeral tag:ci node,
+        # which the tailnet policy lets reach svc:bst-cache's ports and
+        # nothing else. No Tailscale secret is stored here: client ID and
+        # audience are repo variables, and the credential only accepts
+        # subjects repo:starlit-os/krytis:ref:refs/heads/* (no PR runs).
+        # Skipped on force_self_hosted: krytis-runner's host is already a
+        # tailnet node, and a second tailscaled in the runner would clash.
+        if: ${{ !inputs.force_self_hosted }}
+        uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4.3.0
+        with:
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Wait for bow cache over the tailnet
+        # The action's README: a new node propagates through the tailnet
+        # eventually, and peers refuse it until then. Wait for the Service to
+        # resolve and accept TCP rather than letting the cache gate fail on it.
+        if: ${{ !inputs.force_self_hosted }}
+        run: |
+          for i in $(seq 30); do
+            if timeout 3 bash -c '</dev/tcp/bst-cache.werewolf-stonecat.ts.net/7982' 2>/dev/null; then
+              echo "bow cache reachable after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::bst-cache.werewolf-stonecat.ts.net:7982 unreachable over the tailnet"
+          tailscale status || true
+          exit 1
+
       - name: Toolchain cache gate
         # Refuse to start a build that would compile freedesktop-sdk's
         # toolchain (bootstrap/*, llvm, rust): this runner is ephemeral and
