@@ -101,13 +101,13 @@ build:
   max-jobs: 4
 artifacts:
   servers:
-  - url: https://bst-cache.ririi.dev:7981
+  - url: https://bst-cache.werewolf-stonecat.ts.net:7981
     type: index
     push: ${PUSH_BOOL}
     auth:
       server-cert: __CERT_PATH__
       access-token: __TOKEN_PATH__
-  - url: https://bst-cache.ririi.dev:7982
+  - url: https://bst-cache.werewolf-stonecat.ts.net:7982
     type: storage
     push: ${PUSH_BOOL}
     auth:
@@ -115,13 +115,13 @@ artifacts:
       access-token: __TOKEN_PATH__
 source-caches:
   servers:
-  - url: https://bst-cache.ririi.dev:7981
+  - url: https://bst-cache.werewolf-stonecat.ts.net:7981
     type: index
     push: ${PUSH_BOOL}
     auth:
       server-cert: __CERT_PATH__
       access-token: __TOKEN_PATH__
-  - url: https://bst-cache.ririi.dev:7982
+  - url: https://bst-cache.werewolf-stonecat.ts.net:7982
     type: storage
     push: ${PUSH_BOOL}
     auth:
@@ -140,7 +140,7 @@ EOF
     # project venv natively, or the bst2 image under --container (same grpc and
     # BuildStream protos either way). It cannot see bow dropping in the seconds
     # between this check and bst's own remote initialisation.
-    PROBE=(scripts/bow-artifact-check.py --probe bst-cache.ririi.dev:7981 bst-cache.ririi.dev:7982)
+    PROBE=(scripts/bow-artifact-check.py --probe bst-cache.werewolf-stonecat.ts.net:7981 bst-cache.werewolf-stonecat.ts.net:7982)
     if [ "$CONTAINER" = "true" ]; then
         PROBE_CMD=(podman run --rm --network=host -e BOW_TOKEN -v "$(pwd):/src:ro" -w /src
             "${BST2_IMAGE}" python3 "${PROBE[@]}" /src/quadlet/buildbarn/certs/bow-server.crt)
@@ -148,7 +148,7 @@ EOF
         PROBE_CMD=(uv run --quiet python3 "${PROBE[@]}" quadlet/buildbarn/certs/bow-server.crt)
     fi
     if ! BOW_TOKEN="$TOKEN" "${PROBE_CMD[@]}" >/dev/null; then
-        echo "ERROR: --${ROLE} was requested but bow (bst-cache.ririi.dev) cannot be used (reason above)." >&2
+        echo "ERROR: --${ROLE} was requested but bow (bst-cache.werewolf-stonecat.ts.net) cannot be used (reason above)." >&2
         echo "       Not starting bst: without bow it would build everything missing locally from source." >&2
         echo "       Retry once bow is back, or drop --${ROLE} to build deliberately without it." >&2
         exit 1
