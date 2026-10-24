@@ -93,7 +93,7 @@ jobs:
         uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.10.17
+          version: 2026.10.18
           experimental: true
           # krytis-vps only, so the tools are already in /root/.local/share/mise.
           # The actions/cache round trip installed nothing and cost 48-50s per
