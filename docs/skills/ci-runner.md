@@ -1652,7 +1652,7 @@ as noise if subsequent pushes succeed; only worry if it repeats per-element.
 The design above (mTLS: CA + per-role client certs) was the **local
 dev-test** design, verified against a Buildbarn instance on the dev
 workstation. krytis's own `project.conf` now points at a real deployed
-instance instead — `bst-cache.ririi.dev:7981`/`:7982`, on `bow`, managed
+instance instead — `bst-cache.werewolf-stonecat.ts.net:7981`/`:7982`, on `bow`, managed
 by a separate repo (`materia`, a GitOps Podman orchestration project —
 see `specs/plans/issue-28-bst-cache-krytis.md` and
 `specs/plans/issue-28-krytis-handoff.md` there for the full server-side
@@ -2053,7 +2053,7 @@ BST_FLAGS_OVERRIDE="-o x86_64_v3 false --no-interactive --config /src/.buildbarn
 
 ### `project.conf` deliberately omits bow entries — bearer auth means a token-less entry can never work
 
-`bst-cache.ririi.dev` (bow) requires a JWT bearer token for **every** RPC,
+`bst-cache.werewolf-stonecat.ts.net` (bow) requires a JWT bearer token for **every** RPC,
 read or write — not just push. Buildbarn's `jwt` `AuthenticationPolicy`
 gates the connection itself; there's no anonymous-read carve-out. Since no
 token is ever committed to this repo, a `project.conf` entry for bow with

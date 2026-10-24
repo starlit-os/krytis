@@ -91,7 +91,7 @@ fi
 
 set +e
 RESULT="$(printf '%s' "$REMOTE_INPUT" | BOW_TOKEN="$TOKEN" uv run --quiet python3 scripts/bow-artifact-check.py \
-    bst-cache.ririi.dev:7981 bst-cache.ririi.dev:7982 quadlet/buildbarn/certs/bow-server.crt)"
+    bst-cache.werewolf-stonecat.ts.net:7981 bst-cache.werewolf-stonecat.ts.net:7982 quadlet/buildbarn/certs/bow-server.crt)"
 rc=$?
 set -e
 

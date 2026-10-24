@@ -109,7 +109,7 @@ Likely causes, in order, and what to check:
    cache this machine usually builds against isn't in place. Where that cache lives is
    machine-specific, so ask the user rather than guessing.
 2. **No remote cache.** The build was started without `--pull`/`--push`, or the token did
-   not resolve, or bow (`bst-cache.ririi.dev`) is unreachable. With `--pull`/`--push` the
+   not resolve, or bow (`bst-cache.werewolf-stonecat.ts.net`) is unreachable. With `--pull`/`--push` the
    last two now stop the task before bst starts (#1113). Without either flag, check the
    build's `Initializing remote caches` line and the `artifacts:` block of the generated
    `--config` file.
@@ -784,16 +784,23 @@ in `project.conf` are project-scoped and `docs/skills/ci-runner.md`. With
 one of the flags, the task resolves a bow JWT (`BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
 env var first, else `fnox get` — see `fnox.toml`'s `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
 entries, sourced from the Krytis vault's "Buildbarn" item), writes a temp
-`buildstream.conf` wiring `https://bst-cache.ririi.dev:7981`/`:7982` (index/storage,
+`buildstream.conf` wiring `https://bst-cache.werewolf-stonecat.ts.net:7981`/`:7982` (index/storage,
 `quadlet/buildbarn/certs/bow-server.crt` for TLS), and passes it via `bst --config` —
 never touching `~/.config/buildstream.conf`/`~/.config/buildstream/user.conf` on the
 host, and never mounting a persistent secret into the ephemeral `--container` build.
 `--push` also serves reads (a push-capable connection satisfies pulls too), so prefer
 it when you have push access; `--pull` is the read-only fallback.
 
+bow is reachable **only over the tailnet**: the cache is a Tailscale Service
+(`svc:bst-cache`, materia issue #163), so the machine running bst must be a tailnet node
+with MagicDNS, or `bst-cache.werewolf-stonecat.ts.net` does not resolve. krytis-runner is
+joined by materia (host-side MagicDNS via systemd-resolved); a workstation needs the
+Tailscale client logged in to the same tailnet. The old public name `bst-cache.ririi.dev`
+no longer serves the cache.
+
 **An unreachable bow fails the task; BuildStream alone would only warn (#1113).** When a
 remote can't be initialised, bst logs `WARNING Failed to initialize remote
-https://bst-cache.ririi.dev:7982: UNAVAILABLE …` and carries on without it. Every artifact
+https://bst-cache.werewolf-stonecat.ts.net:7982: UNAVAILABLE …` and carries on without it. Every artifact
 missing locally is then built from source, toolchain included. That happened on
 2026-10-06: bow was briefly down when a `build --pull` started, and nothing failed until
 someone saw `bootstrap/build/gcc-stage2.bst` compiling. So with either flag, the task

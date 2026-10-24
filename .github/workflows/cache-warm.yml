@@ -188,13 +188,13 @@ jobs:
             cat >> ~/.config/buildstream.conf <<EOF2
           artifacts:
             servers:
-            - url: https://bst-cache.ririi.dev:7981
+            - url: https://bst-cache.werewolf-stonecat.ts.net:7981
               type: index
               push: ${PUSH_FLAG}
               auth:
                 server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
                 access-token: ${TOKEN_FILE}
-            - url: https://bst-cache.ririi.dev:7982
+            - url: https://bst-cache.werewolf-stonecat.ts.net:7982
               type: storage
               push: ${PUSH_FLAG}
               auth:
@@ -203,13 +203,13 @@ jobs:
 
           source-caches:
             servers:
-            - url: https://bst-cache.ririi.dev:7981
+            - url: https://bst-cache.werewolf-stonecat.ts.net:7981
               type: index
               push: ${PUSH_FLAG}
               auth:
                 server-cert: ${GITHUB_WORKSPACE}/quadlet/buildbarn/certs/bow-server.crt
                 access-token: ${TOKEN_FILE}
-            - url: https://bst-cache.ririi.dev:7982
+            - url: https://bst-cache.werewolf-stonecat.ts.net:7982
               type: storage
               push: ${PUSH_FLAG}
               auth:
