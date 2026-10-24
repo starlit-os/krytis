@@ -1602,6 +1602,65 @@ So the X11-socket fix works only when the app's own window is on X11:
 reading the source on 2026-10-15, not from a run; `docs/design/proton-pass-flatpak.md` has
 the citations and the test matrix. It's why native `desktop/proton-pass.bst` stays.
 
+## Wine games lock the pointer to their window on umbriel: set `GrabPointer=N`
+
+World of Warcraft and Hearthstone under Faugus keep the pointer inside their window on
+umbriel in windowed fullscreen; the same games under niri don't. The game calls Windows
+`ClipCursor`, Wine turns that into a `zwp_pointer_constraints_v1.confine_pointer` request,
+and umbriel enforces it:
+
+- **Wine Wayland driver:** `WAYLAND_ClipCursor` → `wayland_pointer_update_constraint`
+  confines to the clip rect (`dlls/winewayland.drv/wayland_pointer.c`).
+- **Wine X11 driver:** `grab_clipping_window` maps an InputOnly clip window and calls
+  `XGrabPointer` with `confine_to` (`dlls/winex11.drv/mouse.c`). Xwayland's
+  `xwl_cursor_confined_to` finds the toplevel that clip window covers and confines to it
+  (`hw/xwayland/xwayland-screen.c`).
+- **umbriel** activates any client constraint on the surface under the pointer
+  (`src/input/cursor_constraint.cpp`, `updateConstraintForSurface`). The
+  `confine_pointer` window rule can't switch that off: `false` only drops umbriel's own
+  rule-based confinement.
+
+Why niri doesn't lock wasn't found. xwayland-satellite does forward the X11 path: a
+`WAYLAND_DEBUG=1` satellite on a spare display, driven by a script doing Wine's clip-window
+grab, sent `confine_pointer` on to niri (2026-10-24). niri 26.04 implements confinement
+(`src/input/mod.rs`), so [INFERENCE] a game on the Wayland driver would be confined under
+niri too.
+
+**The fix is in the Wine prefix, not the compositor.** win32u reads `GrabPointer`, and when
+it is false `process_wine_clipcursor` returns before calling the display driver
+(`dlls/win32u/input.c`, read in `dlls/win32u/sysparams.c`). No confine request goes out with
+either driver. The key still sits under `X11 Driver` for historical reasons:
+
+```
+HKCU\Software\Wine\AppDefaults\Wow.exe\X11 Driver          GrabPointer = "N"
+HKCU\Software\Wine\AppDefaults\Hearthstone.exe\X11 Driver  GrabPointer = "N"
+```
+
+Drop `AppDefaults\<exe>\` to cover the whole prefix. A process keeps the value it read at
+startup, so restart the game. Verified on 2026-10-24 on umbriel `8449975` with
+Proton-CachyOS `cachyos-11.0-20261015-slr` (its `win32u.so` carries the `GrabPointer`
+string): with both games on the Wayland driver the pointer leaves the window freely. The
+Wine paths above are `master` on that date.
+
+Two things that cost time:
+
+- **Check which driver the game is really on.** A Faugus entry's launch-argument
+  `PROTON_ENABLE_WAYLAND=0` overrides Faugus's global "Wayland driver" toggle, and games
+  started from the Battle.net launcher inherit Battle.net's environment. Read it from the
+  game itself: `tr '\0' '\n' < /proc/<pid>/environ | grep PROTON_ENABLE_WAYLAND`. Under
+  niri, an X11 game's window carries xwayland-satellite's PID in `niri msg windows`.
+- **Editing a running prefix's registry.** Faugus runs Wine in a pressure-vessel container
+  whose private `/tmp` holds the wineserver socket, so a host-side `wine reg` would start a
+  second wineserver on the same prefix. Join the container's namespaces instead. This works
+  as the user, without root, and reuses the running wineserver:
+
+  ```shell
+  nsenter -t "$(pgrep -x wineserver)" -U -m --preserve-credentials -- \
+    env WINEPREFIX="$HOME/Faugus/battlenet/pfx" WINEDEBUG=-all \
+    "$HOME/.local/share/Steam/compatibilitytools.d/Proton-CachyOS Latest/files/bin/wine" \
+    reg add 'HKCU\Software\Wine\AppDefaults\Wow.exe\X11 Driver' /v GrabPointer /t REG_SZ /d N /f
+  ```
+
 ## Validating niri Config Changes
 
 When editing anything under `files/niri/`, validate the top-level file before committing — since includes are relative, validate the file in place (not copied to `/tmp`, which would break the relative include paths):
