@@ -546,10 +546,13 @@ Two halves, deliberately independent, because either can be lost on its own:
 
 - **`patches/oo7/login-helper-connect-retry.patch`** — replaces the daemon's single connect
   with a bounded 500 ms retry (`connect_to_login_helper`), and logs the give-up at debug
-  instead of swallowing it. Proposed upstream on 2026-10-21 as linux-credentials/oo7#615,
-  whose branch adds two unit tests the carried patch lacks. If the patch stops applying after
-  an oo7 re-pin, check whether #615 merged, or upstream grew its own retry, before re-basing
-  it.
+  instead of swallowing it. Proposed upstream on 2026-10-21 as linux-credentials/oo7#615.
+  The PR branch (`kitten-lily/oo7` `fix/login-helper-connect-retry`) has moved past the
+  carried patch. It adds two unit tests, and since review on 2026-10-24 the connect retry
+  and the `recvmsg` are async on the tokio runtime (`tokio::time::sleep`,
+  `UnixStream::async_io`), not blocking calls. The carried patch is still the synchronous
+  version. Refresh it from the branch once #615 settles. If the patch stops applying after an
+  oo7 re-pin, check whether #615 merged, or upstream grew its own retry, before re-basing it.
 - **`oo7-daemon.service.d/10-krytis-login-helper-wait.conf`**, installed by
   `elements/desktop/oo7.bst` — an `ExecStartPre` that waits up to 500 ms for
   `%t/oo7-daemon-login.sock`. Ordering at the unit level, so the guarantee survives an oo7
