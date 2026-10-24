@@ -310,17 +310,19 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   `src/config/fields_keybinds.cpp` and `config_merge.cpp` at the pinned ref).
   To switch an upstream bind off, re-point it at a no-op (`spawn:true`). Every
   upstream bind krytis has no niri counterpart for is still live — `Mod+T`,
-  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad trio. They are
-  enumerated in `files/umbriel/binds.toml`'s header so the divergence is
-  auditable.
-- **Six upstream binds are overridden.** Five mean something different under
+  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad move/restore pair.
+  They are enumerated in `files/umbriel/binds.toml`'s header so the divergence
+  is auditable.
+- **Seven upstream binds are overridden.** Five mean something different under
   niri: `Mod+Space` (scratchpad → launcher), `Mod+Escape` (quit →
   shortcuts-inhibit), `Mod+F` (fullscreen → maximize), `Mod+Shift+<dir>` (move
   → focus output), and `Mod+Wheel<Up|Down>` (window focus → workspace).
-  Re-binding `Mod+Space` leaves `scratchpad-toggle` with no key; the other three
-  scratchpad binds remain. The sixth, bare `Mod` (launcher, fired on release when
-  nothing else was pressed), has no niri counterpart and is re-pointed at a
-  no-op, so `Mod+Space` is the only launcher key.
+  `Mod+Tab` (scratchpad-focus-next → `noctalia msg window-switcher`) has no
+  niri counterpart; it was taken for the window switcher. Together these leave
+  `scratchpad-toggle` and `scratchpad-focus-next` with no key; move-to and
+  restore-from scratchpad remain. The seventh, bare `Mod` (launcher, fired on
+  release when nothing else was pressed), has no niri counterpart and is
+  re-pointed at a no-op, so `Mod+Space` is the only launcher key.
 - **Upstream's packaged config enables a hot corner.** niri has
   `gestures { hot-corners { off } }`; umbriel's default config turns top-left
   into overview-open after 500 ms. `input.toml` disables it explicitly — dropping
