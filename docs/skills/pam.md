@@ -551,8 +551,10 @@ Two halves, deliberately independent, because either can be lost on its own:
   carried patch. It adds two unit tests, and since review on 2026-10-24 the connect retry
   and the `recvmsg` are async on the tokio runtime (`tokio::time::sleep`,
   `UnixStream::async_io`), not blocking calls. The carried patch is still the synchronous
-  version. Refresh it from the branch once #615 settles. If the patch stops applying after an
-  oo7 re-pin, check whether #615 merged, or upstream grew its own retry, before re-basing it.
+  version, and stays that way on purpose: krytis does not refresh it from the branch while
+  review is open. Drop the patch on the first oo7 re-pin that contains #615 (or upstream's
+  own retry). Keep the drop-in below. If the patch stops applying after a re-pin before
+  then, check whether #615 merged before re-basing it.
 - **`oo7-daemon.service.d/10-krytis-login-helper-wait.conf`**, installed by
   `elements/desktop/oo7.bst` — an `ExecStartPre` that waits up to 500 ms for
   `%t/oo7-daemon-login.sock`. Ordering at the unit level, so the guarantee survives an oo7
