@@ -74,7 +74,7 @@ sources:
   - '*rc*'
   - '*alpha*'
   - '*beta*'
-  ref: v0.2.2-0-gaaaaaa9e9dd59d4d08c22c69a1d1979a5eb66a4b
+  ref: v0.3.0-0-gcd6bac8b3b421d42074f520c38beac36fe2afb64
 - kind: cargo2
   url: crates:crates
   ref:
@@ -216,8 +216,8 @@ sources:
     sha: 8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1
   - kind: registry
     name: ureq
-    version: 3.4.2
-    sha: 9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc
+    version: 3.5.0
+    sha: cde93ff05758a36a851a398a772b0b79a82fbe3c186a46f2696baaeaf84c966b
   - kind: registry
     name: ureq-proto
     version: 0.6.5
