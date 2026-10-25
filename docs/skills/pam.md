@@ -502,20 +502,25 @@ keyring`, and nothing in the journal reads as an error — `pam_oo7` reports suc
 |`17.060742`|daemon binds `oo7-pam.sock` — 38 ms after `pam_oo7` gave up|
 |`17.062261`|`Setting up collection 'login'` — locked, and stays locked|
 
-**Neither side retries, and the failure is silent on both.**
+**At the reproducing pin (`da576e43`), neither side retried, and the failure was silent on
+both.**
 
 - `pam/src/socket.rs`: `Err(e) if auto_start && e.kind() == NotFound => { start_login_helper(…)?; return Ok(()) }`. Fire-and-forget — it then reports success to PAM whether or not anything ever collects the secret.
-- `server/src/main.rs`: `read_secret_from_login_helper()` runs **once**, inside `inner_main` ahead of `Service::run`. Its failure arm is `Err(_) => return None` — no log, no retry. Absence of `Connected to login helper at …` in the daemon's log is the only trace.
+- Before upstream `b54f8e7`, `server/src/main.rs` ran
+  `read_secret_from_login_helper()` **once**, inside `inner_main` ahead of `Service::run`.
+  Its failure arm was `Err(_) => return None` — no log, no retry. Absence of
+  `Connected to login helper at …` in the daemon's log was the only trace.
 - `server/src/login.rs`: the helper binds `/run/user/<uid>/oo7-daemon-login.sock` and polls for `HELPER_TIMEOUT_SECS = 120`, then logs `Timed out after 120s, no daemon connected` and exits 0. **That log never reaches the journal** — the helper is `execv`'d from greetd's PAM child with stderr discarded, so the process leaves no trace at all. Do not conclude from a silent journal that the helper never ran.
 
-So the secret is handed to a helper the daemon has already stopped looking for.
+At that pin, the secret was handed to a helper the daemon had already stopped looking for.
 
-**This is not intermittent, it only looks that way.** `Socket not found, starting login helper`
-appears on every fresh-boot login from 2026-08-14 onward. On the same machine the daemon logged
+**This was not intermittent, it only looked that way.** `Socket not found, starting login
+helper` appeared on every fresh-boot login from 2026-08-14 until krytis shipped the downstream
+fix on 2026-09-10. On the same machine the daemon logged
 `pam_listener: Received unlock request for user: lily` exactly twice across four weeks of boots
 — both times on re-logins into a boot where `user@1000` still lingered, so `oo7-pam.sock`
 already existed and `pam_oo7` took the direct path (`Connected to daemon socket`, no helper, no
-race). **Same-boot re-logins work; first login after a boot never does.**
+race). **Same-boot re-logins worked; first login after a boot did not.**
 
 Builds before 2026-08-14 had a fallback that worked: `Socket not found, attempting to start
 daemon` → poll → `Connected to daemon socket` ~100 ms later. Upstream replaced that
@@ -540,25 +545,20 @@ state anyway. Mid-session recovery is the interactive prompter only.
 Ordering `pam_oo7` **before** `pam_systemd` is not a fix either: `/run/user/<uid>` does not
 exist until logind registers the session, so the helper would have nowhere to bind.
 
-### The fix krytis ships (#806)
+### The fix upstream ships, plus krytis's ordering guard (#806)
 
-Two halves, deliberately independent, because either can be lost on its own:
+Two halves remain deliberately independent, because either can regress on its own:
 
-- **`patches/oo7/login-helper-connect-retry.patch`** — replaces the daemon's single connect
-  with a bounded 500 ms retry (`connect_to_login_helper`), and logs the give-up at debug
-  instead of swallowing it. Proposed upstream on 2026-10-21 as linux-credentials/oo7#615.
-  The PR branch (`kitten-lily/oo7` `fix/login-helper-connect-retry`) has moved past the
-  carried patch. It adds two unit tests, and since review on 2026-10-24 the connect retry
-  and the `recvmsg` are async on the tokio runtime (`tokio::time::sleep`,
-  `UnixStream::async_io`), not blocking calls. The carried patch is still the synchronous
-  version, and stays that way on purpose: krytis does not refresh it from the branch while
-  review is open. Drop the patch on the first oo7 re-pin that contains #615 (or upstream's
-  own retry). Keep the drop-in below. If the patch stops applying after a re-pin before
-  then, check whether #615 merged before re-basing it.
+- **Upstream `b54f8e7`** — linux-credentials/oo7#615, merged 2026-10-24 — replaces the
+  daemon's single connect with a bounded 500 ms async retry (`connect_to_login_helper`) and
+  logs the give-up at debug instead of swallowing it. The `recvmsg` also runs asynchronously
+  through `UnixStream::async_io`, and two unit tests cover a helper binding 150 ms late and
+  the no-helper timeout. Krytis first pins this commit without its former downstream patch
+  on 2026-10-25.
 - **`oo7-daemon.service.d/10-krytis-login-helper-wait.conf`**, installed by
   `elements/desktop/oo7.bst` — an `ExecStartPre` that waits up to 500 ms for
-  `%t/oo7-daemon-login.sock`. Ordering at the unit level, so the guarantee survives an oo7
-  bump that silently drops the patch.
+  `%t/oo7-daemon-login.sock`. Ordering at the unit level, so a future retry regression cannot
+  silently restore the race.
 
 500 ms is an order of magnitude more than the observed 38 ms skew. The two budgets stack only
 when no helper is coming at all — a manual `systemctl --user restart oo7-daemon` pays up to 1 s
@@ -568,11 +568,12 @@ because the helper binds within tens of milliseconds.
 ### `mise run oo7-login-race-test` gates it
 
 The symptom is invisible — no error is logged on either side, and a same-boot re-login masks
-it entirely — so this is a task on the built artifact, not an investigation to redo. It makes
-the daemon *win* the race deliberately: the daemon starts first, the helper appears 150 ms
-later. That is well outside a single connect attempt and well inside the 500 ms budget.
+it entirely — so this remains a task on the built artifact, not an investigation to redo. It
+makes the daemon *win* the race deliberately: the daemon starts first, the helper appears
+150 ms later. That is well outside a single connect attempt and well inside upstream's 500 ms
+budget.
 
-Unpatched artifact:
+Pre-fix artifact:
 
 ```
 ==> FAIL: daemon never received the login secret (krytis#806)
@@ -582,7 +583,8 @@ Unpatched artifact:
 ==> login collection Locked = b true
 ```
 
-Patched artifact:
+Fixed artifact (the former downstream patch and upstream `b54f8e7` have the same observable
+result):
 
 ```
     INFO oo7_daemon: Connected to login helper at /run/user/1000/oo7-daemon-login.sock

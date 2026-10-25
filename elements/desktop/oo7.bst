@@ -59,16 +59,15 @@ config:
   - |
     # krytis#806: pam_oo7.so auto_start spawns the transient oo7-daemon-login
     # helper from the same PAM session stack that starts oo7-daemon.service,
-    # one module after pam_systemd.so — and the daemon reads the helper's
-    # socket exactly once at startup. Whichever process binds second loses,
-    # and the login secret is dropped with no error logged on either side.
+    # one module after pam_systemd.so. Before upstream b54f8e7 (oo7#615), the
+    # daemon read the helper's socket once at startup; if it won the race, the
+    # login secret was dropped with no error logged on either side.
     #
-    # Belt and braces with patches/oo7/login-helper-connect-retry.patch. The
-    # patch carries the fix inside the daemon (proposed as oo7#615);
-    # this drop-in keeps the ordering guarantee if an oo7 re-pin ever drops the
-    # patch. Both budgets are 500 ms, so the worst case — no helper coming, as
-    # on a manual `systemctl --user restart oo7-daemon` — is 1 s of startup
-    # delay on a unit nothing blocks on.
+    # b54f8e7 retries asynchronously for 500 ms. Keep this drop-in as an
+    # independent ordering guarantee: it waits before the daemon starts, so a
+    # future retry regression cannot silently restore the race. The two 500 ms
+    # budgets stack only when no helper is coming, such as a manual
+    # `systemctl --user restart oo7-daemon`; nothing blocks on this unit.
     install -dm755 \
       "%{install-root}%{indep-libdir}/systemd/user/oo7-daemon.service.d"
     cat > "%{install-root}%{indep-libdir}/systemd/user/oo7-daemon.service.d/10-krytis-login-helper-wait.conf" <<'EOF'
@@ -95,10 +94,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-285-g901e7406aa42f8be3bb9f5533ede8c5c7fec693d
-
-- kind: patch
-  path: patches/oo7/login-helper-connect-retry.patch
+  ref: v0.6.0-alpha-287-gb54f8e7cec0700366d3be86170053c014e97a576
 
 - kind: cargo2
   url: crates:crates

@@ -9,21 +9,19 @@
 #
 # pam_oo7.so auto_start spawns the helper from the same PAM session stack that
 # starts oo7-daemon.service, one module after pam_systemd.so, so the two race by
-# a few tens of milliseconds. Upstream reads the helper socket exactly once, in
-# read_secret_from_login_helper() ahead of Service::run, with `Err(_) => return
-# None` — no retry and no log. Whichever binds second loses and the secret is
-# dropped silently, while pam_oo7 reports success regardless.
+# a few tens of milliseconds. Before upstream b54f8e7 (oo7#615), the daemon read
+# the helper socket exactly once in read_secret_from_login_helper(), ahead of
+# Service::run. Whichever bound second lost and the secret was dropped silently,
+# while pam_oo7 reported success regardless.
 #
-# This is a gate rather than a one-off check because the fix lives in
-# patches/oo7/login-helper-connect-retry.patch, which an oo7 re-pin can silently
-# drop, and because the symptom is invisible: no error is logged anywhere, and a
-# same-boot re-login masks it entirely (the daemon socket already exists then,
-# so the helper path is never taken).
+# This stays a gate after the fix moved upstream: an oo7 re-pin can regress the
+# retry just as silently, and a same-boot re-login masks the symptom (the daemon
+# socket already exists then, so the helper path is never taken).
 #
 # The test makes the daemon *win* the race deliberately — it starts first, and
 # the helper appears 150 ms later. That is well outside a single connect attempt
-# and well inside the patch's 500 ms budget, so an unpatched binary fails and a
-# patched one passes.
+# and well inside upstream's 500 ms budget, so a pre-fix binary fails and
+# b54f8e7 or later passes.
 #
 # A pass is a positive observation from the receiver's own log ("Received login
 # secret from helper"), never pam_oo7's success claim, which is emitted whether
