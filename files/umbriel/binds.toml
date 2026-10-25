@@ -15,9 +15,10 @@
 #   Mod+F1       window-focus-next
 #   Mod+Ctrl+F   window-toggle-maximize  -- see the gap note at the bottom
 #   Mod+Shift+1..9  window-move-to-workspace:N (niri uses Mod+Ctrl+N)
-#   Mod+Shift+Space / Mod+Ctrl+Space / Mod+Tab  scratchpad move/restore/cycle.
-#     Note Mod+Space is re-bound below to the launcher, so `scratchpad-toggle`
-#     itself is left without a key; the other three scratchpad binds remain.
+#   Mod+Shift+Space / Mod+Ctrl+Space  scratchpad move/restore.
+#     Note Mod+Space and Mod+Tab are re-bound below to noctalia, so
+#     `scratchpad-toggle` and `scratchpad-focus-next` are left without a key;
+#     the other two scratchpad binds remain.
 
 [keybinds]
 
@@ -77,6 +78,10 @@
 # niri: `Mod+Alt+L { spawn-sh "noctalia msg session lock"; }`. Upstream leaves
 # the key free.
 "Mod+Alt+L" = { action = "spawn:noctalia msg session lock", repeat = false }
+
+# No niri counterpart. OVERRIDE: upstream binds Mod+Tab to
+# scratchpad-focus-next; noctalia's window switcher is the more common use.
+"Mod+Tab" = { action = "spawn:noctalia msg window-switcher", repeat = false }
 
 "XF86AudioPlay" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
 "XF86AudioNext" = { action = "spawn:noctalia msg media next", allow_when_locked = true }
