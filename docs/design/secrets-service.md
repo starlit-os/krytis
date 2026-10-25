@@ -109,8 +109,8 @@ still in force.
 
 ### Current decision — ship oo7, accept the outstanding bugs
 
-Deliberate call, made with the failure modes measured rather than guessed. Krytis moves to
-oo7 + noctalia's native prompter now, carrying two known defects and two workarounds:
+Deliberate call, made with the failure modes measured rather than guessed. Krytis ships
+oo7 + noctalia's native prompter, tracking the measured risks and their mitigations:
 
 | Accepted | Consequence | Workaround in tree | Exit condition |
 |---|---|---|---|
@@ -118,7 +118,7 @@ oo7 + noctalia's native prompter now, carrying two known defects and two workaro
 | ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
 | **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
-| **#806** — the login secret is lost to a startup race | `pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers | `patches/oo7/login-helper-connect-retry.patch` (500 ms retry in the daemon) plus an `ExecStartPre` drop-in on `oo7-daemon.service`; gated by `mise run oo7-login-race-test` | linux-credentials/oo7#615 (the patch, proposed 2026-10-21) merges, or upstream grows its own retry |
+| ~~**#806** — the login secret is lost to a startup race~~ **RESOLVED 2026-10-24** | ~~`pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers~~ | Upstream `b54f8e7` retries the helper connection asynchronously for 500 ms; krytis retains an independent `ExecStartPre` wait on `oo7-daemon.service`. Gated by `mise run oo7-login-race-test` | **met.** linux-credentials/oo7#615 merged as `b54f8e7`. Verified without the former downstream patch at that pin with `mise run oo7-login-race-test` |
 
 **The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
 *usual* way the collection ends up locked, not the only one. A mid-session
