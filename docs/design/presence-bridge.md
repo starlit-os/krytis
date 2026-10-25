@@ -73,6 +73,7 @@ apply), pulled in by `stacks/desktop-apps.bst`:
   scan and no request to discord.com. That takes a `disable presence-bridge.service`
   user-preset rule: with no rule, the image's global preset step enables it
   (`docs/skills/bst.md` § User units fall through too). Users opt in with
-  `mise presence-bridge:enable` and out with `mise presence-bridge:disable`
-  (`systemctl --user enable|disable --now presence-bridge.service`), declared by the
-  same element in `/etc/mise/conf.d/presence-bridge.toml`.
+  `mise presence-bridge:enable` and out with `mise presence-bridge:disable`;
+  those tasks call upstream's `presence-bridge service install|uninstall`,
+  which finds this packaged unit and enables or disables it. The tasks are
+  declared by the same element in `/etc/mise/conf.d/presence-bridge.toml`.

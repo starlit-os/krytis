@@ -168,6 +168,17 @@ process whose parent is `systemd --user` is an orphan.
   `cracklib-dict-check` → `portal-routing-check`), and confirm
   the change by inspecting image *contents* — `podman run --rm localhost/krytis:latest ...`,
   or `/usr/manifest.json` for element-level presence — never by the lint exit code alone.
+- **`localhost/krytis:latest` and `localhost/krytis-input:latest` are shared across
+  every worktree.** A build in another worktree can replace either tag after your
+  `mise run build` passes, so a later content smoke or `boot-test` may exercise that
+  other image. On 2026-10-25 a build tagged the expected image as `5b677ceb`; after
+  `boot-test`, the rootless tag was `8793c763` and contained main's old
+  presence-bridge binary and mise tasks. Re-running `mise run build --pull --force`
+  restored the branch image as `24b41d34`. Inspect changed contents immediately after
+  the build, then capture its ID with `podman image inspect` before a long-running
+  check and assert the tag still has that ID after it.
+  `boot-test` copies whichever object the tag names when `generate-disk` starts; its
+  pass does not prove the tag still names that image afterward.
 - **`mise lint` is a real multi-stage `podman build`, not a fast static check — its
   name undersells it.** `Containerfile` has two stages: `base` (`FROM
   localhost/krytis-input:latest` + `RUN bootc container lint` — this part really is

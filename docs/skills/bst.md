@@ -371,7 +371,7 @@ assertion on what it produced (`test -s <output>`), not on its exit status.
 
 **File-task directory scanning only applies to project configs.** Mise does NOT scan `/etc/mise/tasks/` automatically even if `/etc/mise/config.toml` exists. Tasks must be declared explicitly with `[tasks.*]` TOML blocks pointing to the script files, either in `/etc/mise/config.toml` or in a `/etc/mise/conf.d/*.toml` fragment. Ship both: the scripts (for execution) and the TOML (for discovery).
 
-**A second element declaring tasks uses a `conf.d` fragment, never `config.toml`.** `config/fido2-tasks.bst` owns `/etc/mise/config.toml`; another element installing it is an overlap. mise loads `[tasks.*]` from `/etc/mise/conf.d/<name>.toml` with no `config.toml` present at all (checked 2026-10-11 with mise 2026.10.7: `MISE_SYSTEM_CONFIG_DIR=<dir>` holding only `conf.d/pb.toml`, run from a directory with no project config, lists and runs the task). One-line tasks need no script file: `desktop/presence-bridge.bst` heredocs `/etc/mise/conf.d/presence-bridge.toml` with inline `run = "systemctl --user enable --now …"` strings.
+**A second element declaring tasks uses a `conf.d` fragment, never `config.toml`.** `config/fido2-tasks.bst` owns `/etc/mise/config.toml`; another element installing it is an overlap. mise loads `[tasks.*]` from `/etc/mise/conf.d/<name>.toml` with no `config.toml` present at all (checked 2026-10-11 with mise 2026.10.7: `MISE_SYSTEM_CONFIG_DIR=<dir>` holding only `conf.d/pb.toml`, run from a directory with no project config, lists and runs the task). One-line tasks need no script file: `desktop/presence-bridge.bst` heredocs `/etc/mise/conf.d/presence-bridge.toml` with inline `run = "presence-bridge service install"` / `uninstall` strings. Keeping service lifecycle policy in the binary means `cargo install` users and krytis's system tasks take the same path; on krytis, the command finds the packaged unit and only runs `systemctl --user enable|disable --now`.
 
 Use quoted keys for namespace separators: `[tasks."fido2:enroll"]`.
 
@@ -5039,3 +5039,10 @@ BuildStream handles each one as a miss. The task counts them and leaves them alo
 Run `btrfs check --readonly` (as root, filesystem unmounted) before remounting, and the
 task after. The first rules out filesystem damage; only the second can see the CAS's own
 consistency. The task refuses to run while `buildbox-casd` or `bst` is running.
+
+**The stale mount can refuse to unmount with no process holding it.** On 2026-10-31 the
+enclosure dropped mid-build again, and `umount ~/.cache/buildstream` failed with `target is
+busy` even though nothing had a cwd or fd under it and no `buildbox`/`bst` process was left.
+The holder was a submount: the build's `buildbox-fuse` staging mount
+(`cas/staging/cas-tmpdir*`) outlived its daemon. `findmnt -R ~/.cache/buildstream` shows it.
+Detach it as the user with `fusermount3 -uz <mountpoint>`, then unmount the parent.
