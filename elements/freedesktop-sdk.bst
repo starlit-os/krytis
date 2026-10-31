@@ -9,7 +9,7 @@ sources:
   - '*rc*'
   - '*alpha*'
   - '*beta*'
-  ref: freedesktop-sdk-26.08.2-0-g32c5fea70e827885fc805d38a9dc5716c39ed173
+  ref: freedesktop-sdk-26.08.4-0-g114ae909ec9881958bd507c8b4414aa33f758d2b
 
 config:
   options:
