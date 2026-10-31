@@ -4732,6 +4732,17 @@ version-track glob to the `10.x` series for this reason — widening it will
 silently reintroduce the build failure. Revisit once a freedesktop-sdk
 `python3-qemu-qmp` component exists.
 
+**`qemu-update` reads versions from GitLab tags, not the download.qemu.org index.**
+The index page started answering "No Files Available for Listing" on 2026-10-31,
+which turned the `track-qemu` job red after 0.2 s with nothing but `task failed`: an
+empty `grep` under `set -o pipefail` aborts the task without printing anything. The
+version now comes from `gitlab.com/api/v4/projects/qemu-project%2Fqemu/repository/tags`
+(the `10.x` filter still applies), and the tarball is still downloaded from the `qemu:`
+alias. A tag shows up before its tarball does, so the task checks the tarball with a
+`HEAD` request first and exits 0 when it isn't there yet. The general lesson for shell
+trackers: a pipeline that scrapes a version should test for an empty result and say
+which URL gave it, rather than relying on `pipefail` to stop the task.
+
 **QEMU's `Makefile` doesn't inherit the autotools plugin's `MAKEFLAGS`
 parallelism.** The `autotools` BST plugin sets `MAKEFLAGS: -j%{max-jobs}` in
 `environment:` by default, but QEMU's generated `Makefile` just wraps a
