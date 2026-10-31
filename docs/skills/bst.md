@@ -1759,13 +1759,16 @@ merging: `mise run bst --pull build desktop/<lib>.bst <consumers>`. The consumer
 removed file the same way, so diff the upstream tree's file list too
 (`gh api repos/<o>/<r>/compare/<old>...<new> -q '.files[]|select(.status!="modified")'`).
 
-**When the new deps are additive, land them on main first, then re-run the tracking PR's
-build.** Adding a `depends:` entry the old ref doesn't use is harmless, so it can merge
+**When the new deps are additive, land them on main first, then update the tracking PR's
+branch.** Adding a `depends:` entry the old ref doesn't use is harmless, so it can merge
 ahead of the bump in its own PR. Then the tracker's commit is the only change on its
 branch, and the hourly reset (see `commit-tracking-update.sh`'s skip rule) has nothing to
 wipe. The tracker doesn't re-push an unchanged update, so the PR's red **Build changed
-elements** stays red until someone re-runs it. A re-run builds the PR's merge ref against
-the new main and turns green. umbriel 2952bbcb (#1450, 2026-10-31) needed `libeis-1.0`;
+elements** stays red. **Re-running that job doesn't help**: `build-changed.yml` checks out
+`github.sha`, the merge commit from the original event, so a re-run builds against the old
+main again. Click "Update branch" instead (`update_pull_request_branch`). That merge commit
+is unsigned, but the next hourly run sees a tip that isn't its own and recommits the update
+onto the new main, signed, with the cooldown trailers carried over. umbriel 2952bbcb (#1450, 2026-10-31) needed `libeis-1.0`;
 `freedesktop-sdk.bst:components/libei.bst` went to main first.
 
 ### The track job's PR title/version comes from parsing the git-describe `ref:`
