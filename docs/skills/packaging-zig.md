@@ -269,10 +269,17 @@ at once including two new ones. Once the hashes were rewritten it also failed wi
 named 'translate_c'`. `zig fetch` of the same tarballs printed the declared `<D>`.
 Rewriting the zon files to `<X>` (tried, then reverted) therefore accepts whatever a bad
 unpack produced, so don't do it. Moving the local package dir with
-`ZIG_LOCAL_PKG_DIR=/tmp/zig-pkg` changed nothing. ghostty.bst now resolves the tree up front
-with `zig build --fetch=all -j1` before the real build. Its helper steps need
-`components/grep.bst` and `components/sed.bst` in `build-depends`. The Zig element sandbox
-has neither, and a step failed with `grep: command not found`.
+`ZIG_LOCAL_PKG_DIR=/tmp/zig-pkg` changed nothing. Pre-fetching with
+`zig build --fetch=all -j1` made it worse: *every* package mismatched, and each "fetched"
+hash came out as a nameless `N-V-…` (for example `libxev-0.0.0-86vtc8…` declared,
+`N-V-__8AAMQQ…` fetched). So zig build's fetch isn't seeing each package's
+`build.zig.zon` at all, while `zig fetch` of the same tarball names the package correctly.
+The root cause was still open when #1452 was parked (2026-10-31); ghostty stays on 1.3.1 /
+Zig 0.15 until it's understood. Next things to try: reproduce outside BST with
+`zig fetch` plus an offline `zig build --fetch`, and compare against how ghostty's own
+`nix/build-support` populates its cache for 0.17. Any `grep`/`sed` in a Zig element's
+build steps needs `components/grep.bst` and `components/sed.bst` in `build-depends`: the
+sandbox has neither (`grep: command not found`).
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 
