@@ -160,11 +160,15 @@ adds: "Never ignore a failed `zig fetch`."
 
 Krytis is on Zig 0.16 (`elements/desktop/zig-0.16.bst`) and on 0.15.2
 (`elements/desktop/zig.bst`), where `seance.bst` and `falcond.bst` fetch tarballs
-directly and build, so the tarball form is not broken *here yet*. Two things follow:
+directly and build, so the tarball form is not broken there. Two things follow:
 
-- **On the next Zig bump, expect this failure first.** A hash mismatch on a dep that
-  fetched cleanly on the previous Zig is this, not a bad pin. Switch the fetch loop to
-  dakota's unpack-then-fetch-directory form.
+- **On Zig 0.17, a hash mismatch on a dep that fetched cleanly is this, not a bad pin.**
+  It is very likely the blocker the parked ghostty 1.4 port on #1452 hit (see "ghostty
+  1.4 shipped needing Zig 0.17" below): there, `zig fetch` of each tarball printed the
+  right hash and `zig build` then saw nameless `N-V-…` packages, which is what a cached
+  package with an unstripped top-level directory looks like. [Not yet confirmed in
+  krytis, as of 2026-10-31.] Switch the fetch loop to dakota's
+  unpack-then-fetch-directory form before trying anything else on that port.
 - **Drop `|| true` / `|| echo WARNING` from fetch loops.** `ghostty.bst` still turns a
   failed fetch into a `WARNING` line (its Stage 2). A dep that failed there resurfaces
   much later as a network-fetch or hash error inside `zig build`, far from the cause.
@@ -304,7 +308,9 @@ these, all with Zig 0.17.0 in the BST sandbox:
   nameless `N-V-…`, as if zig build's fetch never sees the package's `build.zig.zon`.
   `zig fetch` of the same tarballs prints the right named hash. Don't rewrite the zon
   hashes to `<X>`: that accepts whatever the bad unpack produced. Moving
-  `ZIG_LOCAL_PKG_DIR` to `/tmp` changed nothing.
+  `ZIG_LOCAL_PKG_DIR` to `/tmp` changed nothing. dakota shipped ghostty 1.4.0 on Zig 0.17
+  (`bbb070f`) by unpacking each archive and running `zig fetch <directory>`; try that
+  first. See "Never swallow a failed `zig fetch`" above.
 - Any `grep`/`sed` in a Zig element's build steps needs `components/grep.bst` and
   `components/sed.bst`, because the sandbox has neither.
 
