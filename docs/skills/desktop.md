@@ -2864,8 +2864,8 @@ zirconium-hawaii's own (full-workspace) `gamerslop/scx-scheds.bst`:**
   `components/rust-bindgen.bst` is unrelated here, that's for consumers who shell out to a
   `bindgen` binary). `bindgen`'s `clang-sys` dependency dlopens `libclang.so` at build-script run
   time; `freedesktop-sdk.bst:components/llvm.bst` in `build-depends` supplies it (same component
-  `overrides/rust-bindgen.bst` depends on for the same reason), alongside the `clang` binary
-  itself for the two points above.
+  freedesktop-sdk's `components/rust-bindgen.bst` depends on for the same reason), alongside the
+  `clang` binary itself for the two points above.
 - Reverse-dependency-checked against the pinned commit's full workspace `Cargo.lock` (BFS closure
   from `scx_lavd`/`scx_bpfland`/`scx_cosmos`) before trusting or dropping any of zirconium-hawaii's
   full-workspace deps: `libseccomp` is pulled in only by `scx_rustland_core` (the `scx_rustland`

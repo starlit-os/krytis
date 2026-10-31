@@ -70,7 +70,7 @@ fi
 if [ -z "$ROLE" ]; then
     echo "==> FAILED: ${remote_count} toolchain artifact(s) are not in the local cache, and no remote was checked:"
     printf '%s' "$REMOTE_INPUT" | cut -f1 | sed 's/^/    /'
-    echo "    Re-run with --pull to check bow, or run cache-warm first (gh workflow run cache-warm.yml)."
+    echo "    Re-run with --pull to check bow, or run cache-warm first (gh workflow run cache-warm.yml --ref <this branch>)."
     exit 1
 fi
 
@@ -109,6 +109,6 @@ fi
 
 echo "==> FAILED: $(printf '%s\n' "$bad" | grep -c .) toolchain artifact(s) cannot be pulled from bow, so a build would compile them:"
 printf '%s\n' "$bad" | awk -F'\t' 'NF {print "    " $2 "  (" $3 ")"}'
-echo "    Run cache-warm first (gh workflow run cache-warm.yml, or mise run warm-cache --push)."
+echo "    Run cache-warm first (gh workflow run cache-warm.yml --ref <this branch>, or mise run warm-cache --push)."
 echo "    See docs/skills/mise.md § Standard build workflow (stop and ask before rebuilding the toolchain)."
 exit 1
