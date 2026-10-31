@@ -100,7 +100,9 @@ sources:
   url: crates:crates
   # oo7 main pins ashpd as a git dependency in Cargo.lock (seen on the
   # 2026-10-30 track, #1408); without this alias its cargo2 `kind: git` entry trips
-  # the fatal unaliased-url warning. Same as core/bootc.bst.
+  # the fatal unaliased-url warning. The mapping makes `bst source track`
+  # write `repo: github:…`; the plugin checks `repo:` as written, so the
+  # mapping alone does not fix an existing raw URL. Same as core/bootc.bst.
   git-mirrors:
     https://github.com/: "github:"
   ref:
@@ -138,7 +140,7 @@ sources:
     sha: 330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470
   - kind: git
     commit: 0bced661a0b2cb851e52f1f87c5b79d930537b64
-    repo: https://github.com/bilelmoussaoui/ashpd
+    repo: github:bilelmoussaoui/ashpd
     query:
       branch: main
     name: ashpd
