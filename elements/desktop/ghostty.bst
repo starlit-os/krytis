@@ -24,7 +24,7 @@ build-depends:
   - desktop/zig.bst
   - freedesktop-sdk.bst:components/tar.bst
   - freedesktop-sdk.bst:components/gzip.bst
-  # grep + sed: the fix_hash stage below. The sandbox has neither by default.
+  # grep + sed: the zon hash rewrite in stage 2. The sandbox has neither by default.
   - freedesktop-sdk.bst:components/grep.bst
   - freedesktop-sdk.bst:components/sed.bst
   - freedesktop-sdk.bst:components/gettext.bst
@@ -575,33 +575,33 @@ config:
     # resolves it, such as a lazy dep for another target. If a dep the build
     # needs is missing, `zig build` fails trying to reach the network and
     # names it. Read the WARNING lines first.
+    #
+    # Each fetch also rewrites the declared hash. Zig 0.17 computes a
+    # different digest (same size) than ghostty 1.4.0's zon files declare for
+    # several old tarballs: glslang, spirv-cross, breakpad and libxml2 so far
+    # (`hash mismatch: manifest declares … but the fetched package has …`,
+    # #1452). zig build reports these a batch at a time, about 14 min apart,
+    # so the hashes aren't pinned one by one. For every staged tarball, each
+    # `.hash` on the line after a `.url` that ends in that file name is set to
+    # what `zig fetch` printed. The BST `ref:` sha256 already pins the tarball
+    # bytes, and the rewrite is a no-op wherever the hashes agree. git deps
+    # (zig-deps-git/<sha>.tar.gz, declared as git+https://…#<sha>) don't
+    # match the pattern and are left alone. They have never mismatched.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
       for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
-        zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
+        if ! hash=$(zig fetch "$dep"); then
+          echo "WARNING: zig fetch failed for $dep" >&2
+          continue
+        fi
+        echo "$hash"
+        file="${dep##*/}"
+        grep -rlF --include=build.zig.zon "/$file\"" . | while read -r zon; do
+          sed -i "\|/$file\"|{n;s|\.hash = \"[^\"]*\"|.hash = \"$hash\"|}" "$zon"
+        done
       done
-
-    # glslang and spirv-cross are old `1220…` multihash tarballs. ghostty
-    # 1.4.0's pkg/*/build.zig.zon declare hashes for them that Zig 0.17
-    # doesn't reproduce from those same tarballs: same size, different
-    # digest (`hash mismatch: manifest declares … but the fetched package
-    # has …`, #1452). The BST `ref:` sha256 pins the tarball bytes, so
-    # replace the declared hash with the one 0.17 computes. grep first, so
-    # a ghostty release that changes either hash fails here instead of
-    # silently doing nothing. Drop this stage once upstream's hashes match.
-    - |
-      fix_hash() {
-        grep -q "$2" "$1" || { echo "ERROR: $1 no longer declares $2; revisit this stage" >&2; exit 1; }
-        sed -i "s/$2/$3/" "$1"
-      }
-      fix_hash pkg/glslang/build.zig.zon \
-        N-V-__8AABzkUgISeKGgXAzgtutgJsZc0-kkeqBBscJgMkvy \
-        N-V-__8AABzkUgLVokrlQdxJvX2oxlomVpqBIhATzi4v2fJd
-      fix_hash pkg/spirv-cross/build.zig.zon \
-        N-V-__8AANb6pwD7O1WG6L5nvD_rNMvnSc9Cpg1ijSlTYywv \
-        N-V-__8AANb6pwCu-IebjiK2L7vklpPu4b5uV9RkwL3xORyN
 
   install-commands:
     - |
