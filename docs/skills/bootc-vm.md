@@ -448,6 +448,41 @@ are still reading is safe but a forgotten one is not permanent. See docs/skills/
 
 **Gotcha when running a task from a worktree:** `mise` resolves tasks from the directory it starts in. Launch it with the worktree as the working directory — if the `cd` silently fails, you get the *main* checkout's task and will conclude your fix did nothing. Check the `[boot-test] $ <path>` line mise echoes: it names the script that actually ran.
 
+### A switch-root timeout can be Btrfs data corruption, not an image failure
+
+On 2026-10-25, default `mise run boot-test` reached
+`initrd-switch-root.service` but never brought up SSH; the injected diagnostics
+could not query PID 1 and printed `Transport endpoint is not connected`. The
+decisive evidence was on the **host**, not in the serial log:
+
+```
+kernel: fs-verity (loop0p3, inode ...): FILE CORRUPTED! pos=...
+        want_hash=sha512:... real_hash=sha512:2d23913d...
+```
+
+`2d23913d…` is the SHA-512 of one 4096-byte zero block. Several positions in
+two inodes returned that same value, so the freshly installed Btrfs filesystem
+contained holes/zero-filled blocks where fs-verity expected file data.
+`journalctl -k --since '<before the run>' | grep fs-verity` exposed it; the
+serial log only showed switch-root stopping.
+
+Keep the image object fixed while isolating this: capture
+`podman image inspect localhost/krytis:latest --format '{{.Id}}'` before and
+after. The identical image (`24b41d34`, both checks) passed
+`mise run boot-test --filesystem ext4`; its ext4 filesystem was created with
+`-O verity`. That proves the image boots and narrows the failure to the Btrfs
+install/filesystem path; it does **not** explain why Btrfs returned zeros.
+Do not suppress verity or accept the timeout: verity correctly prevented
+corrupted content from becoming the running OS.
+
+**It didn't reproduce.** On 2026-10-31 the same branch, rebased on `main`, passed
+default (Btrfs) `mise run boot-test` with the image ID unchanged before and after
+(`e4951909`). `journalctl -k` for the run had zero `FILE CORRUPTED` lines (host
+kernel `7.3.0-3-cachyos`). The 2026-10-25 host's journal had already rotated, so
+the two runs can't be compared. The cause is still unknown. Treat it as
+intermittent: on a recurrence, collect the host `journalctl -k` before rerunning,
+and don't record a default-filesystem pass on the strength of an ext4 pass.
+
 ### Reading a stalled guest without root
 
 **Use this first.** It works under secure boot, needs no `sudo`, no
