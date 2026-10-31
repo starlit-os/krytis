@@ -47,8 +47,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 |---|---|---|---|---|
 | vim | `github.com/vim/vim` | Own patch `elements/overrides/vim.bst` (krytis policy, not upstreamable). | Yes | Disclose AI use. An **`Assisted-by: <tool>` trailer is required**. The PR template has "AI involvement is disclosed" / "No AI was used" boxes. No ban. |
 | greetd | `git.sr.ht/~kennylevinsen/greetd`, `github.com/kennylevinsen/greetd` (mirror) | Vuln-remediation patches `elements/desktop/greetd.bst`. | Partial | No project rule. **SourceHut's ToS bans LLM-written or LLM-assisted code, tickets and emails** on the platform. Patches go to `greetd-devel@lists.sr.ht`. |
-| rust-bindgen | `github.com/rust-lang/rust-bindgen` | Vuln-remediation patches `elements/overrides/rust-bindgen.bst`. | No | rust-lang/rust's LLM policy explicitly excludes other rust-lang repos. The Rust moderation team's spam policy bans unreviewed automated contributions [INFERENCE: it applies org-wide]. |
-| freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst`, `elements/overrides/rust-bindgen.bst`, `elements/overrides/btrfs-progs.bst` and `elements/overrides/python3-pil.bst` mirror its elements; the last also vendors fdsdk's own `patches/python3-pil/drop-pybind.patch` from freedesktop-sdk!35059. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
+| freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst`, `elements/overrides/btrfs-progs.bst` and `elements/overrides/python3-pil.bst` mirror its elements; the last also vendors fdsdk's own `patches/python3-pil/drop-pybind.patch` from freedesktop-sdk!35059. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
 | efitools | `git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git` | Patches `elements/core/efitools.bst`. | No | Nothing in the tree. Patches go to `sbsigntools@groups.io`, kernel-style with `Signed-off-by` [INFERENCE]. |
 | btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. The kernel's policy (no agent `Signed-off-by`, `Assisted-by: LLM [tools]`) is context [INFERENCE]. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
@@ -137,10 +136,8 @@ nothing was found, so an absence is evidenced and not assumed.
   its list is on lists.sr.ht. greetd-devel threads mentioning LLMs couldn't be read
   (lists.sr.ht returned HTTP 418 to automated fetches).
 
-### rust-bindgen and Rust
+### Rust
 
-- bindgen [CONTRIBUTING.md](https://github.com/rust-lang/rust-bindgen/blob/main/CONTRIBUTING.md)
-  says nothing about AI. Recent PRs disclosing LLM use have been merged (rust-lang/rust-bindgen#3490).
 - The [Rust Forge LLM policy](https://forge.rust-lang.org/policies/llm-usage.html) binds
   rust-lang/rust, cargo, clippy, rustfmt, mdBook and rustlings, and says "Other
   repositories in `rust-lang`" are "free to set their own policies". For rust-lang/rust:
@@ -148,7 +145,7 @@ nothing was found, so an absence is evidenced and not assumed.
   **create**". LLM-created code is allowed only if "Pre-arranged, non-critical,
   high-quality, well-tested, and well-reviewed … **with disclosure**".
 - The [moderation spam policy](https://github.com/rust-lang/moderation-team/blob/main/policies/spam.md)
-  bans "Fully or partially automated contribs". Whether it reaches bindgen is [INFERENCE].
+  bans "Fully or partially automated contribs".
 
 ### freedesktop-sdk
 

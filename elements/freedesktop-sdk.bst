@@ -53,9 +53,11 @@ config:
     components/linux-module-cert.bst: gnome-build-meta.bst:gnomeos/linux-module-cert.bst
     # Load-bearing, not a leftover: gnome-build-meta's systemd/systemd-libs
     # filters read freedesktop-sdk.bst:components/_private/systemd-base.bst, and
-    # without this line that is fdsdk's own build (v261.2 at 26.08.2, which
-    # still fails systemd-update-utmp.service on every boot, #417).
-    # gnome-build-meta pins v261.3, the first release carrying the fix.
+    # without this line that is fdsdk's own build, a different systemd from the one
+    # gnome-build-meta ships (fdsdk 26.08.4: v261.4; gnome-build-meta 8a89846:
+    # v262.1). gnome-build-meta's own fdsdk junction carries the same redirect.
+    # Both versions carry the #417 fix (systemd-update-utmp.service), first
+    # released in v261.3.
     components/_private/systemd-base.bst: gnome-build-meta.bst:core-deps/systemd-base.bst
     components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst
     components/systemd-ukify.bst: gnome-build-meta.bst:core-deps/systemd-ukify.bst
@@ -63,7 +65,6 @@ config:
     components/frei0r.bst: overrides/frei0r.bst
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
-    components/rust-bindgen.bst: overrides/rust-bindgen.bst
     # mkfs.btrfs flushes its signature-wiping zeroes before it discards (#1294,
     # upstream tracking #1302). Drift and exit condition: `mise run btrfs-progs-check`.
     components/btrfs-progs.bst: overrides/btrfs-progs.bst
