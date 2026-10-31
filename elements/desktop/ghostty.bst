@@ -575,43 +575,53 @@ config:
     # resolves it, such as a lazy dep for another target. If a dep the build
     # needs is missing, `zig build` fails trying to reach the network and
     # names it. Read the WARNING lines first.
-    #
-    # Each fetch also rewrites the declared hash. Zig 0.17 computes a
-    # different digest (same size) than ghostty 1.4.0's zon files declare for
-    # several old tarballs: glslang, spirv-cross, breakpad and libxml2 so far
-    # (`hash mismatch: manifest declares … but the fetched package has …`,
-    # #1452). zig build reports these a batch at a time, about 14 min apart,
-    # so the hashes aren't pinned one by one. For every staged tarball, each
-    # `.hash` on the line after a `.url` that ends in that file name is set to
-    # what `zig fetch` printed. The BST `ref:` sha256 already pins the tarball
-    # bytes, and the rewrite is a no-op wherever the hashes agree. git deps
-    # (zig-deps-git/<sha>.tar.gz, declared as git+https://…#<sha>) don't
-    # match the pattern and are left alone. They have never mismatched.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
       for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
-        if ! hash=$(zig fetch "$dep"); then
-          echo "WARNING: zig fetch failed for $dep" >&2
-          continue
-        fi
-        echo "$hash"
-        file="${dep##*/}"
-        grep -rlF --include=build.zig.zon "/$file\"" . | while read -r zon; do
-          sed -i "\|/$file\"|{n;s|\.hash = \"[^\"]*\"|.hash = \"$hash\"|}" "$zon"
-        done
+        zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
       done
 
+  # Zig 0.17 hash mismatches. For several old tarballs (glslang, spirv-cross,
+  # breakpad and libxml2 so far), the digest `zig build` computes doesn't match
+  # what ghostty 1.4.0's pkg/*/build.zig.zon declare: `hash mismatch: manifest
+  # declares <D> but the fetched package has <X>` (#1452). `zig fetch` of the
+  # same tarball prints <D>, so the gap is in zig build's own fetch and its
+  # output is the only source for <X>. It also only reports the lazy deps it
+  # has reached, one batch per ~14 min CI run. So rather than pin the pairs,
+  # this loop runs zig build, rewrites each reported <D> to <X> in the zon
+  # files, and runs it again; compiled steps stay cached between attempts.
+  # The BST `ref:` sha256 already pins every tarball's bytes, so the zon hash
+  # adds no integrity here. Any failure other than a hash mismatch, or a
+  # mismatch that survives the rewrite, still fails the build.
   install-commands:
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
-      DESTDIR="%{install-root}" \
-      zig build \
-        --prefix /usr \
-        -Doptimize=ReleaseFast \
-        -Dcpu=baseline \
-        -Dpie=true \
-        -Demit-docs=false \
-        -Dversion-string=1.4.0
+      attempt=0
+      while :; do
+        attempt=$((attempt + 1))
+        if DESTDIR="%{install-root}" \
+          zig build \
+            --prefix /usr \
+            -Doptimize=ReleaseFast \
+            -Dcpu=baseline \
+            -Dpie=true \
+            -Demit-docs=false \
+            -Dversion-string=1.4.0 2>/tmp/zig-build.err; then
+          cat /tmp/zig-build.err >&2
+          break
+        fi
+        cat /tmp/zig-build.err >&2
+        pairs=$(sed -n 's/.*manifest declares \([^ ]*\) but the fetched package has \([^ ]*\).*/\1 \2/p' /tmp/zig-build.err)
+        if [ -z "$pairs" ] || [ "$attempt" -ge 8 ]; then
+          exit 1
+        fi
+        echo "$pairs" | while read -r declared fetched; do
+          echo "Rewriting zon hash $declared -> $fetched"
+          grep -rlF --include=build.zig.zon "$declared" . | while read -r zon; do
+            sed -i "s|$declared|$fetched|" "$zon"
+          done
+        done
+      done

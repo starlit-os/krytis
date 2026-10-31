@@ -262,17 +262,16 @@ tarball has `.name = "tree-sitter"`, a string where 0.17 wants an enum literal, 
 it tries the network and names the dep.
 
 **Zig 0.17 rejects some declared hashes for old tarballs.** For several of ghostty 1.4.0's
-`pkg/*` deps (glslang, spirv-cross, breakpad, libxml2), `zig build` computes a different
-digest of the same size than the zon file declares. It fails with `hash mismatch: manifest
-declares … but the fetched package has …`. Each batch shows up only after about 14 minutes of
-CI, and fixing one batch reveals the next. So don't pin hashes one at a time. ghostty.bst's
-fetch stage captures the hash `zig fetch` prints for each staged tarball and `sed`s it into
-every `.hash` on the line after a `.url` ending in that file name. That's a no-op wherever
-the hashes already agree, and the BST `ref:` sha256 still pins the bytes. This only works for
-ghostty's own zon files. A mismatch inside a fetched package's zon can't be patched this
-way, because editing it changes the parent package's own hash. The stage needs
-`components/grep.bst` and `components/sed.bst` in `build-depends`. The Zig element sandbox has
-neither, and the first attempt failed with `grep: command not found`.
+`pkg/*` deps (glslang, spirv-cross, breakpad, libxml2), `zig build` fails with `hash
+mismatch: manifest declares <D> but the fetched package has <X>`. The two digests are the
+same size. `zig fetch` of the same tarball prints `<D>`, so rewriting the zon from `zig fetch`
+output changes nothing (tried on #1452). Only `zig build`'s error has `<X>`. It also reports
+only the lazy deps it has reached so far, one batch per ~14-minute CI run, so pinning pairs
+by hand takes a round per batch. ghostty.bst's install step runs `zig build` in a loop
+instead: it `sed`s each reported `<D>` to `<X>` in the zon files and retries, up to 8 times.
+Any other error ends the loop. The BST `ref:` sha256 still pins the tarball bytes. The loop
+needs `components/grep.bst` and `components/sed.bst` in `build-depends`. The Zig element
+sandbox has neither, and the first attempt failed with `grep: command not found`.
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 
