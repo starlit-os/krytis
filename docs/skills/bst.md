@@ -3170,6 +3170,23 @@ stage, not at load — a YAML-parse or reference-only check passes clean:
 
 Precedents to copy: `core/bootc.bst`, `desktop/greetd.bst`.
 
+**A git dependency in `Cargo.lock` needs `git-mirrors:` too.** `url: crates:crates` only
+aliases the registry entries. A `kind: git` entry in the `ref:` list (`repo:
+https://github.com/...`) is fetched from its raw URL unless the source maps the prefix:
+
+```yaml
+- kind: cargo2
+  url: crates:crates
+  git-mirrors:
+    https://github.com/: "github:"
+```
+
+Without it the same fatal `[unaliased-url]` fires at resolve, naming the repo
+(`Use of unaliased source download URL: https://github.com/bilelmoussaoui/ashpd`). It
+appears the first time an upstream switches a crate to a git pin, so a tracker PR that
+was fine for weeks can start failing on it: oo7 main did this with `ashpd` (#1408,
+2026-10-30). `core/bootc.bst` already carried the mapping.
+
 ### Strategy B: upstream vendored-dependencies tarball
 
 Use when the upstream project publishes an official vendored tarball alongside each release (e.g. niri). Avoids the cargo2 plugin entirely and keeps the element short.

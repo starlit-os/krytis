@@ -98,6 +98,11 @@ sources:
 
 - kind: cargo2
   url: crates:crates
+  # oo7 main pins ashpd as a git dependency in Cargo.lock (first seen in the
+  # 2026-10-23 track, #1408); without this alias its cargo2 `kind: git` entry trips
+  # the fatal unaliased-url warning. Same as core/bootc.bst.
+  git-mirrors:
+    https://github.com/: "github:"
   ref:
   - kind: registry
     name: aes
