@@ -94,10 +94,17 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-287-gb54f8e7cec0700366d3be86170053c014e97a576
+  ref: v0.6.0-alpha-303-ge55a1b10fc16c252811b4c7f7cf3603f743679e0
 
 - kind: cargo2
   url: crates:crates
+  # oo7 main pins ashpd as a git dependency in Cargo.lock (seen on the
+  # 2026-10-30 track, #1408); without this alias its cargo2 `kind: git` entry trips
+  # the fatal unaliased-url warning. The mapping makes `bst source track`
+  # write `repo: github:…`; the plugin checks `repo:` as written, so the
+  # mapping alone does not fix an existing raw URL. Same as core/bootc.bst.
+  git-mirrors:
+    https://github.com/: "github:"
   ref:
   - kind: registry
     name: aes
@@ -131,22 +138,17 @@ sources:
     name: anyhow
     version: 1.0.104
     sha: 330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470
-  - kind: registry
+  - kind: git
+    commit: 0bced661a0b2cb851e52f1f87c5b79d930537b64
+    repo: github:bilelmoussaoui/ashpd
+    query:
+      branch: main
     name: ashpd
-    version: 0.13.13
-    sha: fb8421aaa9644a5faf26735f258b669b15f063313ef8f8e2bdb28912a1a6f111
-  - kind: registry
-    name: async-broadcast
-    version: 0.7.2
-    sha: 435a87a52755b8f27fcf321ac4f04b2802e337c8c4872923137471ec39c37532
+    version: 0.13.0
   - kind: registry
     name: async-channel
     version: 2.5.0
     sha: 924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2
-  - kind: registry
-    name: async-executor
-    version: 1.14.0
-    sha: c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a
   - kind: registry
     name: async-fs
     version: 2.2.0
@@ -159,18 +161,6 @@ sources:
     name: async-lock
     version: 3.4.2
     sha: 290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311
-  - kind: registry
-    name: async-process
-    version: 2.5.0
-    sha: fc50921ec0055cdd8a16de48773bfeec5c972598674347252c0399676be7da75
-  - kind: registry
-    name: async-recursion
-    version: 1.2.0
-    sha: 4f8abc12baad266b1c8cec146854c195b5864b4221d4b2ca7296a7ae82d9e451
-  - kind: registry
-    name: async-signal
-    version: 0.2.14
-    sha: 52b5aaafa020cf5053a01f2a60e8ff5dccf550f0f77ec54a4e47285ac2bab485
   - kind: registry
     name: async-task
     version: 4.7.1
@@ -316,18 +306,6 @@ sources:
     version: 1.1.1
     sha: 66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099
   - kind: registry
-    name: enumflags2
-    version: 0.7.12
-    sha: 1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef
-  - kind: registry
-    name: enumflags2_derive
-    version: 0.7.12
-    sha: 67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827
-  - kind: registry
-    name: equivalent
-    version: 1.0.3
-    sha: 00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826
-  - kind: registry
     name: errno
     version: 0.3.14
     sha: 39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb
@@ -404,10 +382,6 @@ sources:
     version: 0.27.0
     sha: 4caa7e4460b196107cc1bb2629488e8b6dbb7f34f6683ea6753c4ac22f590785
   - kind: registry
-    name: hashbrown
-    version: 0.17.1
-    sha: ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a
-  - kind: registry
     name: heck
     version: 0.5.0
     sha: 2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea
@@ -431,10 +405,6 @@ sources:
     name: hybrid-array
     version: 0.4.15
     sha: 27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17
-  - kind: registry
-    name: indexmap
-    version: 2.14.2
-    sha: cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855
   - kind: registry
     name: inout
     version: 0.2.3
@@ -627,10 +597,6 @@ sources:
     name: ppv-lite86
     version: 0.2.21
     sha: 85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9
-  - kind: registry
-    name: proc-macro-crate
-    version: 3.5.0
-    sha: e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f
   - kind: registry
     name: proc-macro2
     version: 1.0.107
@@ -829,8 +795,8 @@ sources:
     sha: 7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85
   - kind: registry
     name: tokio
-    version: 1.53.3
-    sha: ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e
+    version: 1.54.1
+    sha: b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3
   - kind: registry
     name: tokio-macros
     version: 2.7.2
@@ -839,18 +805,6 @@ sources:
     name: tokio-stream
     version: 0.1.19
     sha: a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b
-  - kind: registry
-    name: toml_datetime
-    version: 1.1.2+spec-1.1.0
-    sha: 2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053
-  - kind: registry
-    name: toml_edit
-    version: 0.25.17+spec-1.1.0
-    sha: e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c
-  - kind: registry
-    name: toml_parser
-    version: 1.1.5+spec-1.1.0
-    sha: baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c
   - kind: registry
     name: tracing
     version: 0.1.44
@@ -957,16 +911,16 @@ sources:
     sha: 1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e
   - kind: registry
     name: zbus
-    version: 5.19.0
-    sha: 5db4be7c075cb421e4b7ee645541604239bd243ba7c357511f4ff3a74b555907
+    version: 6.1.0
+    sha: fcff5faa63a63d5b81051740f7382017f10b3440b3f401d97f0cf0b3b39c62d9
   - kind: registry
     name: zbus_macros
-    version: 5.19.0
-    sha: 2990635d09ade6df1868f72f8cac69a876a90981e8bd3c40b1be413f8dc88f40
+    version: 6.1.0
+    sha: 5bba6e2bfe19571dc81b3e0be9f8daec6e5422db3e2eea2e766a859553e7bd37
   - kind: registry
-    name: zbus_names
-    version: 4.3.5
-    sha: 812a12be4ead7a59e18ea8f047d08add0066b73bc62fc1467066a2472ae088dd
+    name: zbus_utils
+    version: 6.0.0
+    sha: c27a055b114bd9fc3686e90f62bd1fe612d523fc5f620bac3b1d2f42d3f6cab8
   - kind: registry
     name: zcheapstr
     version: 1.1.0
@@ -1000,13 +954,9 @@ sources:
     version: 1.0.23
     sha: 29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b
   - kind: registry
-    name: zvariant
-    version: 5.15.1
-    sha: 80bf6d6cd6a4b601acb64cfb8284cdc643fcfa75ef26ae3c46ec8aa4e8a1fbb7
-  - kind: registry
-    name: zvariant_derive
-    version: 5.15.1
-    sha: ef2672456ba1cb54b5eaec136e63135b3c7495fb938e53b28a62e633496d486d
+    name: zruntime
+    version: 0.2.0
+    sha: 467fd80a2014d186319f14b81aef027aa466712f355c90158a0e6b39de60726d
   - kind: registry
     name: zvariant_utils
     version: 4.2.0

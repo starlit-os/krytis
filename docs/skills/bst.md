@@ -3185,6 +3185,32 @@ stage, not at load — a YAML-parse or reference-only check passes clean:
 
 Precedents to copy: `core/bootc.bst`, `desktop/greetd.bst`.
 
+**A git dependency in `Cargo.lock` needs `git-mirrors:` and an aliased `repo:`.**
+`url: crates:crates` only aliases the registry entries. A `kind: git` entry in the `ref:`
+list carries its own `repo:`, and the cargo2 plugin (buildstream-plugins-community 2.4.0,
+`cargo2.py` `configure()`) marks that string as a download URL **verbatim**, before any
+mapping. So `repo: https://github.com/...` is fatal `[unaliased-url]` at resolve, naming the
+repo (`Use of unaliased source download URL: https://github.com/bilelmoussaoui/ashpd`),
+even with `git-mirrors:` set. `git-mirrors:` matters at track time: `bst source track`
+writes each git entry's `repo:` through it, so with the mapping in place the tracked ref
+comes out as `repo: github:<owner>/<repo>`. Without it the tracker writes the raw URL.
+Both pieces are needed:
+
+```yaml
+- kind: cargo2
+  url: crates:crates
+  git-mirrors:
+    https://github.com/: "github:"
+  ref:
+  - kind: git
+    repo: github:bilelmoussaoui/ashpd   # not https://github.com/...
+```
+
+The problem first shows up when an upstream switches a crate to a git pin, so a tracker PR
+that was fine for weeks can start failing on it. oo7 main did this with `ashpd` (#1408,
+2026-10-30): adding `git-mirrors:` alone still failed CI, and rewriting the existing
+`repo:` fixed it. `core/bootc.bst` (`repo: github:bootc-dev/bcvk`) is the precedent.
+
 ### Strategy B: upstream vendored-dependencies tarball
 
 Use when the upstream project publishes an official vendored tarball alongside each release (e.g. niri). Avoids the cargo2 plugin entirely and keeps the element short.
