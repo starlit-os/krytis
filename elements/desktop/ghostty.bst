@@ -588,6 +588,12 @@ config:
     - |
       cat > /tmp/zig-build-retry.sh <<'RETRY'
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
+      # Zig 0.17's zig build also copies every package into a local package
+      # dir, ./zig-pkg by default, inside the BuildStream build directory.
+      # Builds there hit hash mismatches that `zig fetch` into /tmp doesn't
+      # see, and then "no module named 'translate_c'" (#1452). Keep the local
+      # copy on /tmp next to the global cache.
+      export ZIG_LOCAL_PKG_DIR="/tmp/zig-pkg"
       export ZIG_LIB_DIR="%{libdir}/zig"
       attempt=0
       while :; do
