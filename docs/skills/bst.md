@@ -3523,6 +3523,8 @@ Keep `recc: cache-only` in reserve rather than as the default — it still does 
 
 GitHub's job log only carries what BuildStream prints on failure: the **last 20 lines** of the build log. Ninja finishes its already-started edges after an edge fails, so those 20 lines are usually unrelated progress and the actual error has scrolled away. Do not try to infer the failure from them.
 
+**The failure message itself eats those 20 lines when the failing command is long.** BuildStream ends the log with `Command '<the whole command>' failed with exitcode N`, quoted in full. A 30-line inline shell loop leaves nothing else in the window. ghostty.bst's zig build retry loop hit this on #1452 and showed only its own echo. When you can't pull the artifact, the fix that needs no credentials is to have an earlier build-command write the logic to a script (`cat > /tmp/x.sh <<'EOF'`), keep the failing command one line long (`sh /tmp/x.sh`), and have the script print its own diagnosis last.
+
 BuildStream caches failed builds as artifacts *and* pushes them, so the full log is retrievable. Take the element's 64-hex key from the `fetch needed <key> <element>` line near the top of the run log, then pull and read that artifact ref directly:
 
 ```shell
