@@ -583,62 +583,40 @@ config:
         zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
       done
 
-    # Stage 3: write the zig build retry loop (see the comment above
-    # install-commands) to a script, so install-commands stays one line.
+    # Stage 3: write the zig build step to a script, so install-commands
+    # stays one line (see the note there).
     - |
-      cat > /tmp/zig-build-retry.sh <<'RETRY'
+      cat > /tmp/zig-build.sh <<'BUILD'
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-      # Zig 0.17's zig build also copies every package into a local package
-      # dir, ./zig-pkg by default, inside the BuildStream build directory.
-      # Builds there hit hash mismatches that `zig fetch` into /tmp doesn't
-      # see, and then "no module named 'translate_c'" (#1452). Keep the local
-      # copy on /tmp next to the global cache.
-      export ZIG_LOCAL_PKG_DIR="/tmp/zig-pkg"
       export ZIG_LIB_DIR="%{libdir}/zig"
-      attempt=0
-      while :; do
-        attempt=$((attempt + 1))
-        echo "zig build: attempt $attempt"
-        if DESTDIR="$1" zig build \
-            --prefix /usr \
-            -Doptimize=ReleaseFast \
-            -Dcpu=baseline \
-            -Dpie=true \
-            -Demit-docs=false \
-            -Dversion-string=1.4.0 2>/tmp/zig-build.err; then
+      run() {
+        if ! "$@" 2>/tmp/zig-build.err; then
           cat /tmp/zig-build.err >&2
-          exit 0
-        fi
-        cat /tmp/zig-build.err >&2
-        pairs=$(sed -n 's/.*manifest declares \([^ ]*\) but the fetched package has \([^ ]*\).*/\1 \2/p' /tmp/zig-build.err)
-        if [ -z "$pairs" ] || [ "$attempt" -ge 8 ]; then
-          echo "=== zig build failed on attempt $attempt; its error lines: ===" >&2
+          echo "=== '$*' failed; its error lines: ===" >&2
           grep -n 'error' /tmp/zig-build.err | head -n 15 >&2
           exit 1
         fi
-        echo "$pairs" | while read -r declared fetched; do
-          echo "Rewriting zon hash $declared -> $fetched"
-          grep -rlF --include=build.zig.zon "$declared" . | while read -r zon; do
-            sed -i "s|$declared|$fetched|" "$zon"
-          done
-        done
-      done
-      RETRY
+        cat /tmp/zig-build.err >&2
+      }
+      # Resolve the whole package tree first, one job at a time. With the
+      # default parallelism, zig build's own package fetch under Zig 0.17
+      # produced hash mismatches for a *different* set of deps on every CI
+      # run (glslang, spirv-cross, breakpad, libxml2 and others), plus a
+      # missing translate_c module (#1452). The set changing between runs
+      # with identical inputs points at a race, not at wrong hashes, so
+      # the declared hashes are left alone.
+      run zig build --fetch=all -j1
+      run env DESTDIR="$1" zig build \
+        --prefix /usr \
+        -Doptimize=ReleaseFast \
+        -Dcpu=baseline \
+        -Dpie=true \
+        -Demit-docs=false \
+        -Dversion-string=1.4.0
+      BUILD
 
-  # Zig 0.17 hash mismatches. For several old tarballs (glslang, spirv-cross,
-  # breakpad and libxml2 so far), the digest `zig build` computes doesn't match
-  # what ghostty 1.4.0's pkg/*/build.zig.zon declare: `hash mismatch: manifest
-  # declares <D> but the fetched package has <X>` (#1452). `zig fetch` of the
-  # same tarball prints <D>, so the gap is in zig build's own fetch and its
-  # output is the only source for <X>. It also only reports the lazy deps it
-  # has reached, one batch per ~14 min CI run. So rather than pin the pairs,
-  # this loop runs zig build, rewrites each reported <D> to <X> in the zon
-  # files, and runs it again; compiled steps stay cached between attempts.
-  # The BST `ref:` sha256 already pins every tarball's bytes, so the zon hash
-  # adds no integrity here. Any failure other than a hash mismatch, or a
-  # mismatch that survives the rewrite, still fails the build.
   install-commands:
     # Kept to one short line on purpose: on failure BuildStream prints only the
-    # last 20 log lines, and with a long inline loop those 20 are just the
-    # echo of the failed command. The script prints the errors last instead.
-    - sh /tmp/zig-build-retry.sh "%{install-root}"
+    # last 20 log lines, and with a long inline command those 20 are just its
+    # echo. The script prints the errors last instead.
+    - sh /tmp/zig-build.sh "%{install-root}"

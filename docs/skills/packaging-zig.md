@@ -261,17 +261,18 @@ tarball has `.name = "tree-sitter"`, a string where 0.17 wants an enum literal, 
 "WARNING: ..."`). A missing dep that `zig build` really needs still fails the build, because
 it tries the network and names the dep.
 
-**Zig 0.17 rejects some declared hashes for old tarballs.** For several of ghostty 1.4.0's
-`pkg/*` deps (glslang, spirv-cross, breakpad, libxml2), `zig build` fails with `hash
-mismatch: manifest declares <D> but the fetched package has <X>`. The two digests are the
-same size. `zig fetch` of the same tarball prints `<D>`, so rewriting the zon from `zig fetch`
-output changes nothing (tried on #1452). Only `zig build`'s error has `<X>`. It also reports
-only the lazy deps it has reached so far, one batch per ~14-minute CI run, so pinning pairs
-by hand takes a round per batch. ghostty.bst's install step runs `zig build` in a loop
-instead: it `sed`s each reported `<D>` to `<X>` in the zon files and retries, up to 8 times.
-Any other error ends the loop. The BST `ref:` sha256 still pins the tarball bytes. The loop
-needs `components/grep.bst` and `components/sed.bst` in `build-depends`. The Zig element
-sandbox has neither, and the first attempt failed with `grep: command not found`.
+**Zig 0.17 `zig build` hash mismatches in the BST sandbox look like a race, not wrong
+hashes.** On #1452, ghostty 1.4.0 failed with `hash mismatch: manifest declares <D> but the
+fetched package has <X>` (same size, different digest), but for a *different* set of deps on
+each run with identical inputs: glslang and spirv-cross, then breakpad and libxml2, then five
+at once including two new ones. Once the hashes were rewritten it also failed with `no module
+named 'translate_c'`. `zig fetch` of the same tarballs printed the declared `<D>`.
+Rewriting the zon files to `<X>` (tried, then reverted) therefore accepts whatever a bad
+unpack produced, so don't do it. Moving the local package dir with
+`ZIG_LOCAL_PKG_DIR=/tmp/zig-pkg` changed nothing. ghostty.bst now resolves the tree up front
+with `zig build --fetch=all -j1` before the real build. Its helper steps need
+`components/grep.bst` and `components/sed.bst` in `build-depends`. The Zig element sandbox
+has neither, and a step failed with `grep: command not found`.
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 
