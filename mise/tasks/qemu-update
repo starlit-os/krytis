@@ -12,11 +12,24 @@ ELEMENT="elements/dev/qemu.bst"
 # sandbox. No freedesktop-sdk python3-qemu-qmp component exists to satisfy
 # it offline. Widen this glob to `[0-9]+\.[0-9]+\.[0-9]+` once one does
 # (and add it to depends: in elements/dev/qemu.bst).
-echo "==> Fetching latest QEMU 10.x release listing..."
-LATEST_VER=$(curl -fsSL --retry 3 --retry-delay 10 https://download.qemu.org/ \
-  | grep -oE 'qemu-10\.[0-9]+\.[0-9]+\.tar\.xz"' \
-  | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
-  | sort -V | tail -1)
+
+# Version source: the upstream repo's tags on GitLab, not the
+# download.qemu.org index. That index started answering "No Files Available
+# for Listing" (first failed track: 2026-10-31), and with `set -o pipefail` an
+# empty grep killed the task with no message. The tarballs themselves are still
+# served from download.qemu.org, so only the listing moved.
+echo "==> Fetching latest QEMU 10.x release tag..."
+TAGS_URL='https://gitlab.com/api/v4/projects/qemu-project%2Fqemu/repository/tags?search=%5Ev10.&per_page=100'
+LATEST_VER=$(curl -fsSL --retry 3 --retry-delay 10 "${TAGS_URL}" \
+  | python3 -c 'import json, sys; [print(t["name"]) for t in json.load(sys.stdin)]' \
+  | grep -oE '^v10\.[0-9]+\.[0-9]+$' \
+  | sed 's/^v//' \
+  | sort -V | tail -1 || true)
+
+if [ -z "${LATEST_VER}" ]; then
+  echo "ERROR: no v10.x.y tag found at ${TAGS_URL}" >&2
+  exit 1
+fi
 
 echo "==> Latest: ${LATEST_VER}"
 
@@ -29,6 +42,13 @@ if [ "${LATEST_VER}" = "${CURRENT_VER}" ]; then
 fi
 
 TARBALL="qemu-${LATEST_VER}.tar.xz"
+
+# A release is tagged before its tarball is uploaded. Until it is, stay put
+# rather than turning the tracking run red.
+if ! curl -fsSI --retry 3 --retry-delay 10 "https://download.qemu.org/${TARBALL}" >/dev/null; then
+  echo "==> ${TARBALL} is tagged but not published yet; staying on ${CURRENT_VER}"
+  exit 0
+fi
 TMPFILE=$(mktemp)
 trap 'rm -f "${TMPFILE}"' EXIT
 
