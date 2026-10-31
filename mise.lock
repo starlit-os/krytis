@@ -24,13 +24,13 @@ url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/66006942
 provenance = "cosign"
 
 [[tools.fnox]]
-version = "1.42.1"
+version = "1.45.0"
 backend = "packslip:github.com/jdx/fnox"
-specifiers = ["v1.42.1"]
+specifiers = ["v1.45.0"]
 
 [tools.fnox."platforms.linux-x64"]
-checksum = "sha256:1c6f91f5e4ee6d53edc42acd56fa211dfc6ffd7cdef4ae7dd224490f5fadd8a0"
-url = "https://github.com/jdx/fnox/releases/download/v1.42.1/fnox-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:e57ec74dad34ef5413c839c0c48ad5be1ff01cc5a6d5312ddabf95927790a43e"
+url = "https://github.com/jdx/fnox/releases/download/v1.45.0/fnox-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/fnox/.github/workflows/release.yml"
 repository_ids = { repository = "1078762196" }
 
