@@ -39,15 +39,6 @@ sources:
     url: ghostty_releases:1.4.0/ghostty-1.4.0.tar.gz
     ref: cb188ac6c3a8278d5fd7bfef15d8c017104c87f638b5560eb38024a71ae0f005
 
-  # Zig 0.15.2 knows glibc up to 2.42; fdsdk 26.08 ships 2.44, so zig's stub
-  # libc lacks the @GLIBC_2.43 symbols fdsdk's libgraphene-1.0.so references
-  # and ld.lld refuses the link. Sets exe.allow_shlib_undefined, since the
-  # real glibc resolves those at load time. Drop once ghostty tags a release
-  # built on a Zig whose abilists cover 2.44 (v1.3.1 pins 0.15.2 as its
-  # minimum, and no newer ghostty tag exists). See krytis#305.
-  - kind: patch
-    path: patches/ghostty/allow-shlib-undefined.patch
-
   # Zig package dependencies — generated, do not hand-edit.
   # Regenerate with the element's `-update` mise task.
   - kind: remote
@@ -563,34 +554,21 @@ config:
       export ZIG_LIB_DIR="%{libdir}/zig"
       mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p"
 
-    # Stage 2: Populate cache from HTTP deps via zig fetch
+    # Stage 2: populate it from the staged dep tarballs. `zig fetch` computes
+    # the content hash `zig build` expects, for git-declared deps as well as
+    # plain tarballs. Do NOT hand-place git deps under p/<hash>: since Zig 0.16
+    # such entries are ignored and the dep is re-fetched over the network,
+    # which cannot work in the offline sandbox (same as seance.bst/falcond.bst).
+    #
+    # No `|| true`: a dep that fails to fetch here fails the build hundreds of
+    # steps later with an unrelated-looking error, so stop at the real cause.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
-      for dep in zig-deps/*; do
+      for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
-        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep" || {
-          echo "WARNING: zig fetch failed for $dep" >&2
-        }
+        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
       done
-
-    # Stage 3: Place git deps that can't be resolved via zig fetch
-    - |
-      export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-
-      place_git_dep() {
-        local tarball="$1"
-        local zig_hash="$2"
-        local dest="$ZIG_GLOBAL_CACHE_DIR/p/$zig_hash"
-        mkdir -p "$dest"
-        tar xf "$tarball" --strip-components=1 -C "$dest"
-        echo "Placed git dep at $dest"
-      }
-
-      # uucode: transitive dep of vaxis via git+https://
-      place_git_dep \
-        "zig-deps-git/5f05f8f83a75caea201f12cc8ea32a2d82ea9732.tar.gz" \
-        "uucode-0.1.0-ZZjBPj96QADXyt5sqwBJUnhaDYs_qBeeKijZvlRa0eqM"
 
   install-commands:
     - |

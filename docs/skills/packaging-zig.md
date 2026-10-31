@@ -244,23 +244,16 @@ error: unable to discover remote git server capabilities: NameServerFailure
 4. When the established package (ghostty) is updated to support the newer Zig version, promote
    `zig-<version>.bst` to `zig.bst` and delete the old element.
 
-**Ghostty / Zig 0.16.0 transition note:**
+**What ghostty 1.4 actually did (#1435, 2026-10-31):** it skipped 0.16 and declares
+`minimum_zig_version = "0.17.0"`, so the planned "promote `zig-0.16.bst` to `zig.bst`" step
+didn't apply. `zig.bst` moved straight to 0.17.0 and `zig-0.16.bst` stays for falcond and
+seance. ghostty's `place_git_dep` stage was replaced with seance's
+`zig fetch zig-deps/* zig-deps-git/*` loop, and `allow-shlib-undefined.patch` was dropped.
+`ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
+for a Zig-bumping ghostty release always needs this hand-edit.
 
-As of ghostty 1.3.x, ghostty builds against Zig 0.15.x. ghostty 1.4 is expected to target
-Zig 0.16.0. When updating ghostty to 1.4:
-
-- Run `mise run ghostty-update` to get the new source ref and dep hashes.
-- Verify `minimum_zig_version` in the new ghostty `build.zig.zon` says `0.16.0`.
-- Promote `zig-0.16.bst` → `zig.bst` (replace its contents in place).
-- Delete `zig-0.16.bst`.
-- Update `falcond.bst` `build-depends` to reference `zig.bst` again.
-- Drop ghostty's `place_git_dep` block entirely and re-populate those deps with
-  `zig fetch <local-tarball>` like falcond already does — under 0.16.0 manually placed
-  `p/<hash>/` entries are ignored, so re-deriving the old hashes is not an option.
-
-**Current state (re-verified 2026-09-24):** `zig.bst` = 0.15.2 (ghostty 1.3.1, still using
-`place_git_dep` in its Stage 3), `zig-0.16.bst` = 0.16.0 (falcond 2.0.14, using
-`zig fetch`). Both coexist until ghostty 1.4 ships.
+**Current state (2026-10-31):** `zig.bst` = 0.17.0 (ghostty 1.4.0), `zig-0.16.bst` = 0.16.0
+(falcond, seance).
 
 ### `-Dpie=true` is project-specific — check `build.zig` first
 

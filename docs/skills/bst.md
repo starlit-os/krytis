@@ -1610,9 +1610,9 @@ Three things that bit while writing it, both worth knowing before adding a provi
   `CURRENT_TAG` extraction does the same.
 
 **Series-pinned elements need a constrained tracker, not the latest release.**
-`desktop/zig-0.16.bst` exists because falcond declares `minimum_zig_version = "0.16.0"` while
-ghostty is still on 0.15.2. Tracking "latest Zig" would silently move it to 0.17 and break
-falcond, so its provider is `zig-series` with the series as the locator. Any element that is
+`desktop/zig-0.16.bst` exists because falcond and seance are built on Zig 0.16 while
+`desktop/zig.bst` follows ghostty (0.15.2 until ghostty 1.4.0 moved it to 0.17.0, #1435).
+Tracking "latest Zig" would silently move it to 0.17 and break falcond, so its provider is `zig-series` with the series as the locator. Any element that is
 pinned to a major/minor on purpose wants the same treatment — check *why* a version is pinned
 before writing its updater.
 
@@ -2992,7 +2992,7 @@ regeneration. Without it, the next ghostty bump would silently drop
 
 ### Zig 0.16 covers fdsdk 26.08's glibc; Zig 0.15 does not
 
-`ghostty.bst` carries `allow-shlib-undefined.patch` because Zig 0.15.2's abilists stop at
+`ghostty.bst` carried `allow-shlib-undefined.patch` until ghostty 1.4.0 (#1435) because Zig 0.15.2's abilists stop at
 glibc 2.42 while fdsdk 26.08 ships 2.44, so `ld.lld` refuses the link against fdsdk
 libraries referencing newer symbols (#305). That patch is **not** needed on
 `desktop/zig-0.16.bst`:
@@ -3003,8 +3003,12 @@ libraries referencing newer symbols (#305). That patch is **not** needed on
   `libgraphene-1.0.so.0` are 2.43; everything else (adwaita, X11, wayland, EGL, GL,
   fontconfig, freetype, harfbuzz, pango, cairo, libnotify) is ≤ 2.38.
 
-So a Zig 0.16 element needs no workaround, and `ghostty.bst` should be able to drop its
-patch whenever ghostty itself moves to 0.16. Re-run the `nm -D` check after an fdsdk bump
+So a Zig 0.16 element needs no workaround. ghostty 1.4.0 requires Zig 0.17.0, so
+`desktop/zig.bst` moved to 0.17.0 and the patch was dropped in the same PR (#1435). The
+patch no longer applied anyway: 1.4.0 rewrote the context in `src/build/GhosttyExe.zig`,
+and `build-changed` failed on `Hunk #1 FAILED at 28`. If a ghostty bump fails on a carried
+patch, check `minimum_zig_version` in its `build.zig.zon` before rebasing the patch,
+because the version jump may be the change that retires it. Re-run the `nm -D` check after an fdsdk bump
 rather than assuming it still holds.
 
 **Do not silence the resulting `zig cannot build new glibc version 2.44.0; providing
