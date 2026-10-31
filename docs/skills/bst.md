@@ -1700,6 +1700,16 @@ slow. To check by hand: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].
 
 ### An auto-track `ref:` bump often needs new deps — fix them on the tracking PR
 
+**A fix pushed onto an `auto/track-*` branch only survives until the next hourly run** (cron
+`13 * * * *`). `scripts/commit-tracking-update.sh` skips its push only when the branch tip *is*
+its own commit (same files, same message). A hand commit on top fails that test, so the run
+rebuilds the branch from main and moves the ref with `force=true`, wiping the fix. That
+happened to the Zig 0.17 port on #1435 on 2026-10-31. A one-commit fix can still win the
+race if it merges inside the hour, as oo7 #1408 did. Anything that needs several CI rounds
+goes on a non-`auto/` branch: cherry-pick the tracker's commit plus the fixes there and open
+a PR from it (#1452). Once that merges, main already carries the update, so the tracker has
+nothing to push.
+
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
 `ref:`; it does not build anything itself. When an upstream release adds a new
 `dependency()` to its `meson.build`/`CMakeLists.txt`, the bump alone fails to build. Before
