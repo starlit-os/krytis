@@ -569,8 +569,9 @@ config:
     # fetched on their own under Zig 0.17: tree-sitter v0.25.0 ships a
     # pre-0.14 build.zig.zon (`.name = "tree-sitter"`, a string, where 0.17
     # wants an enum literal). A dep like that can only work if `zig build` never
-    # resolves it, such as a lazy dep for another target. If a dep the build needs is missing, `zig build` fails
-    # trying to reach the network and names it. Read the WARNING lines first.
+    # resolves it, such as a lazy dep for another target. If a dep the build
+    # needs is missing, `zig build` fails trying to reach the network and
+    # names it. Read the WARNING lines first.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
@@ -578,6 +579,26 @@ config:
         echo "Fetching: $dep"
         zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
       done
+
+    # glslang and spirv-cross are old `1220…` multihash tarballs. ghostty
+    # 1.4.0's pkg/*/build.zig.zon declare hashes for them that Zig 0.17
+    # doesn't reproduce from those same tarballs: same size, different
+    # digest (`hash mismatch: manifest declares … but the fetched package
+    # has …`, #1452). The BST `ref:` sha256 pins the tarball bytes, so
+    # replace the declared hash with the one 0.17 computes. grep first, so
+    # a ghostty release that changes either hash fails here instead of
+    # silently doing nothing. Drop this stage once upstream's hashes match.
+    - |
+      fix_hash() {
+        grep -q "$2" "$1" || { echo "ERROR: $1 no longer declares $2; revisit this stage" >&2; exit 1; }
+        sed -i "s/$2/$3/" "$1"
+      }
+      fix_hash pkg/glslang/build.zig.zon \
+        N-V-__8AABzkUgISeKGgXAzgtutgJsZc0-kkeqBBscJgMkvy \
+        N-V-__8AABzkUgLVokrlQdxJvX2oxlomVpqBIhATzi4v2fJd
+      fix_hash pkg/spirv-cross/build.zig.zon \
+        N-V-__8AANb6pwD7O1WG6L5nvD_rNMvnSc9Cpg1ijSlTYywv \
+        N-V-__8AANb6pwCu-IebjiK2L7vklpPu4b5uV9RkwL3xORyN
 
   install-commands:
     - |

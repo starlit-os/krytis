@@ -260,6 +260,15 @@ tarball has `.name = "tree-sitter"`, a string where 0.17 wants an enum literal, 
 `error: expected enum literal`. So the fetch loop warns instead of aborting (`|| echo
 "WARNING: ..."`). A missing dep that `zig build` really needs still fails the build, because
 it tries the network and names the dep.
+
+**Zig 0.17 rejects some declared hashes for old `1220…` tarballs.** ghostty 1.4.0's
+`pkg/glslang` and `pkg/spirv-cross` zon files declare `N-V-__8AABzkUgISe…` and
+`N-V-__8AANb6pwD7…`, but `zig build` computes a different digest of the same size from the
+same tarballs. It fails with `hash mismatch: manifest declares … but the fetched package has
+…`, and only after about 14 minutes of compiling. The element rewrites the two declared
+hashes to the computed ones before `zig build` (the BST `ref:` already pins the bytes), and
+greps first, so a release that changes them fails loudly. The mismatch error prints both
+hashes, so one failed CI run gives you everything the rewrite needs.
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 
