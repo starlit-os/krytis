@@ -1707,6 +1707,16 @@ slow. To check by hand: `gh api repos/<o>/<r>/releases/tags/<tag> -q '.assets[].
 
 ### An auto-track `ref:` bump often needs new deps — fix them on the tracking PR
 
+**A fix pushed onto an `auto/track-*` branch only survives until the next hourly run** (cron
+`13 * * * *`). `scripts/commit-tracking-update.sh` skips its push only when the branch tip *is*
+its own commit (same files, same message). A hand commit on top fails that test, so the run
+rebuilds the branch from main and moves the ref with `force=true`, wiping the fix. That
+happened to the Zig 0.17 port on #1435 on 2026-10-31. A one-commit fix can still win the
+race if it merges inside the hour, as oo7 #1408 did. Anything that needs several CI rounds
+goes on a non-`auto/` branch: cherry-pick the tracker's commit plus the fixes there and open
+a PR from it (#1452). Once that merges, main already carries the update, so the tracker has
+nothing to push.
+
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
 `ref:`; it does not build anything itself. When an upstream release adds a new
 `dependency()` to its `meson.build`/`CMakeLists.txt`, the bump alone fails to build. Before
@@ -1755,6 +1765,18 @@ merging: `mise run bst --pull build desktop/<lib>.bst <consumers>`. The consumer
 `docs/design/image-inventory.md`. A manual element that globs its install files hides a
 removed file the same way, so diff the upstream tree's file list too
 (`gh api repos/<o>/<r>/compare/<old>...<new> -q '.files[]|select(.status!="modified")'`).
+
+**When the new deps are additive, land them on main first, then update the tracking PR's
+branch.** Adding a `depends:` entry the old ref doesn't use is harmless, so it can merge
+ahead of the bump in its own PR. Then the tracker's commit is the only change on its
+branch, and the hourly reset (see `commit-tracking-update.sh`'s skip rule) has nothing to
+wipe. The tracker doesn't re-push an unchanged update, so the PR's red **Build changed
+elements** stays red. **Re-running that job doesn't help**: `build-changed.yml` checks out
+`github.sha`, the merge commit from the original event, so a re-run builds against the old
+main again. Click "Update branch" instead (`update_pull_request_branch`). That merge commit
+is unsigned, but the next hourly run sees a tip that isn't its own and recommits the update
+onto the new main, signed, with the cooldown trailers carried over. umbriel 2952bbcb (#1450, 2026-10-31) needed `libeis-1.0`;
+`freedesktop-sdk.bst:components/libei.bst` went to main first.
 
 ### The track job's PR title/version comes from parsing the git-describe `ref:`
 
@@ -3503,6 +3525,8 @@ Keep `recc: cache-only` in reserve rather than as the default — it still does 
 ## Recovering the real build log of a FAILED element from CI
 
 GitHub's job log only carries what BuildStream prints on failure: the **last 20 lines** of the build log. Ninja finishes its already-started edges after an edge fails, so those 20 lines are usually unrelated progress and the actual error has scrolled away. Do not try to infer the failure from them.
+
+**The failure message itself eats those 20 lines when the failing command is long.** BuildStream ends the log with `Command '<the whole command>' failed with exitcode N`, quoted in full. A 30-line inline shell loop leaves nothing else in the window. ghostty.bst's zig build retry loop hit this on #1452 and showed only its own echo. When you can't pull the artifact, the fix that needs no credentials is to have an earlier build-command write the logic to a script (`cat > /tmp/x.sh <<'EOF'`), keep the failing command one line long (`sh /tmp/x.sh`), and have the script print its own diagnosis last.
 
 BuildStream caches failed builds as artifacts *and* pushes them, so the full log is retrievable. Take the element's 64-hex key from the `fetch needed <key> <element>` line near the top of the run log, then pull and read that artifact ref directly:
 

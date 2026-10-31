@@ -287,6 +287,27 @@ Zig 0.16.0. When updating ghostty to 1.4:
 `place_git_dep` in its Stage 3), `zig-0.16.bst` = 0.16.0 (falcond 2.0.14, using
 `zig fetch`). Both coexist until ghostty 1.4 ships.
 
+**ghostty 1.4 shipped needing Zig 0.17, not 0.16, and the port is parked (2026-10-31).**
+ghostty 1.4.0 declares `minimum_zig_version = "0.17.0"`, so the promote-0.16 plan above
+doesn't apply. `ghostty-update` only *warns* about that, so its tracker PR (#1435) bumps the
+version without touching Zig. The hand port on #1452 (unmerged, kept for reference) found
+these, all with Zig 0.17.0 in the BST sandbox:
+
+- `zig fetch` rejects `--global-cache-dir` (`unrecognized parameter`) because 0.17 moved
+  package management into the build runner. Export `ZIG_GLOBAL_CACHE_DIR` instead.
+- `zig fetch` rejects pre-0.14 manifests, for example tree-sitter v0.25.0's
+  `.name = "tree-sitter"` (`expected enum literal`).
+- `allow-shlib-undefined.patch` no longer applies to 1.4.0.
+- **Blocker:** `zig build` reports `hash mismatch: manifest declares <D> but the fetched
+  package has <X>`, for a different set of deps on each run with identical inputs. With
+  `zig build --fetch=all -j1` it happens for *every* package, and every `<X>` is a
+  nameless `N-V-…`, as if zig build's fetch never sees the package's `build.zig.zon`.
+  `zig fetch` of the same tarballs prints the right named hash. Don't rewrite the zon
+  hashes to `<X>`: that accepts whatever the bad unpack produced. Moving
+  `ZIG_LOCAL_PKG_DIR` to `/tmp` changed nothing.
+- Any `grep`/`sed` in a Zig element's build steps needs `components/grep.bst` and
+  `components/sed.bst`, because the sandbox has neither.
+
 ### `-Dpie=true` is project-specific — check `build.zig` first
 
 `-Dpie=true` is not a standard Zig build option. A project only accepts it if `build.zig` explicitly
