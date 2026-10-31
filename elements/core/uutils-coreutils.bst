@@ -1,11 +1,11 @@
 # uutils-coreutils — Rust coreutils replacement.
 # Installs multicall binary as /usr/bin/uutils-coreutils and creates two
 # symlinks for each util: uutils-<prog> (always) and <prog> (skipped for
-# cp/mv/rm). Those stay on GNU because Ubuntu's 2026-04-22 rust-coreutils
-# update counted 8 open issues in them (it called them TOCTOU; three are not
-# races). projectbluefin/common#290 made dakota do the same, and it closed
-# when that shipped (projectbluefin/dakota#316); it is not a sign the issues
-# are fixed.
+# cp/mv/rm, and for env/kill/uptime: see install-commands). cp/mv/rm stay on
+# GNU because Ubuntu's 2026-04-22 rust-coreutils update counted 8 open issues
+# in them (it called them TOCTOU; three are not races).
+# projectbluefin/common#290 made dakota do the same, and it closed when that
+# shipped (projectbluefin/dakota#316); it is not a sign the issues are fixed.
 #
 # As of 2026-10-12 all 8 are closed and fixed by 0.11.0 (the last was
 # uutils#10014), and Ubuntu 26.10 ships 0.12.0 with cp/mv/rm from uutils.
@@ -29,8 +29,13 @@ config:
       ln -sr "%{install-root}/usr/bin/uutils-coreutils" "%{install-root}/usr/bin/uutils-${prog}"
       # Keep cp/mv/rm from GNU coreutils — uutils has unresolved TOCTOU issues.
       # See projectbluefin/common#290.
+      # env, kill and uptime also stay off the plain names (dakota b86f7c5).
+      # pkexec realpath()s its target and the multicall binary dispatches on
+      # the executed path, so a symlinked env breaks `pkexec -u <user>
+      # /usr/bin/env <cmd>`. kill and uptime belong to procps-ng, which GNU
+      # coreutils does not shadow either; leave procps their only provider.
       case "${prog}" in
-        cp|mv|rm) continue ;;
+        cp|mv|rm|env|kill|uptime) continue ;;
       esac
       ln -sr "%{install-root}/usr/bin/uutils-coreutils" "%{install-root}/usr/bin/${prog}"
     done
@@ -62,7 +67,6 @@ public:
     - /usr/bin/dirname
     - /usr/bin/du
     - /usr/bin/echo
-    - /usr/bin/env
     - /usr/bin/expand
     - /usr/bin/expr
     - /usr/bin/factor
@@ -76,7 +80,6 @@ public:
     - /usr/bin/id
     - /usr/bin/install
     - /usr/bin/join
-    - /usr/bin/kill
     - /usr/bin/link
     - /usr/bin/ln
     - /usr/bin/logname
@@ -135,7 +138,6 @@ public:
     - /usr/bin/unexpand
     - /usr/bin/uniq
     - /usr/bin/unlink
-    - /usr/bin/uptime
     - /usr/bin/users
     - /usr/bin/vdir
     - /usr/bin/wc

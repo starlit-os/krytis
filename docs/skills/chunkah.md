@@ -158,3 +158,12 @@ of `/var/lib/containers` or `/var/tmp` reports more free space via `df
 for untagged archives on some podman versions) — this is copied from
 dakota verbatim since it is itself a defensive workaround for
 podman-version skew, not something worth re-deriving.
+
+**Don't pass `SOURCE_DATE_EPOCH` to chunkah.** zirconium-hawaii added
+`-e SOURCE_DATE_EPOCH=1320937200` to its chunkah run for reproducibility
+(`99f6285`, 2026-10-10) and reverted it three days later (`2e309db`): bootc's
+composefs backend took the image's timestamp from it and reported the image
+as built in 2011, so uupd decided there had been no update in over a month.
+krytis is composefs-only, and `mise/tasks/chunkify` sets no
+`SOURCE_DATE_EPOCH` (checked 2026-10-31). Keep it that way unless the image's
+creation date stops being something the update path reads.

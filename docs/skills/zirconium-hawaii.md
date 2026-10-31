@@ -424,3 +424,19 @@ Each body lives in `docs/skills/bst.md`. This list is the record of where they c
   configs aren't useful to us"). Reading those elements showed that krytis's own description
   of them was wrong. → `docs/skills/bst.md` § NetworkManager Is Present and Running, and §
   resolv.conf and /etc/hosts Are Already Covered.
+
+## 2026-10-31 pass (`de67660..b784cbe`): where the lessons went
+
+- **BuildStream 2.8.0 hands parent-project cache remotes down into junctions** (`d459758`,
+  which deleted zirconium's cache patches on fdsdk and fdsdk-extra for that reason). Krytis
+  is on 2.7.0. → `docs/skills/bst.md` § Remote cache declarations in `project.conf` are
+  project-scoped.
+- **anitya's flat-archive fix, carried as a plugin patch** (`9396c06`, bpc MR !499). →
+  `docs/skills/bst.md` § `kind: anitya` tracks release tarballs, limit 1.
+- **No `SOURCE_DATE_EPOCH` on chunkah** (`99f6285`, reverted by `2e309db`). →
+  `docs/skills/chunkah.md`, end of § chunkify task.
+- **gnome-build-meta's freedesktop-sdk-extra split** (`6f55e0b`, `0b6b6a3`) and its
+  zram-generator config (`b784cbe`): krytis's draft PR #1222 does the same three things
+  (moved paths, `components/krb5.bst` override mirror, `config/zram-generator.bst`), so
+  nothing new was written here.
+

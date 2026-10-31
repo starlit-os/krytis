@@ -285,6 +285,12 @@ mkdir -p /etc/bootc-installer /usr/share/bootc-installer/images
 # would auto-detect composefs-native and land on the same path; the explicit
 # value just pins it. See docs/skills/dakota-iso.md § `images.json`
 # `flatpak_var_path` is the target's var **root**.
+#
+# filesystems is btrfs only. composefs needs fs-verity and XFS has none, so
+# fisherman refuses composefs on XFS ("composefs-backend requires fs-verity,
+# which XFS does not support") and an XFS pick failed at install time
+# (dakota-iso 2d54023). See docs/skills/dakota-iso.md § The installer must not
+# offer XFS for a composefs image.
 cat > /etc/bootc-installer/images.json << IMGEOF
 {
   "default_image": "${KRYTIS_IMGREF}",
@@ -299,7 +305,7 @@ cat > /etc/bootc-installer/images.json << IMGEOF
       "composefs": true,
       "needs_user_creation": true,
       "flatpak_var_path": "state/os/default/var",
-      "filesystems": ["btrfs", "xfs"]
+      "filesystems": ["btrfs"]
     }
   ]
 }
