@@ -2987,8 +2987,8 @@ element in its diff, and `build-changed` builds it.
 
 A regenerating updater must also preserve non-dep sources: `extract_source_blocks(text,
 "patch")` carries `kind: patch` entries (and the comment block above them) across a
-regeneration. Without it, the next ghostty bump would silently drop
-`patches/ghostty/allow-shlib-undefined.patch`.
+regeneration. Without it, a ghostty bump would have silently dropped the
+`allow-shlib-undefined` patch ghostty.bst carried until 1.4.0 (#1435).
 
 ### Zig 0.16 covers fdsdk 26.08's glibc; Zig 0.15 does not
 
