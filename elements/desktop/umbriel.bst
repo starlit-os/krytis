@@ -74,6 +74,13 @@
 # (`general.xwayland = true`, started lazily on the first X11 client) ships
 # via stacks/desktop.bst, so it is not re-declared here.
 #
+# libeis-1.0 (>=1.3): hard `dependency()` since upstream 2952bbcb (EIS server
+# for the umbriel-input-capture-v1 protocol). freedesktop-sdk 26.08 ships
+# components/libei.bst (1.6.0), which builds libei, libeis and liboeffis
+# together. The same bump raised xkbcommon to >=1.10.0 and libinput to >=1.29
+# (fdsdk has 1.13.2 / 1.32.0) and added xcb-shape / xcb-randr, which come
+# from components/xorg-lib-xcb.bst through desktop/wlroots.bst.
+#
 # Update-path gate: upstream noctalia-dev/umbriel has no tags/releases yet
 # (checked as of 2026-09; see #774/#775). Uses kind: git_repo,
 # track: refs/heads/main -- same branch-tracking pattern as desktop/stb.bst.
@@ -103,6 +110,7 @@ depends:
 - freedesktop-sdk.bst:components/libglvnd.bst
 - freedesktop-sdk.bst:components/systemd-libs.bst
 - freedesktop-sdk.bst:components/lcms.bst
+- freedesktop-sdk.bst:components/libei.bst
 - freedesktop-sdk.bst:extensions/mesa/mesa.bst
 
 variables:
