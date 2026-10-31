@@ -1374,8 +1374,15 @@ Four limits, all visible in the plugin source:
 1. **It always strips the archive's top-level directory and has no `base-dir`.**
    `TarStager` drops the first path component and every member that has only one. A flat
    archive therefore stages nothing. That is the nerd-font failure in `a446abd`'s commit
-   body, and the reason zirconium-hawaii's `jetbrains-mono-nerd-font` and `maple-mono`
-   stayed on `kind: tar`/`kind: zip`.
+   body. **A fix exists but is unreleased:** buildstream-plugins-community MR !499
+   (`sources/_utils.py`: keep members with no directory component, skip only the root
+   directory entry; "Fixes #117"). As of 2026-10-31 the newest bpc release is still 2.4.0,
+   so the fix is only reachable as a patch. zirconium-hawaii `9396c06` carries it as
+   `patches/buildstream-plugins-community/0001-…patch` through a `kind: patch_queue`
+   source on its `plugins/buildstream-plugins-community.bst`, and with it moved
+   `jetbrains-mono-nerd-font` (a flat `.tar.xz`) to `kind: anitya`; `maple-mono` stays on
+   `kind: zip`. Krytis can do the same for a flat archive, or wait for the release after
+   2.4.0 — check its changelog for #117 before dropping such a patch.
 2. **Tar only.** `anitya.py` always stages through `TarStager`, with no zip path.
 3. **No version-series hold.** `track` always takes the newest stable version. Its
    `exclude:` key filters *archive members* at stage time, not versions, which is easy to
@@ -1389,7 +1396,7 @@ Four limits, all visible in the plugin source:
 **Prerequisite: register the plugin.** `project.conf` lists the
 `plugins/buildstream-plugins-community.bst` sources it loads (`cargo2`, `git_module`,
 `git_repo`, `go_module`, `patch_queue`, `zip`). `anitya` isn't among them, and
-`grep -rn anitya elements project.conf` finds nothing (2026-10-14). Add it in the same PR
+`grep -rn anitya elements project.conf` finds nothing (re-checked 2026-10-31). Add it in the same PR
 as the first `kind: anitya` element. Its `requests` import is already covered:
 `pyproject.toml` lists `requests` for `git_repo`.
 
@@ -3545,6 +3552,21 @@ project's list is never inherited downward. zirconium-hawaii `f833afe` removed
 its `gbm.gnome.org` entries on that reasoning: a top-level declaration "will
 never have any artifacts from [this project] cached" and is useful only "for the
 junctions that already have it patched in".
+
+**That is BuildStream ≤ 2.7 behaviour; 2.8.0 reverses it.** In the 2.8.0 wheel,
+`_resolve_specs_for_project` walks `project.junction` upward and *prepends*
+every parent project's `project.conf` remotes to the junctioned project's own
+list, so a toplevel entry is now consulted for every junctioned element too. The
+2.7.0 wheel has no such loop (both read 2026-10-31 with `pip download --no-deps
+buildstream==<v>`). Krytis pins 2.7.0 (`uv.lock`), so the scoping rule and #942's
+table below still describe today's builds. zirconium-hawaii `d459758` deleted its
+patches that added a cache to fdsdk/fdsdk-extra `project.conf` for exactly this
+reason ("buildstream 2.8.0 … automatically includes the host project's CAS
+server configs in any junctions"). **On the 2.8 upgrade**, re-run the
+`bst artifact pull --deps none` probe below: the gbm/fdsdk rows will gain any
+entry krytis declares. The ref-namespace filter (next paragraphs) does not
+change, so a foreign cache still serves nothing for `krytis/…` refs; what 2.8
+adds is the option of declaring one cache for every junction from the toplevel.
 
 **krytis dropped both gbm entries on measured evidence (#942).** The cheap way
 to see the scoping is `bst artifact pull --deps none <element>`: its heading

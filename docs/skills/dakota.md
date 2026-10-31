@@ -441,6 +441,28 @@ Deliberate divergences:
 | GTK setup app, polkit action, `pkexec` helper | system mise task, `sudo` helper with a lock around read/check/set | GUI deferred to #1385; the lock closes a race dakota's helper also has |
 | Version from the feed, checksum by BST tracking | `tailscale-update` also verifies `.sha256` and distsign `.sig` against pinned roots | `docs/skills/bst.md` § Verify the vendor's own signature in a bespoke update task |
 
+### A uutils `env` symlink breaks `pkexec … /usr/bin/env <cmd>`
+
+*Source: dakota `b86f7c5` (projectbluefin/dakota#1808, "restore uupd user updates"),
+mined 2026-10-31.*
+
+dakota's uupd runs user-level updates as `pkexec -u <user> /usr/bin/env <cmd>`. With
+`/usr/bin/env` a symlink to the uutils multicall binary, that stopped working: pkexec
+`realpath()`s its target before exec, so the multicall binary is started as
+`uutils-coreutils`, not `env`, and dispatches on that path instead. dakota now keeps GNU
+`env` on the plain name. The same element already left `kill` and `uptime` alone, because
+those belong to procps-ng and GNU coreutils does not install them either.
+
+Krytis symlinked all three (`elements/core/uutils-coreutils.bst` skipped only
+`cp|mv|rm`), and `files/fakecap-manifest.tsv` lists both providers for each path, so the
+winner was staging order (§ Staging order, not the whitelist, picks the overlap winner).
+Nothing in krytis runs `pkexec … env` today, but any polkit helper that does would break
+the same way (the Tailscale GUI, #1385, is the nearest). The element now skips
+`env|kill|uptime` too, and their `overlap-whitelist` lines are gone. The general rule:
+**anything that resolves a symlink before exec (pkexec, some sandboxes, `readlink -f`
+wrappers) defeats a multicall binary**, so a tool reached that way must not be a multicall
+symlink.
+
 ## Referencing This Project
 
 Copy patterns from `../dakota/` and adapt — don't symlink or junction into dakota from krytis. Independent BST artifact caches and element trees, same as the `zirconium-hawaii.md` convention.

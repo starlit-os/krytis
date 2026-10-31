@@ -9,7 +9,7 @@ Zirconium-hawaii does NOT use any of these — they are dakota/Bluefin-specific 
 | Element | krytis element | Notes |
 |---------|----------------|-------|
 | `sudo-rs` | `elements/core/sudo-rs.bst` | Rust sudo replacement, shipped. `elements/core/pangolin-cli.bst` documents the sudoers `Cmnd` / `Args::Prefix` matching rules sudo-rs actually supports. No PikaOS-style fallback wrapper was carried. |
-| `uutils-coreutils` | `elements/core/uutils-coreutils.bst` | Rust coreutils, shipped with dakota's carve-out preserved: the element installs `uutils-<prog>` symlinks for everything but only takes over the bare `<prog>` name outside `cp`/`mv`/`rm`, which stay GNU. The carve-out's original reason, Ubuntu's 8 open audit issues in those tools, is gone as of 2026-10-12 (all fixed by uutils 0.11.0; krytis ships 0.12.0); whether to drop it is #1158. See `docs/skills/bst.md` § `overlap-whitelist` permits an overlap; staging order picks the winner. |
+| `uutils-coreutils` | `elements/core/uutils-coreutils.bst` | Rust coreutils, shipped with dakota's carve-out preserved: the element installs `uutils-<prog>` symlinks for everything but only takes over the bare `<prog>` name outside `cp`/`mv`/`rm`, which stay GNU, and `env`/`kill`/`uptime` (GNU `env` because `pkexec` realpath()s its target and the multicall binary then cannot tell it was `env`; `kill`/`uptime` are procps's, dakota `b86f7c5`). The carve-out's original reason, Ubuntu's 8 open audit issues in those tools, is gone as of 2026-10-12 (all fixed by uutils 0.11.0; krytis ships 0.12.0); whether to drop it is #1158. See `docs/skills/bst.md` § `overlap-whitelist` permits an overlap; staging order picks the winner. |
 
 ## Build patterns to revisit from dakota
 
