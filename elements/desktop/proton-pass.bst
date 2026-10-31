@@ -50,7 +50,7 @@ depends:
 - desktop/xdg-utils.bst
 
 variables:
-  version: "1.42.0"
+  version: "1.43.0"
   strip-binaries: ''
 
 config:
@@ -68,5 +68,5 @@ config:
 sources:
 - kind: remote
   filename: proton-pass.deb
-  url: proton_me:download/pass/linux/proton-pass_1.42.0_amd64.deb
-  ref: 67c05db83dd4ce5ac784d6737979a9be9254a8af4f09f10d564c97f71b955564
+  url: proton_me:download/pass/linux/proton-pass_1.43.0_amd64.deb
+  ref: 9fb7c11b756421c02483056a3332f9a91c1bcb25fa547f39b328182379544d8e
