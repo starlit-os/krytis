@@ -1749,6 +1749,15 @@ merging: `mise run bst --pull build desktop/<lib>.bst <consumers>`. The consumer
 removed file the same way, so diff the upstream tree's file list too
 (`gh api repos/<o>/<r>/compare/<old>...<new> -q '.files[]|select(.status!="modified")'`).
 
+**When the new deps are additive, land them on main first, then re-run the tracking PR's
+build.** Adding a `depends:` entry the old ref doesn't use is harmless, so it can merge
+ahead of the bump in its own PR. Then the tracker's commit is the only change on its
+branch, and the hourly reset (see `commit-tracking-update.sh`'s skip rule) has nothing to
+wipe. The tracker doesn't re-push an unchanged update, so the PR's red **Build changed
+elements** stays red until someone re-runs it. A re-run builds the PR's merge ref against
+the new main and turns green. umbriel 2952bbcb (#1450, 2026-10-31) needed `libeis-1.0`;
+`freedesktop-sdk.bst:components/libei.bst` went to main first.
+
 ### The track job's PR title/version comes from parsing the git-describe `ref:`
 
 `git_repo` refs are git-describe strings — `v5.0.0-beta.6-0-g<sha40>` — and the `track`
