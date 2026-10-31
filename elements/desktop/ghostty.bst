@@ -583,6 +583,42 @@ config:
         zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
       done
 
+    # Stage 3: write the zig build retry loop (see the comment above
+    # install-commands) to a script, so install-commands stays one line.
+    - |
+      cat > /tmp/zig-build-retry.sh <<'RETRY'
+      export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
+      export ZIG_LIB_DIR="%{libdir}/zig"
+      attempt=0
+      while :; do
+        attempt=$((attempt + 1))
+        echo "zig build: attempt $attempt"
+        if DESTDIR="$1" zig build \
+            --prefix /usr \
+            -Doptimize=ReleaseFast \
+            -Dcpu=baseline \
+            -Dpie=true \
+            -Demit-docs=false \
+            -Dversion-string=1.4.0 2>/tmp/zig-build.err; then
+          cat /tmp/zig-build.err >&2
+          exit 0
+        fi
+        cat /tmp/zig-build.err >&2
+        pairs=$(sed -n 's/.*manifest declares \([^ ]*\) but the fetched package has \([^ ]*\).*/\1 \2/p' /tmp/zig-build.err)
+        if [ -z "$pairs" ] || [ "$attempt" -ge 8 ]; then
+          echo "=== zig build failed on attempt $attempt; its error lines: ===" >&2
+          grep -n 'error' /tmp/zig-build.err | head -n 15 >&2
+          exit 1
+        fi
+        echo "$pairs" | while read -r declared fetched; do
+          echo "Rewriting zon hash $declared -> $fetched"
+          grep -rlF --include=build.zig.zon "$declared" . | while read -r zon; do
+            sed -i "s|$declared|$fetched|" "$zon"
+          done
+        done
+      done
+      RETRY
+
   # Zig 0.17 hash mismatches. For several old tarballs (glslang, spirv-cross,
   # breakpad and libxml2 so far), the digest `zig build` computes doesn't match
   # what ghostty 1.4.0's pkg/*/build.zig.zon declare: `hash mismatch: manifest
@@ -596,32 +632,7 @@ config:
   # adds no integrity here. Any failure other than a hash mismatch, or a
   # mismatch that survives the rewrite, still fails the build.
   install-commands:
-    - |
-      export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-      export ZIG_LIB_DIR="%{libdir}/zig"
-      attempt=0
-      while :; do
-        attempt=$((attempt + 1))
-        if DESTDIR="%{install-root}" \
-          zig build \
-            --prefix /usr \
-            -Doptimize=ReleaseFast \
-            -Dcpu=baseline \
-            -Dpie=true \
-            -Demit-docs=false \
-            -Dversion-string=1.4.0 2>/tmp/zig-build.err; then
-          cat /tmp/zig-build.err >&2
-          break
-        fi
-        cat /tmp/zig-build.err >&2
-        pairs=$(sed -n 's/.*manifest declares \([^ ]*\) but the fetched package has \([^ ]*\).*/\1 \2/p' /tmp/zig-build.err)
-        if [ -z "$pairs" ] || [ "$attempt" -ge 8 ]; then
-          exit 1
-        fi
-        echo "$pairs" | while read -r declared fetched; do
-          echo "Rewriting zon hash $declared -> $fetched"
-          grep -rlF --include=build.zig.zon "$declared" . | while read -r zon; do
-            sed -i "s|$declared|$fetched|" "$zon"
-          done
-        done
-      done
+    # Kept to one short line on purpose: on failure BuildStream prints only the
+    # last 20 log lines, and with a long inline loop those 20 are just the
+    # echo of the failed command. The script prints the errors last instead.
+    - sh /tmp/zig-build-retry.sh "%{install-root}"
