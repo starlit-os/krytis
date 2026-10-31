@@ -24,6 +24,9 @@ build-depends:
   - desktop/zig.bst
   - freedesktop-sdk.bst:components/tar.bst
   - freedesktop-sdk.bst:components/gzip.bst
+  # grep + sed: the fix_hash stage below. The sandbox has neither by default.
+  - freedesktop-sdk.bst:components/grep.bst
+  - freedesktop-sdk.bst:components/sed.bst
   - freedesktop-sdk.bst:components/gettext.bst
   - freedesktop-sdk.bst:components/pkg-config.bst
 

@@ -269,6 +269,8 @@ same tarballs. It fails with `hash mismatch: manifest declares … but the fetch
 hashes to the computed ones before `zig build` (the BST `ref:` already pins the bytes), and
 greps first, so a release that changes them fails loudly. The mismatch error prints both
 hashes, so one failed CI run gives you everything the rewrite needs.
+The stage needs `components/grep.bst` and `components/sed.bst` in `build-depends`. The Zig
+element sandbox has neither, and the first attempt failed with `grep: command not found`.
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 
