@@ -1,6 +1,6 @@
 # Carried patches and fork pins
 
-Status: **current as of 2026-10-25**. Every patch krytis carries against a source it
+Status: **current as of 2026-10-31**. Every patch krytis carries against a source it
 does not own, and every element built from a fork, has one row in the
 [Inventory](#inventory). `mise run patch-inventory-check` fails when an element and this
 file disagree, and `checks.yml` runs it on every PR. Moved here from the body of
@@ -49,7 +49,6 @@ The check reads the first two columns, so keep their format:
 |---|---|---|---|---|
 | `elements/overrides/vim.bst` | `patches/vim/vim-not-show-in-gnome.patch`, `patches/vim/gvim-not-show-in-gnome.patch` | Own patch | Sets `NoDisplay=true` on `vim.desktop`/`gvim.desktop`. This is a krytis preference, not an upstream bug: neither the terminal editor nor its GUI variant should appear in the app grid. | Not upstreamable (krytis-specific policy). Permanent unless the preference changes. |
 | `elements/desktop/greetd.bst` | `patches/greetd/drop-agreety-workspace-member.patch`, `patches/greetd/bump-tokio-bytes-drop-agreety-deps.patch`, `patches/greetd/bump-tokio-1.43.1.patch` | Own patch (vuln remediation) | Drops `agreety` from `[workspace] members`. It is greetd's unused reference text greeter (krytis ships `noctalia-greeter-session`) and the only consumer of `rpassword` 5.0.1 (GHSA-2p6r-x3vv-xqm2). Paired with `cargo update -p bytes` (1.6.0->1.12.1, fixes GHSA-434x-w66g-qw3r) on the same element. **Correction, 2026-09-01:** the original `bump-tokio-bytes-drop-agreety-deps.patch` (#501) bumped `tokio` 1.37.0->1.42.1 to fix GHSA-rr8g-9fpq-6wmg, and it didn't. The advisory's patched range is `>=1.39.0, <1.43.1`, so 1.42.1 was still vulnerable. A fresh `mise run vuln-scan` after the 26.08rc merge caught it. `bump-tokio-1.43.1.patch` bumps `tokio` 1.42.1->1.43.1 and `tokio-macros` 2.4.0->2.5.0 (tokio 1.43.1 requires `~2.5.0`), which clears it. | Not upstreamable as a "fix": `agreety` isn't broken, krytis just doesn't use it. Permanent unless krytis starts shipping `agreety`. The patches also become redundant if greetd's own upstream Cargo.lock ever refreshes these crates. It has been stalled at 0.10.3 since Jun 2024 (per #496's investigation). |
-| `elements/overrides/rust-bindgen.bst` | `patches/rust-bindgen/drop-quickchecking-workspace-member.patch`, `patches/rust-bindgen/drop-quickchecking-lockfile.patch` | Own patch (vuln remediation, mirrored element) | Mirrors freedesktop-sdk's `components/rust-bindgen.bst` and drops `bindgen-tests/tests/quickchecking` from `[workspace] members`. That crate is bindgen's own unused fuzz-testing crate, outside `default-members`, and the only path to `quickcheck` -> `rand` 0.8.5 (GHSA-cq8v-f236-94qc). The alternative was crossing rand's 0.8.x -> 0.9.x major bump, which has no compatible semver range. Paired with a regenerated `Cargo.lock`/`cargo2` block on the same element. Closes #498. | Delete the override and patches once freedesktop-sdk's own rust-bindgen ref drops quickchecking (or bumps its rand pin) upstream. Drift-checked by `mise run rust-bindgen-check`. |
 | `elements/overrides/python3-pil.bst` | `patches/python3-pil/drop-pybind.patch` | Pre-release backport (vuln remediation, mirrored element) | Runs Pillow 13.0.0 ahead of the junction's 12.3.0 for GHSA-8g5g-8vmr-9782 (Critical heap overflow in the JPEG decoder, fixed in 13.0.0), which blocked the 2026-10-21 publish. Pillow ships in the image as a runtime dependency of fdsdk's `components/fwupd.bst`. Element and patch are freedesktop-sdk's own bump, verbatim from its release/26.08 autoupdater MR freedesktop-sdk!35059 (head `90b7b26a`, open as of 2026-10-21). fdsdk's 12.3.0 patch doesn't apply to 13.0.0, so the refreshed one is vendored. | The junction ships Pillow ≥ 13.0.0. `mise run python3-pil-check` fails when that happens, and also when the copy drifts from the junction's element. |
 | `elements/overrides/btrfs-progs.bst` | `patches/btrfs-progs/flush-zeroing-before-discard.patch` | Own patch (mirrored element), not yet proposed upstream | Since v6.16.1 (kdave/btrfs-progs `d50769a4`) `mkfs.btrfs` zeroes old signatures with buffered writes and then issues `BLKDISCARD`, which drops those writes from the page cache. A device that ignores the discard keeps the old signatures. A reinstall over an encrypted disk then kept both LUKS2 headers and failed at fisherman's remount with `unknown filesystem type 'crypto_LUKS'` (#1294). The patch adds an `fsync()` between the zeroing and the discard. Gated by `mise run mkfs-reformat-test`. | The junction's btrfs-progs persists the zeroing before it discards (#1302). Proposing it upstream is an Upstream Gate decision. Drift-checked by `mise run btrfs-progs-check`. |
 | `elements/core/efitools.bst` | `patches/efitools/c99.patch`, `patches/efitools/gcc15.patch` | Downstream carry of fdsdk's patches (vendored element) | fdsdk deleted its EFI element family in 26.08 (`b39e7194`). krytis vendors only `sign-efi-sig-list`, which it needs to sign the `.auth` files (sbsigntools' `sbvarsign` writes a 0-based `EFI_TIME` month). It keeps two of fdsdk's four patches: `-D_GNU_SOURCE` plus the missing `strings.h`, and the lib/asn1 typedefs vs C23 `bool` fix for GCC 15. | Upstream efitools releases with the fixes. It has been dormant since 2018 (v1.9.2 plus four commits), so in practice this is permanent while krytis signs with it. |
@@ -98,8 +97,18 @@ Worked examples of the full lifecycle this inventory tracks:
 - `overrides/systemd-base.bst` and `update-utmp-shorten-comm.patch` backported systemd
   `b8968c49` (#417, #425). Dropped in #1062 once gnome-build-meta pinned v261.3, which
   includes the stable backport `40d1c21160`. The junction override was **retargeted** to
-  `gnome-build-meta.bst:core-deps/systemd-base.bst`, not deleted. Deleting it falls back
-  to fdsdk's own v261.2, which still has the bug.
+  `gnome-build-meta.bst:core-deps/systemd-base.bst`, not deleted. At fdsdk 26.08.2,
+  deleting it fell back to fdsdk's own v261.2, which still had the bug. fdsdk 26.08.4
+  ships v261.4, which has the fix, but the redirect stays: gnome-build-meta's systemd
+  filters must read the systemd gnome-build-meta builds (`elements/freedesktop-sdk.bst`).
+- `overrides/rust-bindgen.bst` with `drop-quickchecking-workspace-member.patch` and
+  `drop-quickchecking-lockfile.patch` dropped bindgen's unbuilt `quickchecking`
+  workspace member, the only path to `rand` 0.8.5 (GHSA-cq8v-f236-94qc, #498). Dropped
+  with the fdsdk 26.08.4 bump (#1222): fdsdk now pins bindgen v0.73.2, whose
+  `Cargo.lock` has `rand` 0.8.8. The carry's premise was wrong from the start. It said
+  the fix needed rand 0.9.3, a major-version jump, but the advisory also lists 0.8.6 as
+  patched, released 2026-04-17, four months before #498 closed. A lockfile bump inside
+  0.8.x would have been enough.
 - `overrides/abseil-cpp.bst` and `bmi2intrin-via-immintrin.patch` fixed abseil
   20260526.0's direct `<bmi2intrin.h>` include on x86_64_v3 (#305). It never had a row
   in #483's table. Dropped in #1063: since 26.08.0, fdsdk pins 20260817.0, which has no

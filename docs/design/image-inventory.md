@@ -26,7 +26,7 @@ the stacks. Only the description column is hand-written.
 - **Junction replacements.** Entries in a junction element's `config: overrides:` map
   that point at a krytis element. Stacks keep naming the upstream element, but the krytis
   element is what gets built. A replacement is listed whether or not the upstream element
-  reaches the image: `overrides/rust-bindgen.bst` is a build tool.
+  reaches the image.
 
 Junction elements (any dependency with a `:`) are never followed. A krytis element that
 only a junction element depends on is therefore missed. That can only happen through an
@@ -77,6 +77,7 @@ element does, its row's text is a review question.
 | `config/fisherman-cleanup.bst` | Deletes what the ISO installer leaves on the physical root: a plain-text copy of the disk passphrase (#1280) and ~11G of install scratch (#1282). |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
+| `config/zram-generator.bst` | zram-generator's default config (zstd `zram0`, half of RAM). It used to ship with the generator; the `freedesktop-sdk-extra` element ships none. |
 | `config/oomd.bst` | Enables systemd-oomd and arms its memory-pressure kill on each user's `app.slice` (#1216). |
 
 #### `stacks/bootc.bst`
@@ -213,7 +214,6 @@ element does, its row's text is a review question.
 | `overrides/frei0r.bst` | `freedesktop-sdk.bst:components/frei0r.bst` | Builds with SSE 4.1 disabled on x86_64 until upstream fixes a type mismatch (dyne/frei0r#228, dyne/frei0r#239). |
 | `overrides/vim.bst` | `freedesktop-sdk.bst:components/vim.bst` | Adds a patch that hides gvim's desktop entry from the app menu (#241). |
 | `core/sudo-rs.bst` | `freedesktop-sdk.bst:components/sudo.bst` | sudo-rs, a memory-safe sudo, in place of sudo. |
-| `overrides/rust-bindgen.bst` | `freedesktop-sdk.bst:components/rust-bindgen.bst` | Build tool. Patched to drop an unbuilt crate that put a vulnerable `rand` into the SBOM (#498). |
 | `overrides/btrfs-progs.bst` | `freedesktop-sdk.bst:components/btrfs-progs.bst` | Patched so `mkfs.btrfs` erases old signatures, such as LUKS headers, on a disk that ignores TRIM (#1294). |
 | `overrides/libdecor.bst` | `freedesktop-sdk.bst:components/libdecor.bst` | Built without its GTK3 plugin (#1075). |
 | `overrides/python3-pil.bst` | `freedesktop-sdk.bst:components/python3-pil.bst` | Pillow 13.0.0, one release ahead of the junction, for a Critical JPEG decoder overflow (GHSA-8g5g-8vmr-9782). |

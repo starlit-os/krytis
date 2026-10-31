@@ -7,8 +7,9 @@ kind: autotools
 # § Never install payload content under /opt for the related secure-boot
 # testing context this unblocks.
 #
-# Deliberately does not depend on gnome-build-meta.bst:core-deps/qemu.bst
-# (GNOME's own qemu recipe) — that build enables GTK+SDL+spice+virglrenderer
+# Deliberately does not depend on gnome-build-meta's qemu recipe (since
+# gnome-build-meta eaa10b21: gnome-build-meta.bst:freedesktop-sdk-extra.bst:
+# components/qemu.bst) — that build enables GTK+SDL+spice+virglrenderer
 # +usbredir+smartcard+pipewire for an interactive desktop VM viewer, none of
 # which mise's boot-test/boot-vm tasks use (`-nographic`, virtio-net user
 # networking, a monitor socket). Building against freedesktop-sdk's own
@@ -91,19 +92,18 @@ config:
   install-commands:
     (>):
     # hppa-firmware*.img cause errors with freedesktop-sdk-stripper, same
-    # exclusion gnome-build-meta's core-deps/qemu.bst applies. We don't even
+    # exclusion gnome-build-meta's former core-deps/qemu.bst applied. We don't even
     # build the hppa target, but the shared firmware blobs still land here.
     - rm -f '%{install-root}'/usr/share/qemu/hppa-firmware*.img
 
 sources:
 - kind: tar
-  # Pinned to 10.1.3, not the newest release: QEMU 11.x's configure/meson
-  # step requires the `qemu.qmp` PyPI package for QAPI codegen and tries to
-  # fetch it over the network, which fails in BST's offline build sandbox
-  # ("Could not provide build dependency 'qemu.qmp==0.0.5'"). 10.1.3 is the
-  # exact version gnome-build-meta.bst:core-deps/qemu.bst already builds
-  # cleanly in this same freedesktop-sdk ecosystem — predates the qemu.qmp
-  # requirement. Revisit once freedesktop-sdk ships a python3-qemu-qmp
-  # component (none exists as of this writing).
+  # Held to the 10.x series (mise/tasks/qemu-update's glob), not the newest
+  # release: QEMU 11.x's configure/meson step requires the `qemu.qmp` PyPI
+  # package for QAPI codegen and tries to fetch it over the network, which
+  # fails in BST's offline build sandbox ("Could not provide build dependency
+  # 'qemu.qmp==0.0.5'"). 10.x predates the qemu.qmp requirement. Revisit once
+  # freedesktop-sdk ships a python3-qemu-qmp component (none exists as of
+  # this writing).
   url: qemu:qemu-10.2.4.tar.xz
   ref: 821b545b92f165e57dddccac5077d76d4d436a226595b8813ad59306bbfd0746

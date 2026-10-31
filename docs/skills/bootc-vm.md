@@ -259,9 +259,11 @@ systemd at v261.2 while gnome-build-meta already shipped v261.3. The mirror is
 gone (#483). What now holds the fix is the junction override
 `components/_private/systemd-base.bst: gnome-build-meta.bst:core-deps/systemd-base.bst`
 in `elements/freedesktop-sdk.bst`. Deleting that line falls back to fdsdk's own
-systemd-base, which is still v261.2 at fdsdk 26.08.2. To check whether a
-systemd tag has the fix, grep that tag's own `src/update-utmp/update-utmp.c` for
-the short literal; the version number alone does not tell you.
+systemd-base: v261.2 at fdsdk 26.08.2, without the fix; v261.4 at 26.08.4, with it
+(both checked by the grep below), but still not the v262.1 gnome-build-meta ships.
+To check whether a systemd tag has the fix, grep that tag's own
+`src/update-utmp/update-utmp.c` for the short literal; the version number alone
+does not tell you.
 
 With the unit fixed, `boot-test` asserts `running` and nothing else, prints the
 state it observed, and lists the failed units when there are any — verified on

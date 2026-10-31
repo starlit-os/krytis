@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 #MISE description="Regenerate files/fakecap-manifest.tsv from localhost/krytis:latest"
 #USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image tag to attribute files from"
+#USAGE flag "--pull" help="Fetch artifacts missing from the local cache from krytis's bow cache (BUILDBARN_PULL_TOKEN env var or fnox)"
 
 set -euo pipefail
 
 TAG="${usage_tag:-localhost/krytis:latest}"
+
+if [ "${usage_pull:-}" = "true" ]; then
+    # One token lookup for the whole run: mise/tasks/bst reads the env var before
+    # falling back to fnox, and this task calls it once per element and prefix.
+    BUILDBARN_PULL_TOKEN="${BUILDBARN_PULL_TOKEN:-$(fnox get BUILDBARN_PULL_TOKEN)}"
+    export BUILDBARN_PULL_TOKEN
+    export FAKECAP_PULL=1
+fi
 
 echo "==> Extracting /usr/manifest.json from ${TAG}..."
 podman run --rm "${TAG}" cat /usr/manifest.json > usr-manifest.json
