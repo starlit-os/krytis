@@ -20,7 +20,8 @@
 > | **Dual** signatures: keyless (OIDC) + static key pair | **No** — keyless only |
 > | Host-side `bootc`/`policy.json` enforcement using the static key | **No** — tracked in #418 |
 > | Docs page for manual/CI verification via the keyless signature | **Yes** — `docs/skills/signing.md` |
-> | `mise` tasks for key generation and manual verification | **Partial** — `mise/tasks/sign` exists; no cosign key generation (unnecessary without the static key) and no separate verify task (verification is inline in `publish.yml` plus documented). Note `mise run generate-keys`/`pull-keys` are the **secure boot** PK/KEK/db keys, unrelated to cosign. |
+> | `mise` tasks for key generation and manual verification | **Partial** — `mise/tasks/sign` exists; no cosign key generation (unnecessary without the static key) and no general verify task. `mise/tasks/promote` (#1458) verifies the image signature before it moves `:latest`/`:sealed`; referrer signatures are verified inline in `publish.yml`. Note `mise run generate-keys`/`pull-keys` are the **secure boot** PK/KEK/db keys, unrelated to cosign. |
+> | Step 10's "verify fails the publish" | **Yes, since #1458** — `publish.yml` pushes only the version tag, and `:latest`/`:sealed` move only after the image signature verifies. Before that, `mise run push` published `:latest` first and signing was best-effort. |
 >
 > Sections **3. Key management (Security Gate)** and **4. Host-side enforcement** are
 > therefore unimplemented proposals, not documentation. Both hinge on introducing a

@@ -6,6 +6,7 @@
 #USAGE flag "--skip-vuln-scan" help="Skip Grype vulnerability scan and OCI-referrer attach (#41) — faster iteration, no scan artifact"
 #USAGE flag "--fail-on <severity>" help="Exit non-zero BEFORE pushing if the vuln scan finds a vulnerability >= this severity (negligible|low|medium|high|critical) (#392). Default: warn-only, never blocks the push"
 #USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Write image_digest/sbom_digest/vuln_digest here for mise run sign (#60) to consume"
+#USAGE flag "--version-only" help="Push only the version tag; leave :latest/:sealed to mise run promote, which moves them after the signature verifies (#1458). publish.yml uses this"
 
 set -euo pipefail
 
@@ -14,6 +15,7 @@ SEALED=$([[ "${usage_sealed:-}" == "true" ]] && echo 1 || echo 0)
 SKIP_SBOM=$([[ "${usage_skip_sbom:-}" == "true" ]] && echo 1 || echo 0)
 SKIP_VULN_SCAN=$([[ "${usage_skip_vuln_scan:-}" == "true" ]] && echo 1 || echo 0)
 FAIL_ON="${usage_fail_on:-}"
+VERSION_ONLY=$([[ "${usage_version_only:-}" == "true" ]] && echo 1 || echo 0)
 OUT_DIGESTS="${usage_digest_file:-krytis-push-digests.env}"
 VERSION=$(grep '^image-version:' include/image-version.yml | awk '{print $2}' | tr -d "'")
 
@@ -111,23 +113,31 @@ fi
 echo "==> Logging in to ghcr.io as ${GH_USER}..."
 echo "$TOKEN" | podman login ghcr.io --username "$GH_USER" --password-stdin
 
-echo "==> Tagging ${SOURCE_TAG} → ${DEST_VERSION_TAG} and ${DEST_LATEST_TAG}..."
+# Without --version-only the floating tag is pushed too, before anything has
+# signed it. That is fine for a human iterating locally; CI passes
+# --version-only and moves the floating tag with `mise run promote` only once
+# the image signature verifies, so :latest/:sealed never name an unsigned
+# image (#1458).
+echo "==> Tagging ${SOURCE_TAG} → ${DEST_VERSION_TAG}..."
 podman tag "$SOURCE_TAG" "$DEST_VERSION_TAG"
-podman tag "$SOURCE_TAG" "$DEST_LATEST_TAG"
 
 echo "==> Pushing ${DEST_VERSION_TAG}..."
 DIGEST_FILE=$(mktemp)
 podman push --digestfile "$DIGEST_FILE" "$DEST_VERSION_TAG"
 
-echo "==> Pushing ${DEST_LATEST_TAG}..."
-podman push "$DEST_LATEST_TAG"
+if [[ "$VERSION_ONLY" -eq 1 ]]; then
+  echo "==> Done: pushed ${DEST_VERSION_TAG} (--version-only: ${DEST_LATEST_TAG} left for mise run promote)"
+else
+  podman tag "$SOURCE_TAG" "$DEST_LATEST_TAG"
+  echo "==> Pushing ${DEST_LATEST_TAG}..."
+  podman push "$DEST_LATEST_TAG"
+  echo "==> Done: pushed ${DEST_VERSION_TAG} and ${DEST_LATEST_TAG}"
+fi
 
-echo "==> Done: pushed ${DEST_VERSION_TAG} and ${DEST_LATEST_TAG}"
-
-# Both tags above are pushed from the same SOURCE_TAG image ID, so they
-# share one content-addressed manifest digest — capture it once, regardless
-# of whether SBOM/vuln-scan run, so `mise run sign` (#60) always has an
-# image digest to work with.
+# The digest comes from the version-tag push. The floating tag, when it is
+# pushed, is the same SOURCE_TAG image ID and so the same manifest digest.
+# Captured regardless of whether SBOM/vuln-scan run, so `mise run sign` (#60)
+# and `mise run promote` (#1458) always have an image digest to work with.
 IMAGE_DIGEST=$(cat "$DIGEST_FILE")
 rm -f "$DIGEST_FILE"
 echo "image_digest=${IMAGE_DIGEST}" > "$OUT_DIGESTS"

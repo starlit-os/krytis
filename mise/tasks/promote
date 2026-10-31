@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#MISE description="Move :latest (or :sealed) to a pushed image digest, only after its cosign signature verifies (#1458)"
+#USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path the image lives under"
+#USAGE flag "--sealed" help="Move :sealed instead of :latest"
+#USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Digest file written by mise run push — image_digest is read from here unless --image-digest is given"
+#USAGE flag "--image-digest <digest>" help="sha256 digest of the image to promote — overrides --digest-file"
+#USAGE flag "--identity-regexp <regexp>" help="Signer identity the signature must match. Default: publish.yml on main in starlit-os/krytis"
+
+# The other half of `mise run push --version-only`. publish.yml pushes only the
+# version tag, signs the image, then runs this: the floating tag a host follows
+# moves only to a digest whose signature verifies, so a Fulcio/Rekor failure
+# leaves :latest/:sealed on the previous signed image instead of publishing an
+# unsigned one (#1458).
+#
+# By hand it is a rollback: `mise run promote --image-digest <older digest>`
+# moves :latest back to any image publish.yml signed on main. Recovering from a
+# failed signing step means re-dispatching publish.yml, because a signature
+# made outside it carries another identity and will not verify here.
+#
+# Retagging by digest re-uploads nothing and keeps the manifest bytes, so the
+# signature — bound to the digest, not the tag — stays valid.
+set -euo pipefail
+
+REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
+DIGEST_FILE="${usage_digest_file:-krytis-push-digests.env}"
+IMAGE_DIGEST="${usage_image_digest:-}"
+IDENTITY="${usage_identity_regexp:-^https://github\.com/starlit-os/krytis/\.github/workflows/publish\.yml@refs/heads/main$}"
+ISSUER="https://token.actions.githubusercontent.com"
+FLOATING_TAG=$([[ "${usage_sealed:-}" == "true" ]] && echo sealed || echo latest)
+
+if [[ -z "$IMAGE_DIGEST" && -f "$DIGEST_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$DIGEST_FILE"
+    IMAGE_DIGEST="${image_digest:-}"
+fi
+
+if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "==> ERROR: no valid image digest (--image-digest, or image_digest in ${DIGEST_FILE}); got '${IMAGE_DIGEST}'" >&2
+    exit 1
+fi
+
+# Same GITHUB_TOKEN/gh-auth-token resolution as mise/tasks/push (see #389).
+# oras writes ~/.docker/config.json, which cosign reads too.
+TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+if [[ -n "${GITHUB_ACTOR:-}" ]]; then
+    GH_USER="$GITHUB_ACTOR"
+elif ! GH_USER=$(gh api user --jq .login 2>/dev/null); then
+    GH_USER="token"
+fi
+echo "==> Logging in to ghcr.io as ${GH_USER}..."
+echo "$TOKEN" | oras login ghcr.io --username "$GH_USER" --password-stdin
+
+echo "==> Verifying ${REGISTRY}@${IMAGE_DIGEST} against ${IDENTITY}..."
+if ! cosign verify \
+    --certificate-identity-regexp "$IDENTITY" \
+    --certificate-oidc-issuer "$ISSUER" \
+    "${REGISTRY}@${IMAGE_DIGEST}" >/dev/null; then
+    echo "==> ERROR: no signature on ${IMAGE_DIGEST} verifies — :${FLOATING_TAG} stays where it is" >&2
+    exit 1
+fi
+
+PREVIOUS=$(oras resolve "${REGISTRY}:${FLOATING_TAG}" 2>/dev/null || echo "<none>")
+echo "==> Moving :${FLOATING_TAG} ${PREVIOUS} → ${IMAGE_DIGEST}..."
+oras tag "${REGISTRY}@${IMAGE_DIGEST}" "$FLOATING_TAG"
+
+# Read back: the registry must now resolve the tag to exactly this digest.
+NOW=$(oras resolve "${REGISTRY}:${FLOATING_TAG}")
+if [[ "$NOW" != "$IMAGE_DIGEST" ]]; then
+    echo "==> ERROR: ${REGISTRY}:${FLOATING_TAG} resolves to ${NOW}, expected ${IMAGE_DIGEST}" >&2
+    exit 1
+fi
+echo "==> Done: ${REGISTRY}:${FLOATING_TAG} → ${IMAGE_DIGEST}"

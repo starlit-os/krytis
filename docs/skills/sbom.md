@@ -52,11 +52,11 @@ These elements appear in the SBOM as packages with no recorded upstream URL/comm
 
 Skip with `mise run push --skip-sbom` for fast local iteration.
 
-**Signing is handled separately** — `mise run sign` (#60, see `docs/skills/signing.md`) signs the pushed image and both OCI referrers by digest after `mise run push` completes. Deliberately not built into `mise/tasks/sbom`/`mise/tasks/push` directly: signing needs the three manifest digests `push` already writes to `krytis-push-digests.env`, and keeping it a separate task lets it be best-effort (`.github/workflows/publish.yml` runs it with `continue-on-error: true`) without coupling its failure mode to the SBOM/scan pipeline's.
+**Signing is handled separately**: `mise run sign` (#60, see `docs/skills/signing.md`) signs the pushed image and both OCI referrers by digest after `mise run push` completes. It isn't built into `mise/tasks/sbom`/`mise/tasks/push` because it needs the three manifest digests `push` writes to `krytis-push-digests.env`, and CI runs it in two parts: the image signature gates moving `:latest`/`:sealed`, while a referrer (SBOM or vulnerability report) that fails to sign fails the run only after promotion (#1458, `docs/skills/signing.md` § Promotion gates on the image signature (#1458)).
 
 ## CI Build Pipeline (#380)
 
-`.github/workflows/publish.yml` (#380, `workflow_dispatch`-only) now wraps `mise run build` → `mise run push` → `mise run sign` as krytis's automated build→publish pipeline — SBOM generation and the vulnerability scan run there exactly as they do for a human running `mise run push` locally, since `publish.yml` is a thin orchestration layer around the same `mise` tasks, not a reimplementation. `publish.yml` runs `mise/tasks/sbom` in **native** mode (no `--container`, `BST_CONTAINER` unset in that workflow), so the crun/runc gotcha below does not currently apply to it — it only matters if a `--container`-mode SBOM run is ever added to a GitHub Actions job.
+`.github/workflows/publish.yml` (#380; weekday cron plus `workflow_dispatch`) wraps `mise run build` → `mise run push --version-only` → `mise run sign` → `mise run promote` as krytis's automated build→publish pipeline. SBOM generation and the vulnerability scan run there exactly as they do for a human running `mise run push` locally, since `publish.yml` is a thin orchestration layer around the same `mise` tasks, not a reimplementation. `publish.yml` runs `mise/tasks/sbom` in **native** mode (no `--container`, `BST_CONTAINER` unset in that workflow), so the crun/runc gotcha below does not currently apply to it — it only matters if a `--container`-mode SBOM run is ever added to a GitHub Actions job.
 
 ### crun 1.21+ breaks `buildstream-sbom`'s internal `bst show` on some runners
 
