@@ -19,6 +19,9 @@ aliases:
   # URL_ALIASES emits it for Zig dependencies hosted there, so keep the two in
   # sync.
   github_raw: https://raw.githubusercontent.com/
+  # hexops' Forgejo, which hosts Zig packages ghostty pulls in since 1.4.0
+  # (xcode-frameworks). Emitted by mise/lib/zig_zon.py's URL_ALIASES.
+  hexops_files: https://code.hexops.org/
   gitlab_files: https://gitlab.com/
   gnome_downloads: https://download.gnome.org/sources/
   proton_me: https://proton.me/
