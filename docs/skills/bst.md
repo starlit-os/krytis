@@ -5167,6 +5167,21 @@ dropped off the bus mid-build. btrfs logged `Transaction … aborted (error -5)`
 `emergency shutdown`. After remounting, `btrfs check --readonly` found **no error**: the
 filesystem was consistent, but BuildStream's own data was not.
 
+**A second symptom: the build succeeds and `load-image` fails** (2026-10-31, the same
+enclosure, behind a powered hub since then). The run builds `oci/krytis/image.bst` in
+seconds and then `podman load` rejects the checkout:
+
+```
+Error: payload does not match any of the supported image formats:
+ * oci-archive: loading index: EOF
+```
+
+`bst artifact checkout --tar - oci/krytis/image.bst | tar -tv` lists `index.json` and the
+manifest and config blobs at **0 bytes**, next to an intact 7 GB layer. The build
+interrupted by the drop had already written those objects empty, and the rebuild produced
+the same digests, so casd kept the empty files. Run the task below with `--fix`, then
+`bst artifact delete oci/krytis/image.bst`, and build again.
+
 **What the aborted transaction leaves behind:**
 
 - **CAS objects under the right name with the wrong content.** These are zero-length files
