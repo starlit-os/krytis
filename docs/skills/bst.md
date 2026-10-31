@@ -2970,6 +2970,21 @@ Each was a real failure while writing `seance.bst` (#956), and each is silent if
   `cd` in every command. Symptom is identical to falcond's genuinely-nested layout, so check
   the tarball (`tar tzf … | awk -F/ '{print $1}' | sort -u`) before assuming which it is.
 
+**A dep on a new host ships an unaliased URL, and only CI notices.** `apply_alias()` passes
+a URL through unchanged when no `URL_ALIASES` prefix matches. ghostty 1.4.0 (#1435,
+2026-10-28) added `xcode-frameworks` from `https://code.hexops.org/`, the tracker wrote it
+into `ghostty.bst` verbatim, and `build-changed` died at "Resolving elements" with
+`[unaliased-url]` (fatal in `project.conf`). The fix is three edits, kept in sync: an
+alias in `include/aliases.yml` (`hexops_files`), the matching prefix in
+`mise/lib/zig_zon.py`'s `URL_ALIASES`, and the one URL in the element (or rerun the
+updater with `-- --regenerate`). Before merging any Zig tracker PR,
+`grep -n 'url: https' elements/desktop/{ghostty,seance}.bst` should print nothing.
+Land the alias in its **own PR first**. `build-changed` skips the build for any diff that
+touches `include/aliases.yml` (it treats that as a project-wide input), so a tracker PR
+carrying both the alias and the version bump goes green without building the new version.
+After the alias PR merges, merge `main` into the tracker branch. That leaves only the
+element in its diff, and `build-changed` builds it.
+
 A regenerating updater must also preserve non-dep sources: `extract_source_blocks(text,
 "patch")` carries `kind: patch` entries (and the comment block above them) across a
 regeneration. Without it, the next ghostty bump would silently drop

@@ -33,6 +33,7 @@ URL_ALIASES = [
     ("https://release.files.ghostty.org/", "ghostty_releases:"),
     ("https://raw.githubusercontent.com/", "github_raw:"),
     ("https://codeberg.org/", "codeberg_files:"),
+    ("https://code.hexops.org/", "hexops_files:"),
     ("https://github.com/", "github_files:"),
 ]
 
