@@ -560,6 +560,11 @@ config:
     # such entries are ignored and the dep is re-fetched over the network,
     # which cannot work in the offline sandbox (same as seance.bst/falcond.bst).
     #
+    # The cache location comes from ZIG_GLOBAL_CACHE_DIR alone. Zig 0.17 moved
+    # package management into the build runner, and `zig fetch` there rejects
+    # `--global-cache-dir` ("unrecognized parameter"), so neither command
+    # passes it; the exported variable is honoured by both.
+    #
     # No `|| true`: a dep that fails to fetch here fails the build hundreds of
     # steps later with an unrelated-looking error, so stop at the real cause.
     - |
@@ -567,7 +572,7 @@ config:
       export ZIG_LIB_DIR="%{libdir}/zig"
       for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
-        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
+        zig fetch "$dep"
       done
 
   install-commands:
@@ -577,7 +582,6 @@ config:
       DESTDIR="%{install-root}" \
       zig build \
         --prefix /usr \
-        --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
         -Doptimize=ReleaseFast \
         -Dcpu=baseline \
         -Dpie=true \

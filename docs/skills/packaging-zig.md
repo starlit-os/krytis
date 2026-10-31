@@ -249,6 +249,12 @@ error: unable to discover remote git server capabilities: NameServerFailure
 didn't apply. `zig.bst` moved straight to 0.17.0 and `zig-0.16.bst` stays for falcond and
 seance. ghostty's `place_git_dep` stage was replaced with seance's
 `zig fetch zig-deps/* zig-deps-git/*` loop, and `allow-shlib-undefined.patch` was dropped.
+**Zig 0.17 `zig fetch` rejects `--global-cache-dir`** (`error: unrecognized parameter:
+"--global-cache-dir"`, first ghostty 1.4.0 build on #1435). 0.17 moved package management
+from the compiler into the build runner, and the new `fetch` does not parse that flag. Export
+`ZIG_GLOBAL_CACHE_DIR` and call plain `zig fetch "$dep"`; ghostty.bst drops the flag from
+`zig build` too, so both read the same variable. The skeleton above, plus falcond and seance,
+still pass the flag, which is correct on 0.16. Drop it when an element moves to 0.17.
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 
