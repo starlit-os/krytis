@@ -255,6 +255,11 @@ from the compiler into the build runner, and the new `fetch` does not parse that
 `ZIG_GLOBAL_CACHE_DIR` and call plain `zig fetch "$dep"`; ghostty.bst drops the flag from
 `zig build` too, so both read the same variable. The skeleton above, plus falcond and seance,
 still pass the flag, which is correct on 0.16. Drop it when an element moves to 0.17.
+**Zig 0.17 `zig fetch` also rejects pre-0.14 manifests.** ghostty 1.4.0's tree-sitter v0.25.0
+tarball has `.name = "tree-sitter"`, a string where 0.17 wants an enum literal, and fails with
+`error: expected enum literal`. So the fetch loop warns instead of aborting (`|| echo
+"WARNING: ..."`). A missing dep that `zig build` really needs still fails the build, because
+it tries the network and names the dep.
 `ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
 for a Zig-bumping ghostty release always needs this hand-edit.
 

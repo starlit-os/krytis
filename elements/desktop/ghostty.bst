@@ -565,14 +565,18 @@ config:
     # `--global-cache-dir` ("unrecognized parameter"), so neither command
     # passes it; the exported variable is honoured by both.
     #
-    # No `|| true`: a dep that fails to fetch here fails the build hundreds of
-    # steps later with an unrelated-looking error, so stop at the real cause.
+    # A failed fetch warns instead of stopping. Some staged tarballs can't be
+    # fetched on their own under Zig 0.17: tree-sitter v0.25.0 ships a
+    # pre-0.14 build.zig.zon (`.name = "tree-sitter"`, a string, where 0.17
+    # wants an enum literal). A dep like that can only work if `zig build` never
+    # resolves it, such as a lazy dep for another target. If a dep the build needs is missing, `zig build` fails
+    # trying to reach the network and names it. Read the WARNING lines first.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
       for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
-        zig fetch "$dep"
+        zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
       done
 
   install-commands:
