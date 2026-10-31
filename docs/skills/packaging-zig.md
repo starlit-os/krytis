@@ -62,7 +62,8 @@ config:
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
       for dep in zig-deps/*; do
-        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep" || true
+        # No `|| true`: see "Never swallow a failed `zig fetch`" below.
+        zig fetch --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" "$dep"
       done
 
     # Stage 3: Populate git deps from local Gitea commit tarballs via zig fetch.
@@ -144,6 +145,30 @@ did work in 0.15.x. The behaviour change is a 0.16.0 regression/redesign. Do not
 `tar.bst` and `gzip.bst` are NOT needed in build-depends when using `zig fetch` (Zig handles
 decompression internally). They are only needed if using the system `tar` command directly
 (e.g., the old `place_git_dep` pattern).
+
+### Never swallow a failed `zig fetch`; on Zig 0.17, fetch an unpacked directory
+
+*Source: dakota `bbb070f` (Ghostty 1.4.0 + Zig 0.17, mined 2026-10-31), its
+`elements/bluefin/ghostty.bst` build-commands and `.agents/skills/dakota-packaging`.*
+
+dakota hit this moving to Zig 0.17: `zig fetch <local tarball>` cached the archive
+**without stripping its top-level directory**, so the package then failed its hash check
+at `zig build` time. Their fix unpacks each archive the way Zig's own fetcher does
+(strip a lone top-level directory, handle `.zst` with `zstd -qdc`), runs
+`hash="$(zig fetch "$package")"` on the directory, and removes the temp dir. Their skill
+adds: "Never ignore a failed `zig fetch`."
+
+Krytis is on Zig 0.16 (`elements/desktop/zig-0.16.bst`) and on 0.15.2
+(`elements/desktop/zig.bst`), where `seance.bst` and `falcond.bst` fetch tarballs
+directly and build, so the tarball form is not broken *here yet*. Two things follow:
+
+- **On the next Zig bump, expect this failure first.** A hash mismatch on a dep that
+  fetched cleanly on the previous Zig is this, not a bad pin. Switch the fetch loop to
+  dakota's unpack-then-fetch-directory form.
+- **Drop `|| true` / `|| echo WARNING` from fetch loops.** `ghostty.bst` still turns a
+  failed fetch into a `WARNING` line (its Stage 2). A dep that failed there resurfaces
+  much later as a network-fetch or hash error inside `zig build`, far from the cause.
+  `seance.bst` already fails fast, and says why in its Stage 2 comment.
 
 ### Use `DESTDIR + --prefix /usr`, not `--prefix %{install-root}/usr`
 

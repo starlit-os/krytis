@@ -5,7 +5,9 @@
   // It reads [project.dependencies] and refreshes uv.lock via `uv lock`.
   // Custom managers only run when "custom.regex" is listed here explicitly —
   // an enabledManagers allowlist otherwise silently skips customManagers.
-  "enabledManagers": ["github-actions", "pep621", "mise", "custom.regex"],
+  // "dockerfile" is here only for the live-ISO Containerfiles; a packageRule
+  // below switches it off everywhere else.
+  "enabledManagers": ["github-actions", "pep621", "mise", "custom.regex", "dockerfile"],
   // Renamed from "baseBranches", which renovate-config-validator now reports
   // as needing migration.
   "baseBranchPatterns": ["main"],
@@ -81,6 +83,23 @@
   ],
   "packageRules": [
     {
+      // The dockerfile manager keeps the live ISO's third-party bases
+      // (live/Containerfile's debian:bookworm initramfs-builder,
+      // live/iso-tools/Containerfile's fedora-minimal) digest-pinned and
+      // current, as dakota-iso 16e6135 does. Their contents end up inside the
+      // ISO, so a retag upstream must arrive as a reviewable PR. Every other
+      // Containerfile is either localhost-built or has its own manager
+      // (Containerfile.runner's customManager), so the manager stays off there.
+      // See docs/skills/dakota-iso.md § Digest-pin the third-party images.
+      "matchManagers": ["dockerfile"],
+      "enabled": false,
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchFileNames": ["live/Containerfile", "live/iso-tools/Containerfile"],
+      "enabled": true,
+    },
+    {
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
       "automerge": true,
       "automergeType": "pr",
@@ -134,6 +153,7 @@
       "automerge": false,
       "prBodyNotes": [
         ":warning: BuildStream is coupled to the freedesktop-sdk junction — check whether `elements/freedesktop-sdk.bst` and `elements/gnome-build-meta.bst` need bumping in lockstep before merging.",
+        ":warning: BuildStream 2.8.0 changes how cache remotes reach junctions: parent-project `project.conf` remotes now apply to every junctioned project. Re-check `project.conf`'s cache comment and docs/skills/bst.md § Remote cache declarations in `project.conf` are project-scoped.",
       ],
     },
     {
