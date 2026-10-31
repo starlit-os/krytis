@@ -206,9 +206,10 @@ def extract_source_blocks(text: str, kind: str) -> list[str]:
     """Return the raw YAML for every `- kind: <kind>` source in an element.
 
     Regenerating `sources:` wholesale would otherwise silently drop hand-written
-    entries that are not deps — ghostty.bst's `kind: patch` carrying
-    patches/ghostty/allow-shlib-undefined.patch is load-bearing, and losing it
-    on the next version bump would surface as an unrelated link failure.
+    entries that are not deps. ghostty.bst carried a load-bearing `kind: patch`
+    (allow-shlib-undefined, dropped with ghostty 1.4.0 / Zig 0.17, #1435);
+    losing a patch like that on a version bump surfaces as an unrelated
+    link failure.
 
     The contiguous comment lines directly above the entry come with it: for a
     patch source that comment is the only record of *why* the patch exists.

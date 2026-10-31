@@ -1,7 +1,8 @@
 kind: manual
 
 # Zig 0.16.0 — used by falcond which requires minimum_zig_version = "0.16.0".
-# Kept separate from zig.bst (0.15.2) to avoid breaking ghostty until it supports 0.16.
+# Kept separate from zig.bst, which follows ghostty (0.17.0 since ghostty 1.4.0, #1435).
+# seance also builds on it.
 
 sources:
 - kind: tar

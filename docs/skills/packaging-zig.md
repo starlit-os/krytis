@@ -244,23 +244,47 @@ error: unable to discover remote git server capabilities: NameServerFailure
 4. When the established package (ghostty) is updated to support the newer Zig version, promote
    `zig-<version>.bst` to `zig.bst` and delete the old element.
 
-**Ghostty / Zig 0.16.0 transition note:**
+**What ghostty 1.4 actually did (#1435, 2026-10-31):** it skipped 0.16 and declares
+`minimum_zig_version = "0.17.0"`, so the planned "promote `zig-0.16.bst` to `zig.bst`" step
+didn't apply. `zig.bst` moved straight to 0.17.0 and `zig-0.16.bst` stays for falcond and
+seance. ghostty's `place_git_dep` stage was replaced with seance's
+`zig fetch zig-deps/* zig-deps-git/*` loop, and `allow-shlib-undefined.patch` was dropped.
+**Zig 0.17 `zig fetch` rejects `--global-cache-dir`** (`error: unrecognized parameter:
+"--global-cache-dir"`, first ghostty 1.4.0 build on #1435). 0.17 moved package management
+from the compiler into the build runner, and the new `fetch` does not parse that flag. Export
+`ZIG_GLOBAL_CACHE_DIR` and call plain `zig fetch "$dep"`; ghostty.bst drops the flag from
+`zig build` too, so both read the same variable. The skeleton above, plus falcond and seance,
+still pass the flag, which is correct on 0.16. Drop it when an element moves to 0.17.
+**Zig 0.17 `zig fetch` also rejects pre-0.14 manifests.** ghostty 1.4.0's tree-sitter v0.25.0
+tarball has `.name = "tree-sitter"`, a string where 0.17 wants an enum literal, and fails with
+`error: expected enum literal`. So the fetch loop warns instead of aborting (`|| echo
+"WARNING: ..."`). A missing dep that `zig build` really needs still fails the build, because
+it tries the network and names the dep.
 
-As of ghostty 1.3.x, ghostty builds against Zig 0.15.x. ghostty 1.4 is expected to target
-Zig 0.16.0. When updating ghostty to 1.4:
+**Zig 0.17 `zig build` hash mismatches in the BST sandbox look like a race, not wrong
+hashes.** On #1452, ghostty 1.4.0 failed with `hash mismatch: manifest declares <D> but the
+fetched package has <X>` (same size, different digest), but for a *different* set of deps on
+each run with identical inputs: glslang and spirv-cross, then breakpad and libxml2, then five
+at once including two new ones. Once the hashes were rewritten it also failed with `no module
+named 'translate_c'`. `zig fetch` of the same tarballs printed the declared `<D>`.
+Rewriting the zon files to `<X>` (tried, then reverted) therefore accepts whatever a bad
+unpack produced, so don't do it. Moving the local package dir with
+`ZIG_LOCAL_PKG_DIR=/tmp/zig-pkg` changed nothing. Pre-fetching with
+`zig build --fetch=all -j1` made it worse: *every* package mismatched, and each "fetched"
+hash came out as a nameless `N-V-…` (for example `libxev-0.0.0-86vtc8…` declared,
+`N-V-__8AAMQQ…` fetched). So zig build's fetch isn't seeing each package's
+`build.zig.zon` at all, while `zig fetch` of the same tarball names the package correctly.
+The root cause was still open when #1452 was parked (2026-10-31); ghostty stays on 1.3.1 /
+Zig 0.15 until it's understood. Next things to try: reproduce outside BST with
+`zig fetch` plus an offline `zig build --fetch`, and compare against how ghostty's own
+`nix/build-support` populates its cache for 0.17. Any `grep`/`sed` in a Zig element's
+build steps needs `components/grep.bst` and `components/sed.bst` in `build-depends`: the
+sandbox has neither (`grep: command not found`).
+`ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
+for a Zig-bumping ghostty release always needs this hand-edit.
 
-- Run `mise run ghostty-update` to get the new source ref and dep hashes.
-- Verify `minimum_zig_version` in the new ghostty `build.zig.zon` says `0.16.0`.
-- Promote `zig-0.16.bst` → `zig.bst` (replace its contents in place).
-- Delete `zig-0.16.bst`.
-- Update `falcond.bst` `build-depends` to reference `zig.bst` again.
-- Drop ghostty's `place_git_dep` block entirely and re-populate those deps with
-  `zig fetch <local-tarball>` like falcond already does — under 0.16.0 manually placed
-  `p/<hash>/` entries are ignored, so re-deriving the old hashes is not an option.
-
-**Current state (re-verified 2026-09-24):** `zig.bst` = 0.15.2 (ghostty 1.3.1, still using
-`place_git_dep` in its Stage 3), `zig-0.16.bst` = 0.16.0 (falcond 2.0.14, using
-`zig fetch`). Both coexist until ghostty 1.4 ships.
+**Current state (2026-10-31):** `zig.bst` = 0.17.0 (ghostty 1.4.0), `zig-0.16.bst` = 0.16.0
+(falcond, seance).
 
 ### `-Dpie=true` is project-specific — check `build.zig` first
 
