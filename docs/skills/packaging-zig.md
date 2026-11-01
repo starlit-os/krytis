@@ -158,17 +158,20 @@ at `zig build` time. Their fix unpacks each archive the way Zig's own fetcher do
 `hash="$(zig fetch "$package")"` on the directory, and removes the temp dir. Their skill
 adds: "Never ignore a failed `zig fetch`."
 
-Krytis is on Zig 0.16 (`elements/desktop/zig-0.16.bst`) and on 0.15.2
-(`elements/desktop/zig.bst`), where `seance.bst` and `falcond.bst` fetch tarballs
-directly and build, so the tarball form is not broken *here yet*. Two things follow:
+Krytis confirmed the same cause independently: it was the "changing false hash mismatches"
+blocker on the ghostty 1.4 port, which `elements/desktop/ghostty.bst` now normalizes (see
+"Ghostty 1.4 / Zig 0.17 transition" below). `zig.bst` is 0.17.0 for ghostty.
+`seance.bst` and `falcond.bst` build on `zig-0.16.bst` and fetch tarballs directly, and the
+tarball form isn't broken there. Two things follow:
 
-- **On the next Zig bump, expect this failure first.** A hash mismatch on a dep that
-  fetched cleanly on the previous Zig is this, not a bad pin. Switch the fetch loop to
-  dakota's unpack-then-fetch-directory form.
-- **Drop `|| true` / `|| echo WARNING` from fetch loops.** `ghostty.bst` still turns a
-  failed fetch into a `WARNING` line (its Stage 2). A dep that failed there resurfaces
-  much later as a network-fetch or hash error inside `zig build`, far from the cause.
-  `seance.bst` already fails fast, and says why in its Stage 2 comment.
+- **On Zig 0.17, a hash mismatch on a dep that fetched cleanly is this, not a bad pin.**
+  Move the element to ghostty's fetch-then-normalize loop rather than rewriting zon hashes.
+- **On Zig 0.16, don't use `|| true` / `|| echo WARNING` in fetch loops.** A dep that
+  failed there resurfaces much later as a network-fetch or hash error inside `zig build`,
+  far from the cause. `seance.bst` fails fast, and says why in its Stage 2 comment.
+  `ghostty.bst` warns on purpose: some of its staged tarballs are lazy deps for other
+  targets, with pre-0.14 manifests that Zig 0.17 rejects. Under `zig build --system`, a
+  package the build does need still fails and names the missing hash.
 
 ### Use `DESTDIR + --prefix /usr`, not `--prefix %{install-root}/usr`
 
