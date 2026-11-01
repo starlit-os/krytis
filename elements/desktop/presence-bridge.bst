@@ -13,8 +13,11 @@
 # `mise presence-bridge:disable`); those are system mise tasks declared in
 # /etc/mise/conf.d/presence-bridge.toml, which mise reads without any
 # /etc/mise/config.toml entry (docs/skills/bst.md § System-wide mise tasks via
-# BST element). `systemctl --user enable` writes ~/.config/systemd/user, which
-# the preset never touches.
+# BST element). They run upstream's own `presence-bridge service install` /
+# `service uninstall`, which find this packaged unit and only enable or disable
+# it (`systemctl --user enable|disable --now`); they write a unit of their own
+# only where none is installed. `systemctl --user enable` writes
+# ~/.config/systemd/user, which the preset never touches.
 #
 # The unit file is upstream's own systemd/presence-bridge.service, whose
 # ExecStart=/usr/bin/presence-bridge already matches %{bindir}.
@@ -57,11 +60,11 @@ config:
     install -Dm644 /dev/null "%{install-root}%{sysconfdir}/mise/conf.d/presence-bridge.toml"
     cat > "%{install-root}%{sysconfdir}/mise/conf.d/presence-bridge.toml" <<'EOF'
     [tasks."presence-bridge:enable"]
-    run = "systemctl --user enable --now presence-bridge.service"
+    run = "presence-bridge service install"
     description = "Start presence-bridge now and at every login (Discord presence for flatpak clients)"
 
     [tasks."presence-bridge:disable"]
-    run = "systemctl --user disable --now presence-bridge.service"
+    run = "presence-bridge service uninstall"
     description = "Stop presence-bridge and keep it from starting at login"
     EOF
   - "%{install-extra}"
