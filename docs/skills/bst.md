@@ -1198,6 +1198,21 @@ Read everything else. The same pass found that freedesktop-sdk-extra's accountss
 ships no headers or `.pc` file (runtime library and daemon unchanged), which matters only
 to something building against the image.
 
+`boot-test` doesn't check swap, so check zram from the image. `zram-generator` run inside
+`podman run` exits 0 and writes nothing: it detects the container and skips silently, even
+with `RUST_LOG=debug`. Give it a fake root through `ZRAM_GENERATOR_ROOT`, which needs a
+`sys/module/zram` directory and a copy of `/proc/meminfo`:
+
+```shell
+podman run --rm localhost/krytis:latest sh -c 'r=$(mktemp -d) d=$(mktemp -d)
+  mkdir -p $r/usr/lib/systemd $r/proc $r/sys/module/zram
+  cp /usr/lib/systemd/zram-generator.conf $r/usr/lib/systemd/; cp /proc/meminfo $r/proc/
+  ZRAM_GENERATOR_ROOT=$r /usr/lib/systemd/system-generators/zram-generator $d $d $d; find $d'
+```
+
+Expect `Creating unit file dev-zram0.swap (/dev/zram0 with <ram/2>MB)` and
+`swap.target.wants/dev-zram0.swap`.
+
 **Versions can go backwards too, and vuln-diff will not say so.** The new home pins its own
 versions. freedesktop-sdk-extra-26.08.2 is older than gnome-build-meta's copies for five
 packages, including two security releases: ppp 2.5.4 → 2.5.3 (CVE-2026-75883,
@@ -1210,6 +1225,15 @@ downgrade's release notes:
 v(){ jq -r '.packages[] | "\(.name)@\(.versionInfo)"' "$1" | sort -u; }
 LC_ALL=C comm -3 <(v <base>/krytis.enriched.spdx.json) <(v <head>/krytis.enriched.spdx.json)
 ```
+
+Use `main` merged with the branch as `<head>`, not the branch tip. A branch is cut from an
+older `main`, so a tip-vs-`main` diff also lists everything `main` gained since then as
+downgrades. On #1222 that was 459 rows, including bootc, composefs, tailscale and
+presence-bridge going backwards, none of which the stack touches. Against
+`git merge origin/main` in a throwaway worktree it was 418 rows with one real downgrade.
+`buildstream-sbom` only runs `bst show`, so neither side needs a build. Run `mise run
+generate-image-version` in a fresh worktree first, because `project.conf` includes the file
+it writes.
 
 This is why #1211 (the bump that brought the split) was held rather than merged, until a
 freedesktop-sdk-extra *tag* carried both fixes, since gnome-build-meta pins
