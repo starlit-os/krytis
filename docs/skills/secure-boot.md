@@ -400,7 +400,7 @@ a pulled `ghcr.io/starlit-os/krytis:sealed`).
 
 ## Sealed images push under `:sealed` tags, never `:latest`
 
-`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces.
+`mise run push --sealed` tags `localhost/krytis:sealed` as `${REGISTRY}:${VERSION}-sealed` and `${REGISTRY}:sealed` — distinct from the unsigned `${REGISTRY}:${VERSION}` / `${REGISTRY}:latest` tags the default (non-`--sealed`) push produces. With `--version-only`, which is how `publish.yml` runs it, only the version tag is pushed, and `mise run promote --sealed` moves `:sealed` once the cosign signature verifies (`docs/skills/signing.md` § Promotion gates on the image signature (#1458)).
 
 A sealed/UKI image is installed differently from an unsigned one, but **not** via a flag the installer has to know about: bootc **auto-detects** the UKI in the image and switches to the composefs backend itself — *"Whenever the container image has a UKI, bootc automatically selects the composefs backend during installation"* — so the installer only ever supplies `--composefs-backend` and `--bootloader systemd`. There is **no `--boot=uki` flag**; earlier revisions of this section claimed one, copied from a Fedora doc reference that has since been debunked. Verified against the authoritative `bootc install to-filesystem` man page, whose complete flag set is `--source-imgref`, `--target-imgref`, `--bootloader {grub,grub-cc,systemd,none}`, `--composefs-backend`, `--allow-missing-verity`, `--uki-addon`, plus the disk/selinux/karg flags.
 

@@ -2,9 +2,10 @@
 #MISE description="Sign the published krytis image + OCI referrers with cosign keyless/OIDC (#60)"
 #USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path the signed artifacts live under"
 #USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Digest file written by mise run push — read image_digest/sbom_digest/vuln_digest from here when the flags below are not given"
-#USAGE flag "--image-digest <digest>" help="sha256 digest of the pushed image manifest — required unless present in --digest-file"
+#USAGE flag "--image-digest <digest>" help="sha256 digest of the pushed image manifest — required unless present in --digest-file, or --only referrers"
 #USAGE flag "--sbom-digest <digest>" help="sha256 digest of the attached SBOM OCI referrer manifest — signed if given or present in --digest-file"
 #USAGE flag "--vuln-digest <digest>" help="sha256 digest of the attached vulnerability report OCI referrer manifest — signed if given or present in --digest-file"
+#USAGE flag "--only <part>" help="Sign only 'image' or only 'referrers' (SBOM + vulnerability report). Default: all three. publish.yml signs the image first so promotion can gate on it alone (#1458)"
 
 # Cosign keyless (OIDC) signing (#60). In GitHub Actions, cosign detects the
 # Actions OIDC token ambiently (the job needs `id-token: write`; no explicit
@@ -20,6 +21,15 @@ DIGEST_FILE="${usage_digest_file:-krytis-push-digests.env}"
 IMAGE_DIGEST="${usage_image_digest:-}"
 SBOM_DIGEST="${usage_sbom_digest:-}"
 VULN_DIGEST="${usage_vuln_digest:-}"
+ONLY="${usage_only:-}"
+
+case "$ONLY" in
+    ""|image|referrers) ;;
+    *)
+        echo "==> ERROR: --only must be 'image' or 'referrers', got '${ONLY}'" >&2
+        exit 1
+        ;;
+esac
 
 if [[ -f "$DIGEST_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -29,7 +39,7 @@ if [[ -f "$DIGEST_FILE" ]]; then
     : "${VULN_DIGEST:=${vuln_digest:-}}"
 fi
 
-if [[ -z "$IMAGE_DIGEST" ]]; then
+if [[ "$ONLY" != referrers && -z "$IMAGE_DIGEST" ]]; then
     echo "==> ERROR: no image digest given (--image-digest, or image_digest in ${DIGEST_FILE}) — run mise run push first" >&2
     exit 1
 fi
@@ -47,15 +57,44 @@ fi
 echo "==> Logging in to ghcr.io as ${GH_USER} (cosign)..."
 echo "$TOKEN" | cosign login ghcr.io --username "$GH_USER" --password-stdin
 
+# Retried because publish.yml now refuses to promote an image whose signature
+# failed (#1458), so a short Fulcio/Rekor blip would otherwise cost the day's
+# :latest. Each attempt generates fresh ephemeral keys, so a retry is a new
+# transparency-log entry, and run 32241688624's Rekor 409 createLogEntryConflict
+# ("an equivalent entry already exists") should not repeat on the next attempt.
+# Signing a digest twice only adds a second signature; verification accepts
+# either.
+SIGN_ATTEMPTS=3
 sign_ref() {
-    local label="$1" digest="$2"
-    echo "==> Signing ${label} (${REGISTRY}@${digest})..."
-    cosign sign -y "${REGISTRY}@${digest}"
-    echo "==> Signed ${label}"
+    local label="$1" digest="$2" attempt
+    for attempt in $(seq 1 "$SIGN_ATTEMPTS"); do
+        echo "==> Signing ${label} (${REGISTRY}@${digest}), attempt ${attempt}/${SIGN_ATTEMPTS}..."
+        if cosign sign -y "${REGISTRY}@${digest}"; then
+            echo "==> Signed ${label}"
+            return 0
+        fi
+        if [[ "$attempt" -lt "$SIGN_ATTEMPTS" ]]; then
+            echo "==> Signing ${label} failed, retrying in $((attempt * 30))s..." >&2
+            sleep $((attempt * 30))
+        fi
+    done
+    echo "==> ERROR: signing ${label} failed after ${SIGN_ATTEMPTS} attempts" >&2
+    return 1
 }
 
-sign_ref "image" "$IMAGE_DIGEST"
-[[ -n "$SBOM_DIGEST" ]] && sign_ref "SBOM" "$SBOM_DIGEST"
-[[ -n "$VULN_DIGEST" ]] && sign_ref "vulnerability report" "$VULN_DIGEST"
+if [[ "$ONLY" != referrers ]]; then
+    sign_ref "image" "$IMAGE_DIGEST"
+fi
+if [[ "$ONLY" != image ]]; then
+    # Attempt both referrers even when the first fails, so one bad signature
+    # does not leave the other unsigned too; fail at the end.
+    failed=0
+    [[ -n "$SBOM_DIGEST" ]] && { sign_ref "SBOM" "$SBOM_DIGEST" || failed=1; }
+    [[ -n "$VULN_DIGEST" ]] && { sign_ref "vulnerability report" "$VULN_DIGEST" || failed=1; }
+    if [[ "$failed" -ne 0 ]]; then
+        echo "==> ERROR: at least one OCI referrer is unsigned" >&2
+        exit 1
+    fi
+fi
 
-echo "==> Done signing ${REGISTRY}@${IMAGE_DIGEST} and its OCI referrers"
+echo "==> Done signing (${ONLY:-image and referrers}) for ${REGISTRY}@${IMAGE_DIGEST:-<image digest not given>}"

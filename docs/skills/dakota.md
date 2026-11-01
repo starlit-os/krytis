@@ -112,7 +112,7 @@ Dakota's publish pipeline pushes an image to GHCR and then immediately probes/si
 1. **Public GHCR visibility checks must not use runner credentials.** `skopeo inspect --creds "$GH_ACTOR:$GH_TOKEN" docker://ghcr.io/...` can fail for a *public* package even while the same tag is readable unauthenticated. Authenticated probes against a public GHCR package are not equivalent to the public read path — use the unauthenticated probe for visibility checks; keep `--creds` only on `skopeo copy` operations that actually write.
 2. **Newly-pushed manifests can take a long time to become visible.** A 12×10s (2 min) polling loop was originally deemed generous; it still failed in production on 2026-07-28 because GHCR propagation exceeded 120s on a large push. Dakota widened the loop to 36×10s (6 min) to absorb the observed lag.
 
-**Krytis exposure:** `.github/workflows/publish.yml` pushes (`mise run push`) and then immediately runs `mise run sign` (cosign sign) followed by a blocking `cosign verify ghcr.io/starlit-os/krytis@${digest}` step, with **no visibility-wait loop** in between. This is the same push-then-immediately-probe shape that bit dakota. Krytis hasn't hit the race yet (image size/timing may differ), but if `cosign verify` starts intermittently failing with a not-found/unknown-manifest error right after a push that otherwise succeeded, this is the known cause — add a `skopeo inspect --no-tags` polling loop (unauthenticated) between push and sign, sized to at least 6 minutes, rather than adding retries to cosign itself.
+**Krytis exposure:** `.github/workflows/publish.yml` pushes (`mise run push --version-only`) and then immediately runs `mise run sign --only image` (cosign sign) followed by `mise run promote`, whose blocking `cosign verify ghcr.io/starlit-os/krytis@${digest}` gates the `:latest` move. There is **no visibility-wait loop** in between. This is the same push-then-immediately-probe shape that bit dakota. Krytis hasn't hit the race yet (image size/timing may differ). `mise run sign` retries each `cosign sign` since #1458, but its backoff totals 90 s, short of the 6 min dakota needed. If signing or verification starts intermittently failing with a not-found/unknown-manifest error right after a push that otherwise succeeded, this is the known cause: add a `skopeo inspect --no-tags` polling loop (unauthenticated) between push and sign, sized to at least 6 minutes, rather than lengthening the signing retries.
 
 ### `convert-to-qcow2`, ported for interactive VM testing (2026-08-05)
 
@@ -315,10 +315,10 @@ the rule stands on its own.
 `workflow_run` off `"Publish krytis image"`, and then at `:71`/`:74` runs
 `podman pull ghcr.io/starlit-os/krytis:sealed` and hands the same **mutable tag** to
 `mise run enroll-test` — re-resolved at pull time, with nothing tying it to the run that
-triggered it. The producer already computes the receipt: `publish.yml:351-353` pushes the
-sealed image via `mise run push --sealed --digest-file krytis-sealed-digests.env`, and
-`publish.yml:362` feeds that same file to `mise run sign`, with the verify step resolving
-`ghcr.io/starlit-os/krytis@${image_digest}` from it. It is just never uploaded (`publish.yml`
+triggered it. The producer already computes the receipt: the `Build and push sealed
+version tag` step in `publish.yml` writes `krytis-sealed-digests.env`, and the sealed
+sign and promote steps read `image_digest` from that same file, resolving
+`ghcr.io/starlit-os/krytis@${image_digest}`. It is just never uploaded (`publish.yml`
 has no `upload-artifact` step at all), so the consumer cannot read it. Two publishes in
 quick succession and `verify-sealed` gates on an image the triggering run did not produce
 — and reports green against that run. The narrower multi-hop `head_sha` trap does not bite

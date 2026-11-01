@@ -1,6 +1,6 @@
 # Cosign Keyless Signing
 
-Load when working on `mise run sign`, `.github/workflows/publish.yml`, or anything touching cosign/Sigstore/OIDC in krytis. Implements #60.
+Load when working on `mise run sign`, `mise run promote`, `.github/workflows/publish.yml`, or anything touching cosign/Sigstore/OIDC in krytis. Implements #60; promotion gating is #1458.
 
 ## What It Is
 
@@ -16,21 +16,22 @@ sbom_digest=sha256:...
 vuln_digest=sha256:...
 ```
 
-`sbom_digest`/`vuln_digest` are only present when the corresponding `push` step actually ran (absent if `--skip-sbom`/`--skip-vuln-scan` was passed). `mise run sign` reads this file by default (`--digest-file`, default `krytis-push-digests.env`) — a human running both commands from the same shell in the same directory needs no extra flags:
+`sbom_digest`/`vuln_digest` are only present when the corresponding `push` step actually ran (absent if `--skip-sbom`/`--skip-vuln-scan` was passed). `mise run sign` and `mise run promote` both read this file by default (`--digest-file`, default `krytis-push-digests.env`), so a human running the commands from the same shell in the same directory needs no extra flags:
 
 ```bash
 mise run push --fail-on critical
 mise run sign
 ```
 
-`--image-digest`/`--sbom-digest`/`--vuln-digest` flags override the file for scripted use (also useful for re-signing a specific historical digest without re-running `push`). CI does not use them — it pairs a matching `--digest-file` on `push` and `sign` instead, which is what lets the sealed build (#448) run in the same job without clobbering the record: the sealed steps write and read `krytis-sealed-digests.env`, so the primary image's `krytis-push-digests.env` still names the digest its own signature was verified against.
+`--image-digest`/`--sbom-digest`/`--vuln-digest` flags override the file for scripted use (also useful for re-signing a specific historical digest without re-running `push`). CI does not use them. It passes a matching `--digest-file` to `push`, `sign` and `promote` instead, which is what lets the sealed build (#448) run in the same job without clobbering the record: the sealed steps write and read `krytis-sealed-digests.env`, so the primary image's `krytis-push-digests.env` still names the digest its own signature was verified against.
 
-## Why Signing Isn't Wired Into `mise/tasks/push`/`mise/tasks/sbom` Directly
+## Why signing is a separate task from `push`
 
-Two independent reasons — the first reflects #392's push reordering, the second is #380's original design decision:
+Since #392, `mise run push --fail-on critical` aborts *before* logging in, tagging or pushing anything, so a Critical finding means nothing reaches the registry and no digest file is written. `mise run sign` depends only on that file existing, not on why an earlier step did or didn't run.
 
-1. **Severity-gate independence.** Since #392, `mise run push --fail-on critical` aborts *before* logging in/tagging/pushing anything — a Critical finding means nothing ever reaches the registry. A separate `mise run sign` task still makes sense here: it only depends on `krytis-push-digests.env` existing on disk, not on *why* the previous step succeeded or failed. When push (or the earlier pre-build `mise run vuln-scan --fail-on` gate in CI) blocks, the digest file was never written, so `mise run sign` cleanly reports "no image digest given" and exits — no special-casing needed to distinguish "blocked" from "genuinely nothing to sign yet." `mise run sign` runs `if: always()` in CI for exactly this reason: it's cheap to attempt and self-explains when there's nothing to do.
-2. **Best-effort semantics.** #380's design decision: signing does not block promotion (`continue-on-error: true` in CI, matching dakota's `publish-sbom` job pattern). Keeping it a separate task means a signing failure (e.g. a transient Fulcio/Rekor outage) can't accidentally propagate into `push`'s exit code and be conflated with an actual severity-gate failure.
+Keeping them apart is also what makes the CI ordering in § Promotion gates on the image signature possible: push the version tag, sign, verify, and only then move the floating tag. A `push` that signed internally would have to grow all of that.
+
+The original reason, #380's "signing is best-effort and must not block promotion", no longer holds. #1458 replaced it (see below).
 
 ## GitHub Actions OIDC (Ambient Credential Detection)
 
@@ -70,51 +71,47 @@ got "https://github.com/starlit-os/krytis/.github/workflows/publish.yml@refs/hea
 
 i.e. the published `:latest` had been signed from a feature branch. `publish.yml` now
 refuses to publish from a non-`main` ref unless `allow_branch_publish=true` is passed
-explicitly, and that gate runs **before** the build — because `mise run push` always tags
-`:latest` and runs long before verification, so a post-hoc check would publish first and
-fail second.
+explicitly, and that gate runs **before** the build. Verification can't catch a
+branch publish by itself: the job pins `SIGNER_IDENTITY` to the run's own ref, so a
+branch run signs, verifies and promotes `:latest` under the branch identity.
 
 **Consequence of an opt-in branch publish:** the resulting `:latest` is signed with a
 non-`main` identity and will **not** satisfy the command above. Re-publish from `main`
-afterwards. There is currently no way to test-publish without moving `:latest`
-(`mise run push` has no `--skip-latest`), which is the sharp edge here — worth a flag if
-branch publishes become routine.
+afterwards. `mise run push --version-only` pushes without touching `:latest`, but the
+workflow always runs `mise run promote` after it, so a branch publish still moves
+`:latest`. Skipping promotion on non-`main` refs would be the fix if branch publishes
+become routine.
 
 ## `cosign login` vs. relying on `oras`/`podman` login side effects
 
 `mise/tasks/sign` calls `cosign login ghcr.io` itself rather than assuming `mise/tasks/push`'s earlier `oras login`/`podman login` calls already populated a credential store cosign will read. `cosign` follows the same Docker-config-file (`~/.docker/config.json`) convention as `oras`, so in practice the credentials would already be there after a plain `push` run (i.e. one where `--skip-sbom` was not passed) — but `mise run sign` is designed to be independently runnable (e.g. re-signing an old digest without re-running `push`, or `--skip-sbom` was passed to `push`), so it does not depend on that side effect.
 
-## CI verification is blocking — but only when signing succeeded
+## Promotion gates on the image signature (#1458)
 
-`publish.yml` runs `cosign verify` after `mise run sign`, and **that step fails the job**
-(#418). It previously carried `continue-on-error: true` and was labelled "diagnostic",
-which meant nothing in the pipeline ever rejected a bad signature — we signed and then
-ignored whether the signature was verifiable against our own policy.
+`:latest` and `:sealed` are the tags hosts follow, so `publish.yml` never points them at an unsigned digest. Order per half (unsigned, then sealed):
 
-The gate is `if: always() && steps.sign.outcome == 'success'`, not unconditional, and the
-distinction matters:
-
-| Situation | Outcome |
+| Step | On failure |
 |---|---|
-| Signing failed (Fulcio/Rekor outage, or nothing was pushed) | verify **skipped**, publish still succeeds — preserves #380's best-effort tolerance |
-| Signing succeeded, signature verifies | publish succeeds |
-| Signing succeeded, signature does **not** verify against the expected identity | publish **fails** — the only case where the signature problem is genuinely ours |
+| `mise run push --version-only` pushes `:<version>` (or `:<version>-sealed`) only | job fails, nothing promoted |
+| `mise run sign --only image`, each `cosign sign` retried 3× (30 s, 60 s backoff) | job fails; the floating tag stays on the previous signed image; `:<version>` exists unsigned |
+| `mise run promote [--sealed] --identity-regexp "$SIGNER_IDENTITY"`: `cosign verify` the image, then `oras tag` the digest and read it back | job fails, nothing promoted. A signature that does not verify against our own identity is the only case where a signature problem is genuinely ours |
+| `mise run sign --only referrers` (SBOM + vulnerability report), `continue-on-error` | the floating tag has already moved; `Fail on unsigned referrers`, the job's last step, turns the run red |
+| inline `cosign verify` of the referrers, only if they signed | job fails |
 
-The identity is pinned to the run's own ref (`main` on the normal path — see § Verifying a Signature), and the "only main may publish" policy is enforced by a ref gate that runs before the build.
+**Only the image signature gates promotion.** That was the owner's decision on #1458: a referrer that fails to sign does not hold back a signed image, but the run must not stay green. A red run skips `verify-sealed.yml` (it only runs on a successful publish), so dispatch it by hand if `:sealed` moved.
 
-It verifies every artifact `sign` signed (image, SBOM, vulnerability report), not just the
-image: an unverifiable referrer signature is the same class of problem.
+**Why it changed.** Under #380 the push tagged `:latest` first and signing ran with `continue-on-error: true`, so a signing failure left an unsigned `:latest` public in a green run. The cost of the new rule was measured over all 86 `publish.yml` runs GitHub listed on 2026-10-31 (2026-07-30 to 2026-10-30; 61 unsigned and 49 sealed pushes). Signing failed after a successful push twice, and neither was a declared Sigstore incident:
 
-The sealed image repeats the whole pattern with its own steps — `Sign sealed
-artifacts with cosign (best-effort)` (`if: always() && steps.push-sealed.outcome
-== 'success'`, `continue-on-error: true`) and `Verify sealed signature`
-(`if: always() && steps.sign-sealed.outcome == 'success'`) — against
-`krytis-sealed-digests.env` and the same ref-pinned identity regexp. Same
-contract, separate digest file. It runs only when `publish_sealed` is set
-(`workflow_dispatch` input, default `true`), and deliberately *after* the
-unsigned image is published, signed and verified: the sealed build is the
-newer, less-exercised path and a failure in it must not cost the primary
-artifact.
+- Run 31158190488 (2026-08-07): `dial tcp [::]:443: connect: connection refused` to Fulcio on the self-hosted runner. A dial to `[::]` points to the runner's DNS rather than Fulcio [INFERENCE]. Under the new rule, `:latest` would have stayed on the previous image for about 4–5 h, until the next run.
+- Run 32241688624 (2026-08-19): the sealed image and SBOM signed, but the vulnerability report hit Rekor `409 createLogEntryConflict` ("an equivalent entry already exists"). Under image-only gating, nothing is lost.
+
+**Retries.** Each `cosign sign` attempt generates fresh ephemeral keys, so a retry is a new Rekor entry and the 409 above should not recur on a retry. Signing a digest twice only adds a second signature, and `cosign verify` accepts either.
+
+**`promote` is also the rollback tool.** `mise run promote --image-digest <older digest>` moves `:latest` back to any image `publish.yml` signed on `main`. Its default `--identity-regexp` is that main-pinned identity. It cannot rescue a failed signing step: a signature made outside `publish.yml` carries another identity and fails verification, so recovery is re-dispatching the workflow. `oras tag` re-uploads nothing and keeps the manifest bytes, so the signature, which is bound to the digest, stays valid.
+
+`SIGNER_IDENTITY` is a job-level env var in `publish.yml`, pinned to the run's own ref (`main` on the normal path; see § Verifying a Signature), so every verification in the job uses the same regexp. The "only main may publish" policy is enforced by a ref gate that runs before the build.
+
+The sealed half repeats the same five steps against `krytis-sealed-digests.env`. It runs only when `publish_sealed` is set (the `workflow_dispatch` input defaults to `true`, and scheduled runs always set it), and deliberately *after* the unsigned image is published, signed, verified and promoted: the sealed build is the newer, less-exercised path, and a failure in it must not cost the primary artifact.
 
 ## Host-side enforcement does not exist, and cannot today
 

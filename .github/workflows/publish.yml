@@ -80,7 +80,7 @@ jobs:
       # half of this job on every cron run — republishing :latest and
       # never refreshing :sealed, which is the artifact users actually boot
       # under Secure Boot. Resolved once here rather than repeated at each
-      # of the five sealed steps, so the two cannot drift apart.
+      # sealed step, so they cannot drift apart.
       #
       # The other three inputs are safe when null and deliberately left
       # alone: report_only falsy means the severity gate blocks (the strict
@@ -88,14 +88,21 @@ jobs:
       # allow_branch_publish falsy is fine because a scheduled run always
       # carries the default branch, which the ref gate accepts.
       PUBLISH_SEALED: ${{ github.event_name == 'schedule' || inputs.publish_sealed }}
+      # The signer identity every verification in this job pins: publish.yml in
+      # THIS repo at THIS ref. The older `@refs/heads/.*` accepted a signature
+      # from any branch, so a check proved "some branch of this repo signed it"
+      # rather than naming one — the run that validated #421 was itself a
+      # branch publish, which is how that was noticed. github.ref_name is `main`
+      # on the normal path; an opt-in branch publish pins to that branch. The
+      # "only main may publish" policy is the ref gate's job, not this one.
+      SIGNER_IDENTITY: '^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/${{ github.ref_name }}$'
     steps:
       - name: Gate on ref (only main may publish)
-        # FIRST, before build or push. `mise run push` always tags :latest and
-        # runs at step ~9, while signature verification runs at ~13 — so a
-        # main-pinned verify alone would publish :latest publicly and only then
-        # fail. Refusing here means a wrong-ref dispatch costs nothing and the
-        # error names the actual cause instead of surfacing as a signature
-        # problem.
+        # FIRST, before build or push. A branch run would push, sign and then
+        # promote :latest under a non-main identity: verification pins
+        # SIGNER_IDENTITY to the run's own ref, so it cannot catch this. Refusing
+        # here means a wrong-ref dispatch costs nothing and the error names the
+        # actual cause.
         #
         # allow_branch_publish exists because testing changes to this workflow
         # requires dispatching it from a branch (that is how #421 itself was
@@ -242,90 +249,76 @@ jobs:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
         run: mise run build --pull
 
-      - name: Push, attach SBOM + vulnerability report
+      - name: Push version tag, attach SBOM + vulnerability report
         id: push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # --version-only: :latest moves later, in the promote step, and only to
+        # a digest whose signature verifies (#1458).
         run: |
           if [[ "${{ inputs.report_only }}" == "true" ]]; then
             echo "::notice::report_only=true — vulnerability scan will not block this run"
-            mise run push
+            mise run push --version-only
           else
-            mise run push --fail-on critical
+            mise run push --version-only --fail-on critical
           fi
 
-      - name: Sign image and referrers with cosign (best-effort)
-        id: sign
-        # Runs regardless of whether either severity gate above tripped.
-        # If the pre-build gate or push's own scan-before-push blocked
-        # publish, no image was ever pushed — this step then has nothing
-        # to sign and cleanly no-ops (continue-on-error absorbs its exit).
-        # continue-on-error: signing failure never fails this job (#380
-        # design decision: parallel/best-effort, matching dakota's
-        # publish-sbom job). A transient Fulcio/Rekor outage must not block
-        # promotion of an image that is otherwise fine.
-        if: always()
+      - name: Sign image with cosign
+        # BLOCKING (#1458). This used to be best-effort with continue-on-error
+        # (#380): a signing failure left an unsigned :latest public and the run
+        # stayed green. That happened once, in run 31158190488 (2026-08-07).
+        # Now a failure here stops the job before promotion, so :latest stays
+        # on the previous signed image; `mise run sign` retries each artifact
+        # first. Recovery is re-dispatching this workflow.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run sign --only image
+
+      - name: Promote :latest to the verified image
+        # Verifies the image signature against SIGNER_IDENTITY, then retags the
+        # digest. A signature that does not verify fails the job here, which is
+        # the only case where the signature problem is genuinely ours (#418).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run promote --identity-regexp "${SIGNER_IDENTITY}"
+
+      - name: Sign SBOM and vulnerability report with cosign
+        id: sign-referrers
+        # Owner decision on #1458: only the image signature gates promotion. A
+        # referrer that fails to sign does not hold :latest back; the job fails
+        # at the end instead ('Fail on unsigned referrers'), so the gap shows.
+        # Run 32241688624 lost exactly this: a Rekor 409 on the sealed
+        # vulnerability report after the image itself had signed.
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: mise run sign
+        run: mise run sign --only referrers
 
-      - name: Verify signature
-        # BLOCKING, but only when signing itself reported success (#418).
-        #
-        # Previously this was continue-on-error too, which meant nothing in the
-        # pipeline ever rejected a bad signature — we signed and then ignored
-        # whether the signature was verifiable with our own policy. That is the
-        # gap #418 closes.
-        #
-        # Gating on steps.sign.outcome == 'success' rather than making this
-        # unconditionally blocking is deliberate: it preserves #380's outage
-        # tolerance above. Sign failed (Fulcio/Rekor down, or nothing was
-        # pushed) -> this is skipped and publish still succeeds. Sign claimed
-        # success but the signature cannot be verified against the identity we
-        # expect -> the job fails, which is the only case where a signature
-        # problem is genuinely ours.
-        if: always() && steps.sign.outcome == 'success'
+      - name: Verify SBOM and vulnerability report signatures
+        # Blocking when signing claimed success: a referrer signature that does
+        # not verify against our own identity is the same class of problem as
+        # an image one.
+        if: steps.sign-referrers.outcome == 'success'
         run: |
-          if [[ ! -f krytis-push-digests.env ]]; then
-            # sign reported success with no digest file: it no-op'd because
-            # nothing was pushed. Nothing to verify, and not a failure.
-            echo "::notice::No digest file — nothing was published, so no signature to verify"
-            exit 0
-          fi
           # shellcheck disable=SC1091
           source krytis-push-digests.env
           verify() {
             local label="$1" digest="$2"
             [[ -z "${digest}" ]] && return 0
             echo "==> Verifying ${label} (${digest})"
-            # Pin the signature to publish.yml in THIS repo at THIS ref. The
-            # previous `@refs/heads/.*` accepted a signature from any branch,
-            # so the check proved "some branch of this repo signed it" rather
-            # than naming one — and the run that validated #421 was itself a
-            # branch publish, which is how that was noticed.
-            #
-            # github.ref_name resolves to `main` on the normal path, so this IS
-            # main-pinning there; on an opt-in branch publish it pins to that
-            # branch, which is still tighter than the old wildcard. The "only
-            # main may publish" policy is enforced by the ref gate at the top of
-            # this job, not here — one job, one place.
             cosign verify \
-              --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/${{ github.ref_name }}\$" \
+              --certificate-identity-regexp "${SIGNER_IDENTITY}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "ghcr.io/starlit-os/krytis@${digest}"
           }
-          # Verify every artifact sign signed, not just the image — an unverifiable
-          # SBOM or vulnerability-report signature is the same class of problem.
-          verify "image" "${image_digest:-}"
           verify "SBOM" "${sbom_digest:-}"
           verify "vulnerability report" "${vuln_digest:-}"
 
       # ── Sealed image (#448) ────────────────────────────────────────────────
-      # Deliberately after the unsigned image is published, signed AND verified:
-      # the sealed build is the newer, less-exercised path, and a failure in it
-      # must not cost us the primary artifact. Everything below is skipped when
-      # publish_sealed=false.
+      # Deliberately after the unsigned image is published, signed, verified
+      # and promoted: the sealed build is the newer, less-exercised path, and a
+      # failure in it must not cost us the primary artifact. Everything below is
+      # skipped when publish_sealed=false.
       #
       # Key custody: the six UEFI keys are NOT GitHub secrets. They live in the
       # Proton Pass vault the whole project already uses (fnox.toml), and CI
@@ -372,39 +365,48 @@ jobs:
         if: env.PUBLISH_SEALED == 'true'
         run: mise run pull-keys
 
-      - name: Build and push sealed image
+      - name: Build and push sealed version tag
         id: push-sealed
         if: env.PUBLISH_SEALED == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # A separate digest file: the unsigned push already wrote
-        # krytis-push-digests.env and the verify step above read it. Overwriting
-        # it here would silently re-point the primary image's signature record at
-        # the sealed one.
+        # krytis-push-digests.env and the steps above read it. Overwriting it
+        # here would silently re-point the primary image's signature record at
+        # the sealed one. --version-only for the same reason as the unsigned
+        # push: :sealed moves in the promote step below (#1458).
         run: |
           if [[ "${{ inputs.report_only }}" == "true" ]]; then
-            mise run push --sealed --digest-file krytis-sealed-digests.env
+            mise run push --sealed --version-only --digest-file krytis-sealed-digests.env
           else
-            mise run push --sealed --fail-on critical --digest-file krytis-sealed-digests.env
+            mise run push --sealed --version-only --fail-on critical --digest-file krytis-sealed-digests.env
           fi
 
-      - name: Sign sealed artifacts with cosign (best-effort)
-        id: sign-sealed
-        if: always() && steps.push-sealed.outcome == 'success'
+      - name: Sign sealed image with cosign
+        # Same contract as the unsigned image: blocking, and :sealed only moves
+        # once this succeeds.
+        if: env.PUBLISH_SEALED == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run sign --only image --digest-file krytis-sealed-digests.env
+
+      - name: Promote :sealed to the verified image
+        if: env.PUBLISH_SEALED == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run promote --sealed --digest-file krytis-sealed-digests.env --identity-regexp "${SIGNER_IDENTITY}"
+
+      - name: Sign sealed SBOM and vulnerability report with cosign
+        id: sign-sealed-referrers
+        if: env.PUBLISH_SEALED == 'true'
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: mise run sign --digest-file krytis-sealed-digests.env
+        run: mise run sign --only referrers --digest-file krytis-sealed-digests.env
 
-      - name: Verify sealed signature
-        # Same contract as the unsigned verify above: blocking, but only when
-        # signing itself reported success.
-        if: always() && steps.sign-sealed.outcome == 'success'
+      - name: Verify sealed SBOM and vulnerability report signatures
+        if: env.PUBLISH_SEALED == 'true' && steps.sign-sealed-referrers.outcome == 'success'
         run: |
-          if [[ ! -f krytis-sealed-digests.env ]]; then
-            echo "::notice::No sealed digest file — nothing was published, so no signature to verify"
-            exit 0
-          fi
           # shellcheck disable=SC1091
           source krytis-sealed-digests.env
           verify() {
@@ -412,11 +414,10 @@ jobs:
             [[ -z "${digest}" ]] && return 0
             echo "==> Verifying sealed ${label} (${digest})"
             cosign verify \
-              --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/publish\.yml@refs/heads/${{ github.ref_name }}\$" \
+              --certificate-identity-regexp "${SIGNER_IDENTITY}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "ghcr.io/starlit-os/krytis@${digest}"
           }
-          verify "image" "${image_digest:-}"
           verify "SBOM" "${sbom_digest:-}"
           verify "vulnerability report" "${vuln_digest:-}"
 
@@ -441,7 +442,7 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.push.outcome }}" == "success" ]]; then
-            echo "::notice::Publish succeeded (severity gate: $([[ '${{ inputs.report_only }}' == 'true' ]] && echo 'report-only' || echo 'blocking at Critical'))"
+            echo "::notice::Push passed the severity gate ($([[ '${{ inputs.report_only }}' == 'true' ]] && echo 'report-only' || echo 'blocking at Critical')); signing and promotion are reported by their own steps"
           elif [[ "${{ steps.vuln-scan.outcome }}" == "failure" ]]; then
             echo "::error::Vulnerability scan blocked this run before the build started — see the 'Scan for vulnerabilities (pre-build gate)' step above"
             exit 1
@@ -449,3 +450,17 @@ jobs:
             echo "::error::Publish step failed — see logs above (push's own scan-before-push re-check, or a build/push failure)"
             exit 1
           fi
+
+      - name: Fail on unsigned referrers
+        # Last, so the sealed half still ran. :latest/:sealed have already moved
+        # to signed images (#1458 gates promotion on the image signature only);
+        # this makes the unsigned SBOM or vulnerability report visible instead
+        # of leaving a green run. A red run also skips verify-sealed.yml, so
+        # dispatch it by hand if :sealed moved.
+        if: always() && (steps.sign-referrers.outcome == 'failure' || steps.sign-sealed-referrers.outcome == 'failure')
+        run: |
+          echo "::error::An OCI referrer is unsigned (unsigned half: ${{ steps.sign-referrers.outcome }}, sealed half: ${{ steps.sign-sealed-referrers.outcome }})."
+          echo "  The images themselves are signed and promoted. Re-dispatch publish.yml to"
+          echo "  publish a fully signed set: a referrer signed outside publish.yml carries"
+          echo "  another identity and would not verify against SIGNER_IDENTITY."
+          exit 1
