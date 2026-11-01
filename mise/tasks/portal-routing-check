@@ -83,7 +83,7 @@ EXPECTED = {
         "FileChooser": ("gnome", "Nautilus (#1029)"),
         "GlobalShortcuts": ("none", "krytis pin: needs org.gnome.Shell (#1029)"),
         "Inhibit": ("gtk", "gnome.portal lacks it"),
-        "InputCapture": ("none", "krytis pin: needs Mutter InputCapture (#1029)"),
+        "InputCapture": ("umbriel", "xdg-desktop-portal-umbriel input capture backend"),
         "Lockdown": ("gnome", UMBRIEL_KRYTIS),
         "Notification": ("gtk", "krytis pin: xdp-gnome needs org.gtk.Notifications"),
         "Print": ("gnome", UMBRIEL_KRYTIS),

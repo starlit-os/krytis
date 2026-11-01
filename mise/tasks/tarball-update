@@ -38,9 +38,9 @@
 #
 #   zig-series       locator=<series>       extra=<unused>
 #       ziglang.org download index, constrained to a release series. zig-0.16
-#       is deliberately held on 0.16.x because falcond declares
-#       minimum_zig_version 0.16.0 and ghostty is still on 0.15.2 — so this
-#       must never wander to 0.17.
+#       is deliberately held on 0.16.x for falcond and seance, which are
+#       built against 0.16; desktop/zig.bst follows ghostty separately (0.17
+#       since ghostty 1.4.0). So this must never wander to 0.17 on its own.
 #
 #   github-release-glued   locator=<owner/repo>   extra=<tarball basename prefix>
 #       Newest GitHub release carrying `<prefix><tag>.tar.xz` — no
