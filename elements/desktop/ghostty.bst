@@ -24,9 +24,6 @@ build-depends:
   - desktop/zig.bst
   - freedesktop-sdk.bst:components/tar.bst
   - freedesktop-sdk.bst:components/gzip.bst
-  # grep + sed: the zon hash rewrite in stage 2. The sandbox has neither by default.
-  - freedesktop-sdk.bst:components/grep.bst
-  - freedesktop-sdk.bst:components/sed.bst
   - freedesktop-sdk.bst:components/gettext.bst
   - freedesktop-sdk.bst:components/pkg-config.bst
 
@@ -34,6 +31,9 @@ depends:
   - gnome-build-meta.bst:sdk/gtk.bst
   - gnome-build-meta.bst:sdk/libadwaita.bst
   - desktop/gtk4-layer-shell.bst
+  # --system makes Ghostty link oniguruma dynamically. fdsdk's jq element
+  # vendors it and ships both oniguruma.h and libonig.so.
+  - freedesktop-sdk.bst:components/jq.bst
   - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 sources:
@@ -551,72 +551,74 @@ sources:
 
 config:
   build-commands:
-    # Stage 1: Set up Zig cache
-    - |
-      export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
-      export ZIG_LIB_DIR="%{libdir}/zig"
-      mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p"
-
-    # Stage 2: populate it from the staged dep tarballs. `zig fetch` computes
-    # the content hash `zig build` expects, for git-declared deps as well as
-    # plain tarballs. Do NOT hand-place git deps under p/<hash>: since Zig 0.16
-    # such entries are ignored and the dep is re-fetched over the network,
-    # which cannot work in the offline sandbox (same as seance.bst/falcond.bst).
+    # Zig 0.17's `zig fetch` keeps a staged source archive's top-level
+    # directory inside p/<hash>.tar.gz. `zig build --system` instead expects
+    # build.zig.zon and the package files immediately under <hash>/, which is
+    # the layout produced when `zig fetch` receives an unpacked directory.
+    # Normalize each source through both forms before building.
+    #
+    # Do not point --system at the p/*.tar.gz files directly. Zig 0.17.0
+    # panics on that layout (ziglang/zig#30191); it needs real directories.
     #
     # The cache location comes from ZIG_GLOBAL_CACHE_DIR alone. Zig 0.17 moved
-    # package management into the build runner, and `zig fetch` there rejects
-    # `--global-cache-dir` ("unrecognized parameter"), so neither command
-    # passes it; the exported variable is honoured by both.
+    # package management into the build runner, whose `zig fetch` rejects
+    # `--global-cache-dir`.
     #
-    # A failed fetch warns instead of stopping. Some staged tarballs can't be
-    # fetched on their own under Zig 0.17: tree-sitter v0.25.0 ships a
-    # pre-0.14 build.zig.zon (`.name = "tree-sitter"`, a string, where 0.17
-    # wants an enum literal). A dep like that can only work if `zig build` never
-    # resolves it, such as a lazy dep for another target. If a dep the build
-    # needs is missing, `zig build` fails trying to reach the network and
-    # names it. Read the WARNING lines first.
+    # A failed fetch warns instead of stopping. Some staged tarballs are lazy
+    # deps for other targets and carry pre-0.14 manifests that Zig 0.17 cannot
+    # parse. A package this build needs still fails deterministically under
+    # --system, which names the absent hash instead of trying the network.
     - |
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
+      mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p" /tmp/zig-normalize /tmp/zig-packages
       for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
-        zig fetch "$dep" || echo "WARNING: zig fetch failed for $dep" >&2
+        if hash="$(zig fetch "$dep")"; then
+          work="/tmp/zig-normalize/$hash"
+          rm -rf "$work"
+          mkdir -p "$work"
+          tar -xzf "$ZIG_GLOBAL_CACHE_DIR/p/$hash.tar.gz" -C "$work"
+
+          package_root="$work/$hash"
+          only=""
+          count=0
+          for child in "$package_root"/*; do
+            [ -e "$child" ] || continue
+            count=$((count + 1))
+            only="$child"
+          done
+          if [ "$count" -eq 1 ] && [ -d "$only" ]; then
+            package_root="$only"
+          fi
+
+          rm "$ZIG_GLOBAL_CACHE_DIR/p/$hash.tar.gz"
+          normalized_hash="$(zig fetch "$package_root")"
+          if [ "$normalized_hash" != "$hash" ]; then
+            echo "ERROR: normalizing $dep changed $hash to $normalized_hash" >&2
+            exit 1
+          fi
+          tar -xzf "$ZIG_GLOBAL_CACHE_DIR/p/$hash.tar.gz" -C /tmp/zig-packages
+          rm -rf "$work"
+        else
+          echo "WARNING: zig fetch failed for $dep" >&2
+        fi
       done
 
-    # Stage 3: write the zig build step to a script, so install-commands
-    # stays one line (see the note there).
+  install-commands:
     - |
-      cat > /tmp/zig-build.sh <<'BUILD'
       export ZIG_GLOBAL_CACHE_DIR="/tmp/zig-cache"
       export ZIG_LIB_DIR="%{libdir}/zig"
-      run() {
-        if ! "$@" 2>/tmp/zig-build.err; then
-          cat /tmp/zig-build.err >&2
-          echo "=== '$*' failed; its error lines: ===" >&2
-          grep -n 'error' /tmp/zig-build.err | head -n 15 >&2
-          exit 1
-        fi
-        cat /tmp/zig-build.err >&2
-      }
-      # Resolve the whole package tree first, one job at a time. With the
-      # default parallelism, zig build's own package fetch under Zig 0.17
-      # produced hash mismatches for a *different* set of deps on every CI
-      # run (glslang, spirv-cross, breakpad, libxml2 and others), plus a
-      # missing translate_c module (#1452). The set changing between runs
-      # with identical inputs points at a race, not at wrong hashes, so
-      # the declared hashes are left alone.
-      run zig build --fetch=all -j1
-      run env DESTDIR="$1" zig build \
+      # fdsdk's bzip2 ships libbz2.so without bzip2.pc. Ghostty's system
+      # freetype path falls back to -lbzip2 when that metadata is absent.
+      # Use Ghostty's staged freetype package instead of linking a nonexistent
+      # library name.
+      DESTDIR="%{install-root}" zig build \
         --prefix /usr \
+        --system /tmp/zig-packages \
+        -fno-sys=freetype \
         -Doptimize=ReleaseFast \
         -Dcpu=baseline \
         -Dpie=true \
         -Demit-docs=false \
         -Dversion-string=1.4.0
-      BUILD
-
-  install-commands:
-    # Kept to one short line on purpose: on failure BuildStream prints only the
-    # last 20 log lines, and with a long inline command those 20 are just its
-    # echo. The script prints the errors last instead.
-    - sh /tmp/zig-build.sh "%{install-root}"

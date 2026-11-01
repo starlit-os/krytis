@@ -1746,8 +1746,9 @@ the `.portal` file's basename (`oo7-portal`), not its `DBusName`.
 - **`umbriel-portals.conf` is a full routing file**: `default=umbriel;gnome;gtk;` (#1029)
   shadows upstream's `default=umbriel;gtk` for everything umbriel, gnome or gtk implements.
   Pins: `Access=gtk` and `Notification=gtk` (same as niri upstream), `none` for Background,
-  GlobalShortcuts, RemoteDesktop, Clipboard, InputCapture and Wallpaper, and
-  `Secret=oo7-portal` (#1028). Why each one: *xdp-gnome outside GNOME* below.
+  GlobalShortcuts, RemoteDesktop, Clipboard and Wallpaper, and `Secret=oo7-portal` (#1028).
+  InputCapture falls through `default=` to Umbriel's own backend. Why each pin:
+  *xdp-gnome outside GNOME* below.
 
 Measured on a probe image: with the delta files removed, Secret resolves to none in both
 sessions even though `oo7-portal.portal` says `UseIn=gnome` — xdp only consults `UseIn`
@@ -1767,15 +1768,17 @@ can serve it without gnome-shell. Read from xdp-gnome `a4f6ed6` (2026-09-19) wit
 | Background | `org.gnome.Shell.Introspect` (`src/background.c:372`) | works (niri implements it) | `none` |
 | GlobalShortcuts | `org.gnome.Shell` shortcuts provider (`src/globalshortcuts.c:1201`) | `none` (#1054) | `none` |
 | RemoteDesktop, Clipboard | `org.gnome.Mutter.RemoteDesktop`; Clipboard rides RemoteDesktop sessions | `none` (#1054) | `none` |
-| InputCapture | `org.gnome.Mutter.InputCapture` | `none` (#1054) | `none` |
+| InputCapture | `org.gnome.Mutter.InputCapture` | `none` (#1054) | works through Umbriel's own portal backend and `umbriel-input-capture-v1`; no Mutter service involved |
 
 Routing a shell-dependent interface to gnome doesn't make it work: the app gets a dialog or
 a session that fails at call time, and can't detect that up front. `none` makes it visibly
 unsupported. Supporting facts:
 
-- **Umbriel provides no `org.gnome.Shell`/`org.gnome.Mutter` names**: none appear in
-  `noctalia-dev/umbriel` at `26cd1fc` (2026-09-30) or at the `e4b6760` pin (tarball grep,
-  2026-10-12). Recheck on umbriel bumps that touch D-Bus.
+- **Umbriel provides no `org.gnome.Shell`/`org.gnome.Mutter` names**: none appear at the
+  `679f4fb` pin (tarball grep, 2026-11-01). Its own portal backend now declares
+  InputCapture and implements it through `umbriel-input-capture-v1` plus libei, so that
+  interface routes directly to `umbriel` instead of needing a Mutter name. Recheck the
+  remaining shell-dependent gaps on Umbriel bumps that touch D-Bus or portal interfaces.
 - **xdp-gnome starts without Mutter.** libgxdp `gxdp_wayland_init` (`df896e34`, the revision
   xdp-gnome's wrap pins) falls back to plain GTK Wayland with the warning "Compositor
   service channel missing, portal dialogs may misbehave" when

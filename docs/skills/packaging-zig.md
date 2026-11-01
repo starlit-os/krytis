@@ -244,68 +244,62 @@ error: unable to discover remote git server capabilities: NameServerFailure
 4. When the established package (ghostty) is updated to support the newer Zig version, promote
    `zig-<version>.bst` to `zig.bst` and delete the old element.
 
-**What ghostty 1.4 actually did (#1435, 2026-10-31):** it skipped 0.16 and declares
-`minimum_zig_version = "0.17.0"`, so the planned "promote `zig-0.16.bst` to `zig.bst`" step
-didn't apply. `zig.bst` moved straight to 0.17.0 and `zig-0.16.bst` stays for falcond and
-seance. ghostty's `place_git_dep` stage was replaced with seance's
-`zig fetch zig-deps/* zig-deps-git/*` loop, and `allow-shlib-undefined.patch` was dropped.
-**Zig 0.17 `zig fetch` rejects `--global-cache-dir`** (`error: unrecognized parameter:
-"--global-cache-dir"`, first ghostty 1.4.0 build on #1435). 0.17 moved package management
-from the compiler into the build runner, and the new `fetch` does not parse that flag. Export
-`ZIG_GLOBAL_CACHE_DIR` and call plain `zig fetch "$dep"`; ghostty.bst drops the flag from
-`zig build` too, so both read the same variable. The skeleton above, plus falcond and seance,
-still pass the flag, which is correct on 0.16. Drop it when an element moves to 0.17.
-**Zig 0.17 `zig fetch` also rejects pre-0.14 manifests.** ghostty 1.4.0's tree-sitter v0.25.0
-tarball has `.name = "tree-sitter"`, a string where 0.17 wants an enum literal, and fails with
-`error: expected enum literal`. So the fetch loop warns instead of aborting (`|| echo
-"WARNING: ..."`). A missing dep that `zig build` really needs still fails the build, because
-it tries the network and names the dep.
+**Ghostty 1.4 / Zig 0.17 transition (#1452, 2026-11-01):** ghostty skipped
+0.16 and declares `minimum_zig_version = "0.17.0"`. `zig.bst` therefore moved
+straight to 0.17.0, while `zig-0.16.bst` stays for falcond and seance.
+Ghostty's old `place_git_dep` stage and `allow-shlib-undefined.patch` were
+dropped.
 
-**Zig 0.17 `zig build` hash mismatches in the BST sandbox look like a race, not wrong
-hashes.** On #1452, ghostty 1.4.0 failed with `hash mismatch: manifest declares <D> but the
-fetched package has <X>` (same size, different digest), but for a *different* set of deps on
-each run with identical inputs: glslang and spirv-cross, then breakpad and libxml2, then five
-at once including two new ones. Once the hashes were rewritten it also failed with `no module
-named 'translate_c'`. `zig fetch` of the same tarballs printed the declared `<D>`.
-Rewriting the zon files to `<X>` (tried, then reverted) therefore accepts whatever a bad
-unpack produced, so don't do it. Moving the local package dir with
-`ZIG_LOCAL_PKG_DIR=/tmp/zig-pkg` changed nothing. Pre-fetching with
-`zig build --fetch=all -j1` made it worse: *every* package mismatched, and each "fetched"
-hash came out as a nameless `N-V-…` (for example `libxev-0.0.0-86vtc8…` declared,
-`N-V-__8AAMQQ…` fetched). So zig build's fetch isn't seeing each package's
-`build.zig.zon` at all, while `zig fetch` of the same tarball names the package correctly.
-The root cause was still open when #1452 was parked (2026-10-31); ghostty stays on 1.3.1 /
-Zig 0.15 until it's understood. Next things to try: reproduce outside BST with
-`zig fetch` plus an offline `zig build --fetch`, and compare against how ghostty's own
-`nix/build-support` populates its cache for 0.17. Any `grep`/`sed` in a Zig element's
-build steps needs `components/grep.bst` and `components/sed.bst` in `build-depends`: the
-sandbox has neither (`grep: command not found`).
-`ghostty-update` only *warns* when `minimum_zig_version` exceeds `zig.bst`, so a tracker PR
-for a Zig-bumping ghostty release always needs this hand-edit.
+Zig 0.17 changed both halves of offline dependency handling:
 
-**Current state (2026-10-31):** `zig.bst` = 0.17.0 (ghostty 1.4.0), `zig-0.16.bst` = 0.16.0
-(falcond, seance).
+- `zig fetch` rejects `--global-cache-dir` (`unrecognized parameter`) because
+  package management moved into the build runner. Export
+  `ZIG_GLOBAL_CACHE_DIR` and call plain `zig fetch "$dep"`.
+- Fetching a staged source archive writes
+  `$ZIG_GLOBAL_CACHE_DIR/p/<hash>.tar.gz`, but that canonical archive retains
+  the source archive's top-level directory:
+  `<hash>/<upstream-root>/build.zig.zon`. `zig build --system` requires
+  `<hash>/build.zig.zon` instead. This was the cause of the changing false
+  hash mismatches and the later `no module named 'translate_c'`: the build
+  runner never found the package manifest at the expected root.
+- Normalize each source the same way ghostty's generated
+  `build.zig.zon.nix` does: fetch the staged archive, unpack its canonical
+  tarball, descend through its single top-level directory, remove the first
+  cached tarball, fetch that unpacked directory, and verify that its hash is
+  unchanged. Unpack the resulting canonical tarball into one real system
+  package directory. Passing the `p/*.tar.gz` cache itself to `--system`
+  panics in Zig 0.17.0; this is the failure tracked by
+  [ziglang/zig#30191](https://codeberg.org/ziglang/zig/issues/30191).
+- Do not follow a prefetch with ordinary `zig build` or `zig build
+  --fetch=all`. Those use Zig's project-local `zig-pkg/` fetch path instead of
+  system-package mode. Rewriting the zon hashes, moving
+  `ZIG_LOCAL_PKG_DIR`, and limiting the fetch to `-j1` only mask that wrong
+  package layout.
+- Zig 0.17 rejects old manifests. Ghostty 1.4.0's tree-sitter v0.25.0
+  tarball has `.name = "tree-sitter"` where 0.17 requires an enum literal;
+  a second zig-tree-sitter source uses a pre-multihash hex dependency hash.
+  Both are lazy dependencies for other targets, so those fetch warnings are
+  harmless for the Linux Ghostty build. A required package missing from the
+  `--system` directory fails deterministically instead of attempting the
+  network.
+- `--system` also makes Ghostty prefer dynamically linked system libraries.
+  Those libraries must be explicit element dependencies even when their Zig
+  source tarballs are staged. In particular, fdsdk's
+  `components/jq.bst` vendors oniguruma and ships `oniguruma.h`,
+  `oniguruma.pc`, and `libonig.so`; without it translation fails late with
+  `fatal error: 'oniguruma.h' not found`.
+- System integration can expose distro naming mismatches. fdsdk's bzip2
+  provides `libbz2.so` but no `bzip2.pc`; Ghostty's system-freetype path then
+  falls back to `-lbzip2` and cannot link. Keep that one package vendored with
+  `-fno-sys=freetype` rather than inventing a `libbzip2.so` compatibility
+  symlink.
 
-**ghostty 1.4 shipped needing Zig 0.17, not 0.16, and the port is parked (2026-10-31).**
-ghostty 1.4.0 declares `minimum_zig_version = "0.17.0"`, so the promote-0.16 plan above
-doesn't apply. `ghostty-update` only *warns* about that, so its tracker PR (#1435) bumps the
-version without touching Zig. The hand port on #1452 (unmerged, kept for reference) found
-these, all with Zig 0.17.0 in the BST sandbox:
+`ghostty-update` only warns when `minimum_zig_version` exceeds `zig.bst`, so a
+tracker PR for a Zig-bumping ghostty release still needs the Zig element and
+build-mode hand edit.
 
-- `zig fetch` rejects `--global-cache-dir` (`unrecognized parameter`) because 0.17 moved
-  package management into the build runner. Export `ZIG_GLOBAL_CACHE_DIR` instead.
-- `zig fetch` rejects pre-0.14 manifests, for example tree-sitter v0.25.0's
-  `.name = "tree-sitter"` (`expected enum literal`).
-- `allow-shlib-undefined.patch` no longer applies to 1.4.0.
-- **Blocker:** `zig build` reports `hash mismatch: manifest declares <D> but the fetched
-  package has <X>`, for a different set of deps on each run with identical inputs. With
-  `zig build --fetch=all -j1` it happens for *every* package, and every `<X>` is a
-  nameless `N-V-…`, as if zig build's fetch never sees the package's `build.zig.zon`.
-  `zig fetch` of the same tarballs prints the right named hash. Don't rewrite the zon
-  hashes to `<X>`: that accepts whatever the bad unpack produced. Moving
-  `ZIG_LOCAL_PKG_DIR` to `/tmp` changed nothing.
-- Any `grep`/`sed` in a Zig element's build steps needs `components/grep.bst` and
-  `components/sed.bst`, because the sandbox has neither.
+**Current state (2026-11-01):** `zig.bst` = 0.17.0 (ghostty 1.4.0);
+`zig-0.16.bst` = 0.16.0 (falcond, seance).
 
 ### `-Dpie=true` is project-specific — check `build.zig` first
 
