@@ -225,3 +225,59 @@ ignore:
     package:
       name: rustls-webpki
       version: "0.101.7"
+  # zip (Rust crate) 8.6.0 and 8.5.1, five advisories published 2026-10-28/29
+  # (GHSA-m665-v7pm-7grj Critical, fixed 9.0.5; the rest fixed 9.0.0). Traced
+  # 2026-11-01 on main 04cecdf, where it blocked publish run 41326214673:
+  # - 8.6.0, core/uutils-coreutils.bst (uutils 0.12.0): only the root `coreutils`
+  #   package depends on zip, as `dep:zip` behind the `uudoc` feature (the doc
+  #   generator binary, required-features = ["uudoc"]). With the element's flags,
+  #   `cargo tree --locked --features feat_os_unix --no-default-features -i zip`
+  #   finds no zip; adding `uudoc` resolves `zip v8.6.0 <- coreutils`.
+  # - 8.6.0, freedesktop-sdk gstreamer-plugins-rs.bst (0.15.4): the Cargo.lock's
+  #   only reverse path is burn-store -> gst-plugin-burn, which fdsdk's meson
+  #   flags (-Dauto_features=disabled, rtp/gif/hlssink3/dav1d/spotify) don't build.
+  # - 8.5.1, freedesktop-sdk python3-maturin.bst: a build-only element. The SBOM
+  #   lists it because it is generated with --deps all. It is absent from the
+  #   image's /usr/manifest.json and no maturin file is in the image, so zip is
+  #   compiled into maturin but never shipped.
+  # Re-trace before moving either pin: a version bump can change both paths.
+  - vulnerability: GHSA-m665-v7pm-7grj
+    package:
+      name: zip
+      version: "8.6.0"
+  - vulnerability: GHSA-q7v9-x93c-xqv3
+    package:
+      name: zip
+      version: "8.6.0"
+  - vulnerability: GHSA-hjqx-j4rw-g7xv
+    package:
+      name: zip
+      version: "8.6.0"
+  - vulnerability: GHSA-9hj8-73fh-9963
+    package:
+      name: zip
+      version: "8.6.0"
+  - vulnerability: GHSA-8hxf-qr8p-62x4
+    package:
+      name: zip
+      version: "8.6.0"
+  - vulnerability: GHSA-m665-v7pm-7grj
+    package:
+      name: zip
+      version: "8.5.1"
+  - vulnerability: GHSA-q7v9-x93c-xqv3
+    package:
+      name: zip
+      version: "8.5.1"
+  - vulnerability: GHSA-hjqx-j4rw-g7xv
+    package:
+      name: zip
+      version: "8.5.1"
+  - vulnerability: GHSA-9hj8-73fh-9963
+    package:
+      name: zip
+      version: "8.5.1"
+  - vulnerability: GHSA-8hxf-qr8p-62x4
+    package:
+      name: zip
+      version: "8.5.1"
