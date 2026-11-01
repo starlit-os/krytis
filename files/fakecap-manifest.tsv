@@ -1153,7 +1153,6 @@
 /./usr/bin/enosys	components/_private/util-linux-base.bst	monthly
 /./usr/bin/enosys	components/util-linux.bst	monthly
 /./usr/bin/env	bootstrap/coreutils.bst	monthly
-/./usr/bin/env	core/uutils-coreutils.bst	monthly
 /./usr/bin/eqn	components/groff.bst	monthly
 /./usr/bin/eqn2graph	components/groff.bst	monthly
 /./usr/bin/erofsfuse	components/erofs-utils.bst	monthly
@@ -1651,7 +1650,6 @@
 /./usr/bin/key.dns_resolver	components/keyutils.bst	monthly
 /./usr/bin/keyctl	components/keyutils.bst	monthly
 /./usr/bin/kill	components/procps.bst	monthly
-/./usr/bin/kill	core/uutils-coreutils.bst	monthly
 /./usr/bin/kinit	sdk/krb5.bst	monthly
 /./usr/bin/klist	sdk/krb5.bst	monthly
 /./usr/bin/kmod	components/kmod.bst	monthly
@@ -2973,7 +2971,6 @@
 /./usr/bin/updatectl	core-deps/systemd.bst	monthly
 /./usr/bin/upower	core-deps/upower.bst	monthly
 /./usr/bin/uptime	components/procps.bst	monthly
-/./usr/bin/uptime	core/uutils-coreutils.bst	monthly
 /./usr/bin/usb-devices	components/usbutils.bst	monthly
 /./usr/bin/usbhid-dump	components/usbutils.bst	monthly
 /./usr/bin/useradd	components/shadow.bst	monthly
