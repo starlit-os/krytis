@@ -10,7 +10,9 @@ Krytis's own pipeline is documented in [`mise.md`](mise.md) § ISO build task an
 `projectbluefin/dakota-iso` builds the live installer media for the Bluefin family. As of
 2026-10-14 (dakota-iso `d23d0e8`) its scope is **`dakota` and `utah`** (its `AGENTS.md:13`):
 `5ddc01f` (projectbluefin/dakota-iso#228) retired `bluefin` and `bluefin-lts-hwe` and
-renamed `build-iso-bluefin.yml` to `build-iso-utah.yml`, which builds Utah daily. The
+renamed `build-iso-bluefin.yml` to `build-iso-utah.yml`. That workflow built Utah daily
+until `2169e28` (2026-10-26) moved it to monthly builds from `utah:stable` (04:00 UTC on
+the 8th; dakota-iso `AGENTS.md`, re-checked 2026-10-31). The
 `bluefin`, `bluefin-lts-hwe`, `lts` and `stable` target directories are still in its tree,
 and its `AGENTS.md` keeps the two retired ones for revival only. A `just` project:
 `just container <target>` builds the live-environment image, `just iso-sd-boot <target>` assembles the
@@ -109,22 +111,38 @@ paragraph asking contributors to remember. And the five assertions that existed 
 police the duplicate were deleted along with it — a parity check is rent you pay until the
 duplicate dies, not a permanent fixture.
 
-### The `95dakota-isofile` dracut module is orphaned upstream — 32 tests did not change that
+### `95dakota-isofile` was orphaned upstream until 2026-10-24 — tests alone never caught it
 
-*Source: dakota-iso's `live/src/dracut/95dakota-isofile/` vs its `live/Containerfile:47,92`;
-`53f31cfc` added the tests, and the second copy under `dakota/src/` went with `50169c33`.
-Krytis has no dracut module directory at all; its own `live/Containerfile` is a different
-file.*
+*Source: dakota-iso `53f31cfc` (tests), `5776593` (projectbluefin/dakota-iso#266, wired
+in, 2026-10-24). Re-mined 2026-10-31. Krytis has no dracut module directory at all; its own
+`live/Containerfile` is a different file.*
 
-The module defines a complete Ventoy/file-backed boot path with an `inst_hook initqueue`
-line, and nothing adds it: both `dracut --add` invocations in that Containerfile pass
-`dmsquash-live` only, and no `dracut.conf`/`modules.d` entry references it for any target.
-`53f31cfc` then gave it 32 executed test cases **without wiring it in**, and its commit body
-says why nothing had ever exercised it: "The QEMU gates boot the ISO as a block device, so
+The module boots the ISO when it is a *file* on a USB partition (Ventoy / GRUB loopback):
+upstream's `loopback.cfg` passes `rd.dakota.isofile=`, and the module's `inst_hook
+initqueue` reads it. Upstream's Containerfile rewrite in projectbluefin/dakota-iso#37 had dropped both the
+`COPY` of the module and its `--add`, so for months nothing in the initramfs read that
+argument. `53f31cfc` then gave the hook 32 executed test cases **without wiring it in**, and
+its commit body says why nothing noticed: "The QEMU gates boot the ISO as a block device, so
 the CDLABEL check on the hook's first line short-circuits it before any of its logic runs."
-Tested dead code is still dead code — the suite proves the hook's internals, not that
-anything reaches them. It is dead upstream, not a krytis omission, which is why #519
-excluded it from the port. Don't read it as the mechanism by which live media finds its ISO.
+`5776593` fixed it: the module is copied into both initramfs stages, added to both
+`dracut --add "dmsquash-live dakota-isofile"` calls, and `tests/test_live_build_invariants.py`
+now fails if either goes missing.
+
+Two lessons carry over:
+
+- **Testing a component's internals is not testing that the build includes it.** The fix
+  was an invariant test on the *build file* (copy + `--add` present in every stage), not
+  more hook tests.
+- **A boot path the CI gate cannot exercise needs that kind of gate.** QEMU boots the ISO
+  as a block device, so file-backed boot is invisible to it.
+
+**Krytis status:** #519 excluded the module from the port when it was still dead
+upstream, so krytis's live initramfs has no file-backed boot path of its own.
+`live/src/build-iso.sh` still writes a `boot/grub/loopback.cfg` that passes
+`rd.live.isofile=` (`build-iso.sh:223`); whether anything in krytis's initramfs honours
+it has not been tested. Treat Ventoy/loopback boot of the krytis ISO as unsupported
+until someone boots it that way. If it is ever wanted, port `95dakota-isofile` together
+with upstream's build-file invariant, not just the module.
 
 ### `PAYLOAD_SEALED`, `e2e-lib.sh` and the sealed test chain are not upstream concepts
 
@@ -179,7 +197,7 @@ offline stores" size estimate *derived* from the phantom line item, plus a compo
 row for it and an ISO layout that was no longer producible. Deleting a feature means
 grepping the docs for every claim **derived** from it, not only for its name.
 
-### Digest-pin the third-party images your build and test tasks run — RESOLVED in krytis (`a045d77`, 2026-09-24)
+### Digest-pin the third-party images your build and test tasks run
 
 *Source: dakota-iso `6cfe4f28` — "fix(justfile): pin third-party images chunkah and qemu
 with sha256 digests (#170)".*
@@ -206,6 +224,23 @@ with no update path trades a supply-chain hole for a rot hole. So each pin comes
 `<name>-update` task and a tracking job: `mise/tasks/chunkah-update` + `track-chunkah`, and
 `mise/tasks/qemu-image-update` + `track-qemu-image`, both in
 `.github/workflows/track-bst-sources.yml`.
+
+**The `FROM` lines were missed** (dakota-iso `16e6135`, projectbluefin/dakota-iso#293,
+mined 2026-10-31). This section used to be headed "RESOLVED in krytis", which was only true
+of the task-script images above. The live ISO's own Containerfiles still pulled by tag:
+`live/Containerfile`'s `FROM debian:bookworm AS initramfs-builder` — a stage krytis really
+uses, since its images have no dracut/dnf and take the Debian cross-build branch — and
+`live/iso-tools/Containerfile`'s `FROM registry.fedoraproject.org/fedora-minimal:latest`.
+The first puts Debian's dracut, dracut-live and xfsprogs bits inside the ISO, so a retag
+upstream changed the ISO with no diff. Upstream pinned the tag+digest pair and added a test
+that fails if any external `FROM` loses its digest.
+
+Unlike the task-script refs, a `FROM` line *is* a manifest Renovate can read, so these
+need no `<name>-update` task: `.github/renovate.json5` enables the `dockerfile` manager
+for exactly those two files (a packageRule switches it off everywhere else), and the
+repo-wide `pinDigests: true` makes Renovate's first PR pin both digests. Until that PR
+merges they are still by tag. Krytis has no test that a `FROM` keeps its digest — if one
+is added, `checks.yml` is where it goes.
 
 ### An emulator probe that fails to exec costs you the serial log, not just the binary
 
@@ -401,3 +436,39 @@ Copy patterns from `../dakota-iso/` and adapt — same convention as
 [`dakota.md`](dakota.md) and [`zirconium-hawaii.md`](zirconium-hawaii.md): no symlinking, no
 junctioning, no `DAKOTA_ISO_DIR`-style runtime dependency. krytis's ISO pipeline is
 self-contained by design since #840.
+
+### The installer must not offer XFS for a composefs image
+
+*Source: dakota-iso `2d54023` (projectbluefin/dakota-iso#287, 2026-10-27). Mined
+2026-10-31.*
+
+`images.json` carried `"composefs": true` next to `"filesystems": ["btrfs", "xfs"]`.
+fisherman refuses that pair ("composefs-backend requires fs-verity, which XFS does not
+support"), so a user who picked XFS in the installer got a failed install, not a choice.
+The QEMU install gates never saw it because their recipes always use btrfs. Upstream
+offers btrfs only for composefs targets and added a test that fails if a composefs entry
+offers xfs again.
+
+Krytis had the same pair in `live/src/configure-live-krytis.sh`'s `images.json` heredoc
+and is composefs-only, so the fix there is unconditional: `"filesystems": ["btrfs"]`. `live/Containerfile` still
+installs Debian's `mkfs.xfs`/`xfs_repair` into the live environment; this change leaves
+that alone, since the installer UI choice is what failed.
+
+### Anything the ISO build fetches by URL becomes part of every installed system
+
+*Source: dakota-iso `c1c4c6f` (projectbluefin/dakota-iso#264) and `222a5dc`
+(projectbluefin/dakota-iso#257), mined 2026-10-31.*
+
+Two downloads in `live/src/install-flatpaks.sh` worked like an unpinned action:
+
+- **The installer bundle** came through `releases/latest/download/`, and it runs as root on
+  every machine that boots the ISO. Upstream pins the release tag and both bundles'
+  SHA-256 in a lock file and fails the build on a mismatch. Krytis: #1454.
+- **Flathub's `.flatpakrepo`** was handed to `flatpak remote-add` by URL. Its `GPGKey=` is
+  the trust root for every later Flatpak download, and `/var/lib/flatpak` is copied onto
+  installed systems, so one bad response would become every installed machine's Flathub
+  key. Upstream checks the descriptor into the repo. Krytis: #1455.
+
+The test to apply to any new fetch in `live/`: if what it downloads ends up in the ISO or
+on the target, pin it by digest or check it into the repo, with an update path that opens
+a reviewable PR.
