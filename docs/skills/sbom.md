@@ -279,6 +279,32 @@ graph for that specific version; different versions of the same crate can easily
 different dependency chains (confirmed here: `0.101.7` and `0.102.8` have completely
 disjoint reachable-plugin sets).
 
+**Second instance: `zip` 8.6.0 / 8.5.1 (2026-11-01).** GHSA-m665-v7pm-7grj (Critical,
+published 2026-10-28) blocked publish run 41326214673 at the pre-build gate. Four more zip
+advisories followed the next day. One version was in two vendor snapshots, so both had to
+be walked before 8.6.0 could be ignored:
+
+| `zip` | Element | Why it isn't shipped |
+|---|---|---|
+| 8.6.0 | `core/uutils-coreutils.bst` (uutils 0.12.0) | `dep:zip` behind the `uudoc` feature only |
+| 8.6.0 | fdsdk `components/gstreamer-plugins-rs.bst` (0.15.4) | only `burn-store` → `gst-plugin-burn`, not built |
+| 8.5.1 | fdsdk `components/python3-maturin.bst` | build-only element, not in the image |
+
+Two shortcuts made this quicker than #500's hand-written BFS:
+
+- **Let cargo resolve the element's own feature set.** Clone the pinned tag, then run
+  `cargo tree --locked -e normal,build <the element's cargo flags> -i <crate>`. "Did not
+  match any packages" proves the crate is compiled out. Run a control that adds the
+  feature you suspect (`uudoc` here) to show that the query can find the crate at all.
+  `--all-features` on a big workspace like gst-plugins-rs fails with `--locked`, because
+  upstream's lockfile doesn't cover every feature. For those, walk the reverse edges of
+  `Cargo.lock` with `tomllib` (a superset of any feature selection).
+- **`buildstream-sbom --deps all` includes build-only elements.** A build tool such as
+  maturin compiles the crate in but never ships. Check the image itself: the element is
+  absent from `/usr/manifest.json` and none of its files are in the image. That counts
+  as not reachable from anything krytis ships, which is the same judgment this class
+  makes, so it is pinned the same way.
+
 
 ### A `cargo update -p X` "fix" is only real if it clears the advisory's actual range
 
