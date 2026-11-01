@@ -282,6 +282,12 @@ Zig 0.17 changed both halves of offline dependency handling:
   harmless for the Linux Ghostty build. A required package missing from the
   `--system` directory fails deterministically instead of attempting the
   network.
+- `zig build` does not consume BuildStream's `%{max-jobs}` automatically.
+  Ghostty's uncapped build failed twice after about 13 minutes on the
+  8-vCPU/15.6-GiB PR runner, while the same element built on the development
+  workstation. Export `MAXJOBS: '%{max-jobs}'`, list it under
+  `environment-nocache`, and pass `-j"${MAXJOBS}"` to keep Zig inside the
+  runner's resource budget without changing the artifact key between runners.
 - `--system` also makes Ghostty prefer dynamically linked system libraries.
   Those libraries must be explicit element dependencies even when their Zig
   source tarballs are staged. In particular, fdsdk's

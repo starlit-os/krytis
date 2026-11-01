@@ -3,6 +3,11 @@ kind: manual
 variables:
   strip-binaries: ""
 
+environment:
+  MAXJOBS: '%{max-jobs}'
+environment-nocache:
+  - MAXJOBS
+
 # fdsdk 26.08's ncurses added a `ghostty` entry to its own terminfo database,
 # so /usr/share/terminfo/g/ghostty is now installed by two elements and
 # oci/krytis/runtime.bst fails to stage with `[overlaps]: Non-whitelisted
@@ -613,9 +618,12 @@ config:
       # freetype path falls back to -lbzip2 when that metadata is absent.
       # Use Ghostty's staged freetype package instead of linking a nonexistent
       # library name.
+      # Zig otherwise uses every visible CPU and bypasses BuildStream's
+      # per-element concurrency budget.
       DESTDIR="%{install-root}" zig build \
         --prefix /usr \
         --system /tmp/zig-packages \
+        -j"${MAXJOBS}" \
         -fno-sys=freetype \
         -Doptimize=ReleaseFast \
         -Dcpu=baseline \
