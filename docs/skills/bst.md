@@ -1169,10 +1169,16 @@ a broken graph, not a vulnerability finding: do not read it as a security result
 Reproduce locally with `mise run validate` on the PR head. Find where an element went with
 GitLab's compare API, which flags deleted files per commit:
 `curl -s "https://gitlab.gnome.org/api/v4/projects/GNOME%2Fgnome-build-meta/repository/compare?from=<old-sha>&to=<new-sha>" | jq '.diffs[] | select(.deleted_file) | .old_path'`.
-Fix the references in a PR stacked on the tracking PR (PR #1211's fix was the first). The
-tracking bot recreates its branch from `main` on every run, so a stacked fix needs a local
-`gh stack rebase` whenever that branch moves (`docs/skills/workflow.md` § Two things stacking
-still costs).
+Don't stack the fix on the tracking PR. *Diff vulnerabilities vs base* is a required check
+in ruleset "Main", which has no bypass actors, and it scans `pull_request.base.sha`. The
+tracking PR's head is the broken graph, so the check fails on the tracking PR itself and on
+any PR based on it. Stack 1223 (#1211 → #1222) could not merge for that reason. Branch the
+fix from the tracking branch, open it against `main`, and let it carry the bot's commit.
+Merging it lands the bump, and GitHub then shows the tracking PR as merged. To move an
+existing stacked fix, run `gh stack unstack <N>` and `gh pr edit <pr> --base main`, then
+close and reopen the PR. Re-running the old run reuses its event payload, so it scans the
+old base again. The tracking bot recreates its branch from `main` on every run, and a
+separate fix branch is not affected by that.
 
 ### A moved element is a different recipe: check its files against the shipped image
 
