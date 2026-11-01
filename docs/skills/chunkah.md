@@ -42,6 +42,19 @@ dakota) and regenerated whenever elements meaningfully change — there is
 no CI job auto-regenerating it yet (dakota's `update-filemap.yml` has no
 krytis equivalent); re-run the mise task manually and commit the diff.
 
+**When a rebase conflicts in `files/fakecap-manifest.tsv`, don't pick either side.** A
+branch's "regenerate fakecap manifest" commit contains the branch's own change plus all
+drift up to the day it ran, and `main` has usually regenerated the file since. Take
+`main`'s file and re-apply only the rows the branch's element change accounts for. On
+#1456 that was three deleted lines out of a 13,821-line regen diff (A3:
+`/usr/bin/{env,kill,uptime}` no longer credited to `core/uutils-coreutils.bst`). To find
+them, compare the rows for the paths the element change touches across the regen
+commit's parent, the regen commit, and `origin/main`
+(`git show <rev>:files/fakecap-manifest.tsv | grep -P '^/\./usr/bin/(env|kill)\t'`).
+Reword the commit, because it is no longer a regeneration. A full
+`mise run generate-fakecap-manifest --pull` after rebuilding the rebased tree also works,
+but takes about 45 minutes.
+
 All rows currently get `interval=monthly` — krytis doesn't yet distinguish
 weekly/daily-changing components the way dakota's finer-grained interval
 tagging does. This is fine for the initial port (YAGNI); revisit only if
