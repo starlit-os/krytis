@@ -19,8 +19,8 @@ build-depends:
 # bpftool involved; vmlinux.h ships pre-generated inside scx_utils'
 # vmlinux.tar.zst, so components/bpf-maybe.bst's bpftool is not needed).
 # rust.bst's own `depends: components/llvm.bst` would pull clang in
-# transitively, but every other bindgen-consuming element in this repo
-# (overrides/rust-bindgen.bst) lists it explicitly, so this does too —
+# transitively, but freedesktop-sdk's own bindgen element
+# (components/rust-bindgen.bst) lists it explicitly, so this does too —
 # also covers libclang.so for the `bindgen` crate (scx_utils build.rs)
 # and clang-sys (scx_arena -> libbpf-sys, vendored-libbpf feature).
 - freedesktop-sdk.bst:components/llvm.bst

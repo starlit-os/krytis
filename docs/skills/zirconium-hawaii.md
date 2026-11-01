@@ -301,9 +301,11 @@ Also new upstream: a second junction, zirconium-hawaii's `elements/freedesktop-s
 (`kind: junction`, tracks `freedesktop-sdk-extra.git`), added purely to reuse a
 pre-packaged component (smartmontools) instead of writing a new element from scratch — uses
 the same `config.overrides:` mechanism this file already documents for `gnome-build-meta`
-(§ GNOME Build Meta Junction), applied to a second junction. Not adopted — krytis has no
-current need for smartmontools — but worth knowing the pattern exists if a future package
-is already packaged there.
+(§ GNOME Build Meta Junction), applied to a second junction. krytis never added a direct
+junction, and no longer needs one: since gnome-build-meta `eaa10b21` (Oct 2026),
+gnome-build-meta itself junctions freedesktop-sdk-extra, so every element there is reachable as
+`gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/<name>.bst` (smartmontools
+included). See `docs/skills/bst.md` § Adding a gnome-build-meta junction element.
 
 ## Audit: full `mesa.bst` vs `mesa-headers.bst` in `build-depends`
 
@@ -371,8 +373,8 @@ the fdsdk config closes this without any explicit fix.
 
 **krytis exposure.** `elements/core/linux-cachyos.bst` unpacks prebuilt CachyOS
 `.pkg.tar.zst` packages — an Arch-derived config, with no config step krytis controls —
-and krytis ships toolbox (`gnome-build-meta.bst:gnomeos-deps/toolbox.bst` via
-`elements/stacks/base-system.bst:139`). Grep across `elements/`, `docs/` and
+and krytis ships toolbox (`gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/toolbox.bst`
+via `elements/stacks/base-system.bst:145`). Grep across `elements/`, `docs/` and
 `files/fakecap-manifest.tsv` for `fs/selinux` returns exactly one hit, a Rust source path
 inside bootc's debug split — nothing creates or expects the directory. Upstream's element
 when this was mined was `elements/gamerslop/linux-ogc.bst`. That file is gone as of

@@ -78,11 +78,12 @@ two junctions and needs the junction prefix to resolve
 `bst artifact checkout ... freedesktop-sdk.bst:components/curl.bst`
 succeeds). In the committed `files/fakecap-manifest.tsv` that split is 85 krytis-owned
 elements out of 584 distinct ones. `scripts/generate-fakecap-manifest.py` handles this by
-trying the bare name first, then each of `JUNCTION_PREFIXES = ["freedesktop-sdk.bst:",
-"gnome-build-meta.bst:"]` in order, before giving up — this repo only has
-two content junctions (confirmed via `kind: junction` in `elements/*.bst`),
-so a small hardcoded list is deliberate, not a stand-in for a general
-junction-discovery mechanism.
+trying the bare name first, then each of `JUNCTION_PREFIXES` in order (`freedesktop-sdk.bst:`,
+`gnome-build-meta.bst:`, `gnome-build-meta.bst:freedesktop-sdk-extra.bst:`) before giving up.
+The list is hardcoded on purpose rather than discovered. The third entry is the nested junction
+gnome-build-meta `eaa10b21` introduced; without it, every element that moved there
+(accountsservice, distrobox, toolbox, samba, …) is skipped. Any new junction, nested or
+top-level, needs an entry here, or its elements silently drop out of the TSV.
 
 With both fixes, a real run against `localhost/krytis:latest` (565
 elements) attributed 539/565 (357043 rows); the remaining 26 are elements
@@ -93,13 +94,13 @@ a regression. The committed TSV has since grown to 367,869 rows over 584
 distinct elements (fdsdk 26.08rc.1 + gnome-51, `eee241c`) — same shape, more
 graph.
 
-**A `skip` can also mean "artifact not in the local cache". In that case the TSV is truncated and the task still exits 0.** The script catches every checkout failure, prints `skip (checkout/tar failed)`, and carries on, so it cannot tell an element with no content apart from one whose artifact simply isn't on disk. #1005 hit the second case. The image was built with `mise run build --pull`, and the regeneration skipped 14 elements with `No artifacts have been cached yet for that element`:
+**A `skip` can also mean "artifact not in the local cache".** The script catches every checkout failure, prints `skip (checkout/tar failed)`, and carries on, so it cannot tell an element with no content apart from one whose artifact simply isn't on disk. It now lists every skipped element after the row count, but the task still exits 0. #1005 hit the second case. The image was built with `mise run build --pull`, and the regeneration skipped 14 elements with `No artifacts have been cached yet for that element`:
 
 - eleven fdsdk `components/_private/*-base.bst` parents (`gcc-base`, `pipewire-base`, `util-linux-base`, `cups-base`, …)
 - `overrides/systemd-base.bst` (krytis's systemd-base mirror at the time; since #483 the same parent is `gnome-build-meta.bst:core-deps/systemd-base.bst`)
 - `sdk-deps/gvfs.bst`
 
-The public elements the image actually composes from filter their files out of these parents. A build can therefore finish without ever having the parents' artifacts locally, but `/usr/manifest.json` still credits the files to the parents. The run wrote 349,958 rows and exited 0, but files present in the image were missing from it: `/usr/include/c++/16.2.0/**` had zero rows, and there were 32,300 deletions against the committed TSV. **Before committing a regenerated TSV, count the `skip` lines in the task output and check which elements they name.** More than the handful of `kind: stack`/`script` elements with no own content means the output is incomplete. Either get the missing artifacts into the local cache first (`bst artifact pull` / `bst build` on the named elements), or change only the rows your change affects (what #1005 did: drop the removed element's rows, add the new element's row, keep the file `LC_ALL=C`-sorted).
+The public elements the image actually composes from filter their files out of these parents. A build can therefore finish without ever having the parents' artifacts locally, but `/usr/manifest.json` still credits the files to the parents. The run wrote 349,958 rows and exited 0, but files present in the image were missing from it: `/usr/include/c++/16.2.0/**` had zero rows, and there were 32,300 deletions against the committed TSV. **Regenerate with `mise run generate-fakecap-manifest --pull`.** The flag passes `--pull` to every `bst artifact checkout`, so bow serves the parents a build never downloaded. Then read the skip list the task prints at the end: anything beyond the handful of `kind: stack`/`script` elements with no own content means the output is incomplete. Without bow access, change only the rows your change affects (what #1005 did: drop the removed element's rows, add the new element's row, keep the file `LC_ALL=C`-sorted).
 
 **Known low-severity risks, worth knowing but not worth fixing:** ~4.6% of
 distinct paths in `files/fakecap-manifest.tsv` are attributed to more than
@@ -120,7 +121,12 @@ been observed in practice — the two junctions' element namespaces are
 cleanly segregated by convention (`components/*`, `core-deps/*`,
 `bootstrap/*`, `integration/*`, `public-stacks/*` → freedesktop-sdk;
 `gnomeos*/*`, `sdk*/*`, `vm/*`, `extensions/*` → gnome-build-meta) — but nothing in the
-code enforces it. Both risks share
+code enforces it. The convention is weaker since freedesktop-sdk-extra: it also uses
+`components/*`, and the fdsdk prefix is tried first. At fdsdk 26.08.2 /
+freedesktop-sdk-extra-26.08.2 the two `components/` trees share only `askalono.bst`,
+`buildstream-sbom.bst` and the `_private/` directory, and none of those is in the image
+(checked with the GitLab tree API). Re-check if the TSV attributes a `components/` file
+oddly. Both risks share
 the same blast radius: at most a shared/ambiguous file lands in a
 suboptimal but still-valid composefs layer for OTA-delta purposes — never
 a boot failure or a missing/corrupted xattr.

@@ -200,7 +200,7 @@ sketches a never-written `elements/core/container-sigpolicy.bst` writing
 Both halves are wrong. `files/fakecap-manifest.tsv:353-356` shows krytis already inherits
 `/etc/containers/{policy.json,registries.conf,registries.conf.d/000-shortnames.conf,registries.d/default.yaml}`
 from `components/containers-common.bst` (plus `toolbox.conf` from
-`gnomeos-deps/toolbox.bst`) — so that element would land on an already-owned mutable
+`gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/toolbox.bst`) — so that element would land on an already-owned mutable
 path, which is also the wrong destination per point 1. Rewrite the sketch against
 `%{datadir}/containers` plus the `rm`/`mv` integration commands before anyone builds it.
 

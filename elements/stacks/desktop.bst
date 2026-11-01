@@ -92,8 +92,9 @@ depends:
   # accounts-daemon: AccountsService D-Bus daemon. noctalia-greeter queries
   # org.freedesktop.Accounts for user avatar paths (IconFile property).
   # Without it the greeter falls back to the generic person glyph. D-Bus
-  # activated — no systemd preset needed. Closes #182.
-  - gnome-build-meta.bst:core-deps/accountsservice.bst
+  # activated — no systemd preset needed. Closes #182. Lives in gnome-build-meta's
+  # freedesktop-sdk-extra.bst junction since gnome-build-meta eaa10b21 (MR !5085).
+  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/accountsservice.bst
 
   # ── Files ───────────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/nautilus.bst

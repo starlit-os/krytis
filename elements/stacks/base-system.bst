@@ -144,11 +144,17 @@ depends:
   - config/logind-lid.bst
 
   # ── Container / toolbox (from gnome-build-meta) ────────────────────
-  - gnome-build-meta.bst:gnomeos-deps/distrobox.bst
-  - gnome-build-meta.bst:gnomeos-deps/toolbox.bst
-  - gnome-build-meta.bst:gnomeos-deps/zram-generator.bst
+  # distrobox, toolbox, zram-generator and android-udev-rules moved out of
+  # gnome-build-meta's own tree into its freedesktop-sdk-extra.bst junction
+  # (gnome-build-meta eaa10b21, MR !5085); reached through that nested junction.
+  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/distrobox.bst
+  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/toolbox.bst
+  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/zram-generator.bst
+  # The moved zram-generator ships no config, and without one it creates no zram
+  # device: this restores the zram0 (ram / 2, zstd) gnome-build-meta used to install.
+  - config/zram-generator.bst
   - gnome-build-meta.bst:gnomeos-deps/ld-config.bst
-  - gnome-build-meta.bst:gnomeos-deps/android-udev-rules.bst
+  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/android-udev-rules.bst
   - gnome-build-meta.bst:gnomeos-deps/hidraw-udev.bst
   - gnome-build-meta.bst:gnomeos-deps/udev-hide-usr.bst
   # gnomeos/reload-sysext.bst (systemd unit auto-reloading sysext
