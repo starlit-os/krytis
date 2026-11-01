@@ -282,12 +282,17 @@ Zig 0.17 changed both halves of offline dependency handling:
   harmless for the Linux Ghostty build. A required package missing from the
   `--system` directory fails deterministically instead of attempting the
   network.
+- Zig 0.17 can report `failed to delete temporary directory …:
+  DirNotEmpty` for every fetched archive and leave the unpacked trees under
+  `$ZIG_GLOBAL_CACHE_DIR/tmp`. Ghostty stages more than 100 packages, including
+  every wasmtime target archive, so those copies exhaust the PR runner while
+  the development workstation still completes. Remove `tmp` after each fetch,
+  remove each canonical tarball after unpacking it into the `--system`
+  directory, and discard the remaining fetch cache before `zig build`.
 - `zig build` does not consume BuildStream's `%{max-jobs}` automatically.
-  Ghostty's uncapped build failed twice after about 13 minutes on the
-  8-vCPU/15.6-GiB PR runner, while the same element built on the development
-  workstation. Export `MAXJOBS: '%{max-jobs}'`, list it under
-  `environment-nocache`, and pass `-j"${MAXJOBS}"` to keep Zig inside the
-  runner's resource budget without changing the artifact key between runners.
+  Export `MAXJOBS: '%{max-jobs}'`, list it under `environment-nocache`, and
+  pass `-j"${MAXJOBS}"` to keep Zig inside the runner's resource budget
+  without changing the artifact key between runners.
 - `--system` also makes Ghostty prefer dynamically linked system libraries.
   Those libraries must be explicit element dependencies even when their Zig
   source tarballs are staged. In particular, fdsdk's

@@ -580,6 +580,10 @@ config:
       for dep in zig-deps/* zig-deps-git/*; do
         echo "Fetching: $dep"
         if hash="$(zig fetch "$dep")"; then
+          # Zig 0.17 leaves the unpacked fetch directory behind when its own
+          # cleanup reports DirNotEmpty. Without this, one full copy of every
+          # staged package accumulates under /tmp.
+          rm -rf "$ZIG_GLOBAL_CACHE_DIR/tmp"
           work="/tmp/zig-normalize/$hash"
           rm -rf "$work"
           mkdir -p "$work"
@@ -599,16 +603,22 @@ config:
 
           rm "$ZIG_GLOBAL_CACHE_DIR/p/$hash.tar.gz"
           normalized_hash="$(zig fetch "$package_root")"
+          rm -rf "$ZIG_GLOBAL_CACHE_DIR/tmp"
           if [ "$normalized_hash" != "$hash" ]; then
             echo "ERROR: normalizing $dep changed $hash to $normalized_hash" >&2
             exit 1
           fi
           tar -xzf "$ZIG_GLOBAL_CACHE_DIR/p/$hash.tar.gz" -C /tmp/zig-packages
+          rm "$ZIG_GLOBAL_CACHE_DIR/p/$hash.tar.gz"
           rm -rf "$work"
         else
+          rm -rf "$ZIG_GLOBAL_CACHE_DIR/tmp"
           echo "WARNING: zig fetch failed for $dep" >&2
         fi
       done
+      # --system reads the unpacked package directory, not Zig's fetch cache.
+      rm -rf "$ZIG_GLOBAL_CACHE_DIR" /tmp/zig-normalize
+      mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
 
   install-commands:
     - |
