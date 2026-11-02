@@ -335,12 +335,14 @@ passes only when a 14-letter dictionary word is rejected *as a dictionary word*.
 
 **The real fix is upstream, one line.** Add `bootstrap/gzip.bst` to `cracklib.bst`'s
 `runtime-depends:`, next to the existing `bootstrap/grep.bst # needed for
-create-cracklib-dict`. Upstream already fixed half of this class once. krytis carries no
+create-cracklib-dict`. The gap dates from fdsdk !14813, which swapped `bootstrap-import.bst`
+for `runtime-minimal.bst` and re-added grep but not gzip. krytis carries no
 override for it: overriding `components/cracklib.bst` means mirroring an fdsdk element,
 which then needs its own drift check (see `mise run gnome-disk-utility-check`), and the
-gate already stops a regression from shipping. Nothing has been filed on freedesktop-sdk,
-by maintainer decision. #1041 tracks the upstream fix. After a junction bump, check
-whether `cracklib.bst` gained the dependency and close #1041 if so.
+gate already stops a regression from shipping. Reported upstream as
+[freedesktop-sdk#2097](https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/work_items/2097)
+(open, no MR, as of 2026-11-02). #1041 tracks it. After a junction bump, check whether
+`cracklib.bst` gained the dependency and close #1041 if so.
 
 **Inventory of the rest** (2026-09-30, fdsdk 26.08.2). Dump `%{public}` for the whole
 graph with `mise run bst show --deps all --format $'@@ELEM %{name}\n%{public}'
