@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Sign the published krytis image + OCI referrers with cosign keyless/OIDC (#60)"
+#MISE description="Sign the published krytis image + OCI referrers with cosign keyless/OIDC (#60), and the image with the static key hosts enforce (#418)"
 #USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path the signed artifacts live under"
 #USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Digest file written by mise run push — read image_digest/sbom_digest/vuln_digest from here when the flags below are not given"
 #USAGE flag "--image-digest <digest>" help="sha256 digest of the pushed image manifest — required unless present in --digest-file, or --only referrers"
@@ -14,6 +14,13 @@
 # this repo or as a secret. Locally (no GHA ambient credential), cosign
 # falls back to an interactive browser-based Sigstore OIDC login: usable,
 # but the CI path is the intended primary use per #380.
+#
+# The image (not the referrers) also gets a second signature from the static
+# key in Proton Pass (#418): hosts can't verify the keyless one, because
+# policy.json has no way to match a GitHub Actions identity. It is written in
+# cosign's legacy `.sig`-tag format, the only one containers/image finds, and
+# without it the host would refuse the image. docs/skills/signing.md
+# § Static-key signature (#418) has the experiment behind both points.
 set -euo pipefail
 
 REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
@@ -65,32 +72,57 @@ echo "$TOKEN" | cosign login ghcr.io --username "$GH_USER" --password-stdin
 # Signing a digest twice only adds a second signature; verification accepts
 # either.
 SIGN_ATTEMPTS=3
+# sign_ref <label> <digest> <keyless|static>
 sign_ref() {
-    local label="$1" digest="$2" attempt
+    local label="$1" digest="$2" kind="$3" attempt ok
     for attempt in $(seq 1 "$SIGN_ATTEMPTS"); do
-        echo "==> Signing ${label} (${REGISTRY}@${digest}), attempt ${attempt}/${SIGN_ATTEMPTS}..."
-        if cosign sign -y "${REGISTRY}@${digest}"; then
-            echo "==> Signed ${label}"
+        echo "==> Signing ${label} (${kind}, ${REGISTRY}@${digest}), attempt ${attempt}/${SIGN_ATTEMPTS}..."
+        if [[ "$kind" == static ]]; then
+            # Per-command env, so the key reaches cosign and no other process.
+            COSIGN_PRIVATE_KEY="$STATIC_KEY" COSIGN_PASSWORD="" cosign sign -y \
+                --key env://COSIGN_PRIVATE_KEY \
+                --new-bundle-format=false --use-signing-config=false \
+                "${REGISTRY}@${digest}" && ok=1 || ok=0
+        else
+            cosign sign -y "${REGISTRY}@${digest}" && ok=1 || ok=0
+        fi
+        if [[ "$ok" -eq 1 ]]; then
+            echo "==> Signed ${label} (${kind})"
             return 0
         fi
         if [[ "$attempt" -lt "$SIGN_ATTEMPTS" ]]; then
-            echo "==> Signing ${label} failed, retrying in $((attempt * 30))s..." >&2
+            echo "==> Signing ${label} (${kind}) failed, retrying in $((attempt * 30))s..." >&2
             sleep $((attempt * 30))
         fi
     done
-    echo "==> ERROR: signing ${label} failed after ${SIGN_ATTEMPTS} attempts" >&2
+    echo "==> ERROR: signing ${label} (${kind}) failed after ${SIGN_ATTEMPTS} attempts" >&2
     return 1
 }
 
 if [[ "$ONLY" != referrers ]]; then
-    sign_ref "image" "$IMAGE_DIGEST"
+    # Fetch the static key before anything is signed, and check it is the one
+    # cosign.pub names: a vault key that no longer matches the committed public
+    # key would sign images every host then refuses.
+    if ! STATIC_KEY="$(fnox get COSIGN_PRIVATE_KEY)" || [[ -z "$STATIC_KEY" ]]; then
+        echo "==> ERROR: could not read COSIGN_PRIVATE_KEY through fnox — is pass-cli logged in?" >&2
+        exit 1
+    fi
+    if ! cmp -s <(openssl pkey -pubin -in cosign.pub -outform DER) \
+                <(COSIGN_PRIVATE_KEY="$STATIC_KEY" COSIGN_PASSWORD="" \
+                      cosign public-key --key env://COSIGN_PRIVATE_KEY | openssl pkey -pubin -outform DER); then
+        echo "==> ERROR: the vault's COSIGN_PRIVATE_KEY does not match cosign.pub" >&2
+        exit 1
+    fi
+    sign_ref "image" "$IMAGE_DIGEST" keyless
+    sign_ref "image" "$IMAGE_DIGEST" static
+    unset STATIC_KEY
 fi
 if [[ "$ONLY" != image ]]; then
     # Attempt both referrers even when the first fails, so one bad signature
     # does not leave the other unsigned too; fail at the end.
     failed=0
-    [[ -n "$SBOM_DIGEST" ]] && { sign_ref "SBOM" "$SBOM_DIGEST" || failed=1; }
-    [[ -n "$VULN_DIGEST" ]] && { sign_ref "vulnerability report" "$VULN_DIGEST" || failed=1; }
+    [[ -n "$SBOM_DIGEST" ]] && { sign_ref "SBOM" "$SBOM_DIGEST" keyless || failed=1; }
+    [[ -n "$VULN_DIGEST" ]] && { sign_ref "vulnerability report" "$VULN_DIGEST" keyless || failed=1; }
     if [[ "$failed" -ne 0 ]]; then
         echo "==> ERROR: at least one OCI referrer is unsigned" >&2
         exit 1

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+#MISE description="One-time: generate the static cosign key pair hosts will enforce (#418), store it in Proton Pass and write cosign.pub"
+
+# Run by a human, once per key. It creates the vault item fnox.toml's
+# COSIGN_PRIVATE_KEY reads, then writes cosign.pub to the repo root for you to
+# commit. Custody is the same as the six UEFI keys: the private key exists only
+# in the Proton Pass vault, and CI reaches it through the one PROTON_PASS_PAT
+# secret (docs/skills/signing.md § Static-key signature (#418)).
+#
+# Item shape: a Proton Pass *note* whose note body is the PEM. fnox's provider
+# is read-only, so the item is created with pass-cli, from a JSON template on
+# stdin (a key passed as an argument would show in the process list). A custom
+# item looks like the obvious choice and doesn't work: template fields land in
+# a section, `pass://vault/item/field` cannot address section fields, and
+# `pass-cli item update --field` (which creates top-level fields) takes the
+# value on the command line.
+#
+# The key has an empty password. The vault is what protects it, exactly as for
+# the UEFI keys (generated with `openssl -nodes`); a password stored beside the
+# key would add a second secret to fetch and protect nothing.
+#
+# Refuses to run when either half already exists. A second key pair would
+# silently fork the trust chain: hosts would keep trusting the committed
+# cosign.pub while CI signed with the new key. Rotation is a deliberate
+# procedure (signing.md), not a re-run of this task.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+ITEM="Cosign Signing Key"
+VAULT="$(grep -oP '^vault = "\K[^"]+' fnox.toml)"
+
+if [[ -e cosign.pub ]]; then
+    echo "ERROR: cosign.pub already exists — a key pair is already in use. See" >&2
+    echo "  docs/skills/signing.md § Static-key signature (#418) before generating another." >&2
+    exit 1
+fi
+
+if ! pass-cli info >/dev/null 2>&1; then
+    echo "ERROR: no Proton Pass session. Run 'pass-cli login' first." >&2
+    exit 1
+fi
+
+if pass-cli item view --vault-name "$VAULT" --item-title "$ITEM" >/dev/null 2>&1; then
+    echo "ERROR: vault '${VAULT}' already has an item '${ITEM}'. Refusing to create a" >&2
+    echo "  second key. Restore cosign.pub from git history instead, or follow the" >&2
+    echo "  rotation procedure in docs/skills/signing.md." >&2
+    exit 1
+fi
+
+# tmpfs when available, so the private key never reaches a disk.
+TMP_BASE=/dev/shm
+[[ -d "$TMP_BASE" && -w "$TMP_BASE" ]] || TMP_BASE="${TMPDIR:-/tmp}"
+WORK="$(mktemp -d "${TMP_BASE}/cosign-keygen.XXXXXX")"
+chmod 700 "$WORK"
+cleanup() {
+    shred -u "$WORK"/* 2>/dev/null || true
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+export COSIGN_PASSWORD=""
+
+echo "==> Generating cosign key pair..."
+cosign generate-key-pair --output-key-prefix "${WORK}/cosign" >/dev/null 2>&1
+
+echo "==> Storing the private key in Proton Pass as note '${VAULT}/${ITEM}'..."
+jq -n --arg title "$ITEM" --rawfile key "${WORK}/cosign.key" '{title: $title, note: $key}' \
+    | pass-cli item create note --vault-name "$VAULT" --from-template - >/dev/null
+
+# Round-trip through fnox, the path CI uses. Only write cosign.pub once the
+# vault copy provably derives it, so a truncated or mangled note fails here
+# instead of in the first publish.
+echo "==> Reading the key back through fnox..."
+COSIGN_PRIVATE_KEY="$(fnox get COSIGN_PRIVATE_KEY)"
+export COSIGN_PRIVATE_KEY
+cosign public-key --key env://COSIGN_PRIVATE_KEY > "${WORK}/derived.pub"
+unset COSIGN_PRIVATE_KEY
+
+if ! cmp -s <(openssl pkey -pubin -in "${WORK}/cosign.pub" -outform DER) \
+            <(openssl pkey -pubin -in "${WORK}/derived.pub" -outform DER); then
+    echo "ERROR: the key read back from Proton Pass does not match the one generated." >&2
+    echo "  Delete the '${ITEM}' note in vault '${VAULT}' and re-run." >&2
+    exit 1
+fi
+
+cp "${WORK}/cosign.pub" cosign.pub
+echo "==> Done. '${VAULT}/${ITEM}' verified through fnox; wrote cosign.pub."
+echo "    Commit cosign.pub. The private key is not on disk anywhere."
