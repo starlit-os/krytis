@@ -18,15 +18,15 @@
 > |---|---|
 > | CI workflow that publishes + signs **on every push to `main`** | **Diverged** — `publish.yml` runs on a weekday cron (`30 3 * * 1-5`) and `workflow_dispatch`, not on push |
 > | **Dual** signatures: keyless (OIDC) + static key pair | **Yes, since #418** — the image gets both; the referrers stay keyless only. The static key lives in Proton Pass, not GitHub secrets (§ 3 below is superseded; see `docs/skills/signing.md` § Static-key signature (#418)) |
-> | Host-side `bootc`/`policy.json` enforcement using the static key | **Not yet** — the second half of #418; § 4's `/etc/containers` paths are wrong (`docs/skills/signing.md` § Where a `policy.json` has to live, and why the sketched path is wrong) |
+> | Host-side `bootc`/`policy.json` enforcement using the static key | **Yes, since #418** — `config/container-sigpolicy.bst`, under `/usr/share/containers` rather than § 4's `/etc` paths, with no adoption step (`docs/skills/signing.md` § Host enforcement (#418)) |
 > | Docs page for manual/CI verification via the keyless signature | **Yes** — `docs/skills/signing.md` |
 > | `mise` tasks for key generation and manual verification | **Mostly** — `mise run cosign-generate-keys` (#418, human-run once) and `mise/tasks/sign` exist; no general verify task. `mise/tasks/promote` (#1458) verifies both image signatures before it moves `:latest`/`:sealed`; referrer signatures are verified inline in `publish.yml`. Note `mise run generate-keys`/`pull-keys` are the **secure boot** PK/KEK/db keys, unrelated to cosign. |
 > | Step 10's "verify fails the publish" | **Yes, since #1458** — `publish.yml` pushes only the version tag, and `:latest`/`:sealed` move only after the image signature verifies. Before that, `mise run push` published `:latest` first and signing was best-effort. |
 >
 > Section **3. Key management** was decided differently: on 2026-11-02 the owner chose
 > the static key (#418, option 1), with custody in Proton Pass. Section **4. Host-side
-> enforcement** is still an unimplemented proposal, and its file paths need the fixes
-> above before anyone builds it.
+> enforcement** was built, but differs from the sketch in where the files go and in
+> needing no opt-in; § 4 says how.
 
 ## Problem
 
@@ -198,7 +198,21 @@ measured with cosign 3.1.4. Current custody, format and rotation:
 4. `cosign.key` itself is never committed (mirrors `files/boot-keys/`
    already being `.gitignore`d for the secure-boot key material).
 
-### 4. Host-side enforcement — new element — **not implemented, tracked in #418**
+### 4. Host-side enforcement — new element — **built in #418, differently**
+
+Built as `elements/config/container-sigpolicy.bst`. Three things differ from the
+2026-07-12 proposal below, which is kept as the record:
+
+- The files go under `/usr/share` (`/usr/share/containers/policy.json`,
+  `/usr/share/containers/registries.d/krytis.yaml`, `/usr/share/pki/containers/krytis.pub`),
+  and fdsdk's accept-all `/etc/containers/policy.json` is deleted, because `/etc` is searched
+  first. Existing hosts lose their copy through the `/etc` merge on upgrade (observed).
+- Every transport is listed with `insecureAcceptAnything`, not only the krytis scope.
+- **There is no adoption path.** bootc's composefs backend applies the policy on every
+  pull; `--enforce-container-sigpolicy` is an ostree-path flag. The `bootc switch` below is
+  unnecessary.
+
+Current behaviour, gate and VM test: `docs/skills/signing.md` § Host enforcement (#418).
 
 No existing element manages `/etc/containers/` config. This proposed a new
 `elements/core/container-sigpolicy.bst` (never written) shipping:

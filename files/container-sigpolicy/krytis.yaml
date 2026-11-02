@@ -1,0 +1,6 @@
+# Read cosign's legacy `.sig` tag for krytis images, where the static-key
+# signature policy.json requires lives (#418). Without this, containers/image
+# looks for no signatures at all and refuses every krytis image.
+docker:
+  ghcr.io/starlit-os/krytis:
+    use-sigstore-attachments: true

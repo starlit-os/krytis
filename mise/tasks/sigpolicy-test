@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+#MISE description="Boot the image and assert bootc refuses a krytis image without the static-key signature and accepts one with it (#418); --upgrade-from also proves an existing host drops fdsdk's /etc policy on upgrade"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag carrying the policy (install target, or the upgrade target with --upgrade-from)"
+#USAGE flag "--reuse-disk <path>" help="Boot a copy of this already-installed raw disk instead of running generate-disk (skips the only step that needs root)"
+#USAGE flag "--accept <ref>" default="ghcr.io/starlit-os/krytis:latest" help="Published ref that must carry the static-key signature; bootc must accept it"
+#USAGE flag "--refuse <ref>" default="ghcr.io/starlit-os/krytis@sha256:b817c759281c289cde159c3d95d86da50f95bd20ff89757e6939578a6aae84e9" help="Published ref with only the keyless signature; bootc must refuse it. Default: 26.08.202611011748, the last :latest before #418"
+#USAGE flag "--upgrade-from <ref>" help="First install this published pre-policy image, then bootc switch to --image through a local registry and reboot, as every existing host will"
+#USAGE flag "--size <size>" default="30G" help="Disk size passed to generate-disk, which fallocates it on the host: room for the installed image plus every image the VM pulls"
+#USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys) and print its path"
+
+# What this proves on a booted krytis VM (#418):
+#
+#   1. The shipped policy is the one in force: /etc/containers/policy.json is
+#      gone and /usr/share/containers/policy.json is there. With --upgrade-from,
+#      on a system that had fdsdk's /etc copy and was upgraded the way hosts
+#      are, which is the only route by which existing machines get this.
+#   2. `bootc switch` to a published krytis digest that carries only the
+#      keyless signature fails with containers/image's "A signature was
+#      required" refusal, and nothing is staged.
+#   3. `bootc switch` to a digest with the static-key signature stages it.
+#
+# No opt-in flag is passed anywhere: bootc's composefs pull never sets
+# --insecure-policy, so the image's policy applies to every pull
+# (docs/skills/signing.md § Host enforcement (#418)). If 2 passes here, it
+# passes on every host.
+#
+# The refuse/accept refs are checked on the host first with cosign, so a
+# failure in the VM is about bootc and the policy, not about which signatures
+# the refs happen to carry.
+#
+# Provisioning follows oomd-test: SMBIOS credentials only, the installed disk is
+# never mutated, and only generate-disk needs root.
+
+# shellcheck disable=SC2015  # pass() cannot fail, so `A && pass || fail` is a true if/else
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+CLI_IMAGE=""; CLI_REUSE_DISK=""; CLI_ACCEPT=""; CLI_REFUSE=""; CLI_FROM=""; CLI_SIZE=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)        CLI_IMAGE="$2"; shift 2 ;;
+        --reuse-disk)   CLI_REUSE_DISK="$2"; shift 2 ;;
+        --accept)       CLI_ACCEPT="$2"; shift 2 ;;
+        --refuse)       CLI_REFUSE="$2"; shift 2 ;;
+        --upgrade-from) CLI_FROM="$2"; shift 2 ;;
+        --size)         CLI_SIZE="$2"; shift 2 ;;
+        --keep)         CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+ACCEPT="${CLI_ACCEPT:-${usage_accept:-ghcr.io/starlit-os/krytis:latest}}"
+REFUSE="${CLI_REFUSE:-${usage_refuse:-ghcr.io/starlit-os/krytis@sha256:b817c759281c289cde159c3d95d86da50f95bd20ff89757e6939578a6aae84e9}}"
+FROM="${CLI_FROM:-${usage_upgrade_from:-}}"
+SIZE="${CLI_SIZE:-${usage_size:-30G}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+if [ -n "${REUSE_DISK}" ] && [ ! -f "${REUSE_DISK}" ]; then
+    echo "ERROR: --reuse-disk file not found: ${REUSE_DISK}" >&2
+    exit 1
+fi
+if [ -n "${REUSE_DISK}" ] && [ -n "${FROM}" ]; then
+    echo "ERROR: --reuse-disk and --upgrade-from both pick the installed image; pass one." >&2
+    exit 1
+fi
+command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
+
+# Both refs as digests: the VM must pull exactly what cosign checked here.
+REPO="ghcr.io/starlit-os/krytis"
+resolve() { skopeo inspect --format '{{.Digest}}' "docker://$1"; }
+ACCEPT_DIGEST=$(resolve "${ACCEPT}") || { echo "ERROR: cannot resolve ${ACCEPT}" >&2; exit 1; }
+REFUSE_DIGEST=$(resolve "${REFUSE}") || { echo "ERROR: cannot resolve ${REFUSE}" >&2; exit 1; }
+
+echo "==> [0/6] Checking the refs' signatures on the host..."
+static_signed() { cosign verify --key cosign.pub --new-bundle-format=false "${REPO}@$1" >/dev/null 2>&1; }
+if ! static_signed "${ACCEPT_DIGEST}"; then
+    echo "==> ERROR: ${ACCEPT} (${ACCEPT_DIGEST}) has no signature that verifies against cosign.pub." >&2
+    echo "    The accept case needs an image publish.yml signed with the static key. Until one" >&2
+    echo "    exists this test can't run; pass --accept <ref> to name one." >&2
+    exit 1
+fi
+if static_signed "${REFUSE_DIGEST}"; then
+    echo "==> ERROR: ${REFUSE} (${REFUSE_DIGEST}) carries the static signature, so it can't test a refusal." >&2
+    exit 1
+fi
+echo "    accept ${ACCEPT_DIGEST}: static signature verifies"
+echo "    refuse ${REFUSE_DIGEST}: no static signature"
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-sigpolicy-test.XXXXXX)
+DISK="${WORKDIR}/test.raw"
+REG_NAME="krytis-sigpolicy-test-$$"
+FROM_TAG="localhost/krytis-sigpolicy-from:$$"
+
+QEMU_PID=""
+cleanup() {
+    [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
+    podman rm -f "${REG_NAME}" >/dev/null 2>&1 || true
+    podman untag "${FROM_TAG}" >/dev/null 2>&1 || true
+    if [ -n "${KEEP}" ]; then
+        echo "==> WORKDIR kept at ${WORKDIR}"
+    else
+        rm -rf "${WORKDIR}"
+    fi
+}
+trap cleanup EXIT
+trap 'echo "==> ABORTED at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+ssh-keygen -t ed25519 -N '' -C 'krytis sigpolicy-test root' -f "${WORKDIR}/id_root" -q
+
+if [ -n "${REUSE_DISK}" ]; then
+    echo "==> [1/6] Copying ${REUSE_DISK} (no install, no root)..."
+    cp --reflink=auto "${REUSE_DISK}" "${DISK}"
+elif [ -n "${FROM}" ]; then
+    echo "==> [1/6] Installing the pre-policy image ${FROM} → ${DISK}..."
+    # generate-disk moves the image with podman save/load, which can't take a
+    # digest reference ("Digest of source image's manifest would not match
+    # destination reference"), so it gets a local tag first.
+    podman pull -q "${FROM}" >/dev/null
+    podman tag "${FROM}" "${FROM_TAG}"
+    ./mise/tasks/generate-disk --image "${FROM_TAG}" --disk "${DISK}" --size "${SIZE}"
+else
+    echo "==> [1/6] Installing ${IMAGE} → ${DISK}..."
+    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size "${SIZE}"
+fi
+
+printf '[Unit]\nWants=sshd.service\n' > "${WORKDIR}/mu-dropin.conf"
+cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
+[Service]
+ImportCredential=krytis.sigpolicytest_root_keys
+ExecStart=
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile .ssh/authorized_keys ${CREDENTIALS_DIRECTORY}/krytis.sigpolicytest_root_keys"
+DROPIN
+# No GPU here, and the greeter compositor free-spins without one (#764).
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/true\nRestart=no\n' > "${WORKDIR}/greetd-dropin.conf"
+
+cred_b64() { base64 -w0 < "$1"; }
+. scripts/ovmf-paths.sh   # #458
+OVMF_CODE=$(ovmf_code_plain)
+cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"
+
+launch_qemu() {
+    qemu-system-x86_64 \
+        -enable-kvm -m "${VM_RAM:-8192}" -cpu host -smp "${VM_CPUS:-4}" \
+        -machine q35 \
+        -drive "file=${DISK},format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+        -device virtio-net-pci,netdev=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:krytis.sigpolicytest_root_keys=$(cred_b64 "${WORKDIR}/id_root.pub")" \
+        -display none \
+        -serial "file:${WORKDIR}/serial.log" \
+        -daemonize -pidfile "${WORKDIR}/qemu.pid"
+}
+. scripts/qemu-hostfwd.sh
+
+SSH_OPTS=()
+ROOT() { timeout "${ROOT_TIMEOUT:-120}" ssh "${SSH_OPTS[@]}" -o LogLevel=ERROR -i "${WORKDIR}/id_root" root@localhost "$@"; }
+boot_and_wait() {
+    qemu_launch_hostfwd 2366 launch_qemu
+    QEMU_PID=$(cat "${WORKDIR}/qemu.pid")
+    SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+              -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5)
+    local deadline=$((SECONDS + 300))
+    while [ "${SECONDS}" -lt "${deadline}" ]; do
+        timeout 10 ssh "${SSH_OPTS[@]}" -i "${WORKDIR}/id_root" root@localhost true 2>/dev/null && return 0
+        sleep 3
+    done
+    echo "==> FAIL: root SSH never came up within 300s." >&2
+    tail -40 "${WORKDIR}/serial.log" >&2 || true
+    exit 1
+}
+shutdown_vm() {
+    ROOT systemctl poweroff >/dev/null 2>&1 || true
+    for _ in $(seq 60); do kill -0 "${QEMU_PID}" 2>/dev/null || break; sleep 2; done
+    kill "${QEMU_PID}" 2>/dev/null || true
+    QEMU_PID=""
+}
+
+FAILED=0
+pass() { echo "    PASS  $1"; }
+fail() { echo "    FAIL  $1" >&2; FAILED=1; }
+
+echo "==> [2/6] Booting headless..."
+boot_and_wait
+ROOT 'bootc --version; skopeo --version' | sed 's/^/    /' || true
+
+if [ -n "${FROM}" ]; then
+    echo "==> [3/6] Upgrading the pre-policy system to ${IMAGE}, as an existing host would..."
+    [ "$(ROOT 'test -e /etc/containers/policy.json && echo yes || echo no')" = yes ] \
+        && pass "the pre-policy system has fdsdk's /etc/containers/policy.json" \
+        || fail "the pre-policy system has no /etc/containers/policy.json, so the upgrade proves nothing"
+    # A plain-http registry on the host, which QEMU user networking exposes to
+    # the guest as 10.0.2.2. The old policy accepts anything, which is exactly
+    # what a host upgrading into this image runs under.
+    REG_PORT=$(for p in $(seq 5310 5399); do hostfwd_port_free "$p" && { echo "$p"; break; }; done)
+    podman run -d --rm --name "${REG_NAME}" -p "${REG_PORT}:5000" docker.io/library/registry:2 >/dev/null
+    sleep 2
+    podman push -q --tls-verify=false "${IMAGE}" "localhost:${REG_PORT}/krytis:sigpolicy-test"
+    ROOT "mkdir -p /etc/containers/registries.conf.d && printf '[[registry]]\nlocation = \"10.0.2.2:${REG_PORT}\"\ninsecure = true\n' > /etc/containers/registries.conf.d/99-sigpolicy-test.conf"
+    ROOT_TIMEOUT=3600 ROOT "bootc switch 10.0.2.2:${REG_PORT}/krytis:sigpolicy-test" 2>&1 | tail -5 | sed 's/^/    | /'
+    shutdown_vm
+    echo "    rebooting into the upgraded deployment..."
+    boot_and_wait
+fi
+
+echo "==> [4/6] Which policy is in force..."
+[ "$(ROOT 'test -e /etc/containers/policy.json && echo yes || echo no')" = no ] \
+    && pass "/etc/containers/policy.json is absent" \
+    || fail "/etc/containers/policy.json exists and shadows the shipped policy: $(ROOT 'cat /etc/containers/policy.json' | tr -d '\n' | cut -c1-120)"
+[ "$(ROOT 'test -e /usr/share/containers/policy.json && echo yes || echo no')" = yes ] \
+    && pass "/usr/share/containers/policy.json is present" \
+    || fail "/usr/share/containers/policy.json is missing"
+BOOTED=$(ROOT "bootc status --format=json" | python3 -c 'import json,sys; s=json.load(sys.stdin)["status"]; print(s["booted"]["image"]["imageDigest"])')
+echo "    booted ${BOOTED}"
+
+echo "==> [5/6] bootc switch to a keyless-only digest (must be refused)..."
+REFUSE_OUT=$(ROOT_TIMEOUT=900 ROOT "bootc switch ${REPO}@${REFUSE_DIGEST} 2>&1; echo \"rc=\$?\"" || true)
+printf '%s\n' "${REFUSE_OUT}" | tail -4 | sed 's/^/    | /'
+case "${REFUSE_OUT}" in
+    *"rc=0"*) fail "bootc switch to ${REFUSE_DIGEST} succeeded" ;;
+    *"A signature was required, but no signature exists"*) pass "refused: containers/image found no acceptable signature" ;;
+    *) fail "bootc switch failed, but not with the signature refusal (network?)" ;;
+esac
+STAGED=$(ROOT "bootc status --format=json" | python3 -c 'import json,sys; s=json.load(sys.stdin)["status"]; st=s.get("staged"); print(st["image"]["imageDigest"] if st else "none")')
+[ "${STAGED}" = none ] && pass "nothing is staged after the refusal" || fail "a deployment was staged: ${STAGED}"
+
+echo "==> [6/6] bootc switch to the static-signed digest (must be accepted; pulls the whole image)..."
+ACCEPT_OUT=$(ROOT_TIMEOUT=3600 ROOT "bootc switch ${REPO}@${ACCEPT_DIGEST} 2>&1; echo \"rc=\$?\"" || true)
+printf '%s\n' "${ACCEPT_OUT}" | tail -4 | sed 's/^/    | /'
+case "${ACCEPT_OUT}" in
+    *"rc=0"*) pass "bootc switch to ${ACCEPT_DIGEST} succeeded" ;;
+    *) fail "bootc switch to the signed digest failed" ;;
+esac
+STAGED=$(ROOT "bootc status --format=json" | python3 -c 'import json,sys; s=json.load(sys.stdin)["status"]; st=s.get("staged"); print(st["image"]["imageDigest"] if st else "none")')
+[ "${STAGED}" = "${ACCEPT_DIGEST}" ] && pass "staged ${ACCEPT_DIGEST}" || fail "staged ${STAGED}, want ${ACCEPT_DIGEST}"
+
+shutdown_vm
+if [ "${FAILED}" -ne 0 ]; then
+    echo "==> sigpolicy-test FAILED"
+    exit 1
+fi
+echo "==> sigpolicy-test PASSED"

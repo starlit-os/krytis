@@ -89,6 +89,7 @@ element does, its row's text is a review question.
 | `core/efibootmgr.bst` | efibootmgr. |
 | `config/bootc.bst` | bootc install config, kargs (root rw, plymouth, FIDO2 LUKS) and `prepare-root.conf`. |
 | `config/secureboot-loader-conf.bst` | First-boot oneshot that makes systemd-boot auto-enroll secure-boot keys on real hardware. |
+| `config/container-sigpolicy.bst` | Container signature policy: `bootc` refuses `ghcr.io/starlit-os/krytis` images without the static-key signature (#418). Replaces fdsdk's accept-all `/etc/containers/policy.json`. |
 
 #### `stacks/codecs.bst`
 
