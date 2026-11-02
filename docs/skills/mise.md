@@ -10,7 +10,7 @@ recipes; see [`workflow.md`](workflow.md) § Retargeted PRs Skip CI), not this o
 ```bash
 mise bst build stacks/base-system.bst             # build an element
 mise bst show --deps all stacks/bootc.bst         # show dep graph
-mise bst source track core/bootupd.bst            # track new refs
+mise bst source track core/bootc.bst              # track new refs
 mise validate                                      # check all key element graphs resolve
 mise generate-image-version                        # update include/image-version.yml from git
 mise load-image                                    # bst build + podman load → localhost/krytis-input:latest

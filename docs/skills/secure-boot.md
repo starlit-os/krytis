@@ -550,9 +550,11 @@ that krytis never reached and deliberately did not port — do not go looking fo
 **2. `targetImgref`, not just the store key.** `live/src/configure-live-krytis.sh` bakes
 one ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
 `local_imgref`. Change only the embedded *content* and the install succeeds while
-`targetImgref` still points at `…/krytis:latest` — so the first `bootc upgrade` on
-the freshly sealed system pulls the **unsigned** image, overwrites the signed UKI
-and signed systemd-boot, and the enrolled firmware refuses to boot it. Change only
+`targetImgref` still points at `…/krytis:latest`. The first `bootc upgrade` on the
+freshly sealed system then pulls the **unsigned** image and installs its unsigned UKI,
+and the enrolled firmware refuses to boot it. (bootc writes only the UKI. The loader on
+the ESP is a separate story, see § The ESP's systemd-boot is updated by systemd, not
+bootc — and not on a LUKS root.) Change only
 `payload_ref` and `local_imgref` no longer resolves in the offline store, failing
 the install immediately. `PAYLOAD_REF` moves both together; `build-iso --sealed`
 sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
@@ -1199,6 +1201,62 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   `bootc upgrade` never rewrites it. #447 decided against OS-side replacement writes
   (`docs/secure-boot-enrollment.md` § The keys never rotate (#447)), so clearing keys
   and re-enrolling is the only way.
+
+## The ESP's systemd-boot is updated by systemd, not bootc — and not on a LUKS root
+
+Measured for #1328 on 2026-11-02. bootc v1.17.3 never writes `EFI/systemd/` or
+`EFI/BOOT/`. `install_systemd_boot()` (`bootctl install`) runs only at install time.
+`bootc upgrade` / `switch` → `do_upgrade()` → `setup_composefs_uki_boot(Upgrade)` writes
+the UKI to `EFI/Linux/bootc/`, the addons and `loader/entries`, nothing else.
+
+The loader is refreshed by systemd's own **`systemd-boot-update.service`** (enabled by
+`90-systemd.preset`), which runs `bootctl --variables=no --graceful update` early on
+every boot. After an upgrade, that is the *next* boot, running the new deployment's
+bootctl against the new `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`, the binary
+the Containerfile signed. Measured with `mise run upgrade-test --keep` on a
+`generate-disk` install (plain btrfs, no LUKS), switching from
+`26.08.202610111750-sealed` (systemd-boot 261.3) to `26.08.202611011748-sealed` (262.1).
+Both `EFI/systemd/systemd-bootx64.efi` and `EFI/BOOT/BOOTX64.EFI` went from 261.3 to
+262.1, byte-identical to the new image's signed binary, and the firmware accepted it
+under enforcement. The old loader was kept as `EFI/systemd/systemd-boot-fallbackx64.efi`,
+which is v262 bootctl's update rotation (`src/bootctl/bootctl-install.c`). That fallback
+file shows the boot-time unit did the copy, not bootc.
+
+Two limits apply even when it works:
+
+- **The update is version-gated.** `version_check()` skips a loader whose version in
+  place is equal or newer, and `--graceful` turns the skip into exit 0. A same-version
+  re-sign never reaches an installed machine. That's acceptable because #447 decided
+  krytis's keys never rotate, so a re-sign never has to propagate. The gate also stops a
+  rollback from downgrading the loader. SBAT bumps don't matter here: SBAT is enforced by
+  shim, and krytis's chain has no shim.
+- **It only acts when `/EFI/systemd/` is non-empty.** That holds for bootc installs.
+
+**On a LUKS root it never runs at all.** The unit logs `Couldn't find EFI system
+partition, skipping.` and exits 0, so nothing flags it. On `adora` (ThinkPad, FIDO2
+LUKS, image `26.08.202611011748`) the firmware still boots systemd-boot **260.2** from
+`\EFI\BOOT\BOOTX64.EFI` (`bootctl status`) while the image ships 262.1. Nothing mounts
+the ESP: `boot.automount` is `not-found`. The cause is read from source and
+consistent with both machines. A root-run `SYSTEMD_LOG_LEVEL=debug
+/usr/lib/systemd/system-generators/systemd-gpt-auto-generator` would confirm it and has
+not been run yet:
+
+1. bootc's initramfs (`crates/initramfs/src/lib.rs`) symlinks
+   `/run/systemd/volatile-root` to the device under `/sysroot`. On LUKS that is
+   `/dev/block/253:0`, the dm-crypt mapping (`readlink` on `adora`).
+2. systemd v262's `blockdev_get_root()` (`src/shared/blockdev-util.c`) takes
+   `volatile-root` **as is**. Only its other branch (`get_block_device_harder`) traces
+   dm-crypt to the backing partition.
+3. `systemd-gpt-auto-generator`'s `enumerate_partitions()` dissects the dm device. It has
+   no GPT, so it returns `-ENOPKG` silently, and no ESP mount is generated.
+
+On a plain root, `volatile-root` names the partition, the generator finds the disk's
+GPT, and `boot.mount` ("EFI System Partition Automount") appears in the boot log.
+
+So the installs that matter most, encrypted ones, keep their install-time loader
+forever. Anything that has to rewrite the loader, or check it (`dbx-append`'s ESP scan
+already reads the ESP with mtools via `LoaderDevicePartUUID` for exactly this reason),
+must find the ESP from `LoaderDevicePartUUID` itself and not trust `/boot` or `/efi`.
 
 ## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
 
