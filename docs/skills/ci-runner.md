@@ -819,6 +819,13 @@ its local cache and would otherwise re-report a flaky failure instantly.
    graph. `mise run validate` still resolves it.
 3. **Fork PRs are skipped.** They get no secrets, so no bow token. That is why the gate is
    not a required check.
+4. **The image gates never run.** `mise run build` ends with `lint`,
+   `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check`, and all of
+   them need the assembled image, so only `publish` runs them. A bump that breaks shipped
+   config therefore merges green. The umbriel bump in #1450 (`auto/track-umbriel`, 2026-11-01)
+   passed every check and broke publish run 41437757676 the next morning (fixed in #1485).
+   For a component whose config krytis ships, run the gate locally before merging its bump.
+   `docs/skills/desktop.md` § Validating the shipped Umbriel config shows how for umbriel.
 
 Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` and
 `reopened` trigger the gate (see below).
