@@ -310,7 +310,8 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   `src/config/fields_keybinds.cpp` and `config_merge.cpp` at the pinned ref).
   To switch an upstream bind off, re-point it at a no-op (`spawn true`). Every
   upstream bind krytis has no niri counterpart for is still live — `Mod+T`,
-  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad move/restore pair.
+  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, `Mod+Alt+Left`/`Right` (previous/next tab),
+  and the scratchpad move/restore pair.
   They are enumerated in `files/umbriel/binds.toml`'s header so the divergence
   is auditable.
 - **Seven upstream binds are overridden.** Five mean something different under
@@ -343,12 +344,11 @@ familiar key that behaves differently is worse than one that does nothing.
 
 | niri | gap |
 |---|---|
-| `toggle-column-tabbed-display` (`Mod+W`) | no tabbed columns at all — zero `tab` actions, zero schema keys |
 | `center-visible-columns` (`Mod+Ctrl+C`) | only `column-center`, which is niri's `center-column` (`Mod+C`) |
 | `reset-window-height` (`Mod+Ctrl+R`) | secondary extent can cycle and modify, not reset |
 | `screenshot-window` (`Alt+Print`) | no window capture at keybind level: umbriel has no screenshot action, and `noctalia msg` offers only `screenshot-region`, `screenshot-fullscreen [pick\|all]` and `screenshot-annotate` |
-| `urgent-color` | no urgency colour anywhere in the schema |
-| `tab-indicator`, `recent-windows` | subsystems do not exist |
+| `urgent-color` on focus-ring / border | `[colors.border]` has no urgency colour; the schema's only one is `colors.tab_bar.urgent` |
+| `recent-windows` | subsystem does not exist |
 | `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` exposes only `match.namespace` + four blur keys; `colors.backdrop` is a colour, not placement |
 | `draw-border-with-background false` | no equivalent |
 | `animations { slowdown 2.0 }` | no global multiplier; 54 separate `animation.*.duration_ms` keys |
@@ -357,6 +357,16 @@ familiar key that behaves differently is worse than one that does nothing.
 `Mod+Ctrl+F` is niri's `expand-column-to-available-width`, also absent — but
 upstream already binds that key to `window-toggle-maximize` and a table merge
 cannot remove a bind, so it is left as upstream set it.
+
+**Tabbed columns are no longer a gap.** Upstream `ec677ac8` (2026-10-02) added tab groups,
+and its packaged config binds `Mod+W` to `column-toggle-tabbed`, which krytis inherits as
+niri's `toggle-column-tabbed-display`. In a column with no groups it tabs the whole column,
+as niri does (upstream `docs/user/layout.md` § Tab groups). The packaged config also binds
+`Mod+Alt+Left`/`Right` to the previous/next tab. Those keys have no niri counterpart and don't
+clash with krytis's `Mod+Alt+L`. niri's `tab-indicator` colours are **not** ported. umbriel styles
+the bar through the eight `colors.tab_bar.*` keys, and neither `colors.toml` nor noctalia's
+Umbriel template sets them, so the bar keeps upstream's default palette until someone decides
+which niri colour maps to which key.
 
 #### noctalia's Umbriel template: a schema mismatch, fixed by the v5.2.0 bump
 

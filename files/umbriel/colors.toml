@@ -29,9 +29,19 @@ unfocused = "#232136ff"
 outer = "#232136ff"
 
 # NOT PORTED, no umbriel equivalent exists (krytis#982):
-#   - urgent-color on focus-ring / border / tab-indicator (niri "#eb6f92").
-#     umbriel has no urgency colour anywhere in `umbriel config schema`.
-#   - tab-indicator { ... }. umbriel has no tabbed column display at all --
-#     zero `tab` actions in `umbriel msg --help`, zero tab keys in the schema.
+#   - urgent-color on focus-ring / border (niri "#eb6f92"). umbriel's only
+#     urgency colour is colors.tab_bar.urgent (see below); [colors.border]
+#     has none.
 #   - recent-windows { highlight { ... } }. No such subsystem; umbriel's
 #     window-focus-last / window-focus-next carry no visual switcher.
+#
+# NOT PORTED YET, an equivalent now exists:
+#   - tab-indicator { active-color "#ea9a97" inactive-color "#bb1913"
+#     urgent-color "#eb6f92" }. umbriel gained tabbed columns upstream in
+#     ec677ac8 (2026-10-02), styled by [colors.tab_bar]. That table has eight
+#     keys: active, active_unfocused, background, text, urgent and a _text
+#     colour for three of them. niri's indicator is a thin strip with three
+#     colours, so which tab_bar key each one maps to is a design call that
+#     nobody has made. Until it is, the tab bar renders in upstream's
+#     default colours. noctalia's Umbriel template does not set
+#     [colors.tab_bar] either, so the live palette doesn't change that.

@@ -14,7 +14,8 @@
 #   Mod+P        window-toggle-pinned
 #   Mod+F1       window-focus-next
 #   Mod+Ctrl+F   window-toggle-maximize  -- see the gap note at the bottom
-#   Mod+Shift+1..9  window-move-to-workspace:N (niri uses Mod+Ctrl+N)
+#   Mod+Shift+1..9  window-move-to-workspace N (niri uses Mod+Ctrl+N)
+#   Mod+Alt+Left / Mod+Alt+Right  column-focus-tab-previous / -next
 #   Mod+Shift+Space / Mod+Ctrl+Space  scratchpad move/restore.
 #     Note Mod+Space and Mod+Tab are re-bound below to noctalia, so
 #     `scratchpad-toggle` and `scratchpad-focus-next` are left without a key;
@@ -232,13 +233,19 @@
 "Mod+Ctrl+Shift+WheelUp" = "column-move-left"
 "Mod+Ctrl+Shift+WheelDown" = "column-move-right"
 
+# ── Tabbed columns ───────────────────────────────────────────────────────────
+# niri: `Mod+W { toggle-column-tabbed-display; }`. Upstream's packaged config
+# binds Mod+W to column-toggle-tabbed (upstream ec677ac8, 2026-10-02), so it is
+# not restated. In a column with no tab groups it tabs the whole column, as
+# niri does. Pressed on a tab, it stacks the group's windows again. Upstream
+# also binds Mod+Alt+Left/Right to the previous/next tab. niri has no such
+# keys, and Mod+Alt+L (lock, above) is a different key.
+
 # ── Deliberately unbound: niri actions with no umbriel equivalent ─────────────
 # Leaving these keys free is the point. Rebinding them to the nearest available
 # action would give a niri user a key that looks familiar and behaves
 # differently, which is worse than a key that does nothing. See krytis#982.
 #
-#   Mod+W        toggle-column-tabbed-display. umbriel has no tabbed column
-#                display at all -- no `tab` action, no schema key.
 #   Mod+Ctrl+C   center-visible-columns. umbriel has only column-center, which
 #                is niri's center-column and is bound to Mod+C above.
 #   Mod+Ctrl+R   reset-window-height. umbriel can cycle and modify the
