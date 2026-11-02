@@ -114,7 +114,7 @@ oo7 + noctalia's native prompter, tracking the measured risks and their mitigati
 
 | Accepted | Consequence | Workaround in tree | Exit condition |
 |---|---|---|---|
-| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | upstream reports locked items from `SearchItems`. Reported as linux-credentials/oo7#614 |
+| **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | **none expected — accepted as a lasting oo7 limit on 2026-11-02.** Reported as linux-credentials/oo7#614. A maintainer replied on 2026-10-26 that the server cannot tell whether a locked item's attributes match a search. The issue was still open, with no linked PR, as of 2026-11-02 |
 | ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
 | **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | prompter upstreamed to `noctalia-dev/noctalia` |
@@ -533,12 +533,17 @@ read-shaped and easy to miss in casual testing.
 
 This is the real mechanism behind the Ghostty instability recorded in
 `docs/skills/pam.md` § oo7 `default` alias on a locked collection (the alias itself resolves while locked; measured 2026-10-02), and it is
-**unfixed upstream as of 2026-10-21**: oo7 `main` `901e7406`'s `search_inner_items` still returns empty for a locked keyring, and the repro above gave the same `aoao 0 0` that day on an isolated bus. It should be treated as a second, independent hold
+**still unfixed upstream as of 2026-11-02**: at the krytis pin `e55a1b10`, then oo7 `main`'s tip, `search_inner_items` (`server/src/collection/mod.rs:538-540`) still returns empty for a locked keyring. On 2026-10-21 the repro above gave the same `aoao 0 0` on an isolated bus at `901e7406`. It should be treated as a second, independent hold
 reason alongside oo7#506 — accepting the FIDO2 gap is no longer sufficient to unblock #84,
 because even a user who is willing to unlock manually gets no opportunity to.
 
 Reported upstream on 2026-10-21 as linux-credentials/oo7#614, with the repro above and the
-libsecret reason a candidate-list fix would be unsafe.
+libsecret reason a candidate-list fix would be unsafe. On 2026-10-26 a maintainer
+(@bilelmoussaoui) replied that the server has no way to tell whether a locked item's
+attributes match a search. That is the cause the report already gave, with no fix offered,
+and the issue was still open with no linked PR as of 2026-11-02. **Accepted as a lasting oo7
+limit on 2026-11-02**: krytis no longer waits on an upstream fix, and the greeter mitigation
+plus the residual re-lock risk in § Current decision are permanent rather than interim.
 
 ## 2026-08-16 re-pin: `0.7.0.alpha` → `main` (`c2aa2315`)
 
@@ -647,8 +652,11 @@ silently. That is exactly the failure this gate exists to catch on an oo7 re-pin
 The migration has shipped, so this is no longer "should we start?" but "can we drop a
 workaround?". Re-read this doc when any of these move:
 
-- **oo7 reports locked items from `SearchItems`** (#585) → re-enable FIDO2 login in
-  `config/greetd-config.bst` and delete the mitigation comment there.
+- **oo7 gains a way to match attributes on a locked keyring** (#585) → re-enable FIDO2
+  login in `config/greetd-config.bst` and delete the mitigation comment there. Not expected:
+  #585 was accepted as a lasting oo7 limit on 2026-11-02, after a maintainer's reply on
+  linux-credentials/oo7#614 (2026-10-26). A storage-format change in oo7, or libsecret
+  unlocking and searching again when a locked collection returns nothing, would each fire it.
 - ~~**oo7 handles a peer logind cannot attribute**~~ → **fired 2026-08-27.**
   `patches/oo7/prompter-detect-session-type.patch` and its wiring in
   `elements/desktop/oo7.bst` are deleted. The trigger was correctly written as "a follow-up
