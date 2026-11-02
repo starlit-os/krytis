@@ -58,36 +58,28 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The ESP's loader binaries, read offline from the raw disk: FAT, so mtools needs no
-# root and the ESP is never mounted. Report-only (#1328): bootc never rewrites
-# EFI/systemd/ or EFI/BOOT/. systemd-boot-update.service does, on the first boot of
-# the new deployment, but only for a newer systemd-boot version and only when the ESP
-# is found, which is never on a LUKS root (docs/skills/secure-boot.md § The ESP's
-# systemd-boot is updated by systemd, not bootc — and not on a LUKS root). A loader
-# older than the target image's is therefore not a failed upgrade.
-efi_loader() {
-    printf '%s %s' "$(sha256sum < "$1" | cut -c1-16)" \
-        "$(grep -aoE 'LoaderInfo: systemd-boot [0-9.]+' "$1" | head -1 | sed 's/^LoaderInfo: //')"
-}
+# The ESP's loader binaries, read offline from the raw disk (mise/lib/esp.sh).
+# Report-only (#1328): bootc never rewrites EFI/systemd/ or EFI/BOOT/.
+# systemd-boot-update.service does, on the first boot of the new deployment, but
+# only for a newer systemd-boot version. A loader older than the target image's is
+# therefore not a failed upgrade; mise run esp-update-test is the gate for the update
+# itself (docs/skills/secure-boot.md § The ESP's systemd-boot is updated by systemd,
+# not bootc).
+# shellcheck source=mise/lib/esp.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/esp.sh"
 esp_report() {
-    local off f
-    off=$(sfdisk -J "${WORKDIR}/disk.raw" | python3 -c 'import json,sys
-t = json.load(sys.stdin)["partitiontable"]
-ss = t.get("sectorsize", 512)
-print(next(p["start"] * ss for p in t["partitions"]
-           if p["type"].upper() == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"))') || {
+    local f
+    esp_offset "${WORKDIR}/disk.raw" >/dev/null 2>&1 || {
         echo "    $1: no ESP found in ${WORKDIR}/disk.raw"; return 0; }
-    for f in EFI/systemd/systemd-bootx64.efi EFI/BOOT/BOOTX64.EFI; do
+    for f in "${ESP_LOADERS[@]}"; do
         rm -f "${WORKDIR}/loader.efi"
-        if MTOOLS_SKIP_CHECK=1 mcopy -n -i "${WORKDIR}/disk.raw@@${off}" "::/${f}" \
-                "${WORKDIR}/loader.efi" 2>/dev/null; then
-            printf '    %-5s %-34s %s\n' "$1" "${f}" "$(efi_loader "${WORKDIR}/loader.efi")"
+        if esp_get "${WORKDIR}/disk.raw" "${f}" "${WORKDIR}/loader.efi"; then
+            printf '    %-5s %-34s %s\n' "$1" "${f}" "$(loader_info "${WORKDIR}/loader.efi")"
         else
             printf '    %-5s %-34s absent\n' "$1" "${f}"
         fi
     done
-    MTOOLS_SKIP_CHECK=1 mdir -b -i "${WORKDIR}/disk.raw@@${off}" ::/EFI/Linux/bootc 2>/dev/null \
-        | sed "s|^|    $1  UKI |" || true
+    esp_ukis "${WORKDIR}/disk.raw" | sed "s|^|    $1  UKI |"
 }
 
 echo "==> [1/3] Preparing a copy of ${DISK} and the enrolled varstore..."
@@ -226,7 +218,7 @@ if [ -n "${TO_REF}" ] && podman image exists "${TO_REF}" 2>/dev/null; then
     CID=$(podman create "${TO_REF}" true)
     podman cp "${CID}":/usr/lib/systemd/boot/efi/systemd-bootx64.efi "${WORKDIR}/target.efi" >/dev/null
     podman rm "${CID}" >/dev/null
-    printf '    %-5s %-34s %s\n' image "${TO_REF##*/}" "$(efi_loader "${WORKDIR}/target.efi")"
+    printf '    %-5s %-34s %s\n' image "${TO_REF##*/}" "$(loader_info "${WORKDIR}/target.efi")"
 fi
 
 echo "==> [3/3] Verdict"

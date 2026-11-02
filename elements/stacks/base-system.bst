@@ -100,6 +100,9 @@ depends:
   # Deletes the plain-text LUKS passphrase the installer's TPM2 staging leaves on
   # the physical root (#1280). Skipped on machines without the file.
   - config/fisherman-cleanup.bst
+  # ESP automount for LUKS roots, which systemd-gpt-auto-generator skips, so
+  # systemd-boot-update.service can update the boot loader there too (#1328).
+  - config/esp-automount.bst
 
   # ── Core utilities ─────────────────────────────────────────────────
   - core/uutils-coreutils.bst

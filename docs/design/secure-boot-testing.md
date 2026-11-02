@@ -91,10 +91,12 @@ firmware. It reads each list's `SignatureSize` field; 16 means no certificate.
 | `mise run boot-test --reuse-disk <disk> [--secure]` | 20 s–4 min | boot + health on an already-installed disk, unprivileged | any first-boot behaviour: host keys, `systemd-firstboot`, `/etc` writability, and enrollment policy (trap T-4) |
 | `mise run upgrade-test` | ~3 min + pull | `bootc upgrade` on an installed sealed system, then a reboot into the result, still enforcing and healthy | anything about a *newer* image — it follows whatever the configured stream holds (previously broken, see the closed G-2) |
 | `mise run selfenroll-test` | **66 s** | the full chain on a real installed disk against a pristine firmware — see T3 below, where it belongs in the sequence | the manual enrollment prompt (a VM auto-enrols) |
+| `mise run esp-update-test` | ~1 min | on an **encrypted** installed disk, `systemd-boot-update.service` finds the ESP (`config/esp-automount.bst`) and replaces an older planted systemd-boot with the image's own on one boot (#1328) | enforcement: it boots without Secure Boot, because `boot-test` can't answer the LUKS prompt under it |
 
-The last two need an installed disk, which T3's `iso-install-test` leaves behind at
-`/var/tmp/krytis-install.img`. Both boot a *copy* of it, so the disk stays a
-first-boot disk and can be reused (trap T-4).
+The last three need an installed disk: T3's `iso-install-test` leaves one behind at
+`/var/tmp/krytis-install.img`, and `esp-update-test` needs the encrypted one
+`luks-install-test --keep` leaves at the same path. All three boot a *copy* of it, so
+the disk stays a first-boot disk and can be reused (trap T-4).
 
 ⚠ = `generate-disk` needs `CAP_SYS_ADMIN` for loop devices and a real mount; no
 rootless path exists. On a host without passwordless sudo, use T3 instead — it

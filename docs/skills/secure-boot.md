@@ -558,7 +558,7 @@ one ref into three `recipe.json` fields: `imgref`, `targetImgref`, `image`, and
 freshly sealed system then pulls the **unsigned** image and installs its unsigned UKI,
 and the enrolled firmware refuses to boot it. (bootc writes only the UKI. The loader on
 the ESP is a separate story, see § The ESP's systemd-boot is updated by systemd, not
-bootc — and not on a LUKS root.) Change only
+bootc.) Change only
 `payload_ref` and the recipe's `image` no longer equals the receipt's, so fisherman
 refuses the install immediately (#1479). `PAYLOAD_REF` moves both together; `build-iso --sealed`
 sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
@@ -1189,8 +1189,11 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   is `chattr +i` by default, and the task restores that afterwards.
 - **fwupd's `dbxtool -a` is a thin wrapper around the same write** (attributes `0x67`,
   verified in `plugins/uefi-dbx/fu-dbxtool.c`). Its two guards are an already-applied
-  check and a scan of the ESP for binaries the update would revoke. The ESP is not
-  mounted on krytis, so in practice it needs `-f`, which turns both guards off.
+  check and a scan of the ESP for binaries the update would revoke. It needs `-f` when
+  it can't find a mounted ESP, which turns both guards off. That was the case on every
+  LUKS install until #1328 (§ The ESP's systemd-boot is updated by systemd, not bootc).
+  Whether fwupdtool now runs without `-f` through the `/boot` automount hasn't been
+  checked.
   `dbx-append apply` re-implements both. The ESP scan reads `EFI/` with `mcopy` straight
   off the partition named by `LoaderDevicePartUUID`, so the ESP is never mounted, and it
   refuses if any `.efi` there would be *newly* revoked.
@@ -1216,7 +1219,7 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   (`docs/secure-boot-enrollment.md` § The keys never rotate (#447)), so clearing keys
   and re-enrolling is the only way.
 
-## The ESP's systemd-boot is updated by systemd, not bootc — and not on a LUKS root
+## The ESP's systemd-boot is updated by systemd, not bootc
 
 Measured for #1328 on 2026-11-02. bootc v1.17.3 never writes `EFI/systemd/` or
 `EFI/BOOT/`. `install_systemd_boot()` (`bootctl install`) runs only at install time.
@@ -1246,14 +1249,14 @@ Two limits apply even when it works:
   shim, and krytis's chain has no shim.
 - **It only acts when `/EFI/systemd/` is non-empty.** That holds for bootc installs.
 
-**On a LUKS root it never runs at all.** The unit logs `Couldn't find EFI system
-partition, skipping.` and exits 0, so nothing flags it. On `adora` (ThinkPad, FIDO2
-LUKS, image `26.08.202611011748`) the firmware still boots systemd-boot **260.2** from
-`\EFI\BOOT\BOOTX64.EFI` (`bootctl status`) while the image ships 262.1. Nothing mounts
-the ESP: `boot.automount` is `not-found`. The cause is read from source and
-consistent with both machines. A root-run `SYSTEMD_LOG_LEVEL=debug
-/usr/lib/systemd/system-generators/systemd-gpt-auto-generator` would confirm it and has
-not been run yet:
+**On a LUKS root it never ran, until `config/esp-automount.bst`.** The unit logged
+`Couldn't find EFI system partition, skipping.` and exited 0, so nothing flagged it. On
+`adora` (ThinkPad, FIDO2 LUKS, image `26.08.202611011748`) the firmware still boots
+systemd-boot **260.2** from `\EFI\BOOT\BOOTX64.EFI` (`bootctl status`) while the image
+ships 262.1. Nothing mounts the ESP there: `boot.automount` is `not-found`. The cause,
+read from source (a root-run `SYSTEMD_LOG_LEVEL=debug
+/usr/lib/systemd/system-generators/systemd-gpt-auto-generator` would show it directly
+and has not been run):
 
 1. bootc's initramfs (`crates/initramfs/src/lib.rs`) symlinks
    `/run/systemd/volatile-root` to the device under `/sysroot`. On LUKS that is
@@ -1267,10 +1270,35 @@ not been run yet:
 On a plain root, `volatile-root` names the partition, the generator finds the disk's
 GPT, and `boot.mount` ("EFI System Partition Automount") appears in the boot log.
 
-So the installs that matter most, encrypted ones, keep their install-time loader
-forever. Anything that has to rewrite the loader, or check it (`dbx-append`'s ESP scan
-already reads the ESP with mtools via `LoaderDevicePartUUID` for exactly this reason),
-must find the ESP from `LoaderDevicePartUUID` itself and not trust `/boot` or `/efi`.
+**The fix is `config/esp-automount.bst` (#1328):** a generator,
+`/usr/lib/systemd/system-generators/krytis-esp-automount-generator`, that writes the
+units gpt-auto would have written: `boot.mount` and `boot.automount`, same options
+(`fmask=0177,dmask=0077,…,noexec,nosymfollow`), same 120 s idle timeout, same fsck
+dependency, same choice of `/boot` and then `/efi`. It targets the partition named by
+`LoaderDevicePartUUID`, and it does this only when `volatile-root` is a device-mapper
+device. Plain roots keep gpt-auto's own units. Its units go to the normal generator
+directory and gpt-auto's to the late one, so if systemd ever fixes
+`blockdev_get_root()` the two overlap harmlessly. It's the generator and not a drop-in
+for `systemd-boot-update.service` so that everything else looking for `/boot`
+(`bootctl status`, fwupd) sees the same ESP on LUKS as on plain installs. That those
+tools then behave is expected but not measured.
+
+Measured 2026-11-02 with **`mise run esp-update-test`**, the regression gate:
+- A sealed image carrying the generator, installed through the ISO to an encrypted root
+  (`mise run luks-install-test --keep`), booted with `Set up automount boot.automount`
+  and `Mounted boot.mount - EFI System Partition Automount` in its boot log.
+- With systemd-boot 261.3 planted on both loader paths of a copy of that disk, one boot
+  brought both back to the image's 262.1, byte-identical to the image's binary.
+
+The gate runs without Secure Boot, because `boot-test` can only answer the LUKS prompt
+by injecting `console=ttyS0` through systemd-stub, which the stub refuses under
+enforcement. It boots with `boot-test --reuse-disk --in-place`. Without `--in-place`,
+`boot-test` boots a reflinked copy, and the update lands on a disk the gate never reads.
+The first version of this gate fell into exactly that and reported a false FAIL.
+
+Anything else that has to rewrite the loader, or check it, must still find the ESP
+from `LoaderDevicePartUUID` itself and not rely on `/boot` or `/efi` being mounted.
+`dbx-append`'s ESP scan already reads the ESP with mtools that way.
 
 ## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
 
