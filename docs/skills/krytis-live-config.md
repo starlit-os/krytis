@@ -520,9 +520,18 @@ runs no `wipefs`, and `sfdisk --wipe=always` only clears whole-disk signatures, 
 signatures inside a partition.
 
 **Two traps when reproducing it:**
-- **A file image can't reproduce it.** `mkfs.btrfs` on a regular file issues no
-  `BLKDISCARD`, so the zeroes survive and the result looks clean. It has to be a real
-  block device that ignores discard: the live VM's `/dev/vda` works.
+- **A file image or loop device can't reproduce it.** `mkfs.btrfs` on a regular file issues
+  no `BLKDISCARD`, so the zeroes survive and the result looks clean. A loop device turns the
+  discard into a hole punch, so it reads back as zeroes too [INFERENCE, not tested]. It has
+  to be a block device that accepts the discard and ignores it. The live VM's `/dev/vda`
+  works. So does
+  `qemu-nbd -c /dev/nbd0 -f raw --cache=none --discard=ignore disk.img` on the host (root,
+  `modprobe nbd`). That needs no VM, so it is the quick way to test an unpatched and a
+  patched `mkfs.btrfs` built from an upstream checkout. The nbd device advertises discard,
+  so mkfs prints "Performing full device TRIM", and the bug reproduces the same way: LUKS
+  magic at `0x0`, `blkid -p` says `crypto_LUKS`. It was used on 2026-11-02 to verify the
+  upstream PR against btrfs-progs `devel`, building in a privileged Fedora container
+  because the host has no autotools.
 - **The issue's first guess was a LUKS2 secondary header out of mkfs's reach.** That was
   wrong: both headers sit far inside the 2 MiB mkfs means to zero. Read the disk back
   (`dd … iflag=direct`, `wipefs -n`) before reasoning about offsets.
@@ -534,8 +543,9 @@ GUI starts fisherman with `flatpak-spawn --host pkexec` (bootc-installer's
 `fisherman_runner.py`), and the installer flatpak bundles no mkfs. `mise run mkfs-reformat-test`
 boots the live ISO and runs `luksFormat` followed by fisherman's own `mkfs.btrfs -f -L root`
 on the VM disk. It fails while the LUKS signature survives. Upstream tracking: #1302,
-reported as kdave/btrfs-progs#1198 (open as of 2026-11-02). On hardware, whether the bug
-shows depends on what the drive returns after TRIM [INFERENCE, not tested].
+reported as kdave/btrfs-progs#1198 and proposed as kdave/btrfs-progs#1199 (both open as of
+2026-11-02). On hardware, whether the bug shows depends on what the drive returns after
+TRIM [INFERENCE, not tested].
 
 **Remove when:** the junction's btrfs-progs persists the zeroing before the discard
 (`mise run btrfs-progs-check` fails once the patch stops applying).
