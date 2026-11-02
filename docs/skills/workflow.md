@@ -13,9 +13,10 @@ Always create a worktree before touching any files — including when working on
 git worktree add <worktree-path> <existing-branch>
 ```
 
-**New branch:**
+**New branch** (from a freshly fetched `origin/main`; without a start point, `git worktree add` branches from the current checkout's `HEAD`, which may be far behind, see `AGENTS.md` § Mandatory Gates):
 ```shell
-git worktree add -b <branch> <worktree-path>
+git fetch origin
+git worktree add -b <branch> <worktree-path> origin/main
 ```
 
 The AGENTS.md exception — *"explicit instruction to work on an existing branch"* — means *the branch already exists, so skip `git branch` creation*. It does **not** mean *skip the worktree*. A human saying "check out X and verify it builds" is explicit instruction to use that branch, not to `git checkout` in the primary worktree.
