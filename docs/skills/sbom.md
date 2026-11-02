@@ -246,7 +246,7 @@ GStreamer plugins), not scoped to which plugins krytis's meson flags actually en
 (`rtp`/`gif`/`hlssink3`/`dav1d`/`spotify`) — so disabled plugins' dependencies still show
 up as "installed" in the SBOM and trigger real, purl-scoped Grype matches. Three
 `rustls-webpki` versions coexist in the vendor snapshot (0.101.7/0.102.8 vulnerable,
-0.103.13 fixed — verified against GHSA-965h-392x-2mh5/GHSA-xgp8-3hg3-c2mh's own patched
+0.103.x fixed — verified against GHSA-965h-392x-2mh5/GHSA-xgp8-3hg3-c2mh's own patched
 ranges, `>=0.103.12`). The BST element itself carries no dependency graph (just flat
 `{name, version, sha}` triples for vendoring), so resolving reachability required fetching
 the real upstream `Cargo.lock` at the pinned git ref directly from
@@ -254,11 +254,24 @@ the real upstream `Cargo.lock` at the pinned git ref directly from
 forward BFS from each of the 5 enabled plugins' package nodes through the `dependencies =
 [...]` edges to see which reach `rustls-webpki`:
 
+Re-traced 2026-11-02 against gst-plugins-rs `0.15.4-0-g1afff37` (fdsdk `26.08.4`, bumped
+in by `da1ffdc`); first traced on `0.15.3-0-g6302bea`. Both vulnerable rows are unchanged
+between the two refs:
+
 | `rustls-webpki` version | rustls | CVE status | Reachable from |
 |---|---|---|---|
 | 0.101.7 | 0.21.12 | vulnerable | `aws`, `webrtc` only — **both disabled** |
 | 0.102.8 | 0.22.4 | vulnerable | `spotify` only — **enabled** (`librespot-core -> hyper-proxy2/rustls -> hyper-rustls 0.26 -> rustls 0.22.4`) |
-| 0.103.13 | 0.23.41 | fixed | `spotify` + 14 other disabled plugins |
+| 0.103.15 | 0.23.45 | fixed | `spotify` (direct `rustls` dep) + 15 other disabled plugins |
+
+**fdsdk's vendored crate set isn't the upstream lockfile.** The element carries fdsdk's
+[`0001-Update-Cargo.lock-for-non-git-dependencies.patch`](https://gitlab.com/freedesktop-sdk/freedesktop-sdk/-/blob/freedesktop-sdk-26.08.4/patches/gstreamer-plugins-rs/0001-Update-Cargo.lock-for-non-git-dependencies.patch),
+so at 0.15.4, 52 of its 1118 `cargo2` crates differ in version from upstream's `Cargo.lock`. They
+are all gtk-rs/gstreamer-rs binding crates, and none reaches `rustls-webpki`. The
+upstream lock's graph is only valid for the trace if the patch leaves the crates on the
+path alone. Check that the patch doesn't name them (`grep -ciE 'rustls|hyper|librespot'`
+on it gave 0 here), and diff the element's `cargo2` `{name, version}` set against the
+lock's registry packages before trusting the BFS.
 
 `0.101.7` is ignored in `.grype.yaml` (class 2 there) — proven unreachable from every
 plugin cdylib krytis actually builds. `0.102.8` is **not** ignored, deliberately: the
