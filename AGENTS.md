@@ -193,6 +193,8 @@ Non-compliance = automatic rejection.
 
 **Assume the user knows the system:** Default to assuming the human knows krytis and the machine they're currently on — whether that machine is actually running krytis or something else. A static grep of this repo's `.bst` files is not proof of what's on a live system: transitive dependencies (see `docs/skills/bst.md`) and out-of-repo builds both produce real gaps between "what the source says" and "what's installed." Before contradicting a user's claim about running-system state, verify against the live system itself (`systemctl`, `busctl`, `/usr/manifest.json` SBOM, binaries on disk) — not just the dependency graph in this checkout.
 
+**Read repo state from `origin`, not the local checkout:** A question about the repo as it is now (an element's `ref:`, a junction pin, `.grype.yaml`, a task, a workflow, a doc) is a question about `origin/main`. The human's checkout may be days or hundreds of commits behind. Before answering, or before checking an issue's trigger condition, run `git fetch origin` and read with `git show origin/main:<path>` or `git grep <pattern> origin/main -- <paths>`. Then run `git rev-list --count HEAD..origin/main`. If the checkout is behind, **say so with the count**, and **ask before pulling**. Never `git pull`, `merge` or `reset` the human's checkout unasked, because it may hold uncommitted or unpushed work. On 2026-11-02 an agent reported #500's fdsdk pin as `26.08.2` from a `main` checkout 170 commits behind. `origin/main` had been on `26.08.4` since `da1ffdc`, which had already fired the issue's re-trace trigger.
+
 **Operator accountability:** The human deploying the agent is responsible for all decisions.
 
 **Verification:** Every PR must confirm `mise lint` passed and the image booted. Use `mise boot-test` for automated pass/fail. No WIP PRs. `mise run build` already ends with `mise run lint` plus the image gates `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check` (`generate-image-version` → `load-image` → `lint` → `umbriel-config-validate` → `cracklib-dict-check` → `portal-routing-check`) — running `mise run build` satisfies this gate on its own; a separate `mise run lint` afterward is redundant (it re-lints the same image) and running it *before* `mise run build` completes only lints stale content. See `docs/skills/mise.md`'s "Standard build workflow" section.
@@ -216,10 +218,11 @@ Non-compliance = automatic rejection.
 
 Always create a worktree and branch before starting work. Exception: explicit instruction to work on an existing branch or directly on `main`.
 
-Create both together:
+Create both together, from a freshly fetched `origin/main` rather than whatever the local checkout's `HEAD` is:
 
 ```shell
-git worktree add -b <branch> <worktree-path>
+git fetch origin
+git worktree add -b <branch> <worktree-path> origin/main
 ```
 
 ### Worktree base
