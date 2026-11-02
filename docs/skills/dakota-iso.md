@@ -467,7 +467,12 @@ Two downloads in `live/src/install-flatpaks.sh` worked like an unpinned action:
 - **Flathub's `.flatpakrepo`** was handed to `flatpak remote-add` by URL. Its `GPGKey=` is
   the trust root for every later Flatpak download, and `/var/lib/flatpak` is copied onto
   installed systems, so one bad response would become every installed machine's Flathub
-  key. Upstream checks the descriptor into the repo. Krytis: #1455.
+  key. Upstream checks the descriptor into the repo. In krytis the download turned out to
+  be fetched and thrown away: the source image already ships the sha256-pinned
+  descriptor in `/usr/share/flatpak/remotes.d/`, and flatpak applies that one first. #1455
+  now passes that file to `remote-add` and fails the build when it is missing, so no
+  vendored copy is needed. See [`bst.md`](bst.md) § Flatpak: Transitive Presence and
+  Flathub Config.
 
 The test to apply to any new fetch in `live/`: if what it downloads ends up in the ISO or
 on the target, pin it by digest or check it into the repo, with an update path that opens

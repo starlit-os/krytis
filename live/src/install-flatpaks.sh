@@ -31,8 +31,28 @@ if [ -d "${FLATPAK_CACHE}/repo/refs" ]; then
     echo "Cache seed complete"
 fi
 
-flatpak remote-add --system --if-not-exists flathub \
-    https://dl.flathub.org/repo/flathub.flatpakrepo
+# ── Flathub remote: the image's pinned descriptor, never the network ─────────
+# A .flatpakrepo carries Url= and GPGKey=, the trust root every later Flathub
+# download is verified against, and /var/lib/flatpak is copied onto installed
+# systems (flatpak_var_path in configure-live-krytis.sh). The descriptor must
+# be a reviewed file, so use the one the image already ships:
+# gnome-build-meta.bst:gnomeos-deps/flathub-config.bst installs it here and pins
+# its sha256, so a Flathub key rotation arrives as a junction bump (#1455).
+#
+# flatpak applies /usr/share/flatpak/remotes.d/*.flatpakrepo by itself the
+# first time it opens the system repo, which happens before remote-add checks
+# whether the remote exists. So --if-not-exists is a no-op whenever this file
+# is present, and whatever LOCATION is passed is discarded. The old https://
+# LOCATION was a build-time download whose content was never used, and it would
+# have become the trust root on any source image that lacked this file. Passing
+# the file itself means only the pinned descriptor can define the remote, and
+# the check fails the build loudly instead of silently falling back.
+FLATHUB_DESCRIPTOR="/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
+if [[ ! -s "${FLATHUB_DESCRIPTOR}" ]]; then
+    echo "Missing Flathub remote descriptor ${FLATHUB_DESCRIPTOR}; the source image must ship gnome-build-meta.bst:gnomeos-deps/flathub-config.bst" >&2
+    exit 1
+fi
+flatpak remote-add --system --if-not-exists flathub "${FLATHUB_DESCRIPTOR}"
 
 # bootc-installer bundle — the flatpak that also carries the fisherman binary
 # the live session installs with (configure-live-krytis.sh symlinks it out of
