@@ -533,9 +533,9 @@ the zeroing and the discard. The image's `mkfs.btrfs` is the one every install u
 GUI starts fisherman with `flatpak-spawn --host pkexec` (bootc-installer's
 `fisherman_runner.py`), and the installer flatpak bundles no mkfs. `mise run mkfs-reformat-test`
 boots the live ISO and runs `luksFormat` followed by fisherman's own `mkfs.btrfs -f -L root`
-on the VM disk. It fails while the LUKS signature survives. Upstream tracking: #1302. On
-hardware, whether the bug shows depends on what the drive returns after TRIM
-[INFERENCE, not tested].
+on the VM disk. It fails while the LUKS signature survives. Upstream tracking: #1302,
+reported as kdave/btrfs-progs#1198 (open as of 2026-11-02). On hardware, whether the bug
+shows depends on what the drive returns after TRIM [INFERENCE, not tested].
 
 **Remove when:** the junction's btrfs-progs persists the zeroing before the discard
 (`mise run btrfs-progs-check` fails once the patch stops applying).
