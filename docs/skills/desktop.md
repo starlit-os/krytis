@@ -1824,15 +1824,28 @@ unsupported. Supporting facts:
 **Resolving routing headlessly** — no session, GPU, seat or root needed:
 
 ```shell
-podman run --rm -e XDG_CURRENT_DESKTOP=niri localhost/krytis:latest sh -c \
-  'timeout 5 dbus-run-session -- /usr/libexec/xdg-desktop-portal --verbose 2>&1'
+podman run --rm -e XDG_CURRENT_DESKTOP=niri --entrypoint sh localhost/krytis:latest -c \
+  'dbus-run-session -- sh -c "/usr/libexec/xdg-desktop-portal --verbose & \
+   gdbus wait --session --timeout 60 org.freedesktop.portal.Desktop; kill \$!" 2>&1'
 ```
 
 xdp logs `Using portal configuration file '<path>' for desktop '<d>'` per config loaded,
 then `Using <backend>.portal for org.freedesktop.impl.portal.<Iface> (…)` for each
-interface it can serve — that line *is* the routing decision. Backends then fail to
-activate in the container; harmless, routing is decided before activation. An interface
-with no backend logs `Found '<x>' in configuration for …` but no `Using` line.
+interface it can serve — that line *is* the routing decision. An interface with no backend
+logs `Found '<x>' in configuration for …` but no `Using` line. Backends fail to activate in
+the container, and that is harmless for routing, but it is not free. xdp registers the
+portals one by one, and each registration activates its backend *synchronously* before the
+next `Using` line is written. Every xdg-desktop-portal-gtk activation spawns a process that
+dies with `cannot open display`. On an idle host the whole run takes ~1 s. With a build and
+a QEMU guest running, it once took more than 4 s.
+
+**End the probe on xdp's bus name, not on a clock.** xdp registers every portal in its
+bus-acquired handler and requests `org.freedesktop.portal.Desktop` only after that
+(`src/xdp-main.c`, xdg-desktop-portal 1.22.1). Owning the name therefore means every `Using`
+line is out: `gdbus wait --session --timeout <s> org.freedesktop.portal.Desktop` returns at
+that moment. The task used a fixed `timeout 4` until 2026-11-02. On a loaded host the cut-off
+output showed Umbriel with `0 of 21 interface(s) served` and sixteen `MISMATCH` lines. Every
+one of them was false, and re-running on the same image passed.
 
 **`mise run portal-routing-check`** runs that resolution for `niri` and `Umbriel` in one
 container and compares every interface against the EXPECTED tables in
@@ -1841,8 +1854,9 @@ classifies, any `Error loading …` warning, a desktop with no routing file load
 `/etc/xdg` key whose removal changes nothing because the same file's `default=` or the
 upstream `/usr/share` file already resolves it that way (`REDUNDANT`: delete the key), and
 an Umbriel `none` pin for an interface `umbriel.portal` now declares (`STALE NONE`: drop
-the pin; `OWN_BACKEND` in the task). It runs at the end of `mise run build`. A deliberate
-routing change edits the EXPECTED rows in the same commit.
+the pin; `OWN_BACKEND` in the task). A probe whose xdp never owns its name within the
+60 s ceiling fails as `NOT READY`, and nothing is compared. It runs at the end of
+`mise run build`. A deliberate routing change edits the EXPECTED rows in the same commit.
 
 **Guarding a `none` pin.** A `none` pin keeps the interface at `none` whatever gets
 installed, so the EXPECTED table alone stays green when the pin goes stale. Check for that

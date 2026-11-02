@@ -10,11 +10,21 @@ with every niri bump, desktop/xdg-desktop-portal-umbriel.bst tracks main and
 ships umbriel-portals.conf, and a backend that grows an interface claims it
 through `default=`.
 
-xdg-desktop-portal resolves routing at startup, before it activates anything,
-so this runs headlessly: one container start, xdp --verbose under each
-desktop's XDG_CURRENT_DESKTOP, and its `Using <backend>.portal for <iface>`
-lines are the answer. An interface with no such line has no backend (none).
-Resolution took ~1.2 s when measured; each run gets XDP_SECONDS.
+xdg-desktop-portal resolves routing at startup, so this runs headlessly: one
+container start, xdp --verbose under each desktop's XDG_CURRENT_DESKTOP, and
+its `Using <backend>.portal for <iface>` lines are the answer. An interface
+with no such line has no backend (none).
+
+Each probe ends when xdp owns org.freedesktop.portal.Desktop, not on a fixed
+clock. xdp registers every portal in its bus-acquired handler and only then
+requests the name (xdp-main.c, xdg-desktop-portal 1.22.1), so ownership means
+every `Using` line is already written. Registration activates each backend
+synchronously, and every xdg-desktop-portal-gtk activation spawns a process
+that dies with no display. On an idle host that takes ~1 s. With a build and
+a QEMU guest running it took more than the old fixed 4 s window, and the
+cut-off output read as 21 interfaces silently routed to none. XDP_SECONDS is
+now only a ceiling. A probe that hits it fails as NOT READY, not as a routing
+mismatch.
 
 Fails on:
   mismatch      an interface resolves to a backend other than the table's;
@@ -24,6 +34,8 @@ Fails on:
                 cannot parse, with nothing but that warning (#1027);
   no config     no `Using portal configuration file` line for a desktop: xdp
                 fell back to the legacy UseIn= matching;
+  not ready     xdp never owned its bus name within XDP_SECONDS, so the
+                routing it logged is incomplete and is not compared;
   redundant     a key in a krytis /etc/xdg/xdg-desktop-portal/<d>-portals.conf
                 whose removal changes nothing: that file's own default= or the
                 upstream /usr/share file already resolves the interface the
@@ -43,7 +55,9 @@ import re
 import subprocess
 import sys
 
-XDP_SECONDS = 4
+XDP_SECONDS = 60
+XDP_NAME = "org.freedesktop.portal.Desktop"
+READY = "@@READY"
 
 # interface (without the org.freedesktop.impl.portal. prefix) -> (backend, why)
 NIRI_UPSTREAM = "niri-portals.conf default=gnome;gtk"
@@ -114,8 +128,10 @@ def probe(tag):
     script = f"""
 for d in {' '.join(EXPECTED)}; do
     echo "@@DESKTOP $d"
-    XDG_CURRENT_DESKTOP=$d timeout {XDP_SECONDS} dbus-run-session -- \\
-        /usr/libexec/xdg-desktop-portal --verbose 2>&1
+    XDG_CURRENT_DESKTOP=$d dbus-run-session -- sh -c '
+        /usr/libexec/xdg-desktop-portal --verbose &
+        gdbus wait --session --timeout {XDP_SECONDS} {XDP_NAME} >/dev/null && echo {READY}
+        kill $! 2>/dev/null; wait $!' 2>&1
 done
 for f in /usr/share/xdg-desktop-portal/portals/*.portal; do
     echo "@@PORTAL $f"
@@ -219,6 +235,10 @@ def check_stale_none(confs, impls):
 
 def check_desktop(desktop, lines, universe):
     ok = True
+    if not any(READY in l for l in lines):
+        print(f"  NOT READY: xdp did not own {XDP_NAME} within {XDP_SECONDS} s; its"
+              " routing is incomplete, so nothing is compared. Re-run on a quieter host.")
+        return False
     if not any("Using portal configuration file" in l for l in lines):
         print(f"  NO CONFIG: xdp loaded no portals.conf for {desktop} (legacy UseIn= fallback)")
         ok = False
