@@ -234,65 +234,32 @@ landed in `de1c304` (2026-09-14). `vuln-diff.yml` is the one merge-relevant work
 `types:` before arming that gate — otherwise a retargeted PR merges without the diff ever running
 against the new base.
 
-## The One Verification Gate an Agent Cannot Run: `generate-disk`
+## `generate-disk` needs root: run it in a foreground pty
 
-AGENTS.md § Verification requires every PR to confirm the image booted, and `mise run boot-test` is the automated pass/fail for it. An agent session cannot complete that command. Step 1/5 shells out to `mise/tasks/generate-disk`, which needs real root, and an agent's non-TTY shell dies immediately with:
+`mise run boot-test` step 1/5 calls `mise/tasks/generate-disk`, and `bootc install to-disk
+--via-loopback` needs root. That does not block an agent. Run the task synchronously in a
+pty with a long timeout, and the human answers sudo's FIDO2 PIN and touch prompt in the
+session. `docs/skills/mise.md` § Agents can run the sudo steps: use a pty has the procedure
+and the `--reuse-disk` loop for iterating unprivileged afterwards. `chunkify` and
+`load-image-root` need root for the same reason.
 
-```
-==> [1/5] Installing localhost/krytis:latest → /var/tmp/krytis-boot-test.XXXX/test.raw (filesystem: btrfs)...
-==> Creating 15G sparse disk image at /var/tmp/krytis-boot-test.XXXX/test.raw...
-==> Copying localhost/krytis:latest to root podman store...
-sudo: A terminal is required to authenticate
-```
+This section used to say the opposite: that an agent cannot complete the gate and must hand
+`generate-disk` to the maintainer as the last outstanding step of a PR. Both failures it
+cited came from how the command was run, not from sudo:
 
-There is nothing to retry: `sudo -n true` also fails (no `NOPASSWD` rule for these
-commands), and a `sudo` timestamp primed in the human's own terminal is not visible to
-the agent's shell — sudo scopes timestamps per tty (`tty_tickets`), so *every* agent
-call re-authenticates even seconds apart.
+- **#937 (2026-09-24):** the harness killed the call at its default 300 s, partway through
+  `load-image-root`'s `podman load`. Set the call's timeout above the whole run. #1485's
+  `boot-test`, install included, took 1427 s and passed in a pty with a 2400 s timeout
+  (2026-11-02).
+- **#986 (2026-09-28):** sudo's own `passwd_timeout` expired with `sudo: timed out`, because
+  nobody was at the key when the prompt came up. The human has to be present for the run.
 
-**A PTY does not rescue it, and the near-miss is worth knowing.** Allocating a PTY for
-the call (omp's `bash` tool, `pty: true`) does put the real prompt in front of the human
-— on a FIDO2-enrolled host that is PIN → touch → password, three answers — but the
-harness's foreground window is finite (300 s in omp) and it SIGTERMs the task when it
-expires. Confirmed 2026-09-24 while verifying #937: authentication succeeded, then
-`load-image-root` was killed mid-`podman load` of the 8 GB image, twice. Backgrounding
-instead (`async: true`) puts the prompt where nobody can answer it and fails with the
-same `A terminal is required to authenticate`. Do not try to work around it — hand it
-off.
-
-**Escaping the 300 s window does not rescue it either — the killer just changes.** Running
-the task as a long-lived *named* service (omp's `bash` tool, `name:` + `pty: true`, no
-deadline) removes the harness SIGTERM above, and the run still dies — now on sudo's own
-`passwd_timeout`, reported as a bare `sudo: timed out` after `[1/5]`. Confirmed twice on
-2026-09-28 while finishing #986. Two things make this worse than it sounds: there are
-**two** prompts, not one, separated by the multi-minute `podman load` in
-`load-image-root`, so the human must answer, wait several minutes unprompted, then answer
-again; and the prompt only exists inside the agent's transcript, which nobody is watching
-between turns. Priming the ticket first does not help — `sudo -n -v && mise run boot-test`
-in one command still lost the race, because the timestamp had expired by the time the
-human's earlier answer reached it. Hand off `generate-disk` as below; it is one command
-and it is over in seconds.
-
-**The privileged part is one step, not the whole gate.** `bootc install to-disk --via-loopback` has to create a loop device and mount the new filesystem, which requires `CAP_SYS_ADMIN` in the initial user namespace (see the comment block at `mise/tasks/boot-test:76`). Everything after it — the QEMU boot, the serial-console assertions, the verdict — is unprivileged, and `boot-test` exposes the split via `--reuse-disk`:
-
-```shell
-# human, once per built image — the only privileged command
-mise run generate-disk --image localhost/krytis:latest \
-    --disk /var/tmp/krytis-test.raw --size 15G
-
-# agent, unprivileged, as many times as needed
-mise run boot-test --reuse-disk /var/tmp/krytis-test.raw
-```
-
-`--reuse-disk` is only honest for the image that disk was installed from. A disk left over from an earlier build proves nothing about the current one, so a new image means a new `generate-disk` — don't reuse a stale disk to make the checklist look complete.
-
-**Sequence the handoff so it is the last thing outstanding.** Run every gate that works unprivileged first — `mise run build` (which ends in `bootc container lint`), `mise run validate`, `mise run docs-links`, `mise run vuln-scan`, the element build, and any in-sandbox smoke check via `bst shell` — then open the PR with that evidence and exactly one named command left for the maintainer. When they report the result, **edit the PR body** to record it; AGENTS.md § PR Comment Policy forbids a follow-up comment for a new observation.
-
-The same root requirement applies to `mise run chunkify` and to `mise/tasks/load-image-root` (which `generate-disk` calls to copy the image into the root podman store, invisible to rootless podman).
+A backgrounded (`async`) run still fails with `sudo: A terminal is required to authenticate`,
+as the `mise.md` section records.
 
 ### The ISO path needs no host root at all
 
-`mise run boot-test` is the gate an agent cannot run. It is **not** the only way to get
+`mise run boot-test` needs a human at the FIDO2 prompt. It is **not** the only way to get
 install-and-boot evidence. The entire live-ISO pipeline is unprivileged end to end:
 
 ```shell
@@ -306,18 +273,17 @@ Three things that look like they need root do not:
   unreadable. It is `crw-rw-rw-` on a normal desktop, so the branch never fires.
 - The `sudo` calls in `scripts/iso-install-fisherman.sh` run **inside the live guest**
   over SSH, not on the host.
-- `iso-install-test`'s verdict arm is `boot-test --reuse-disk /var/tmp/krytis-install.img`
-  — the `--reuse-disk` split above, so it skips `generate-disk` entirely.
+- `iso-install-test`'s verdict arm is `boot-test --reuse-disk` on the disk the ISO installed
+  to, so it skips `generate-disk` entirely.
 
 Run on 2026-09-24 (#940): `build-iso --debug` 12m → 4.9 GB ISO, `iso-install-test` 3m44s
 → `==> PASS`, both as detached background jobs with no human present.
 
 **What it does and does not substitute for.** The installed system it boots carries
 `localhost/krytis:latest` as the ISO's offline payload, so a green run *is* real evidence
-that the current image boots — useful when the image-affecting PR is blocked on the
-handoff. It exercises fisherman's install path, not `bootc install to-disk`, so it does
-not discharge `mise run boot-test`; cite it as corroboration and leave the owed item
-standing.
+that the current image boots. That helps when no one is around to answer the sudo prompt.
+It exercises fisherman's install path, not `bootc install to-disk`, so it does not
+discharge `mise run boot-test`. Cite it as corroboration and leave the owed item standing.
 
 **Long builds must be detached, not merely backgrounded.** `hub start` without
 `detached: true` ties the process to the broker: a broker restart killed a `build-iso`
