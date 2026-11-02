@@ -349,9 +349,9 @@ familiar key that behaves differently is worse than one that does nothing.
 | `screenshot-window` (`Alt+Print`) | no window capture at keybind level: umbriel has no screenshot action, and `noctalia msg` offers only `screenshot-region`, `screenshot-fullscreen [pick\|all]` and `screenshot-annotate` |
 | `urgent-color` on focus-ring / border | `[colors.border]` has no urgency colour; the schema's only one is `colors.tab_bar.urgent` |
 | `recent-windows` | subsystem does not exist |
-| `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` exposes only `match.namespace` + four blur keys; `colors.backdrop` is a colour, not placement |
+| `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` matches on `namespace`, `layer` and `at_startup` and sets four blur keys, nothing positional; `colors.backdrop` is a colour, not placement |
 | `draw-border-with-background false` | no equivalent |
-| `animations { slowdown 2.0 }` | no global multiplier; 54 separate `animation.*.duration_ms` keys |
+| `animations { slowdown 2.0 }` | no global multiplier. The top-level `animation.duration_ms` (250) is only the fallback for events on non-spring curves. A spring sets its own duration and ignores `duration_ms`, and `[animation.border]` / `[animation.windows_opacity]` default to `spring:1,900` (upstream `docs/user/animation.md`). Slowing everything means re-tuning the twelve per-event tables one by one |
 | `clip-to-geometry true` | not exposed independently of `corner_radius` |
 
 `Mod+Ctrl+F` is niri's `expand-column-to-available-width`, also absent — but
@@ -363,10 +363,11 @@ and its packaged config binds `Mod+W` to `column-toggle-tabbed`, which krytis in
 niri's `toggle-column-tabbed-display`. In a column with no groups it tabs the whole column,
 as niri does (upstream `docs/user/layout.md` § Tab groups). The packaged config also binds
 `Mod+Alt+Left`/`Right` to the previous/next tab. Those keys have no niri counterpart and don't
-clash with krytis's `Mod+Alt+L`. niri's `tab-indicator` colours are **not** ported. umbriel styles
-the bar through the eight `colors.tab_bar.*` keys, and neither `colors.toml` nor noctalia's
-Umbriel template sets them, so the bar keeps upstream's default palette until someone decides
-which niri colour maps to which key.
+clash with krytis's `Mod+Alt+L`. niri's `tab-indicator` colours are deliberately **not** ported
+(decided 2026-11-02). umbriel styles the bar through the eight `colors.tab_bar.*` keys, and
+the plan is to let noctalia's Umbriel template supply them, as it does every other live colour.
+As of noctalia v5.3.0 the template doesn't set `[colors.tab_bar]`, so the bar uses upstream's
+default palette. Revisit only if that becomes a problem.
 
 #### noctalia's Umbriel template: a schema mismatch, fixed by the v5.2.0 bump
 

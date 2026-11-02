@@ -35,13 +35,14 @@ outer = "#232136ff"
 #   - recent-windows { highlight { ... } }. No such subsystem; umbriel's
 #     window-focus-last / window-focus-next carry no visual switcher.
 #
-# NOT PORTED YET, an equivalent now exists:
+# NOT PORTED, on purpose for now:
 #   - tab-indicator { active-color "#ea9a97" inactive-color "#bb1913"
 #     urgent-color "#eb6f92" }. umbriel gained tabbed columns upstream in
 #     ec677ac8 (2026-10-02), styled by [colors.tab_bar]. That table has eight
 #     keys: active, active_unfocused, background, text, urgent and a _text
-#     colour for three of them. niri's indicator is a thin strip with three
-#     colours, so which tab_bar key each one maps to is a design call that
-#     nobody has made. Until it is, the tab bar renders in upstream's
-#     default colours. noctalia's Umbriel template does not set
-#     [colors.tab_bar] either, so the live palette doesn't change that.
+#     colour for three of them. Decision (2026-11-02): leave it to noctalia's
+#     Umbriel template, which renders the live palette and is expected to
+#     grow [colors.tab_bar]. As of noctalia v5.3.0 it doesn't set it, so the
+#     bar renders in upstream's default colours. Revisit only if that becomes
+#     a problem; a static mapping here would be overridden by the template
+#     anyway once it does.
