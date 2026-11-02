@@ -10,7 +10,7 @@ env = false
 [providers.protonpass]
 type = "proton-pass"
 vault = "Krytis"
-agent_reason = "krytis secure boot key + buildbarn cache token + CI VPS host retrieval"
+agent_reason = "krytis secure boot key + cosign signing key + buildbarn cache token + CI VPS host retrieval"
 
 [secrets]
 PK_KEY  = { provider = "protonpass", value = "Secure Boot Keys/PK.key" }
@@ -19,6 +19,9 @@ KEK_KEY = { provider = "protonpass", value = "Secure Boot Keys/KEK.key" }
 KEK_CRT = { provider = "protonpass", value = "Secure Boot Keys/KEK.crt" }
 DB_KEY  = { provider = "protonpass", value = "Secure Boot Keys/db.key" }
 DB_CRT  = { provider = "protonpass", value = "Secure Boot Keys/db.crt" }
+# Static cosign key hosts enforce (#418): a Proton Pass *note* whose body is the
+# PEM, created by `mise run cosign-generate-keys`. Its public half is cosign.pub.
+COSIGN_PRIVATE_KEY = { provider = "protonpass", value = "Cosign Signing Key/note" }
 BUILDBARN_PULL_TOKEN = { provider = "protonpass", value = "Buildbarn/pull-token" }
 BUILDBARN_PUSH_TOKEN = { provider = "protonpass", value = "Buildbarn/push-token" }
 # Always-on Debian CI VPS runner (#794). The vault item holds the host as two

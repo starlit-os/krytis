@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Move :latest (or :sealed) to a pushed image digest, only after its cosign signature verifies (#1458)"
+#MISE description="Move :latest (or :sealed) to a pushed image digest, only after both its cosign signatures verify (#1458, #418)"
 #USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path the image lives under"
 #USAGE flag "--sealed" help="Move :sealed instead of :latest"
 #USAGE flag "--digest-file <path>" default="krytis-push-digests.env" help="Digest file written by mise run push — image_digest is read from here unless --image-digest is given"
@@ -17,8 +17,13 @@
 # failed signing step means re-dispatching publish.yml, because a signature
 # made outside it carries another identity and will not verify here.
 #
+# Both signatures must verify: the keyless one against publish.yml's identity,
+# and the static-key one against cosign.pub, which is what hosts check (#418).
+# So rollback only reaches images signed since the static key was introduced;
+# an older digest has only the keyless signature and is refused.
+#
 # Retagging by digest re-uploads nothing and keeps the manifest bytes, so the
-# signature — bound to the digest, not the tag — stays valid.
+# signatures — bound to the digest, not the tag — stay valid.
 set -euo pipefail
 
 REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
@@ -55,7 +60,18 @@ if ! cosign verify \
     --certificate-identity-regexp "$IDENTITY" \
     --certificate-oidc-issuer "$ISSUER" \
     "${REGISTRY}@${IMAGE_DIGEST}" >/dev/null; then
-    echo "==> ERROR: no signature on ${IMAGE_DIGEST} verifies — :${FLOATING_TAG} stays where it is" >&2
+    echo "==> ERROR: no keyless signature on ${IMAGE_DIGEST} verifies — :${FLOATING_TAG} stays where it is" >&2
+    exit 1
+fi
+
+# --new-bundle-format=false: the static signature is a legacy `.sig` tag, and
+# cosign 3.1.4's default verify stops at the keyless bundle when the digest
+# carries one, failing with "transparency log certificate does not match"
+# instead of falling back (signing.md § Static-key signature (#418)).
+echo "==> Verifying ${REGISTRY}@${IMAGE_DIGEST} against cosign.pub..."
+if ! cosign verify --key cosign.pub --new-bundle-format=false \
+    "${REGISTRY}@${IMAGE_DIGEST}" >/dev/null; then
+    echo "==> ERROR: no static-key signature on ${IMAGE_DIGEST} verifies against cosign.pub — hosts would refuse it; :${FLOATING_TAG} stays where it is" >&2
     exit 1
 fi
 
