@@ -1,10 +1,12 @@
 # Cosign Keyless Signing
 
-Load when working on `mise run sign`, `mise run promote`, `.github/workflows/publish.yml`, or anything touching cosign/Sigstore/OIDC in krytis. Implements #60; promotion gating is #1458.
+Load when working on `mise run sign`, `mise run promote`, `mise run cosign-generate-keys`, `.github/workflows/publish.yml`, or anything touching cosign/Sigstore/OIDC in krytis. Implements #60; promotion gating is #1458; the static key hosts enforce is #418.
 
 ## What It Is
 
 `mise run sign` signs the published `oci/krytis/image.bst` image and both of its OCI referrers (SBOM from #40, Grype vulnerability report from #41) using [cosign](https://github.com/sigstore/cosign) **keyless** signing: no private key is generated, stored, or rotated. Each `cosign sign -y <ref>@<digest>` call requests a short-lived code-signing certificate from Sigstore's public Fulcio CA, bound to an OIDC identity, and records the signature in Sigstore's public Rekor transparency log.
+
+The image itself (not the referrers) also carries a second signature, from a **static key** kept in Proton Pass. That one exists for hosts: `policy.json` can verify a key but not a GitHub Actions identity. See § Static-key signature (#418).
 
 ## Digest Hand-off from `mise run push`
 
@@ -82,6 +84,12 @@ workflow always runs `mise run promote` after it, so a branch publish still move
 `:latest`. Skipping promotion on non-`main` refs would be the fix if branch publishes
 become routine.
 
+The static-key signature verifies against the committed public key. `--new-bundle-format=false` is required, not optional (§ Static-key signature (#418)):
+
+```bash
+cosign verify --key cosign.pub --new-bundle-format=false ghcr.io/starlit-os/krytis@<digest>
+```
+
 ## `cosign login` vs. relying on `oras`/`podman` login side effects
 
 `mise/tasks/sign` calls `cosign login ghcr.io` itself rather than assuming `mise/tasks/push`'s earlier `oras login`/`podman login` calls already populated a credential store cosign will read. `cosign` follows the same Docker-config-file (`~/.docker/config.json`) convention as `oras`, so in practice the credentials would already be there after a plain `push` run (i.e. one where `--skip-sbom` was not passed) — but `mise run sign` is designed to be independently runnable (e.g. re-signing an old digest without re-running `push`, or `--skip-sbom` was passed to `push`), so it does not depend on that side effect.
@@ -93,8 +101,8 @@ become routine.
 | Step | On failure |
 |---|---|
 | `mise run push --version-only` pushes `:<version>` (or `:<version>-sealed`) only | job fails, nothing promoted |
-| `mise run sign --only image`, each `cosign sign` retried 3× (30 s, 60 s backoff) | job fails; the floating tag stays on the previous signed image; `:<version>` exists unsigned |
-| `mise run promote [--sealed] --identity-regexp "$SIGNER_IDENTITY"`: `cosign verify` the image, then `oras tag` the digest and read it back | job fails, nothing promoted. A signature that does not verify against our own identity is the only case where a signature problem is genuinely ours |
+| `mise run sign --only image`: keyless, then static key (#418); each `cosign sign` retried 3× (30 s, 60 s backoff) | job fails; the floating tag stays on the previous signed image; `:<version>` exists unsigned or keyless-only |
+| `mise run promote [--sealed] --identity-regexp "$SIGNER_IDENTITY"`: `cosign verify` the keyless signature, then the static one against `cosign.pub`, then `oras tag` the digest and read it back | job fails, nothing promoted. A signature that does not verify against our own identity or key is the only case where a signature problem is genuinely ours |
 | `mise run sign --only referrers` (SBOM + vulnerability report), `continue-on-error` | the floating tag has already moved; `Fail on unsigned referrers`, the job's last step, turns the run red |
 | inline `cosign verify` of the referrers, only if they signed | job fails |
 
@@ -107,18 +115,115 @@ become routine.
 
 **Retries.** Each `cosign sign` attempt generates fresh ephemeral keys, so a retry is a new Rekor entry and the 409 above should not recur on a retry. Signing a digest twice only adds a second signature, and `cosign verify` accepts either.
 
-**`promote` is also the rollback tool.** `mise run promote --image-digest <older digest>` moves `:latest` back to any image `publish.yml` signed on `main`. Its default `--identity-regexp` is that main-pinned identity. It cannot rescue a failed signing step: a signature made outside `publish.yml` carries another identity and fails verification, so recovery is re-dispatching the workflow. `oras tag` re-uploads nothing and keeps the manifest bytes, so the signature, which is bound to the digest, stays valid.
+**`promote` is also the rollback tool.** `mise run promote --image-digest <older digest>` moves `:latest` back to any image `publish.yml` signed on `main` with both signatures. Its default `--identity-regexp` is that main-pinned identity. Digests published before the static key existed carry only the keyless signature, so promote refuses them, as hosts enforcing the static key would. It cannot rescue a failed signing step: a signature made outside `publish.yml` carries another identity and fails verification, so recovery is re-dispatching the workflow. `oras tag` re-uploads nothing and keeps the manifest bytes, so the signatures, which are bound to the digest, stay valid.
 
 `SIGNER_IDENTITY` is a job-level env var in `publish.yml`, pinned to the run's own ref (`main` on the normal path; see § Verifying a Signature), so every verification in the job uses the same regexp. The "only main may publish" policy is enforced by a ref gate that runs before the build.
 
 The sealed half repeats the same five steps against `krytis-sealed-digests.env`. It runs only when `publish_sealed` is set (the `workflow_dispatch` input defaults to `true`, and scheduled runs always set it), and deliberately *after* the unsigned image is published, signed, verified and promoted: the sealed build is the newer, less-exercised path, and a failure in it must not cost the primary artifact.
 
+## Static-key signature (#418)
+
+Hosts can't check the keyless signature (§ Host-side enforcement does not exist, and cannot
+today), so on 2026-11-02 the owner chose option 1 of #418: sign every published image a
+second time with a long-lived key that `policy.json` *can* verify, until upstream supports
+workflow identities. Keyless signing stays; it is what CI verifies against `publish.yml`'s
+identity and what puts the image in Rekor.
+
+**Custody.** The private key is the body of a Proton Pass *note*, `Krytis/Cosign Signing
+Key`, read as `COSIGN_PRIVATE_KEY` through `fnox.toml`. The public half is `cosign.pub` in
+the repo root. CI reaches the vault through the one `PROTON_PASS_PAT` secret, the same path
+as the UEFI keys, which is why `publish.yml`'s `Authenticate to Proton Pass` step runs on
+every publish, not only sealed ones. `mise run sign` holds the key in a shell variable and
+hands it to `cosign` through a per-command `env://COSIGN_PRIVATE_KEY`, so it never touches
+the runner's disk. Before signing anything it derives the public key from the vault copy
+and compares it with `cosign.pub`: a vault key that drifted from the committed one would
+sign images every host refuses.
+
+**The key has an empty password.** cosign insists on encrypting the PEM, but a password kept
+next to the key protects nothing the vault doesn't, and would be a second secret to fetch.
+The UEFI keys in the same vault are unencrypted (`openssl -nodes`) for the same reason.
+
+**Creating it: `mise run cosign-generate-keys`, run by a human once.** It refuses when
+`cosign.pub` or the vault item already exists, because a second pair would silently fork the
+trust chain. It generates on `/dev/shm`, creates the note, reads it back through `fnox`,
+and writes `cosign.pub` only if the vault copy derives the same public key.
+
+Two `pass-cli` facts shaped the item type, both found by probing a throwaway item in the
+vault on 2026-11-02 (pass-cli 2.5.1):
+
+- **A custom item doesn't work.** `pass-cli item create custom --from-template -` puts every
+  field in a *section*, and `pass://<vault>/<item>/<field>`, which is how fnox reads, answers
+  `Field does not exist` for section fields. The UEFI item's fields are top-level
+  `extra_fields`, which the template has no way to create. `pass-cli item update --field
+  name=value` does create a top-level field, but takes the value on the command line, where
+  `/proc/<pid>/cmdline` exposes it.
+- **A note does.** `item create note --from-template -` takes the PEM on stdin, and
+  `fnox get` of `<item>/note` returns it intact; `pass-cli item view` adds one trailing
+  newline, which PEM parsing ignores.
+
+**Format: legacy `.sig` tags, or hosts see no signature.** cosign 3.x writes new-format
+Sigstore bundles as OCI referrers by default. containers/image only reads the legacy
+`sha256-<digest>.sig` tag through `use-sigstore-attachments`, and its bundle support
+(podman-container-tools/container-libs#567) was closed unmerged. So the static signature is
+made with `--new-bundle-format=false --use-signing-config=false`. Measured on 2026-11-02
+with cosign 3.1.4 against a local `registry:2`, verifying with the host's own
+`skopeo 1.24.1` (`skopeo copy --policy <sigstoreSigned keyPath policy> --registries.d
+<use-sigstore-attachments>`), by digest and by tag:
+
+| Image's signatures | skopeo with the key's `policy.json` |
+|---|---|
+| legacy `.sig`, right key | accepted |
+| none | refused: "A signature was required, but no signature exists" |
+| legacy `.sig`, wrong key | refused: "invalid signature when validating ASN.1 encoded signature" |
+| new-format bundle, right key | refused: "no signature exists" (the bundle is invisible to it) |
+| new-format bundle (other key) **and** legacy `.sig` (right key) | accepted |
+
+The last row is the production shape: keyless as a bundle, static as a `.sig` tag. They
+coexist without interfering.
+
+**Verifying the static signature needs `--new-bundle-format=false` too.** On a digest that
+carries a bundle, cosign 3.1.4's default `verify --key` checks the bundle and stops: it fails
+with "transparency log certificate does not match" instead of falling back to the `.sig`
+tag. With `--new-bundle-format=false` it finds the right signature. The keyless check is
+unaffected by the extra `.sig` tag. Same experiment, an image carrying both:
+
+| `cosign verify` | default | `--new-bundle-format=false` |
+|---|---|---|
+| `--key` of the legacy `.sig` signer | **fails** | OK |
+| `--key` of the bundle signer | OK | fails |
+
+`mise run promote` therefore verifies keyless with default flags and the static key with
+`--new-bundle-format=false`. A digest with *only* a legacy signature passes the default verify
+too, so a test that never adds a bundle misses this.
+
+**The static signature is uploaded to Rekor.** `--use-signing-config=false` keeps the
+default `--tlog-upload=true`, so `cosign verify --key` checks the log entry as it does for
+keyless. containers/image doesn't look at Rekor unless a policy sets `rekorPublicKeyPath`.
+
+**Rotation is a procedure, not a re-run of the task.** A host trusts only the keys its
+current image's policy names. So: create the new pair under another item title; ship an
+image whose policy lists both public keys in `keyPaths`, both files present (one missing
+file fails the whole requirement, #479); sign with both keys until hosts have taken that
+image; then sign with the new key only and drop the old one from the policy. After a
+compromise the same steps apply, re-signing whatever `:latest`/`:sealed` should point at.
+
 ## Host-side enforcement does not exist, and cannot today
 
-Signatures are attestations for consumers to check. **Nothing on a krytis host verifies
-them before deploying an image** — `bootc` performs no signature check. This is an
-upstream limitation, not an oversight, and it is worth knowing before someone tries to
-"just add a `policy.json`".
+Signatures are attestations for consumers to check. **Nothing on a krytis host refuses an
+unsigned image yet**: the image ships freedesktop-sdk's `/etc/containers/policy.json`,
+whose default is `insecureAcceptAnything`. That is a policy choice, not a bootc gap, and the
+static key above is what will change it. What *can't* happen is the host checking the keyless
+signature, which is worth knowing before someone tries to "just add a `policy.json`" for it.
+
+bootc does consult `policy.json` on the composefs backend krytis uses, and with no opt-in.
+From bootc v1.17.3's source: the composefs pull (`crates/lib/src/bootc_composefs/repo.rs`,
+`pull_composefs_direct`) passes a default `ImageProxyConfig`, so skopeo runs without
+`--insecure-policy`, and no code in bootc or composefs-oci 0.9.4 sets `insecure_policy`.
+`--enforce-container-sigpolicy` belongs to the ostree path: there it marks the origin
+`ostree-image-signed` and refuses a policy whose default is `insecureAcceptAnything`. So once
+an image ships a policy that requires a signature, every later `bootc upgrade` enforces it,
+with no `bootc switch` step. The same fact makes a broken policy block every host's next
+upgrade. [INFERENCE: read from source, not yet observed in a VM.]
 
 `containers-policy.json`'s `sigstoreSigned.fulcio` block requires **both** `oidcIssuer`
 and `subjectEmail`. Upstream's man page: *"Both `oidcIssuer` and `subjectEmail` are
@@ -134,7 +239,7 @@ images signed via GitHub Actions OIDC" at all.
 Note the asymmetry: `cosign verify` handles URI SANs perfectly well, which is exactly what
 the CI step above relies on. It is only `policy.json` that cannot.
 
-An upstream fix exists but has not landed (as of 2026-10-11). [`containers/image#2235`](https://github.com/containers/image/pull/2235)
+No upstream fix has landed (as of 2026-11-02). [`containers/image#2235`](https://github.com/containers/image/pull/2235)
 ("Accept URI for Sigstore Signed Images") would have added URI-SAN support to the `fulcio`
 block, but after stalling on DCO/review friction from February 2024 it was **closed
 unmerged** on 2025-08-26 when `containers/image` folded into the `containers/container-libs`
@@ -143,17 +248,38 @@ monorepo (since renamed `podman-container-tools/container-libs`). The demand mov
 ("Extend Fulcio signature acceptance options to support 'workflow identity'"), and
 [`podman-container-tools/container-libs#625`](https://github.com/podman-container-tools/container-libs/pull/625)
 (opened 2026-02-04) implements it: a `buildSignerURI` match on Fulcio's OID
-`1.3.6.1.4.1.57264.1.9` extension, closing #34. As of 2026-10-11 it is open and blocked,
-with one contributor LGTM, repeated pings to the maintainers, and no maintainer review;
-last activity 2026-05-25. So the timeline is: #625 merges, *then* it reaches the
-`containers/image` version `bootc` vendors. Treat host-side keyless enforcement as
-unavailable, not imminent.
+`1.3.6.1.4.1.57264.1.9` extension, closing container-libs#34. As of 2026-11-02 it is open and blocked: all
+checks pass, but no review has been submitted at all. One contributor said LGTM in a
+comment, and two pings to the maintainers got no reply. Last activity was 2026-05-25.
 
-The workaround — a long-lived static key whose `keyPath` verification `policy.json` *can*
-express, signed alongside the keyless signature — means storing and rotating a key, the
-exact thing keyless signing was chosen to avoid. That is a Security Gate tradeoff under
-AGENTS.md, tracked in **#418**, not a pending chore. The original design for it is at
-`docs/design/cosign-keyless-signing.md` §§ 3–4.
+container-libs#625 is not the only candidate design. On 2026-09-02 a commenter on container-libs#34 proposed
+`subjectBuildConfig`, which can't be combined with `subjectEmail`. It does exact-match only
+on the typed extensions `.12` (source repository URI), `.14` (source repository ref) and
+`.18` (build config URI), and leaves `.9`, the extension container-libs#625 matches, as a later addition.
+A prototype is on a fork branch; no PR and no maintainer reply as of 2026-11-02. So the
+`policy.json` field name for workflow identity is unsettled, not just unmerged. Don't
+sketch a keyless policy against either shape.
+
+The maintainer's position is on record in
+[podman#29973](https://github.com/podman-container-tools/podman/pull/29973), Podman's own
+design doc for signing its machine-OS images, which hit the same gap. On 2026-10-21
+`mtrmac` confirmed c/image has no `policy.json` option for workflow-identity fields: there
+is "demand for supporting this … but I think it rather expands the scope."
+
+So the timeline is: one design merges, *then* it reaches the `containers/image` version
+`bootc` vendors. Treat host-side keyless enforcement as unavailable, not imminent.
+
+The workaround is a long-lived static key, signed alongside the keyless signature, which
+`policy.json` *can* verify with `keyPath`. It means storing and rotating a key, the exact
+thing keyless signing was chosen to avoid. But it isn't only a stopgap. In the same
+podman#29973 thread, `mtrmac` argued that a static key can be recovered after a compromise:
+generate a new key, re-sign past versions, and ship a policy that trusts only the new one.
+Public-instance Fulcio has no equivalent, because you don't control its root and can't
+revoke an individual signature. His best fallback there was renaming the workflow and
+re-signing everything under the new identity. Keyless enforcement would therefore not be a
+strict upgrade even after upstream lands. The owner weighed that under AGENTS.md's Security
+Gate and chose the static key on 2026-11-02 (#418); § Static-key signature (#418) is what
+shipped. The original design for it is at `docs/design/cosign-keyless-signing.md` §§ 3–4.
 
 ## Where a `policy.json` has to live, and why the sketched path is wrong
 

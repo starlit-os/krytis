@@ -16,18 +16,17 @@
 >
 > | This design proposed | Shipped? |
 > |---|---|
-> | CI workflow that publishes + signs **on every push to `main`** | **Diverged** — `publish.yml` is `workflow_dispatch` only (manual) |
-> | **Dual** signatures: keyless (OIDC) + static key pair | **No** — keyless only |
-> | Host-side `bootc`/`policy.json` enforcement using the static key | **No** — tracked in #418 |
+> | CI workflow that publishes + signs **on every push to `main`** | **Diverged** — `publish.yml` runs on a weekday cron (`30 3 * * 1-5`) and `workflow_dispatch`, not on push |
+> | **Dual** signatures: keyless (OIDC) + static key pair | **Yes, since #418** — the image gets both; the referrers stay keyless only. The static key lives in Proton Pass, not GitHub secrets (§ 3 below is superseded; see `docs/skills/signing.md` § Static-key signature (#418)) |
+> | Host-side `bootc`/`policy.json` enforcement using the static key | **Not yet** — the second half of #418; § 4's `/etc/containers` paths are wrong (`docs/skills/signing.md` § Where a `policy.json` has to live, and why the sketched path is wrong) |
 > | Docs page for manual/CI verification via the keyless signature | **Yes** — `docs/skills/signing.md` |
-> | `mise` tasks for key generation and manual verification | **Partial** — `mise/tasks/sign` exists; no cosign key generation (unnecessary without the static key) and no general verify task. `mise/tasks/promote` (#1458) verifies the image signature before it moves `:latest`/`:sealed`; referrer signatures are verified inline in `publish.yml`. Note `mise run generate-keys`/`pull-keys` are the **secure boot** PK/KEK/db keys, unrelated to cosign. |
+> | `mise` tasks for key generation and manual verification | **Mostly** — `mise run cosign-generate-keys` (#418, human-run once) and `mise/tasks/sign` exist; no general verify task. `mise/tasks/promote` (#1458) verifies both image signatures before it moves `:latest`/`:sealed`; referrer signatures are verified inline in `publish.yml`. Note `mise run generate-keys`/`pull-keys` are the **secure boot** PK/KEK/db keys, unrelated to cosign. |
 > | Step 10's "verify fails the publish" | **Yes, since #1458** — `publish.yml` pushes only the version tag, and `:latest`/`:sealed` move only after the image signature verifies. Before that, `mise run push` published `:latest` first and signing was best-effort. |
 >
-> Sections **3. Key management (Security Gate)** and **4. Host-side enforcement** are
-> therefore unimplemented proposals, not documentation. Both hinge on introducing a
-> long-lived signing key — the exact thing keyless signing was chosen to avoid — so
-> they remain a Security Gate decision under AGENTS.md rather than a pending chore.
-> See #418 for the current framing of that tradeoff.
+> Section **3. Key management** was decided differently: on 2026-11-02 the owner chose
+> the static key (#418, option 1), with custody in Proton Pass. Section **4. Host-side
+> enforcement** is still an unimplemented proposal, and its file paths need the fixes
+> above before anyone builds it.
 
 ## Problem
 
@@ -83,11 +82,14 @@ merits, but because `containers/image` was folded into the
 (since renamed `podman-container-tools/container-libs`) and stopped accepting PRs. The
 maintainer filed
 [`container-libs#34`](https://github.com/podman-container-tools/container-libs/issues/34) as a
-pointer to the demand. Its implementation,
+pointer to the demand. As of 2026-11-02 its implementation,
 [`container-libs#625`](https://github.com/podman-container-tools/container-libs/pull/625)
-(`buildSignerURI`), has been open since 2026-02-04 with no maintainer review (checked
-2026-10-01). So URI-SAN support does not exist in any released `containers/image`, and
-**host-side enforcement of the keyless signature is still not possible**.
+(`buildSignerURI`, Fulcio OID `.9`), is still open with no review submitted; it was opened
+2026-02-04. A competing proposal on `container-libs#34` (2026-09-02, `subjectBuildConfig`,
+matching OIDs `.12`/`.14`/`.18`) has a prototype but no PR. Neither has a maintainer response.
+So workflow-identity matching does not exist in any released `containers/image`, its policy
+field name is not settled, and **host-side enforcement of the keyless signature is still
+not possible**.
 
 **Resolution: dual-sign.** Every publish gets both a keyless signature
 (satisfies #60, gives public Rekor transparency and strong workflow-identity
@@ -95,9 +97,14 @@ provenance, used for manual/CI verification) and a signature from a
 maintained static cosign key pair (weaker identity binding — proves
 "signed by whoever holds the repo's cosign key," not "signed by this exact
 workflow run" — but `policy.json`'s `keyPath` verification can check it
-today). If URI-SAN support ever lands — now `podman-container-tools/container-libs#625`, not the
-closed `containers/image#2235` — and bootc picks it up, the static-key host
-enforcement could be replaced by keyless enforcement. #418 is that follow-up.
+today). If workflow-identity matching ever lands (via
+`podman-container-tools/container-libs#625`, the competing `subjectBuildConfig` proposal on
+`container-libs#34`, or a successor) and bootc picks it up, the static-key host enforcement
+could be replaced by keyless enforcement. #418 is that follow-up. Replacing it gives
+something up, though. A static key can be rotated after a compromise, but public Fulcio
+offers no root control or per-signature revocation, as `mtrmac` argued in
+[podman#29973](https://github.com/podman-container-tools/podman/pull/29973) (2026-10-21). So
+keeping the static key as the host gate is a defensible end state, not only a stopgap.
 
 ## Architecture
 
@@ -171,12 +178,15 @@ constraint applies to the static-key signature only — the keyless
 signature is verified out-of-band via `cosign verify` (§5), which is not
 affected.
 
-### 3. Key management (Security Gate) — **not implemented**
+### 3. Key management (Security Gate) — **superseded by #418**
 
-This section describes the static-key half of the dual-signing proposal, which was
-never built (no static key exists; see the status table above). It is a human action,
-not something an agent executes autonomously — flagged per AGENTS.md's Security Gate
-("Auth, signing, supply chain, secrets handling").
+This section is the 2026-07-12 proposal, kept as the record. What #418 built differs in
+two places: the key is a Proton Pass note read through fnox (the UEFI keys' custody, one
+`PROTON_PASS_PAT` in CI), not two GitHub secrets, and it has an empty password. The
+`--registry-referrers-mode=legacy` flag in § 2's note is not what made the signature
+visible to containers/image; `--new-bundle-format=false --use-signing-config=false` is,
+measured with cosign 3.1.4. Current custody, format and rotation:
+`docs/skills/signing.md` § Static-key signature (#418).
 
 1. Human runs `mise run cosign-generate-keys` locally — a task that does **not**
    exist — producing `cosign.key` + `cosign.pub`, password-prompted.
@@ -248,22 +258,24 @@ verify against). The two verification commands below are the content that matter
   ```shell
   cosign verify --key cosign.pub ghcr.io/starlit-os/krytis:latest
   ```
+  As shipped in #418 this needs `--new-bundle-format=false`: cosign 3.x stops at the
+  keyless bundle otherwise (`docs/skills/signing.md` § Static-key signature (#418)).
 
 The page explains why both exist (§ Constraint) and links to the Rekor
 public log for independent transparency verification of the keyless
 signature.
 
-### 6. mise tasks — **only `sign` was built**
+### 6. mise tasks — **`sign` and `cosign-generate-keys` were built**
 
-`mise/tasks/sign` exists and does the keyless half. The other two tasks below were
-never written, and `cosign-sign` was not the shipped name. Note that
-`mise run generate-keys` / `pull-keys` in this repo are the **secure boot** PK/KEK/db
-keys (`docs/design/secure-boot-uki.md`), unrelated to cosign.
+`mise/tasks/sign` does both signatures of the image since #418 (keyless only for the
+referrers). Note that `mise run generate-keys` / `pull-keys` in this repo are the
+**secure boot** PK/KEK/db keys (`docs/design/secure-boot-uki.md`), unrelated to cosign.
 
 - `mise run cosign-generate-keys` — one-time, human-run. Wraps `cosign
-  generate-key-pair`. **Not built** — unnecessary without the static key.
+  generate-key-pair`. **Built in #418**; it stores the key in Proton Pass and writes
+  `cosign.pub`.
 - `mise run cosign-sign --digest <digest>` — runs both signing commands
-  from §2. **Shipped as `mise/tasks/sign`**, keyless only, reading digests from
+  from §2. **Shipped as `mise/tasks/sign`**, reading digests from
   `krytis-push-digests.env` rather than taking a `--digest` flag.
 - `mise run cosign-verify --ref <digest-or-tag>` — runs both verification
   commands from §5. **Not built** — `publish.yml` verifies inline after signing.

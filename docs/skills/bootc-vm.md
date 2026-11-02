@@ -988,11 +988,14 @@ entry breaks against a UKI, including switching away from one to a non-UKI image
 (`bootctl status`: "Couldn't find EFI system partition"; `boot.mount`/`boot.automount`
 units `not-found`) looked like a strong candidate but isn't the cause here — confirmed
 `LoaderDevicePartUUID` correctly identifies the ESP partition (`udevadm info` on the
-partition matches exactly), ruling out a missing/wrong EFI variable. Whether the ESP
-staying unmounted at runtime is itself expected behavior for a UKI-only boot (the ESP is
-management-only once the UKI is loaded by firmware) or a separate bug was not resolved —
-worth its own investigation if `bootc switch`/`upgrade` still can't write to `/boot` after
-matching the image shape below.
+partition matches exactly), ruling out a missing/wrong EFI variable. Why the ESP stays
+unmounted was answered later, by #1328: on a LUKS root, gpt-auto-generator follows
+`/run/systemd/volatile-root` to the dm-crypt mapping, finds no GPT there, and generates
+no ESP mount. A plain root gets `boot.mount`. bootc mounts the ESP itself when it writes
+a UKI, so this does not block `bootc switch`/`upgrade`. It does stop
+`systemd-boot-update.service` from ever refreshing the loader. See
+`docs/skills/secure-boot.md` § The ESP's systemd-boot is updated by systemd, not bootc —
+and not on a LUKS root.
 
 **Fix: switch to an image with the same boot-entry shape as what's currently running.**
 `mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s

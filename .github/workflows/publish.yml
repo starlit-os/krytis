@@ -263,21 +263,69 @@ jobs:
             mise run push --version-only --fail-on critical
           fi
 
+      # Key custody: neither the static cosign key (#418) nor the six UEFI keys
+      # are GitHub secrets. They live in the Proton Pass vault the whole project
+      # already uses (fnox.toml), and CI holds exactly one credential — a Proton
+      # Pass PAT — to reach them. That keeps raw private key material out of the
+      # repository's secret store, makes rotation a vault operation rather than
+      # a secret edit, and means a leaked CI secret exposes a revocable token
+      # instead of the keys themselves. The cosign key never touches the
+      # runner's disk (`mise run sign` holds it in a variable); the UEFI keys
+      # touch it only inside this job and are shredded in the cleanup step below.
+      #
+      # Unconditional since #418: every publish signs with the static key, so a
+      # missing PAT or a Proton Pass outage now fails the job before :latest
+      # moves, the same contract as a Fulcio/Rekor outage.
+      - name: Authenticate to Proton Pass
+        env:
+          PROTON_PASS_PAT: ${{ secrets.PROTON_PASS_PAT }}
+        run: |
+          if [[ -z "${PROTON_PASS_PAT}" ]]; then
+            echo "::error::PROTON_PASS_PAT is not set; publishing needs it for the static cosign key (#418)."
+            echo "  Create one with 'pass-cli personal-access-token create' and add it as a"
+            echo "  repository secret. Format: pst_<token>::<key>."
+            exit 1
+          fi
+          # No liveness probe after this, deliberately. The first real run of this
+          # job died on `pass-cli test`: that subcommand exists in 2.2.3 and was
+          # removed by 2.2.4, and the help I checked came from a stray 2.2.3 on PATH
+          # while mise.lock pins 2.2.4 (84323b8) — whose surface is login/logout/info
+          # and no test. `login` already exits non-zero on bad credentials, and the
+          # next step is a far better check anyway: `mise run sign` fetches the
+          # cosign key and checks it against cosign.pub before signing anything.
+          pass-cli login --pat "${PROTON_PASS_PAT}"
+
+          # A PAT is granted vault access separately from being created, and without
+          # it the run dies later inside a secret lookup with fnox's generic
+          # "Check your Proton Pass configuration" — which is how run 30754171738
+          # was spent. Catch it here, where the remedy fits in the error message.
+          #
+          # `vault list --output json` is verified present in the pinned 2.2.4 asset
+          # (84323b8), not just in whatever pass-cli answers locally — that mistake
+          # is what #452 fixed. What is NOT verified is whether a PAT session may
+          # list vaults at all, or the JSON shape it returns, so this only blocks
+          # when listing plainly succeeds and the vault is plainly absent. Anything
+          # ambiguous warns and falls through to the first secret lookup, which is
+          # the real gate.
+          mise run assert-vault-access
+
       - name: Sign image with cosign
         # BLOCKING (#1458). This used to be best-effort with continue-on-error
         # (#380): a signing failure left an unsigned :latest public and the run
         # stayed green. That happened once, in run 31158190488 (2026-08-07).
         # Now a failure here stops the job before promotion, so :latest stays
         # on the previous signed image; `mise run sign` retries each artifact
-        # first. Recovery is re-dispatching this workflow.
+        # first. Recovery is re-dispatching this workflow. Signs twice: keyless,
+        # and with the static key hosts enforce (#418).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run sign --only image
 
       - name: Promote :latest to the verified image
-        # Verifies the image signature against SIGNER_IDENTITY, then retags the
-        # digest. A signature that does not verify fails the job here, which is
-        # the only case where the signature problem is genuinely ours (#418).
+        # Verifies both image signatures (keyless against SIGNER_IDENTITY,
+        # static against cosign.pub), then retags the digest. A signature that
+        # does not verify fails the job here, which is the only case where the
+        # signature problem is genuinely ours (#418).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run promote --identity-regexp "${SIGNER_IDENTITY}"
@@ -320,47 +368,8 @@ jobs:
       # failure in it must not cost us the primary artifact. Everything below is
       # skipped when publish_sealed=false.
       #
-      # Key custody: the six UEFI keys are NOT GitHub secrets. They live in the
-      # Proton Pass vault the whole project already uses (fnox.toml), and CI
-      # holds exactly one credential — a Proton Pass PAT — to reach them. That
-      # keeps raw private key material out of the repository's secret store,
-      # makes rotation a vault operation rather than six secret edits, and means
-      # a leaked CI secret exposes a revocable token instead of the keys
-      # themselves. The keys touch the runner's disk only inside this job and are
-      # shredded in the cleanup step below.
-      - name: Authenticate to Proton Pass
-        if: env.PUBLISH_SEALED == 'true'
-        env:
-          PROTON_PASS_PAT: ${{ secrets.PROTON_PASS_PAT }}
-        run: |
-          if [[ -z "${PROTON_PASS_PAT}" ]]; then
-            echo "::error::publish_sealed=true but PROTON_PASS_PAT is not set."
-            echo "  Create one with 'pass-cli personal-access-token create' and add it as a"
-            echo "  repository secret. Format: pst_<token>::<key>."
-            exit 1
-          fi
-          # No liveness probe after this, deliberately. The first real run of this
-          # job died on `pass-cli test`: that subcommand exists in 2.2.3 and was
-          # removed by 2.2.4, and the help I checked came from a stray 2.2.3 on PATH
-          # while mise.lock pins 2.2.4 (84323b8) — whose surface is login/logout/info
-          # and no test. `login` already exits non-zero on bad credentials, and the
-          # next step is a far better check anyway: `pull-keys` fetches all six
-          # secrets and openssl-validates every one.
-          pass-cli login --pat "${PROTON_PASS_PAT}"
-
-          # A PAT is granted vault access separately from being created, and without
-          # it the run dies ~20 minutes later inside pull-keys with fnox's generic
-          # "Check your Proton Pass configuration" — which is how run 30754171738
-          # was spent. Catch it here, where the remedy fits in the error message.
-          #
-          # `vault list --output json` is verified present in the pinned 2.2.4 asset
-          # (84323b8), not just in whatever pass-cli answers locally — that mistake
-          # is what #452 fixed. What is NOT verified is whether a PAT session may
-          # list vaults at all, or the JSON shape it returns, so this only blocks
-          # when listing plainly succeeds and the vault is plainly absent. Anything
-          # ambiguous warns and falls through to pull-keys, which is the real gate.
-          mise run assert-vault-access
-
+      # The sealed half reuses the Proton Pass session from 'Authenticate to
+      # Proton Pass' above for the six UEFI keys.
       - name: Pull secure boot keys
         if: env.PUBLISH_SEALED == 'true'
         run: mise run pull-keys
@@ -424,8 +433,9 @@ jobs:
       - name: Revoke Proton Pass session and wipe keys
         # always(): the keys must not survive a failure either. The runner is
         # ephemeral, but a job that leaves private keys on disk between steps is
-        # a habit worth not forming.
-        if: always() && env.PUBLISH_SEALED == 'true'
+        # a habit worth not forming. Not gated on PUBLISH_SEALED: the Proton Pass
+        # session is opened on every run since #418.
+        if: always()
         run: |
           shred -u files/boot-keys/*.key files/boot-keys/*.crt 2>/dev/null || true
           rm -rf files/boot-keys

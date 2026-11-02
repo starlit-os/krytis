@@ -901,7 +901,11 @@ Consequences when debugging:
   `locked[0]`, and `on_lookup_unlocked` returns that item's secret without searching again.
   So a `locked` array of unmatched candidates hands the app some other item's secret. A
   correct fix has to match attributes while locked, and oo7's stored attribute hashes are
-  MACs keyed with the keyring key. Reported as linux-credentials/oo7#614 (2026-10-21).
+  MACs keyed with the keyring key. Reported as linux-credentials/oo7#614 (2026-10-21). On
+  2026-10-26 a maintainer replied that the server cannot tell whether a locked item's
+  attributes match. **Treat this as a lasting oo7 limit, not a pending fix** (accepted
+  2026-11-02). Any fix needs an oo7 storage-format change or a libsecret change that unlocks
+  and searches again, and neither was proposed as of 2026-11-02.
 
 Full reproduction, source references and the effect on the #84 decision:
 `docs/design/secrets-service.md` § *New blocker found while testing*.

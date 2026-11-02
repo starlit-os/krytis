@@ -165,8 +165,63 @@ switched on. After that, `bootctl status` should read `Secure Boot: enabled (use
 
 If the machine will not boot after an update with Secure Boot on, switch Secure Boot off
 in firmware setup: the new entries are what refused it. An append cannot take entries
-back out. To return to the image's `dbx`, clear the keys and re-enroll as in
-§ Recovering from a bad enrollment.
+back out. Clearing the keys and re-enrolling, as in § Recovering from a bad enrollment,
+returns to the `dbx` the machine was *installed* with, not the current image's: the
+`.auth` files on the ESP are written once by `bootc install` (§ The keys never rotate
+(#447)).
+
+## The keys never rotate (#447)
+
+Decided 2026-11-02: krytis's PK, KEK and db are permanent. Nothing on an installed machine
+ever replaces `db`, `KEK` or `PK`. The only write the OS makes to Secure Boot variables is
+`dbx-append` above, and it only adds revocations. Building rotation would mean signed
+`db`/`KEK`/`PK` updates written from the running OS, plus a test that enrols one key set
+and moves to another. That is a large piece of work for an event that, on an
+owner-enrolled desktop, is better handled by reinstalling.
+
+What follows from this:
+
+- **Every sealed image is signed with the same db key** (`files/boot-keys/`, from Proton
+  Pass). An image sealed with any other key installs and upgrades without error, but an
+  enrolled machine's firmware refuses its UKI, as it refuses an unsigned one
+  (`mise run boot-test --secure --expect-fail`).
+- **The loader on the ESP only needs a new systemd-boot version, never a re-sign.**
+  `systemd-boot-update.service` (`bootctl update`) replaces the ESP's loader only when the
+  image carries a newer version. A same-version re-sign would never reach installed
+  machines. With a fixed key there is never a reason for one. See #1328 for where that
+  update does and doesn't run.
+- **There is no SBAT story.** SBAT revocation is enforced by shim, and krytis's chain has
+  no shim. Revocation goes only through `dbx`.
+
+### If a signing key leaks
+
+A leak doesn't stop anything from booting. Enrolled machines keep booting krytis, but a
+leaked `db.key` lets its holder sign anything those machines will boot. A leaked
+`KEK.key` or `PK.key` lets them, with root on a machine, write their own certificate
+into its `db`. `dbx` can't fix a leaked `db.key`: revoking the certificate also revokes
+every krytis loader and UKI, because they are signed with it. Recovery is a reinstall,
+machine by machine:
+
+1. Desk side: make a new key set. `mise run generate-keys` only generates keys when Proton
+   Pass isn't configured. With `fnox.toml` present, it pulls the existing set, or refuses
+   if the vault is unreachable, so it never forks the trust chain by accident. Remove
+   `fnox.toml` (or rename the vault items) and clear `files/boot-keys/`, generate the new
+   set, then store it in Proton Pass under the same fnox names. Publish a sealed image and
+   ISO signed with the new set.
+2. On each machine: back up anything in `/var/home`, because the reinstall wipes the
+   disk. Enter firmware setup and clear the Secure Boot keys (§ Recovering from a bad
+   enrollment), which puts the firmware in Setup Mode.
+3. Reinstall from the new ISO and enrol as in §§ 1–3 above.
+
+**Clearing the keys and re-enrolling without reinstalling re-enrols the leaked set.**
+The `.auth` files systemd-boot offers live in the ESP's `loader/keys/auto/`, and
+`bootc install` writes them once. `bootc upgrade` writes only the UKI and loader entries
+to the ESP, so a machine always holds the key set it was installed with, whatever image
+it has been upgraded to since.
+
+A machine that isn't reinstalled keeps trusting the old key. Once publishing switches to
+the new key, every upgrade it stages has a UKI its firmware refuses, so in practice it
+stays on the last deployment signed with the old key.
 
 ---
 

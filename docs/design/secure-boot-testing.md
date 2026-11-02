@@ -463,7 +463,7 @@ modes. The remaining piece of this scenario is the **manual enrollment prompt**,
 which no VM can exercise — systemd-boot treats a VM as "safe" and enrols without
 asking. That is T4, and #444 tracks the first-boot policy question behind it.
 
-### G-4 · There is no key rotation *mechanism* to test — #447
+### G-4 · ~~There is no key rotation *mechanism* to test~~ — decided: keys never rotate, #447
 
 Investigated rather than assumed. `loader/keys/auto` is a one-shot bootstrap:
 systemd-boot only offers enrollment while the firmware is in Setup Mode. Measured by
@@ -494,12 +494,14 @@ same .auth, --force       accepted, dbx byte-identical                 (firmware
 Secure Boot on, reboot    boots; bootctl "enabled (user)", SecureBoot=1, dbx unchanged (23336 bytes)
 ```
 
-A test needs a mechanism, so #447 asks the prior question: does krytis support
-rotation at all? "No, a compromise means reinstall" is a legitimate answer for a
-desktop OS — it just needs writing down. Whoever does build it inherits the
-`sbvarsign` `tm_mon` trap (`docs/skills/secure-boot.md` § *Every shipped `.auth`
-enrolled an empty allow-list*), which is cosmetic today and becomes silent update
-rejection under rollback protection.
+A test needs a mechanism, so #447 asked the prior question: does krytis support
+rotation at all? **Decided 2026-11-02: no.** PK/KEK/db are permanent, and a key
+compromise means reinstalling each machine. The accepted limitation and the recovery
+procedure are in `docs/secure-boot-enrollment.md` § The keys never rotate (#447). With
+no mechanism there is nothing to test, so G-4 is closed. If the decision is ever
+reversed, whoever builds rotation inherits the `sbvarsign` `tm_mon` trap
+(`docs/skills/secure-boot.md` § *Every shipped `.auth` enrolled an empty allow-list*),
+which is cosmetic today and becomes silent update rejection under rollback protection.
 
 ### G-5 · ~~`dbx` is empty while the Microsoft CAs are trusted~~ — closed, #446
 
