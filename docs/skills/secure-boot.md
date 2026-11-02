@@ -1194,8 +1194,11 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   --dbx <efivar>` counts, or `dbx-append sign` reporting nothing to append), not by
   `cmp`.
 - **Append only adds entries.** Removing a bad entry needs a full replacement with a newer
-  timestamp, or clearing keys and re-enrolling, which writes the image's `dbx.auth`. Both
-  are #447's territory, not this task's.
+  timestamp, or clearing keys and re-enrolling. Re-enrolling writes the `dbx.auth` in the
+  ESP's `loader/keys/auto/`, which is the one the machine was *installed* with, because
+  `bootc upgrade` never rewrites it. #447 decided against OS-side replacement writes
+  (`docs/secure-boot-enrollment.md` § The keys never rotate (#447)), so clearing keys
+  and re-enrolling is the only way.
 
 ## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
 
