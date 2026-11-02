@@ -49,7 +49,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | greetd | `git.sr.ht/~kennylevinsen/greetd`, `github.com/kennylevinsen/greetd` (mirror) | Vuln-remediation patches `elements/desktop/greetd.bst`. | Partial | No project rule. **SourceHut's ToS bans LLM-written or LLM-assisted code, tickets and emails** on the platform. Patches go to `greetd-devel@lists.sr.ht`. |
 | freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst`, `elements/overrides/btrfs-progs.bst` and `elements/overrides/python3-pil.bst` mirror its elements; the last also vendors fdsdk's own `patches/python3-pil/drop-pybind.patch` from freedesktop-sdk!35059. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
 | efitools | `git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git` | Patches `elements/core/efitools.bst`. | No | Nothing in the tree. Patches go to `sbsigntools@groups.io`, kernel-style with `Signed-off-by` [INFERENCE]. |
-| btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). Bug report kdave/btrfs-progs#1198 (open as of 2026-11-02). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. The kernel's policy (no agent `Signed-off-by`, `Assisted-by: LLM [tools]`) is context [INFERENCE]. |
+| btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). Bug report kdave/btrfs-progs#1198 and fix kdave/btrfs-progs#1199 (both open as of 2026-11-02). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. Its own commits carry `Assisted-by: LLM (<role>)` trailers. The kernel's policy (no agent `Signed-off-by`; it dropped `Assisted-by` on 2026-10-14) is context. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
 | Ghostty | `github.com/ghostty-org/ghostty` | Own patch `elements/desktop/ghostty.bst`. | Yes | AI allowed. **Disclose the tool and its extent.** The human must fully understand the code. No AI media. Slop gets you on a public denounce list. PRs need a vouch and a pre-accepted issue. Its `AGENTS.md` tells agents never to open issues or PRs. |
 | oo7 | `github.com/linux-credentials/oo7` | Contributions linux-credentials/oo7#614 (krytis#585, open as of 2026-10-25) and linux-credentials/oo7#615 (krytis#806, merged 2026-10-24). Also waits on oo7#506. | No | No contributor docs, and the org `.github` has none either. |
@@ -164,8 +164,9 @@ nothing was found, so an absence is evidenced and not assumed.
   quiet since 2020.
 - The kernel's
   [coding-assistants.rst](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/Documentation/process/coding-assistants.rst)
-  ("AI agents MUST NOT add Signed-off-by tags", `Assisted-by: LLM [TOOL]`) is a plausible
-  expectation for a kernel maintainer's list. That is [INFERENCE] only.
+  ("AI agents MUST NOT add Signed-off-by tags") is a plausible expectation for a kernel
+  maintainer's list. That is [INFERENCE] only. The kernel no longer asks for an
+  `Assisted-by:` trailer; see the btrfs-progs subsection below.
 
 ### btrfs-progs
 
@@ -176,9 +177,17 @@ nothing was found, so an absence is evidenced and not assumed.
 - Checked at v7.1: the repo root (no CONTRIBUTING, AGENTS, CLAUDE or AI files),
   `README.md` and `Documentation/dev/*.rst`, grepped for AI/LLM/generative/copilot.
 - Because it follows kernel process, the kernel's
-  [coding-assistants.rst](https://docs.kernel.org/process/coding-assistants.html) is the
-  likely expectation: "AI agents MUST NOT add Signed-off-by tags", and the trailer is
-  `Assisted-by: LLM [TOOL1] [TOOL2]`. That is [INFERENCE] only.
+  [coding-assistants.rst](https://docs.kernel.org/process/coding-assistants.html) is
+  context: "AI agents MUST NOT add Signed-off-by tags", leaving the DCO sign-off to the
+  human submitter. The kernel **dropped its `Assisted-by:` tag on 2026-10-14**
+  (torvalds/linux `1e035297ffda`, "docs: remove Assisted-by references"). Tool use now
+  belongs in the cover letter, per `generated-content.rst`. That file was unchanged and
+  still asks for the tools, their inputs and how the fix was tested.
+- btrfs-progs itself still takes the trailer. Its `devel` branch has `Assisted-by: LLM
+  (exposing the bug)`, `Assisted-by: LLM (coding)` and model-named variants on commits from
+  October 2026 (`git log --format='%(trailers)' -n 300 devel`, checked 2026-11-02). The krytis
+  fix for #1302 used `Assisted-by: LLM (exposing the bug, coding)`, no `Signed-off-by`, and a
+  PR body that discloses the tool and the testing.
 
 ### ananicy-cpp
 
