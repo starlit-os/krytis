@@ -1180,7 +1180,10 @@ it runs anywhere the image does, including CI.
 It exists because nothing previously connected `files/umbriel/` to the binary that
 reads it: `desktop/umbriel.bst` tracks `refs/heads/main` and is ref-bumped daily, and
 `bst source track` cannot re-vendor a `kind: local` data file. Run it after any
-`chore(deps): update umbriel` bump.
+`chore(deps): update umbriel` bump, **before merging it**: PR checks never run this gate
+(`docs/skills/ci-runner.md` § PR build gate: `build-changed.yml`, blind spot 4), so #1450
+merged green and the break first showed up in `publish`. A bump PR's `track-bst-sources`
+branch builds locally like any other: `mise run build --pull` in its worktree.
 
 **The subcommand moved.** `umbriel validate` became `umbriel config validate` upstream in
 `f66d6a8` (2026-09-27, `feat(cli): add umbriel config schema and move validate under config`);
