@@ -1884,20 +1884,20 @@ carries no numeric prefix.
 
 1. **`live/iso-tools/Containerfile` → `localhost/iso-tools:latest`** — the Fedora-based toolchain container for the binaries freedesktop-sdk has no component for (see § Tool sourcing below).
 2. **`live/Containerfile` → `localhost/krytis-installer`** — the live environment image (initramfs rebuild, `liveuser`, flatpaks, `configure-live-krytis.sh`, `recipe.json`). `mise run iso-container-build` builds exactly this, standalone, for iterating on the live env without a full ISO assembly; `build-iso` issues the same `podman build` itself so it can pass the payload ref it has just resolved.
-3. **`scripts/iso-sd-boot.sh`** — the assembly engine. Exports the payload image to an oci-archive, preps it (`live/iso-tools/payload-prep.sh`, skipped entirely when sealed), imports it into a `containers-storage` inside the live rootfs, writes `<target>-rootfs.sfs` + `<target>-boot-files.tar`, then hands both to `live/src/build-iso.sh`, which builds the systemd-boot ESP image (mtools/dosfstools) and the hybrid ISO (`xorriso -as mkisofs`, `implantisomd5`).
+3. **`scripts/iso-sd-boot.sh`** — the assembly engine. Exports the payload image to an oci-archive, preps it (`live/iso-tools/payload-prep.sh`, skipped entirely when sealed), converts it to a gzip OCI layout (`<target>-payload-layout`), writes the `media-input.json` receipt into the live rootfs, writes `<target>-rootfs.sfs` + `<target>-boot-files.tar`, then hands all three to `live/src/build-iso.sh`, which builds the systemd-boot ESP image (mtools/dosfstools) and the hybrid ISO (`xorriso -as mkisofs`, `implantisomd5`), grafting the layout at `/OCI`.
 
 Flags are resolved by the task and handed to `iso-sd-boot.sh` as environment (`TARGET`, `OUTPUT_DIR`, `WORKDIR`, `DEBUG`, `INSTALLER_CHANNEL`, `COMPRESSION`, `PAYLOAD_SEALED`, `PAYLOAD_REF`, `ISO_TOOLS_IMAGE`):
 
 | Flag | Effect |
 |---|---|
 | `--output-dir <dir>` | ISO plus intermediates; default `output/`. Made absolute before the script sees it — the script runs with its own cwd. |
-| `--workdir <dir>` | Squashfs/store staging; defaults to `--output-dir`. XFS or BTRFS recommended: the script prints a `findmnt` hint otherwise, and the overlay shortcut for the squashfs root only runs on xfs/ext4 (else `cp -a`). |
+| `--workdir <dir>` | Squashfs root staging; defaults to `--output-dir`. XFS or BTRFS recommended: the script prints a `findmnt` hint otherwise, and the overlay shortcut for the squashfs root only runs on xfs/ext4 (else `cp -a`). |
 | `--compression fast\|release` | `fast` = zstd level 3, 128K blocks; `release` = level 15, 1M blocks. |
 | `--debug` | `DEBUG=1` — sshd enabled in the live session. Not for production, but the install tests need it (see [`krytis-live-config.md`](krytis-live-config.md) § DEBUG ISOs need an sshd drop-in). |
 | `--sealed` | Embed the signed-UKI image as the offline payload: the payload ref becomes `ghcr.io/starlit-os/krytis:sealed` (so `recipe.json`'s `targetImgref` follows the sealed stream — pointing it at `:latest` would make the first `bootc upgrade` replace the signed boot chain, #371), `PAYLOAD_SEALED=1` makes the embed byte-identical, and the output is renamed `krytis-live-sealed.iso`. `./scripts/ensure-sealed-image.sh` runs first. The live *environment* stays unsigned either way — sealing concerns the payload only. |
 | `--payload-image <ref>` | `--sealed` only (errors out otherwise): embed an already-built image as-is instead of `localhost/krytis:sealed`, never re-sealing it. Use the published ref for release validation, where local bits wearing the published name would prove nothing. |
 
-Artifacts land in `OUTPUT_DIR`: `output/krytis-live.iso`, or `output/krytis-live-sealed.iso` for `--sealed` (`iso-sd-boot.sh` always writes `${TARGET}-live.iso`; the task renames afterwards). The intermediates — `krytis-rootfs.sfs`, `krytis-boot-files.tar`, `krytis-payload*.oci.tar` — are cleaned up by the script's EXIT trap. Every build ends by running `mise/tasks/verify-iso-payload`. It asserts that each `containers-storage:` name the baked installer `recipe.json` requests is a name of the embedded image (#1248; `dakota-iso.md` § The ISO's embedded payload and the installer's `local_imgref` are set independently). A sealed build also asserts that the finished ISO embeds the expected image ID. An unsealed build runs it with `--names-only`, because `payload-prep.sh` re-commits an unsealed payload, so its ID can never match (#1261).
+Artifacts land in `OUTPUT_DIR`: `output/krytis-live.iso`, or `output/krytis-live-sealed.iso` for `--sealed` (`iso-sd-boot.sh` always writes `${TARGET}-live.iso`; the task renames afterwards). The intermediates — `krytis-rootfs.sfs`, `krytis-boot-files.tar`, `krytis-payload*.oci.tar`, `krytis-payload-layout/` — are cleaned up by the script's EXIT trap. Every build ends by running `mise/tasks/verify-iso-payload`. It checks every blob of the ISO's `/OCI` layout against its digest and size (`scripts/iso-oci-layout.py`), that the squashfs's `media-input.json` receipt pins that layout, and that the baked installer `recipe.json`'s `image`/`imgref`/`targetImgref` equal the receipt's `image` with no `local_imgref` (#1248, #1479; `dakota-iso.md` § The ISO's embedded payload and the installer's `local_imgref` are set independently). A sealed build also asserts that the layout's config digest is the expected image ID. An unsealed build runs it with `--names-only`, because `payload-prep.sh` re-commits an unsealed payload, so its ID can never match (#1261).
 
 ### The payload is resolved by tag — a missing local tag embeds a stale image silently
 
@@ -1936,7 +1936,7 @@ With `ISO_TOOLS_IMAGE` unset, `iso-sd-boot.sh` falls back to plain host binaries
 
 Krytis runs **rootless** podman. Three things this breaks compared with a rootful CI host, all handled in `scripts/iso-sd-boot.sh` and `live/iso-tools/payload-prep.sh` — keep them when touching either:
 
-1. **Don't bind-mount the host containers-storage into the tools container.** Rootless storage lives under `$HOME`, not `/var/lib/containers/storage`, and the nested userns can't take the storage lock (`storage.lock: permission denied`). Instead `iso-sd-boot.sh` does `podman save --format oci-archive` of the payload on the host first, and payload-prep reads it with `buildah from oci-archive:` — transport-clean, works rootless and rootful.
+1. **Don't bind-mount the host's container storage into the tools container.** Rootless storage lives under `$HOME`, not `/var/lib/containers/storage`, and the nested userns can't take the storage lock (`storage.lock: permission denied`). Instead `iso-sd-boot.sh` does `podman save --format oci-archive` of the payload on the host first, and payload-prep reads it with `buildah from oci-archive:` — transport-clean, works rootless and rootful.
 2. **Force `STORAGE_DRIVER=vfs` for the payload-prep container.** The container rootfs is on overlayfs; buildah's default overlay driver can't stack on overlayfs without fuse-overlayfs (`'overlay' is not supported over overlayfs`). vfs has no such constraint (costs disk, ~2× the payload).
 3. **The squashfs assembly's overlay mount falls back to `cp -a`** when rootless overlay isn't available — slower but works; no action needed.
 
@@ -1946,48 +1946,19 @@ Krytis runs **rootless** podman. Three things this breaks compared with a rootfu
 
 **Kernel cmdline label must match the volume label.** The volume label comes from `build-iso.sh`'s `--label` (`KRYTIS_LIVE`, read from `krytis/live_label`) and every boot entry interpolates the same `${LABEL}`. It used to be a hardcoded literal in the boot entries (`root=live:LABEL=DAKOTA_LIVE`, inherited from the upstream pipeline this was ported from) while the volume label came from the flag: the mismatch made dmsquash-live search for a non-existent label and **hang to a black screen** — no error, in QEMU/Boxes and on bare metal. If you add a variant, set `live_label` and confirm the boot entries reference it. The krytis cmdline also carries `console=tty0` (so boot renders on a display, not just serial) and `rd.shell rd.info loglevel=7` (verbose + emergency shell on initramfs failure instead of a silent hang).
 
-### The offline store is embedded as a **vfs** `containers-storage`
+### The offline payload is an OCI layout on the ISO, bound by `media-input.json` (#1479)
 
-`iso-sd-boot.sh`'s `_ns_build_squashfs` imports the prepped payload archive into a `containers-storage` that ships inside the squashfs, via `skopeo copy oci-archive:… containers-storage:…` inside a `podman run --privileged` container writing to a plain bind-mounted host directory (`CS_STAGING`, on `WORKDIR`'s real filesystem — recommend xfs/ext4/btrfs per the `findmnt` hint earlier in the script). The store is always `driver = "vfs"` at `/var/lib/containers/storage`, copied into the squashfs root with `cp -a`.
+`iso-sd-boot.sh`'s `_ns_build_squashfs` converts the prepped payload archive to an OCI image layout with `skopeo copy --dest-compress --dest-compress-format gzip oci-archive:… oci:<OUTPUT_DIR>/krytis-payload-layout:<ref>`, run inside `localhost/krytis-installer` so the host needs no skopeo. `live/src/build-iso.sh --oci-layout` grafts that directory onto the ISO 9660 tree at `/OCI` (`xorriso -graft-points`, no copy). The layout is **not** in the squashfs: tuna-os/fisherman only accepts a layout on a read-only filesystem, and the live root is an overlay with a writable upper layer. dmsquash-live mounts the ISO itself read-only at `/run/initramfs/live`, so the live system sees the layout at `/run/initramfs/live/OCI`. The same script writes `/etc/bootc-installer/media-input.json` into the squashfs root, naming that path and pinning the layout's manifest and config digests. The full contract is in [`krytis-live-config.md`](krytis-live-config.md) § fisherman requires a media-input.json receipt and a read-only OCI layout on live media.
 
-Until #1247 there was a second, overlay branch (`driver = "overlay"` at `/usr/lib/containers/storage`, copied with `rsync -a --no-specials --no-devices`), chosen by a `live/src/<variant>/composefs` file inherited from dakota-iso. It was never usable on krytis: the installer recipe and the E2E install hardcode composefs, and a blank file sent this script and `payload-prep.sh` down different branches (`dakota-iso.md` § `cat f | tr -d … || echo default` loses its default without pipefail). #1247 deleted the file, the `COMPOSEFS_BACKEND` variable and both non-composefs branches.
+gzip because `podman save` writes uncompressed layers. Recompressing changes the layer digests but not the diff_ids or the config, so the image ID, and a sealed UKI's composefs digest, are unchanged; `verify-iso-payload` checks the config digest.
 
-Three other places encode krytis's vfs layout, and all four move together or not at all: `live/src/configure-live-krytis.sh` writes the live `/etc/containers/storage.conf` with `driver = "vfs"`; `live/iso-tools/payload-prep.sh` injects the same storage.conf into unsealed payloads; and `mise/tasks/verify-iso-payload` reads `var/lib/containers/storage/vfs-images/images.json` straight out of the ISO's squashfs.
+**The OCI layout costs about 1.8 GB of ISO size.** Measured 2026-11-02 with `--compression fast`: the sealed ISO built around `26.08.202611011748-sealed` came out at 7.3G, with a 3.9G squashfs and a 3.24 GiB gzip layer. A pre-#1479 sealed ISO built the same day around `26.08.202610111750-sealed` came out at 5.5G. The payload versions differ, so the figure is approximate. The cause is deduplication: the live root is built from the same OS as the payload, and `mksquashfs` stores identical files once. A VFS store kept the payload's files as files, so most of them deduplicated against the live root for free. An OCI layer is one opaque gzip blob, so nothing does. fisherman accepts only a layout, so this cost comes with the contract. Recompressing the layer with zstd might win some of it back, but that hasn't been measured or install-tested.
 
-vfs stores layers uncompressed (~2× the payload) and makes `bootc update` on the installed system print:
+Until #1479 the payload was a **vfs** `containers-storage` (`driver = "vfs"`, `/var/lib/containers/storage`) inside the squashfs, staged in a `CS_STAGING` bind mount, reached through a live `/etc/containers/storage.conf` with a separate `graphroot` (`storage-live`, to dodge a containers/storage read-only-lock trap, containers/podman#9852) and `additionalimagestores`, and found by a `containers-storage:` `local_imgref` in `recipe.json`. tuna-os/fisherman eecb1106 (tuna-os/fisherman#393) made a receipt mandatory on live media, and with a receipt fisherman does no offline-store discovery at all, so the store, the live `storage.conf` and the lock trap are gone. Before that, until #1247, there was also an overlay-driver branch chosen by a `live/src/<variant>/composefs` file (`dakota-iso.md` § `cat f | tr -d … || echo default` loses its default without pipefail).
 
-```
-User-selected graph driver "overlay" overwritten by graph driver "vfs" from database
-```
+What still encodes the old layout: `live/iso-tools/payload-prep.sh` injects a vfs `storage.conf` into **unsealed** payloads. That file no longer serves the live session; it only reaches the installed unsealed system (see [`krytis-live-config.md`](krytis-live-config.md) § Sealed (UKI) payloads must be embedded byte-identically, the aside).
 
-That is expected and non-fatal — the update still succeeds and stages the image. It is inherent to *any* live-ISO composefs install using vfs, not krytis-specific: fisherman's `selectStorageDriver` (`tuna-os/fisherman`, `fisherman/internal/install/storage_driver.go`) rejects `overlayfs`/`tmpfs` scratch and falls back to vfs, and a live environment's scratch dir is always overlayfs/tmpfs — so bootc records vfs in the installed system's containers-storage database and containers/storage honours that over whatever driver is configured.
-
-**The `graphroot` override is not optional, whichever driver is in play — it avoids a self-reference lock trap.** fisherman installs via `pkexec` (**rootful**), whose *default* graphroot is exactly `/var/lib/containers/storage` — the same path as the embedded payload. containers/storage caches lockfiles by absolute path (`pkg/lockfile` `getLockfile`): the primary store opens its `layers.lock` **read-write**, then the additional store requests the **same** path **read-only** → cache hit on a read-write lock → fatal:
-
-```
-loading additional layer stores: lock /var/lib/containers/storage/vfs-layers/layers.lock is not a read-only lock
-```
-
-`configure-live-krytis.sh` therefore points `graphroot` at a separate empty dir and reaches the payload only as an additional store:
-
-```toml
-[storage]
-driver = "vfs"
-graphroot = "/var/lib/containers/storage-live"
-
-[storage.options]
-additionalimagestores = ["/var/lib/containers/storage"]
-```
-
-The payload is then only ever the read-only additional store, never the primary — the paths differ, so no cache collision. This also covers rootless (`liveuser`), where podman forces graphroot to `~/.local/share/containers/storage`; the payload is reachable only as an additional read-only store there too, and the distinct rootful graphroot keeps the pkexec path from colliding with it. See containers/podman#9852 for the original report of this failure mode.
-
-<details>
-<summary>Historical: the "embed as overlay instead of vfs" change (#248)</summary>
-
-#248 argued that vfs on the `composefs=true` embed step was a misdiagnosis carried over from a different step. The *actual* rootless overlay-on-overlayfs constraint lives in `payload-prep.sh` (buildah's own working-container storage on the iso-tools container's overlayfs rootfs — rootless gotcha #2 above, still true), whereas the embed step is already `--privileged` and writes to a bind mount, not to the container's own overlayfs — which is why the `composefs=false` sibling branch has always used `driver = "overlay"` there successfully. So it switched the composefs branch to overlay (plus the `rsync` copy) to get rid of the `bootc update` warning above.
-
-That change is **not** in the pipeline krytis owns: `scripts/iso-sd-boot.sh` keeps `driver = "vfs"` and `cp -a` (its only branch since #1247), and the live `storage.conf`, the payload-prep injection and the `verify-iso-payload` gate all encode the vfs layout. The reasoning still holds, so re-porting it is possible — but it means changing all four places in one pass plus a real `mise run iso-install-test` to confirm the warning is gone, not editing the embed step alone.
-</details>
+The vfs store also made `bootc update` on an installed system print `User-selected graph driver "overlay" overwritten by graph driver "vfs" from database` (non-fatal). Whether an install from the OCI layout still prints it has not been checked yet.
 
 ### Status
 

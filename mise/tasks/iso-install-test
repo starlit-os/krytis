@@ -10,8 +10,9 @@ set -euo pipefail
 
 # boot-test covers the image→disk install path (`bootc install to-disk`).
 # This covers the ISO→fisherman→disk path, which is the only one that exercises
-# the offline VFS store, the live installer's recipe.json, and targetImgref —
-# i.e. everything `mise run build-iso --sealed` actually changes.
+# the embedded OCI layout and its media-input.json receipt, the live installer's
+# recipe.json, and targetImgref — i.e. everything `mise run build-iso --sealed`
+# actually changes.
 #
 # The two phases deliberately run under DIFFERENT firmware:
 #   phase 1  live ISO      → plain OVMF. The live ISO is unsigned by design

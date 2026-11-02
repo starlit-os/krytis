@@ -523,19 +523,22 @@ element change touching systemd invalidates an existing `:sealed` image — reru
 offline install payload. Two non-obvious requirements, both of which otherwise
 produce late, confusing failures:
 
-**1. Byte identity.** The payload injector — `live/iso-tools/payload-prep.sh`, in this
+**1. Byte identity (of the content).** The payload injector — `live/iso-tools/payload-prep.sh`, in this
 repo — writes `/usr/lib/bootc/install/00-defaults.toml` (a `root-mount-spec`) into every
-payload, adds `/etc/containers/storage.conf` on the composefs backend krytis uses, and
+payload, adds a vfs `/etc/containers/storage.conf` (left over from the pre-#1479 VFS embed), and
 re-commits the result twice with `buildah commit --squash` (the second pass only to
 relabel `ostree.final-diffid` on the squashed layer). The krytis *image* ships neither
-file — the live environment's own copies come from `live/src/configure-live-krytis.sh`
-and are a separate thing — and each `buildah run`/`commit` round trip can bump `/tmp` and
+file — the live environment's own `00-defaults.toml` comes from `live/src/configure-live-krytis.sh`
+and is a separate thing — and each `buildah run`/`commit` round trip can bump `/tmp` and
 `/var/tmp` mtimes, the same, and only, discrepancy that broke the UKI digest before
 (§ `bootc container ukify` must run in a throwaway stage). Any of the three invalidates
 the `composefs=` digest baked into the UKI's frozen cmdline, and `bootc install` then
 aborts with `The UKI has the wrong composefs= parameter (is 'sha512:X', should be
 sha512:Y')`. `PAYLOAD_SEALED=1` makes the pipeline pass the payload through untouched.
-Skipping only the `00-defaults.toml` injection — which is what issue #371 originally
+"Untouched" means the config and the uncompressed layers (diff_ids): since #1479 the
+oci-archive → OCI layout step gzips the layers, which changes the layer *blob* digests
+but not the config digest (the image ID) or the rootfs the composefs digest is computed
+over. Skipping only the `00-defaults.toml` injection — which is what issue #371 originally
 scoped — is **not** enough.
 
 `PAYLOAD_SEALED=1` is honoured twice over, because both halves of the pipeline live here:
@@ -547,14 +550,15 @@ invoked directly. Squashfs assembly is `iso-sd-boot.sh`'s own inline
 dakota-iso carried a duplicate in a second entry point, `scripts/build-live-squashfs.sh`,
 that krytis never reached and deliberately did not port — do not go looking for it here.)
 
-**2. `targetImgref`, not just the store key.** `live/src/configure-live-krytis.sh` bakes
-one ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
-`local_imgref`. Change only the embedded *content* and the install succeeds while
+**2. `targetImgref`, not just the embedded content.** `live/src/configure-live-krytis.sh` bakes
+one ref into three `recipe.json` fields: `imgref`, `targetImgref`, `image`, and
+`scripts/iso-sd-boot.sh` writes the same ref as `image` and `targetImgref` of
+`/etc/bootc-installer/media-input.json`. Change only the embedded *content* and the install succeeds while
 `targetImgref` still points at `…/krytis:latest` — so the first `bootc upgrade` on
 the freshly sealed system pulls the **unsigned** image, overwrites the signed UKI
 and signed systemd-boot, and the enrolled firmware refuses to boot it. Change only
-`payload_ref` and `local_imgref` no longer resolves in the offline store, failing
-the install immediately. `PAYLOAD_REF` moves both together; `build-iso --sealed`
+`payload_ref` and the recipe's `image` no longer equals the receipt's, so fisherman
+refuses the install immediately (#1479). `PAYLOAD_REF` moves both together; `build-iso --sealed`
 sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
 `bootc status --json | jq '.spec.image.image'`.
 
@@ -568,33 +572,43 @@ during it" discipline as `boot-test`'s UKI presence check.
 
 ### Assert the embed on the finished ISO, not inside the pipeline
 
-Once the sealed path is a pass-through, byte identity is true *by construction*, so
+Once the sealed path is a pass-through, content identity is true *by construction*, so
 asserting it inside `scripts/iso-sd-boot.sh` would be tautological.
 `mise run verify-iso-payload` reads the **finished ISO** instead, which is the only
-place that proves the whole chain (`podman save` → oci-archive → `skopeo copy` → VFS
-store → squashfs → ISO) preserved the image. It also catches the "wrong tag embedded"
+place that proves the whole chain (`podman save` → oci-archive → `skopeo copy` → gzip OCI
+layout → ISO `/OCI`) preserved the image. It also catches the "wrong tag embedded"
 class of bug that already bit once (#417/#425). `build-iso --sealed` runs it
 automatically.
 
-The invariant is image-ID equality, established empirically:
+The invariant is image-ID equality:
 
-- a VFS containers-storage records `vfs-images/images.json` as a list of
-  `{"id": …, "names": [...]}`, where `id` is exactly
-  `podman inspect <tag> --format '{{.Id}}'` (the config digest, no `sha256:` prefix);
+- the layout's manifest names a config blob whose digest is exactly
+  `podman inspect <tag> --format '{{.Id}}'` (with a `sha256:` prefix);
+  `scripts/iso-oci-layout.py` reads it from the ISO and hashes every blob against its
+  descriptor on the way. Before #1479 the same ID was read from a VFS store's
+  `vfs-images/images.json`;
+- `skopeo copy --dest-compress-format gzip` into the layout rewrites layer blobs but
+  carries the config over unchanged, so the config digest survives it. Measured
+  2026-11-02: the layout built from `ghcr.io/starlit-os/krytis:26.08.202611011748-sealed`
+  has config `sha256:e5a813e4211b…`, the image's `podman inspect .Id`. The install from
+  it passed `iso-install-test --secure`, so bootc's own digest check agreed;
 - `podman save --format oci-archive` round-trips both the config digest and the
   layer diff_id unchanged for krytis's images (they are already OCI-format, so no
   manifest conversion happens). Checked against `:sealed`: ID `0b00a10aad1a…`,
   diff_id `e2ae30e0f0ac…`, identical before and after the archive round trip.
 
-Byte identity is a *stronger* claim than digest equality, which is what makes it
-the right assertion — and it needs no privileged mount and no digest recomputation.
+Config-digest equality covers the diff_ids, so it pins the uncompressed rootfs the
+composefs digest is computed over — and it needs no privileged mount and no composefs
+digest recomputation.
 The authoritative digest check is `bootc install` itself, which recomputes and
 names both digests in its error; the QEMU install test is therefore the end-to-end
 digest proof, and this gate is the cheap regression net in front of it.
 
-Reading the payload out of the ISO needs neither root nor a 5GB extract: walk the
+Reading the receipt and recipe out of the ISO needs neither root nor a 5GB extract: walk the
 ISO 9660 directory records to find `LiveOS/squashfs.img`'s extent, then
-`unsquashfs -offset <lba*2048> -cat <iso> <path>`. File data in an ISO is
+`unsquashfs -offset <lba*2048> -cat <iso> <path>`. The `/OCI` layout sits on the ISO
+tree itself, so `scripts/iso-oci-layout.py` reads it from the Joliet directory records
+the same way. File data in an ISO is
 contiguous — including across the multi-extent records `-iso-level 3` uses for
 files over 4GB — so the first record's extent is the start of the squashfs. Assert
 the `hsqs` magic at the computed offset so a layout change fails loudly instead of

@@ -17,9 +17,12 @@
 # "fat ESP" so UEFI firmware on either architecture finds its boot binary.
 #
 # Options:
-#   --arch <spec>     — arch:boot-tar:squashfs triplet (repeatable)
-#   --title <string>  — boot-entry title (default: Krytis Live)
-#   --label <string>  — ISO filesystem label (default: KRYTIS_LIVE)
+#   --arch <spec>       — arch:boot-tar:squashfs triplet (repeatable)
+#   --title <string>    — boot-entry title (default: Krytis Live)
+#   --label <string>    — ISO filesystem label (default: KRYTIS_LIVE)
+#   --oci-layout <dir>  — OCI image layout to graft at /OCI, the offline install
+#                         payload (scripts/iso-sd-boot.sh). Grafted, not copied:
+#                         it is several GB.
 #
 # Boot architecture (no GRUB2, no shim):
 #   El Torito EFI entry → EFI/efi.img (FAT ESP image containing):
@@ -34,6 +37,8 @@
 #     boot/grub/loopback.cfg    metadata for Ventoy/GRUB-style loopback boot
 #     LiveOS/squashfs.img       squashfs of the full Krytis live rootfs (single-arch)
 #     LiveOS/squashfs-<arch>.img  per-arch squashfs (multi-arch)
+#     OCI/                      offline install payload as an OCI layout, read by
+#                               fisherman at /run/initramfs/live/OCI (--oci-layout)
 #
 # Live boot flow:
 #   UEFI firmware → El Torito → FAT ESP → systemd-boot → kernel+initramfs
@@ -45,11 +50,13 @@ set -euo pipefail
 
 ARCH_SPECS=()
 LABEL=""
+OCI_LAYOUT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arch)  ARCH_SPECS+=("${2:?--arch requires arch:boot-tar:squashfs}"); shift 2 ;;
         --title) LIVE_TITLE="${2:?--title requires a string}"; shift 2 ;;
         --label) LABEL="${2:?--label requires a string}"; shift 2 ;;
+        --oci-layout) OCI_LAYOUT="${2:?--oci-layout requires a directory}"; shift 2 ;;
         *)       break ;;
     esac
 done
@@ -359,11 +366,12 @@ echo ">>> Assembling ISO..."
 # xorriso -as mkisofs mode:
 #   -iso-level 3   required for files >2 GiB (squashfs is ~4.5 GiB)
 #   -r             Rock Ridge extensions (Linux long filenames / permissions)
-#   -J --joliet-long  Joliet extensions (Windows compatibility)
+#   -J --joliet-long  Joliet extensions (Windows compatibility; also how
+#                  verify-iso-payload reads the OCI layout's 64-char blob names)
 #   --efi-boot EFI/efi.img   El Torito EFI boot entry (platform 0xef)
 #   -efi-boot-part           expose the EFI image as a GPT partition
 #   --efi-boot-image         finalize the EFI boot partition record
-#
+#   -graft-points /OCI=<dir>  the payload layout, added in place (--oci-layout)
 # This is the approach used since the repo's first working ISO (commit 7ab0901).
 # It produces:
 #   - A protective MBR (type 0xEE) so UEFI firmware immediately switches to GPT
@@ -377,6 +385,13 @@ echo ">>> Assembling ISO..."
 #   Old UEFI firmware sees a "dos" disk, skips GPT, finds no EFI entries in the
 #   MBR partition table, and does not show the USB in the boot menu.
 #   (See issues #15, https://github.com/projectbluefin/dakota-iso/issues/15)
+GRAFTS=()
+if [[ -n "${OCI_LAYOUT}" ]]; then
+    [[ -f "${OCI_LAYOUT}/index.json" ]] || { echo "ERROR: ${OCI_LAYOUT} is not an OCI layout (no index.json)" >&2; exit 1; }
+    GRAFTS=(-graft-points "/=${ISO_ROOT}" "/OCI=${OCI_LAYOUT}")
+else
+    GRAFTS=("${ISO_ROOT}")
+fi
 # shellcheck disable=SC2086  # XORRISO may be a multi-word `podman run ...` command
 ${XORRISO} -as mkisofs \
     -iso-level 3 \
@@ -387,7 +402,7 @@ ${XORRISO} -as mkisofs \
     -efi-boot-part \
     --efi-boot-image \
     -o "${OUTPUT_ISO}" \
-    "${ISO_ROOT}"
+    "${GRAFTS[@]}"
 
 # shellcheck disable=SC2086
 ${IMPLANTISOMD5} "${OUTPUT_ISO}" 2>/dev/null || true

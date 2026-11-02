@@ -176,14 +176,13 @@ strings at lines 2-3 and 80-82, option documentation at 20-22 and 38 — which n
 `superiso-store.mount` unit that never existed in krytis either, this file being the only
 hit for `superiso` outside an archived plan — `STORE_SFS=""` at 48, the `--store)` case arm
 at 53, and the copy block at 326-329. Nothing ever passed it: no `mise/tasks/iso-*` call
-site and no `scripts/iso-sd-boot.sh` one. Krytis embeds its payload the same VFS way —
-`scripts/iso-sd-boot.sh:175-187` writes a `driver = "vfs"` store into
-`${CS_STAGING}/var/lib/containers/storage` and copies it to
-`${SQUASHFS_ROOT}/var/lib/containers/storage` at 211-213 (the only path since #1247 removed
-the overlay branch), and the live image's own
-`/etc/containers/storage.conf` names exactly that path as its `additionalimagestores`
-(`live/src/configure-live-krytis.sh:222-230`). Dead here for the same reason it was dead
-upstream.
+site and no `scripts/iso-sd-boot.sh` one. Krytis embedded its payload the same VFS way
+(a `driver = "vfs"` store copied into the squashfs, reached through the live
+`storage.conf`'s `additionalimagestores`), so it was dead here for the same reason it was
+dead upstream. Since #1479 krytis embeds neither: the payload is an OCI layout grafted onto
+the ISO at `/OCI` by `live/src/build-iso.sh --oci-layout` (see
+[`krytis-live-config.md`](krytis-live-config.md) § fisherman requires a media-input.json
+receipt and a read-only OCI layout on live media).
 
 **How it survived the fork:** `docs/plans/done/2026-08-06-hard-fork-dakota-iso.md:358`
 explicitly told the port to *keep* `--store`. A port instruction written against a
@@ -302,17 +301,17 @@ loudly if it comes out empty: it is passed to `live/src/build-iso.sh --label`, w
 The hazard is that the correctness of such defaults is carried by a `set` line hundreds of
 lines away, and this repo **already** crosses shell boundaries where that line does not
 survive: `iso-sd-boot.sh` `export -f`s `_ns_build_squashfs` and re-enters it via `podman
-unshare bash -c '_ns_build_squashfs'` (238), which is why the function re-asserts `set -euo
-pipefail` on its own first line (150); `iso-install-fisherman.sh` builds a `sudo bash -c "…"`
-string that re-asserts it too (95). Move a read like this into a helper, into that `podman
+unshare bash -c '_ns_build_squashfs'` (277), which is why the function re-asserts `set -euo
+pipefail` on its own first line (153); `iso-install-fisherman.sh` builds a `sudo bash -c "…"`
+string that re-asserts it too (117-118). Move a read like this into a helper, into that `podman
 unshare` sub-invocation or into an `sh -c`, and it fails mute. Before #1247 the concrete
 case was an empty `COMPOSEFS_BACKEND`: it staged the payload as an overlay store at
-`usr/lib/containers/storage`, which is neither the path nor the driver the live image's
-`storage.conf` looks for (`live/src/configure-live-krytis.sh:222-230`: `driver = "vfs"`,
-`additionalimagestores = ["/var/lib/containers/storage"]`).
+`usr/lib/containers/storage`, which was neither the path nor the driver the live image's
+`storage.conf` then looked for (`driver = "vfs"`,
+`additionalimagestores = ["/var/lib/containers/storage"]`; that file went away in #1479).
 
 Note the asymmetry one line up: `LIVE_TITLE=$(cat … || echo 'Krytis Live')`
-(`iso-sd-boot.sh:245`) has no pipe and is pipefail-independent — only the whitespace-stripped
+(`iso-sd-boot.sh:284`) has no pipe and is pipefail-independent — only the whitespace-stripped
 reads are fragile. Upstream's fix made the *reader* pipefail-independent rather than trusting
 every caller to have set it.
 
@@ -330,7 +329,7 @@ one build run half of each path:
 | Reader (before #1247) | Blank file meant | Path taken |
 |---|---|---|
 | `scripts/iso-sd-boot.sh` (`… \| tr -d … \|\| echo "true"`) | `""` | overlay store at `usr/lib/containers/storage` (its `== "true"` tests failed) |
-| `live/iso-tools/payload-prep.sh` (`${COMPOSEFS_BACKEND:-true}`, received the exported value) | `true` | VFS/squash payload |
+| `live/iso-tools/payload-prep.sh` (`${COMPOSEFS_BACKEND:-true}`, received the exported value) | `true` | VFS/squash payload (the VFS store was replaced by an OCI layout in #1479) |
 | `live/src/configure-live-krytis.sh` (`images.json` `"composefs": true`, `recipe["composeFsBackend"] = True`), `scripts/iso-install-fisherman.sh` | ignored, hardcoded `true` | composefs install recipe |
 
 Setting the file to `false` broke it the other way: the overlay store was embedded, but the
@@ -351,30 +350,34 @@ containers-storage …`. The two names are configured in unrelated files and agr
 convention. Upstream now treats `<variant>/payload_ref` as the source of truth and tests the
 workflow embed, `configure-live.sh`'s default and the `images.json` catalogue against it.
 
-krytis has the same split:
+krytis has the same split. `local_imgref` itself is gone since #1479 (tuna-os/fisherman now
+binds the install to `/etc/bootc-installer/media-input.json` instead), but the two sides are
+still configured independently:
 
-- **Embed:** `scripts/iso-sd-boot.sh:45` uses `PAYLOAD_REF`, else `krytis/payload_ref`.
-- **Installer:** `live/src/configure-live-krytis.sh:249` bakes
+- **Embed:** `scripts/iso-sd-boot.sh:46` uses `PAYLOAD_REF`, else `krytis/payload_ref`, and
+  writes it as `media-input.json`'s `image` and `targetImgref`.
+- **Installer:** `live/src/configure-live-krytis.sh:238` bakes
   `KRYTIS_IMGREF=${PAYLOAD_REF:-ghcr.io/starlit-os/krytis:latest}` into `recipe.json`
-  (`local_imgref`, `image`, `imgref`) and `images.json`.
+  (`image`, `imgref`, `targetImgref`) and `images.json`.
 - `mise run build-iso` passes one `PAYLOAD_REF` to both. `mise run iso-container-build`
   without `--payload-ref` relies on two literals happening to match, and
   `.github/workflows/build-iso.yml` hardcodes a third copy.
-- **The E2E install can't catch it:** `scripts/iso-install-fisherman.sh:34-46` writes its
-  own recipe from `payload_ref`, and on a miss falls back to a `docker://` network pull, so
-  an online E2E run passes even when the offline GUI install would fail.
+- **The E2E install can't catch it:** `scripts/iso-install-fisherman.sh` writes its own
+  recipe, so a drifted GUI recipe never reaches it. It does compare its `PAYLOAD_REF`
+  against the live session's receipt (`iso-install-fisherman.sh:49-58`) and fails on a
+  mismatch; before #1479 it fell back to a `docker://` network pull instead, so an online
+  E2E run passed even when the offline GUI install would fail.
 
-**Gated since #1248.** `mise/tasks/verify-iso-payload` used to match the store entry by image
-ID only (its `names` were printed, not asserted). It now also reads
-`etc/bootc-installer/recipe.json` from the same squashfs. It fails unless `local_imgref` is a
-`containers-storage:` ref, and unless every `containers-storage:` ref in the recipe
-(`local_imgref`, `image`), minus the prefix, is among the matched store entry's `names`.
-`targetImgref` and the bare `imgref` are deliberately not checked: they name what the
-installed system tracks, which may legitimately be remote. `build-iso` runs it on every
-build. Sealed builds match the store entry by image ID first. Unsealed builds pass
-`--names-only` (#1261), because `payload-prep.sh` re-commits the payload and the ID can't
-match, so the entry is found by the recipe's own `local_imgref`. `iso-install-test
---secure` also runs the sealed form.
+**Gated since #1248.** `mise/tasks/verify-iso-payload` reads
+`etc/bootc-installer/recipe.json` and `etc/bootc-installer/media-input.json` from the
+ISO's squashfs and fails unless the recipe's `image`, `imgref` and `targetImgref` all equal
+the receipt's `image`, and unless the recipe has no `local_imgref`. fisherman itself refuses
+a recipe `image` other than the receipt's, so this is the same failure, found at build time
+instead of on a user's machine. (Until #1479 the same gate matched `containers-storage:`
+refs against the `names` of a VFS store entry.) `build-iso` runs it on every build. Sealed
+builds also check the layout's config digest against the local image ID. Unsealed builds
+pass `--names-only` (#1261), because `payload-prep.sh` re-commits the payload and the ID
+can't match. `iso-install-test --secure` also runs the sealed form.
 
 ### Resolve a binary before prefixing `sudo` — `command -v` answers for the caller's PATH
 

@@ -1084,10 +1084,10 @@ After uncommenting: `mise run lint && mise run generate-disk`.
 
 `mise run boot-test` installs with `bootc install to-disk --via-loopback` straight
 from a local image. That is *not* how a user installs Krytis, and it exercises
-none of the ISO machinery: no offline VFS store, no live installer, no
-`recipe.json`, no `targetImgref`. `mise run iso-install-test` boots the live ISO
+none of the ISO machinery: no `/OCI` payload layout, no `media-input.json`
+receipt, no live installer, no `recipe.json`, no `targetImgref`. `mise run iso-install-test` boots the live ISO
 in QEMU and drives fisherman over SSH, which is the real path — so it is the only
-test that can catch a broken payload embed, a wrong store key, or an imgref that
+test that can catch a broken payload embed, a recipe that does not match the receipt, or an imgref that
 sends the installed system to the wrong upgrade stream.
 
 | Command | Exercises |
