@@ -109,7 +109,7 @@ jobs:
         run: uv sync
 
       - name: Verify privileged podman works
-        # _ns_build_squashfs's VFS-store import (skopeo copy into a
+        # _ns_build_squashfs's OCI-layout conversion (skopeo copy into a
         # bind-mounted dir) needs `podman run --privileged`. This job runs
         # as root (RUNNER_ALLOW_RUNASROOT=1), so rootful podman applies —
         # but some seccomp profiles block CAP_SYS_ADMIN even for root.

@@ -665,7 +665,8 @@ never needs them (see the issue's own "not needed on the host" note).
 
 ### `podman run --privileged` preflight
 
-The VFS-store import inside `_ns_build_squashfs` needs `CAP_SYS_ADMIN` even
+The `podman run --privileged` OCI-layout conversion inside `_ns_build_squashfs`
+(the VFS-store import before #1479) and its overlay mount need `CAP_SYS_ADMIN` even
 under rootful podman (this job runs as root, matching the rest of the VPS
 runner design). Some hosting providers or seccomp profiles block it anyway.
 `build-iso.yml` runs `podman run --rm --privileged busybox true` as its own
@@ -691,8 +692,8 @@ which is what actually produces `:sealed` in the first place.
 
 `build-iso` ends with `verify-iso-payload` in both modes (`mise/tasks/build-iso`'s own
 tail), so `build-iso.yml` has no separate verify step. Sealed builds get the image-ID digest
-gate plus the installer-recipe name check. Unsealed builds get the name check alone
-(`--names-only`).
+gate plus the layout, `media-input.json` receipt and installer-recipe checks. Unsealed builds
+get those checks without the ID gate (`--names-only`).
 
 **An ID check on an unsealed ISO can only fail.** `live/iso-tools/payload-prep.sh` injects
 two files into an unsealed payload and re-commits it with `buildah commit --squash`, which

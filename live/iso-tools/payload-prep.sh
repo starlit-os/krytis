@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 # payload-prep.sh — inject bootc install defaults into the payload image and
-# emit it as an oci-archive for embedding into the live squashfs store.
+# emit it as an oci-archive, which iso-sd-boot.sh turns into the ISO's OCI layout.
 #
 # Extracted from iso-sd-boot.sh so the identical logic runs either:
 #   • directly on the host (host buildah), or
@@ -57,12 +57,14 @@ buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.bootc-root-mount.toml" /tmp/.bootc-
 buildah run "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
 
 # Krytis is always composefs (#1247): inject the VFS storage.conf, squash to one
-# layer (a multi-layer image explodes in a VFS store) and relabel
-# ostree.final-diffid to the squashed layer.
+# layer and relabel ostree.final-diffid to the squashed layer. Both date from
+# when the ISO embedded the payload as a VFS containers-storage, which a
+# multi-layer image exploded; it is an OCI layout since #1479. The storage.conf
+# now only reaches the installed (unsealed) system.
 printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
 buildah run "${INJECT_CTR}" -- mkdir -p /etc/containers
 buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
-echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
+echo "=== Squashing ${PAYLOAD_IMAGE} to a single layer ==="
 buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
 buildah rm "${INJECT_CTR}"
 ANNOT_CTR=$(buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")

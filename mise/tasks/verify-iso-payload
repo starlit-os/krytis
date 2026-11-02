@@ -1,44 +1,46 @@
 #!/usr/bin/env bash
-#MISE description="Assert an ISO's embedded offline payload is the exact image expected, under the name its installer recipe requests (sealed-payload digest gate; --names-only for unsealed ISOs)"
+#MISE description="Assert an ISO's embedded offline payload is the exact image expected, and that its media-input.json receipt and installer recipe both bind to it (sealed-payload digest gate; --names-only for unsealed ISOs)"
 #USAGE flag "--iso <path>" default="output/krytis-live-sealed.iso" help="ISO to inspect"
 #USAGE flag "--image <tag>" default="localhost/krytis:sealed" help="Local image tag the payload must match (ignored with --names-only)"
-#USAGE flag "--names-only" help="Unsealed ISO: skip the image-ID check, keep the installer-recipe name check"
+#USAGE flag "--names-only" help="Unsealed ISO: skip the image-ID check, keep the layout, receipt and recipe checks"
 
 set -euo pipefail
 
 # Why this exists: a sealed payload's UKI carries a composefs= digest baked into
 # its frozen cmdline at seal time, and `bootc install` refuses any mismatch. The
-# embed pipeline therefore has to hand the payload through byte-identically
+# embed pipeline therefore has to hand the payload's content through unchanged
 # (PAYLOAD_SEALED=1 in scripts/iso-sd-boot.sh). Asserting that inside the pipeline
 # would be tautological — the pass-through makes it true by construction. The
 # finished ISO is the only place that proves the whole chain (podman save →
-# oci-archive → skopeo copy → VFS store → squashfs → ISO) preserved the image,
-# and the same check catches the "wrong tag embedded" class of bug that already bit once
-# (#417/#425). Unprivileged, no QEMU, seconds.
+# oci-archive → skopeo copy → OCI layout → ISO) preserved the image, and the same
+# check catches the "wrong tag embedded" class of bug that already bit once
+# (#417/#425). Unprivileged, no QEMU, under a minute (it hashes every blob).
 #
-# The invariant: the image ID recorded in the ISO's embedded VFS store equals
-# `podman inspect <tag> --format '{{.Id}}'`. Verified empirically that a VFS
-# store's vfs-images/images.json records exactly that value as its `id`, and that
-# `podman save --format oci-archive` round-trips both the config digest and the
-# layer diff_id unchanged for krytis's (already OCI-format) images.
+# The payload is an OCI layout at /OCI on the ISO, described by the receipt
+# /etc/bootc-installer/media-input.json in the live squashfs (#1479). Three
+# invariants, each one fisherman also enforces at install time, too late to help:
 #
-# Second invariant (#1248): every `containers-storage:` ref the installer recipe
-# baked into the same squashfs (etc/bootc-installer/recipe.json — `local_imgref`,
-# `image`) is one of that store entry's `names`. The embed side
-# (scripts/iso-sd-boot.sh, from PAYLOAD_REF or krytis/payload_ref) and the recipe
-# side (live/src/configure-live-krytis.sh, from PAYLOAD_REF or its own literal)
-# are configured independently; an ID-only check passes a drifted name, and so
-# does the E2E install, which writes its own recipe and falls back to a network
-# pull. Only a real offline GUI install would fail. dakota-iso shipped exactly
-# that (bd407ff); see docs/skills/dakota-iso.md § The ISO's embedded payload and
-# the installer's `local_imgref` are set independently.
+# 1. The layout is intact: every blob's digest and size match its descriptor
+#    (scripts/iso-oci-layout.py), and for a sealed payload the config digest is
+#    `podman inspect <tag> --format '{{.Id}}'`. iso-sd-boot.sh gzips the layers,
+#    which changes the layer digests but not the config, so the image ID still
+#    identifies the content.
+# 2. The receipt pins that layout: platformManifestDigest and configDigest match
+#    it, ociLayoutPath is where dmsquash-live mounts the ISO, and image equals
+#    targetImgref (what `bootc upgrade` follows afterwards).
+# 3. The installer recipe (#1248) binds to the receipt. fisherman refuses a
+#    recipe `image` that is not the receipt's `image`, and a `targetImgref` that
+#    differs from it. The embed side (iso-sd-boot.sh) and the recipe side
+#    (configure-live-krytis.sh) are configured independently, and the E2E install
+#    writes its own recipe, so only a real GUI install would hit a drift. dakota-iso
+#    shipped exactly that (bd407ff); see docs/skills/dakota-iso.md § The ISO's
+#    embedded payload and the installer's `local_imgref` are set independently.
 #
-# --names-only (#1261): the ID invariant holds only for a SEALED payload. An
-# unsealed one is re-committed by live/iso-tools/payload-prep.sh (two injected
-# files, `buildah commit --squash`), so its ID never equals the local tag's and
-# an ID check on an unsealed ISO can only fail. The name invariant does not
-# depend on the ID, so unsealed builds keep that half: the store entry is
-# selected by the recipe's `local_imgref` instead of by ID.
+# --names-only (#1261): the ID check holds only for a SEALED payload. An unsealed
+# one is re-committed by live/iso-tools/payload-prep.sh (two injected files,
+# `buildah commit --squash`), so its ID never equals the local tag's and an ID
+# check on an unsealed ISO can only fail. Invariants 2 and 3 do not depend on the
+# ID, so unsealed builds keep them.
 #
 # When this task is invoked as a plain script by another task (build-iso does),
 # mise does NOT parse these #USAGE annotations for the child call — it passes the
@@ -67,95 +69,89 @@ if [[ "${NAMES_ONLY}" -eq 0 ]]; then
     podman image exists "${IMAGE}" || { echo "ERROR: ${IMAGE} does not exist locally — nothing to compare the ISO against." >&2; exit 1; }
     EXPECTED_ID="$(podman inspect "${IMAGE}" --format '{{.Id}}')"
 fi
-STORE_JSON="var/lib/containers/storage/vfs-images/images.json"
+MEDIA_JSON_PATH="etc/bootc-installer/media-input.json"
 RECIPE_JSON_PATH="etc/bootc-installer/recipe.json"
 
 if [[ "${NAMES_ONLY}" -eq 1 ]]; then
-    echo "==> Verifying ${ISO}'s installer recipe names its embedded payload (unsealed: no ID check)..."
+    echo "==> Verifying ${ISO}'s embedded payload, receipt and recipe (unsealed: no ID check)..."
 else
     echo "==> Verifying ${ISO} embeds ${IMAGE} (${EXPECTED_ID:0:12})..."
 fi
 
-# Read the store metadata straight out of the ISO's live squashfs — no root, no
-# loop mount, no ~5GB extract. See scripts/iso-squashfs-offset.py for how the
-# offset is found and why xorriso is not an option on a Krytis host.
+# Read the receipt and the recipe straight out of the ISO's live squashfs — no
+# root, no loop mount, no ~5GB extract. See scripts/iso-squashfs-offset.py for
+# how the offset is found and why xorriso is not an option on a Krytis host.
 SFS_OFFSET="$(python3 scripts/iso-squashfs-offset.py "${ISO}")"
 
-if ! IMAGES_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${STORE_JSON}" 2>/dev/null)"; then
-    echo "ERROR: ${STORE_JSON} not present in the ISO's squashfs." >&2
-    echo "       The offline store is missing, or is not the composefs (VFS) layout." >&2
+if ! MEDIA_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${MEDIA_JSON_PATH}" 2>/dev/null)"; then
+    echo "ERROR: ${MEDIA_JSON_PATH} not present in the ISO's squashfs." >&2
+    echo "       fisherman refuses to install from live media without it (#1479)." >&2
     exit 1
 fi
 if ! RECIPE_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${RECIPE_JSON_PATH}" 2>/dev/null)"; then
     echo "ERROR: ${RECIPE_JSON_PATH} not present in the ISO's squashfs — no installer recipe to check." >&2
     exit 1
 fi
+LAYOUT_JSON="$(python3 scripts/iso-oci-layout.py "${ISO}")"
 
-IMAGES_JSON="${IMAGES_JSON}" RECIPE_JSON="${RECIPE_JSON}" EXPECTED_ID="${EXPECTED_ID}" IMAGE="${IMAGE}" python3 <<'PY'
+MEDIA_JSON="${MEDIA_JSON}" RECIPE_JSON="${RECIPE_JSON}" LAYOUT_JSON="${LAYOUT_JSON}" \
+EXPECTED_ID="${EXPECTED_ID}" IMAGE="${IMAGE}" python3 <<'PY'
 import json, os, sys
 
+# Where dmsquash-live mounts the ISO, plus the graft point in live/src/build-iso.sh.
+LIVE_PATH = "/run/initramfs/live/OCI"
+
 expected = os.environ["EXPECTED_ID"].removeprefix("sha256:")
-entries = json.loads(os.environ["IMAGES_JSON"])
-found = [(e.get("id", ""), e.get("names") or []) for e in entries]
+media = json.loads(os.environ["MEDIA_JSON"])
 recipe = json.loads(os.environ["RECIPE_JSON"])
-prefix = "containers-storage:"
-local_refs = {k: v for k, v in recipe.items() if isinstance(v, str) and v.startswith(prefix)}
+layout = json.loads(os.environ["LAYOUT_JSON"])
 err = sys.stderr
+problems = []
 
-def store_listing():
-    for image_id, names in found:
-        print(f"       store has:         {image_id[:12]} {names}", file=err)
-
-def drift_hint():
+if expected and layout["configDigest"] != f"sha256:{expected}":
+    print(f"ERROR: the ISO's embedded layout is not {os.environ['IMAGE']}.", file=err)
+    print(f"       expected image ID: {expected[:12]}", file=err)
+    print(f"       layout config:     {layout['configDigest'].removeprefix('sha256:')[:12]} ({layout['refName']})", file=err)
     print("", file=err)
-    print("An offline GUI install would fail with 'pull failed … containers-storage:…'.", file=err)
-    print("The embed name comes from PAYLOAD_REF / krytis/payload_ref (scripts/iso-sd-boot.sh),", file=err)
-    print("the recipe's from PAYLOAD_REF or configure-live-krytis.sh's default. Build both from", file=err)
-    print("one PAYLOAD_REF: mise run build-iso does; iso-container-build needs --payload-ref.", file=err)
-
-if expected:
-    # Sealed: the store entry is chosen by ID — the digest gate.
-    match = next(((i, n) for i, n in found if i == expected), None)
-    if not match:
-        print(f"ERROR: the ISO's embedded store does not contain {os.environ['IMAGE']}.", file=err)
-        print(f"       expected image ID: {expected[:12]}", file=err)
-        store_listing()
-        print("", file=err)
-        print("Two likely causes:", file=err)
-        print("  1. The payload was mutated during embedding (PAYLOAD_SEALED not honoured in", file=err)
-        print("     scripts/iso-sd-boot.sh). The store then holds a re-committed image whose", file=err)
-        print("     rootfs no longer matches the digest baked into the UKI, and the install", file=err)
-        print("     would abort with 'The UKI has the wrong composefs= parameter'.", file=err)
-        print("  2. The wrong tag was embedded — check build-iso's payload ref.", file=err)
-        sys.exit(1)
-
-if "local_imgref" not in local_refs:
-    print(f"ERROR: recipe.json has no {prefix} local_imgref "
-          f"(got {recipe.get('local_imgref')!r}); the GUI installer has no offline source.",
-          file=err)
+    print("Two likely causes:", file=err)
+    print("  1. The payload was mutated during embedding (PAYLOAD_SEALED not honoured in", file=err)
+    print("     scripts/iso-sd-boot.sh). The layout then holds a re-committed image whose", file=err)
+    print("     rootfs no longer matches the digest baked into the UKI, and the install", file=err)
+    print("     would abort with 'The UKI has the wrong composefs= parameter'.", file=err)
+    print("  2. The wrong tag was embedded — check build-iso's payload ref.", file=err)
     sys.exit(1)
 
-if not expected:
-    # Unsealed (--names-only): the store entry is chosen by the recipe's own name.
-    want = local_refs["local_imgref"].removeprefix(prefix)
-    match = next(((i, n) for i, n in found if want in n), None)
-    if not match:
-        print(f"ERROR: the installer recipe's local_imgref names {want}, which the embedded store does not carry.", file=err)
-        store_listing()
-        drift_hint()
-        sys.exit(1)
+checks = [
+    ("media-input.json schemaVersion", media.get("schemaVersion"), 1),
+    ("media-input.json platform", media.get("platform"), "linux/amd64"),
+    ("media-input.json ociLayoutPath", media.get("ociLayoutPath"), LIVE_PATH),
+    ("media-input.json platformManifestDigest", media.get("platformManifestDigest"), layout["manifestDigest"]),
+    ("media-input.json configDigest", media.get("configDigest"), layout["configDigest"]),
+    ("media-input.json targetImgref", media.get("targetImgref"), media.get("image")),
+    ("recipe.json image", recipe.get("image"), media.get("image")),
+    ("recipe.json targetImgref", recipe.get("targetImgref"), media.get("image")),
+    ("recipe.json imgref", recipe.get("imgref"), media.get("image")),
+]
+for what, got, want in checks:
+    if not want or got != want:
+        problems.append(f"{what} is {got!r}, want {want!r}")
+if "local_imgref" in recipe:
+    problems.append(f"recipe.json still has local_imgref {recipe['local_imgref']!r}; "
+                    "the GUI would send it as the source and fisherman would refuse it")
 
-image_id, names = match
-unresolved = {k: v for k, v in local_refs.items() if v.removeprefix(prefix) not in names}
-if unresolved:
-    print("ERROR: the payload is embedded, but the installer recipe asks for a name it does not carry.", file=err)
-    print(f"       store entry {image_id[:12]} names: {names}", file=err)
-    for key, ref in sorted(unresolved.items()):
-        print(f"       recipe.json {key}: {ref}", file=err)
-    drift_hint()
+if problems:
+    print("ERROR: the payload is embedded, but the receipt or recipe does not bind to it.", file=err)
+    for p in problems:
+        print(f"       {p}", file=err)
+    print("", file=err)
+    print("The receipt comes from scripts/iso-sd-boot.sh, the recipe from", file=err)
+    print("live/src/configure-live-krytis.sh; both take PAYLOAD_REF. Build both from one", file=err)
+    print("PAYLOAD_REF: mise run build-iso does; iso-container-build needs --payload-ref.", file=err)
     sys.exit(1)
 
-print(f"==> Payload verified: {image_id[:12]} {names}" + ("" if expected else " (unsealed: name check only)"))
-print(f"==> Installer recipe resolves to it: {', '.join(sorted(local_refs))}")
+cfg = layout["configDigest"].removeprefix("sha256:")[:12]
+print(f"==> Payload verified: {cfg} {media['image']}, {layout['layers']} layer(s), "
+      f"{layout['bytes'] / 2**30:.2f} GiB" + ("" if expected else " (unsealed: no ID check)"))
+print(f"==> media-input.json and recipe.json bind to it: {media['ociLayoutPath']}")
 sys.exit(0)
 PY

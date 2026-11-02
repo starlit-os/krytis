@@ -3,9 +3,9 @@
 # Run a fisherman composefs install via SSH into the live QEMU session.
 #
 # PAYLOAD_REF (env, optional) overrides <target>/payload_ref, matching
-# scripts/iso-sd-boot.sh — the recipe must name the ref the ISO actually
-# embedded or the offline containers-storage lookup misses and fisherman
-# falls back to a network pull.
+# scripts/iso-sd-boot.sh. It must equal the `image` of the ISO's
+# /etc/bootc-installer/media-input.json: on live media fisherman refuses any
+# other source (#1479), so the script checks it up front.
 #
 # LUKS_PASSPHRASE (env, optional) installs to an ENCRYPTED root instead,
 # by emitting an "encryption": {"type": "luks-passphrase"} recipe block.
@@ -42,13 +42,22 @@ e2e_ssh_auth_init live
 SSH="${E2E_SSH_WRAP} ssh $SSH_OPTS ${E2E_SSH_AUTH_OPTS} liveuser@127.0.0.1 -p ${SSH_PORT}"
 SCP="${E2E_SSH_WRAP} scp $SSH_OPTS ${E2E_SSH_AUTH_OPTS} -P ${SSH_PORT}"
 
-if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
-    INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
-    echo "Image found in local containers-storage — using offline install."
-else
-    INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
-    echo "Image not in local store — fisherman will pull from network."
+# The live ISO carries /etc/bootc-installer/live-iso-mode, so fisherman requires
+# media-input.json and installs from its OCI layout or not at all; there is no
+# network fallback to take. Fail here, with the two refs side by side, rather
+# than on fisherman's "requested image … does not match embedded source".
+MEDIA_IMAGE=$($SSH "python3 -c 'import json; print(json.load(open(\"/etc/bootc-installer/media-input.json\"))[\"image\"])'" 2>/dev/null) || {
+    echo "ERROR: the live session has no readable /etc/bootc-installer/media-input.json." >&2
+    echo "       The ISO predates the OCI-layout payload (#1479); rebuild it with mise run build-iso." >&2
+    exit 1
+}
+if [[ "${MEDIA_IMAGE}" != "${PAYLOAD_IMAGE}" ]]; then
+    echo "ERROR: the ISO embeds ${MEDIA_IMAGE}, but this run asks fisherman for ${PAYLOAD_IMAGE}." >&2
+    echo "       Pass --payload-ref ${MEDIA_IMAGE}, or rebuild the ISO for ${PAYLOAD_IMAGE}." >&2
+    exit 1
 fi
+INSTALL_IMAGE="${PAYLOAD_IMAGE}"
+echo "Installing ${INSTALL_IMAGE} from the ISO's embedded OCI layout (media-input.json)."
 
 # Constants, matching the GUI recipe baked by live/src/configure-live-krytis.sh
 # (bootloader "systemd", composeFsBackend true). The live_target/bootloader

@@ -215,40 +215,6 @@ mkdir -p /usr/lib/bootc/install
 printf '[install]\nroot-mount-spec = "LABEL=root"\n' \
     > /usr/lib/bootc/install/00-defaults.toml
 
-# ── Offline containers-storage for the embedded payload ───────────────────────
-# iso-sd-boot.sh embeds the payload OCI image into the squashfs as a *VFS*
-# containers-storage graphroot at /var/lib/containers/storage (composefs=true
-# path). Podman's default driver is "overlay", so without this config it looks
-# in an empty overlay/ tree and reports the image as missing — the installer
-# then fails until you `podman pull` over the network, defeating the offline ISO.
-#
-# Three things are needed:
-#   driver = "vfs"        — match the embedded store's on-disk layout.
-#   graphroot (distinct)  — the primary store must NOT sit at the same path as the
-#                           embedded payload. fisherman installs via pkexec (rootful),
-#                           whose default graphroot IS /var/lib/containers/storage.
-#                           containers/storage caches lockfiles by absolute path
-#                           (pkg/lockfile getLockfile): the primary store opens
-#                           .../vfs-layers/layers.lock read-write, then the additional
-#                           store requests the SAME path read-only → cache hit on a
-#                           read-write lock → fatal "lock ... is not a read-only lock".
-#                           Point graphroot at a separate empty dir so the payload is
-#                           only ever the read-only additional store, never the primary.
-#   additionalimagestores — makes the embedded payload resolvable. Rootless (liveuser)
-#                           forces graphroot to ~/.local/share/containers/storage, so
-#                           the system-path store is only reachable as an additional
-#                           read-only store; the distinct graphroot above keeps the
-#                           rootful path from colliding with it. Covers both identities.
-mkdir -p /etc/containers /var/lib/containers/storage-live
-cat > /etc/containers/storage.conf << 'STORAGEEOF'
-[storage]
-driver = "vfs"
-graphroot = "/var/lib/containers/storage-live"
-
-[storage.options]
-additionalimagestores = ["/var/lib/containers/storage"]
-STORAGEEOF
-
 # ── tuna-installer (bootc-installer flatpak) configuration ────────────────────
 # Krytis embeds the bootc-installer flatpak (org.bootcinstaller.Installer). It
 # reads /etc/bootc-installer/{recipe,images}.json for branding + the offline
@@ -256,13 +222,16 @@ STORAGEEOF
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 
-# Krytis is a single composefs image (no nvidia split). The payload baked into
-# the squashfs VFS store is ghcr.io/starlit-os/krytis:latest; install offline
-# from that containers-storage ref.
+# Krytis is a single composefs image (no nvidia split). The payload is embedded
+# on the ISO as an OCI layout, and scripts/iso-sd-boot.sh writes
+# /etc/bootc-installer/media-input.json naming it (#1479). fisherman binds the
+# install to that receipt: recipe.json's `image` must equal the receipt's
+# `image`, and its `targetImgref` the receipt's `targetImgref`. Both come from
+# PAYLOAD_REF.
 # PAYLOAD_REF (build-arg) overrides the default when the ISO embeds a non-default
 # payload — e.g. krytis's `mise run build-iso --sealed`, which embeds
-# ghcr.io/starlit-os/krytis:sealed. Must match the ref iso-sd-boot.sh imports into
-# the offline store, or recipe.json's local_imgref will not resolve at install time.
+# ghcr.io/starlit-os/krytis:sealed. iso-sd-boot.sh gets the same ref, so the
+# receipt and this recipe agree; verify-iso-payload checks that they do.
 # targetImgref matters just as much as imgref: it is what `bootc upgrade` follows
 # after install, so a sealed install pointing at :latest would replace its own
 # signed boot chain on the first upgrade.
@@ -312,7 +281,11 @@ cat > /etc/bootc-installer/images.json << IMGEOF
 IMGEOF
 
 # recipe.json: start from the shared template, override branding + image refs.
-# composefs=true → install from containers-storage (podman-based offline install).
+# No `local_imgref` and no `containers-storage:` source: on live media fisherman
+# installs from the receipt's OCI layout and refuses an `image` that is neither
+# the receipt's `image` nor `oci:<ociLayoutPath>` (tuna-os/fisherman
+# cmd/fisherman/host_recipe.go resolveMediaInput). tuna-os/tacklebox writes its
+# composefs recipes the same way (internal/purefs/offlinemedia.go).
 python3 - << PYEOF
 import json
 with open("$SCRIPT_DIR/etc/bootc-installer/recipe.json") as f:
@@ -321,8 +294,7 @@ recipe["distro_name"] = "StarlitOS Krytis"
 recipe["welcome_title"] = "Welcome to StarlitOS Krytis"
 recipe["imgref"] = "${KRYTIS_IMGREF}"
 recipe["targetImgref"] = "${KRYTIS_IMGREF}"
-recipe["image"] = "containers-storage:${KRYTIS_IMGREF}"
-recipe["local_imgref"] = "containers-storage:${KRYTIS_IMGREF}"
+recipe["image"] = "${KRYTIS_IMGREF}"
 recipe["bootloader"] = "systemd"
 recipe["composeFsBackend"] = True
 recipe["filesystem"] = "btrfs"
@@ -361,7 +333,9 @@ with open("/etc/bootc-installer/recipe.json", "w") as f:
     f.write("\n")
 PYEOF
 
-# Flag read by the installer to activate live-ISO mode inside the Flatpak sandbox.
+# Live-ISO mode for the installer. Since tuna-os/fisherman eecb1106 this marker
+# also makes /etc/bootc-installer/media-input.json mandatory; iso-sd-boot.sh
+# writes it (#1479).
 touch /etc/bootc-installer/live-iso-mode
 
 # fisherman backend: the installer calls /usr/local/bin/fisherman via pkexec.
@@ -416,9 +390,9 @@ Categories=System;
 DTEOF
 
 # ── Install-time scratch space ────────────────────────────────────────────────
-# The VFS offline install copies the multi-GB squashed image and skopeo writes
-# large blobs to /var/tmp. The live overlay puts /var on a small RAM overlay, so
-# expand /var/tmp and /run to a large share of RAM or the install hits ENOSPC.
+# The offline install unpacks the multi-GB payload and skopeo writes large blobs
+# to /var/tmp. The live overlay puts /var on a small RAM overlay, so expand
+# /var/tmp and /run to a large share of RAM or the install hits ENOSPC.
 cat > /usr/lib/systemd/system/var-tmp.mount << 'UNITEOF'
 [Unit]
 Description=Large tmpfs for /var/tmp in the live environment
@@ -436,7 +410,7 @@ systemctl enable var-tmp.mount || true
 
 cat > /usr/lib/systemd/system/live-run-expand.service << 'UNITEOF'
 [Unit]
-Description=Expand /run tmpfs for large VFS offline installs
+Description=Expand /run tmpfs for large offline installs
 DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=basic.target
