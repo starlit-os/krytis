@@ -83,11 +83,14 @@ merits, but because `containers/image` was folded into the
 (since renamed `podman-container-tools/container-libs`) and stopped accepting PRs. The
 maintainer filed
 [`container-libs#34`](https://github.com/podman-container-tools/container-libs/issues/34) as a
-pointer to the demand. Its implementation,
+pointer to the demand. As of 2026-11-02 its implementation,
 [`container-libs#625`](https://github.com/podman-container-tools/container-libs/pull/625)
-(`buildSignerURI`), has been open since 2026-02-04 with no maintainer review (checked
-2026-10-01). So URI-SAN support does not exist in any released `containers/image`, and
-**host-side enforcement of the keyless signature is still not possible**.
+(`buildSignerURI`, Fulcio OID `.9`), is still open with no review submitted; it was opened
+2026-02-04. A competing proposal on `container-libs#34` (2026-09-02, `subjectBuildConfig`,
+matching OIDs `.12`/`.14`/`.18`) has a prototype but no PR. Neither has a maintainer response.
+So workflow-identity matching does not exist in any released `containers/image`, its policy
+field name is not settled, and **host-side enforcement of the keyless signature is still
+not possible**.
 
 **Resolution: dual-sign.** Every publish gets both a keyless signature
 (satisfies #60, gives public Rekor transparency and strong workflow-identity
@@ -95,9 +98,14 @@ provenance, used for manual/CI verification) and a signature from a
 maintained static cosign key pair (weaker identity binding — proves
 "signed by whoever holds the repo's cosign key," not "signed by this exact
 workflow run" — but `policy.json`'s `keyPath` verification can check it
-today). If URI-SAN support ever lands — now `podman-container-tools/container-libs#625`, not the
-closed `containers/image#2235` — and bootc picks it up, the static-key host
-enforcement could be replaced by keyless enforcement. #418 is that follow-up.
+today). If workflow-identity matching ever lands (via
+`podman-container-tools/container-libs#625`, the competing `subjectBuildConfig` proposal on
+`container-libs#34`, or a successor) and bootc picks it up, the static-key host enforcement
+could be replaced by keyless enforcement. #418 is that follow-up. Replacing it gives
+something up, though. A static key can be rotated after a compromise, but public Fulcio
+offers no root control or per-signature revocation, as `mtrmac` argued in
+[podman#29973](https://github.com/podman-container-tools/podman/pull/29973) (2026-10-21). So
+keeping the static key as the host gate is a defensible end state, not only a stopgap.
 
 ## Architecture
 
