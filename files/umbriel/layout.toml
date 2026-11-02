@@ -51,6 +51,9 @@ prefer_no_csd = true
 # compositor background is never the visible pixel. Left at upstream's default.
 #
 # NOT PORTED: niri's `animations { slowdown 2.0 }`. umbriel has no global
-# animation multiplier -- 54 individual `animation.*.duration_ms` keys would
-# each need hand-scaling, which would then drift from upstream's own tuning
-# every time it changes a default. See krytis#982.
+# animation multiplier. [animation] duration_ms is only the fallback for
+# events on non-spring curves, and a spring curve sets its own duration --
+# [animation.border] and [animation.windows_opacity] default to spring:1,900.
+# Matching niri would mean re-tuning the twelve per-event tables by hand, which
+# would then drift from upstream's own tuning every time it changes a default.
+# See krytis#982.
