@@ -204,7 +204,8 @@ ignore:
   # rustls-webpki 0.101.7 (via rustls 0.21.12): part of freedesktop-sdk's
   # gstreamer-plugins-rs.bst cargo2 vendor snapshot for the whole gst-plugins-rs
   # workspace, but dependency-graph-traced (issue #500, via the real upstream
-  # Cargo.lock at ref 0.15.3-0-g6302bea23b53e6461c104f9543df887a63b2d6ec) to be
+  # Cargo.lock at ref 0.15.4-0-g1afff3711855238433862c0ce3bf34918e500386, the one
+  # freedesktop-sdk-26.08.4 pins; re-traced 2026-11-02, first traced on 0.15.3) to be
   # reachable *only* from the `aws` and `webrtc` plugins, both disabled by krytis's
   # meson config (only rtp/gif/hlssink3/dav1d/spotify enabled) — confirmed unreachable
   # from every plugin cdylib krytis actually builds. rustls-webpki 0.102.8 (same
