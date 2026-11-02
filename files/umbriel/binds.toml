@@ -19,17 +19,24 @@
 #     Note Mod+Space and Mod+Tab are re-bound below to noctalia, so
 #     `scratchpad-toggle` and `scratchpad-focus-next` are left without a key;
 #     the other two scratchpad binds remain.
+#
+# Action syntax: `<action> <args...>`, space-separated -- "spawn seance",
+# "column-move-to-workspace 1". Upstream e8ab5b00 (2026-10-29) dropped the old
+# `<action>:<arg>` form outright, with no compatibility parse: a colon-form
+# action is now an unknown action name, the bind is skipped, and
+# `umbriel config validate` fails the whole config. Upstream's
+# docs/user/actions.md lists every action with its argument shape.
 
 [keybinds]
 
 # ── Applications and session ─────────────────────────────────────────────────
 # niri: `Mod+Return hotkey-overlay-title=... { spawn "seance"; }`. Overrides
-# upstream's spawn:kitty. Only `action` is set so upstream's own repeat = false
+# upstream's `spawn kitty`. Only `action` is set so upstream's own repeat = false
 # merges through key-by-key. seance is the terminal a human opens; ghostty
 # stays the command-executing terminal via /etc/xdg/xdg-terminals.list
 # (krytis#1005).
-"Mod+Return" = { action = "spawn:seance" }
-"Mod+E" = "spawn:nautilus"
+"Mod+Return" = { action = "spawn seance" }
+"Mod+E" = "spawn nautilus"
 
 # niri: `Mod+Shift+7 { show-hotkey-overlay; }` -- Mod+Shift+/ on a US layout.
 "Mod+Shift+7" = { action = "cheatsheet-toggle", repeat = false }
@@ -52,7 +59,7 @@
 # niri has built-in screenshot actions; umbriel has none. Upstream documents
 # three routes, and noctalia is the one it recommends for a Noctalia shell --
 # umbriel's own docs/user/keybinds.md § "Example: Noctalia shell integration"
-# binds `spawn:noctalia msg screenshot-region` (on Mod+P; krytis keeps niri's
+# binds `spawn noctalia msg screenshot-region` (on Mod+P; krytis keeps niri's
 # Print instead, and upstream's own packaged config uses Mod+P for
 # window-toggle-pinned anyway). The other two are not alternatives here:
 #   - grim/slurp, used in that file's submap example. Neither is in the image.
@@ -60,41 +67,41 @@
 #     org.freedesktop.impl.portal.Screenshot and krytis already ships it, but
 #     that serves portal-aware applications, not compositor keybinds.
 # niri's Print was an interactive region grab and Ctrl+Print the whole screen.
-"Print" = { action = "spawn:noctalia msg screenshot-region", repeat = false }
-"Ctrl+Print" = { action = "spawn:noctalia msg screenshot-fullscreen", repeat = false }
+"Print" = { action = "spawn noctalia msg screenshot-region", repeat = false }
+"Ctrl+Print" = { action = "spawn noctalia msg screenshot-fullscreen", repeat = false }
 
 # ── Noctalia shell ───────────────────────────────────────────────────────────
 # niri: `Mod+Space { spawn-sh "noctalia msg panel-toggle launcher"; }`.
 # OVERRIDE: upstream binds Mod+Space to scratchpad-toggle.
-"Mod+Space" = { action = "spawn:noctalia msg panel-toggle launcher", repeat = false }
+"Mod+Space" = { action = "spawn noctalia msg panel-toggle launcher", repeat = false }
 
 # OVERRIDE: upstream binds a bare Mod tap (fires on release when nothing else
 # was pressed) to the same launcher; niri had no such bind. A table merge
 # cannot delete the key, so it is re-pointed at a no-op and Mod+Space above
 # stays the launcher key. The bind still consumes the bare-Super release, as
 # upstream's did.
-"Mod" = "spawn:true"
+"Mod" = "spawn true"
 
 # niri: `Mod+Alt+L { spawn-sh "noctalia msg session lock"; }`. Upstream leaves
 # the key free.
-"Mod+Alt+L" = { action = "spawn:noctalia msg session lock", repeat = false }
+"Mod+Alt+L" = { action = "spawn noctalia msg session lock", repeat = false }
 
 # No niri counterpart. OVERRIDE: upstream binds Mod+Tab to
 # scratchpad-focus-next; noctalia's window switcher is the more common use.
-"Mod+Tab" = { action = "spawn:noctalia msg window-switcher", repeat = false }
+"Mod+Tab" = { action = "spawn noctalia msg window-switcher", repeat = false }
 
-"XF86AudioPlay" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
-"XF86AudioNext" = { action = "spawn:noctalia msg media next", allow_when_locked = true }
+"XF86AudioPlay" = { action = "spawn noctalia msg media toggle", allow_when_locked = true }
+"XF86AudioNext" = { action = "spawn noctalia msg media next", allow_when_locked = true }
 # niri's binds/noctalia.kdl spells this `media mrevious`, which is a typo and a
 # no-op; the niri file is corrected in the same commit.
-"XF86AudioPrev" = { action = "spawn:noctalia msg media previous", allow_when_locked = true }
+"XF86AudioPrev" = { action = "spawn noctalia msg media previous", allow_when_locked = true }
 
-"XF86AudioRaiseVolume" = "spawn:noctalia msg volume-up"
-"XF86AudioLowerVolume" = "spawn:noctalia msg volume-down"
-"XF86AudioMute" = "spawn:noctalia msg volume-mute"
+"XF86AudioRaiseVolume" = "spawn noctalia msg volume-up"
+"XF86AudioLowerVolume" = "spawn noctalia msg volume-down"
+"XF86AudioMute" = "spawn noctalia msg volume-mute"
 
-"XF86MonBrightnessUp" = "spawn:noctalia msg brightness-up"
-"XF86MonBrightnessDown" = "spawn:noctalia msg brightness-down"
+"XF86MonBrightnessUp" = "spawn noctalia msg brightness-up"
+"XF86MonBrightnessDown" = "spawn noctalia msg brightness-down"
 
 # ── Focus ────────────────────────────────────────────────────────────────────
 # Mod+arrows and Mod+HJKL already match upstream; not restated.
@@ -162,10 +169,10 @@
 
 # niri: Mod+Minus / Mod+Equal set-column-width "-10%" / "+10%", and the Shift
 # pair for height. umbriel takes the same step as a fraction of the viewport.
-"Mod+Minus" = "window-modify-primary-extent:-0.1"
-"Mod+Equal" = "window-modify-primary-extent:0.1"
-"Mod+Shift+Minus" = "window-modify-secondary-extent:-0.1"
-"Mod+Shift+Equal" = "window-modify-secondary-extent:0.1"
+"Mod+Minus" = "window-modify-primary-extent -0.1"
+"Mod+Equal" = "window-modify-primary-extent 0.1"
+"Mod+Shift+Minus" = "window-modify-secondary-extent -0.1"
+"Mod+Shift+Equal" = "window-modify-secondary-extent 0.1"
 
 # niri: Mod+V toggle-window-floating, Mod+Shift+V switch-focus-between-
 # floating-and-tiling. Upstream puts the same two actions on Mod+T / Mod+Shift+T,
@@ -195,15 +202,15 @@
 "Mod+Shift+I" = "workspace-move-up"
 
 # niri: Mod+Ctrl+N move-column-to-workspace N.
-"Mod+Ctrl+1" = "column-move-to-workspace:1"
-"Mod+Ctrl+2" = "column-move-to-workspace:2"
-"Mod+Ctrl+3" = "column-move-to-workspace:3"
-"Mod+Ctrl+4" = "column-move-to-workspace:4"
-"Mod+Ctrl+5" = "column-move-to-workspace:5"
-"Mod+Ctrl+6" = "column-move-to-workspace:6"
-"Mod+Ctrl+7" = "column-move-to-workspace:7"
-"Mod+Ctrl+8" = "column-move-to-workspace:8"
-"Mod+Ctrl+9" = "column-move-to-workspace:9"
+"Mod+Ctrl+1" = "column-move-to-workspace 1"
+"Mod+Ctrl+2" = "column-move-to-workspace 2"
+"Mod+Ctrl+3" = "column-move-to-workspace 3"
+"Mod+Ctrl+4" = "column-move-to-workspace 4"
+"Mod+Ctrl+5" = "column-move-to-workspace 5"
+"Mod+Ctrl+6" = "column-move-to-workspace 6"
+"Mod+Ctrl+7" = "column-move-to-workspace 7"
+"Mod+Ctrl+8" = "column-move-to-workspace 8"
+"Mod+Ctrl+9" = "column-move-to-workspace 9"
 
 # ── Scroll wheel ─────────────────────────────────────────────────────────────
 # niri binds the vertical wheel to workspaces and the horizontal wheel to

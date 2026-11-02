@@ -308,7 +308,7 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   override a key but cannot *remove* one: there is no unbind syntax, and an
   invalid action only logs `ignoring keybind` (verified against umbriel's
   `src/config/fields_keybinds.cpp` and `config_merge.cpp` at the pinned ref).
-  To switch an upstream bind off, re-point it at a no-op (`spawn:true`). Every
+  To switch an upstream bind off, re-point it at a no-op (`spawn true`). Every
   upstream bind krytis has no niri counterpart for is still live — `Mod+T`,
   `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad move/restore pair.
   They are enumerated in `files/umbriel/binds.toml`'s header so the divergence
@@ -1176,6 +1176,25 @@ reads it: `desktop/umbriel.bst` tracks `refs/heads/main` and is ref-bumped daily
 `f66d6a8` (2026-09-27, `feat(cli): add umbriel config schema and move validate under config`);
 the bare form is gone, not aliased. The task picks the form out of `umbriel help` rather than
 assuming either, so it spans pins on both sides of that commit.
+
+**Action arguments moved from `name:arg` to words.** Upstream `e8ab5b00` (2026-10-29,
+`refactor(ipc)!: replace name:arg actions with word arguments and typed IPC requests`)
+turned `"spawn:seance"` into `"spawn seance"`, `"column-move-to-workspace:1"` into
+`"column-move-to-workspace 1"`, `"window-modify-primary-extent:-0.1"` into
+`"window-modify-primary-extent -0.1"`. No compatibility parse: `parseAction` in
+`src/config/keybind_parse.cpp` looks the whole `spawn:seance` token up as an action name, finds
+none, and the config fails validation. It broke the 2026-11-02 scheduled publish at
+`umbriel-config-validate` after the `cd09f82` ref bump. The same rename applies to `umbriel msg`
+and `[events]` command lines (`output-disable eDP-1`); `docs/user/actions.md` upstream lists
+every action's argument shape.
+
+**The diagnostic locations point at the wrong file.** That run reported all 29 bad binds,
+but the twelve on keys upstream's packaged default *also* binds (`Mod+Return`, bare `Mod`,
+`Mod+Space`, `Mod+Tab`, the eight `XF86*` keys) came out as
+`/usr/share/umbriel/config.toml:<line>`. That is the base layer's location for the key, not
+`binds.toml`, where the bad value lives. The other seventeen carry no location at all. Reading
+the paths literally sends you to upstream's file, which is correct. Fix `files/umbriel/*.toml`
+by grepping for the old shape, not by following the line numbers.
 
 ## SSH agent: gcr-ssh-agent and `SSH_AUTH_SOCK`
 
