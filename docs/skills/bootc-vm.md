@@ -992,10 +992,10 @@ partition matches exactly), ruling out a missing/wrong EFI variable. Why the ESP
 unmounted was answered later, by #1328: on a LUKS root, gpt-auto-generator follows
 `/run/systemd/volatile-root` to the dm-crypt mapping, finds no GPT there, and generates
 no ESP mount. A plain root gets `boot.mount`. bootc mounts the ESP itself when it writes
-a UKI, so this does not block `bootc switch`/`upgrade`. It does stop
-`systemd-boot-update.service` from ever refreshing the loader. See
-`docs/skills/secure-boot.md` § The ESP's systemd-boot is updated by systemd, not bootc —
-and not on a LUKS root.
+a UKI, so this does not block `bootc switch`/`upgrade`. It did stop
+`systemd-boot-update.service` from ever refreshing the loader, until
+`config/esp-automount.bst` started generating the mount for LUKS roots. See
+`docs/skills/secure-boot.md` § The ESP's systemd-boot is updated by systemd, not bootc.
 
 **Fix: switch to an image with the same boot-entry shape as what's currently running.**
 `mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s

@@ -6,6 +6,7 @@
 #USAGE flag "--expect-fail" help="Invert the result: a successful boot is the failure (secure boot negative test)"
 #USAGE flag "--debug-keep" help="On failure, keep WORKDIR (disk image, serial log, keys) instead of deleting it, for post-mortem inspection"
 #USAGE flag "--reuse-disk <path>" help="Boot this already-installed raw disk instead of running generate-disk. Skips the only step that needs root, so the boot+assert cycle runs unprivileged."
+#USAGE flag "--in-place" help="With --reuse-disk, boot that disk itself instead of a reflinked copy, so the caller can inspect what the boot wrote to it (esp-update-test)"
 #USAGE flag "--luks-passphrase <s>" help="The disk root is an encrypted LUKS2 container: answer the passphrase prompt over the QEMU monitor, and FAIL if no prompt ever appears (#473)"
 
 set -euo pipefail
@@ -21,7 +22,7 @@ set -euo pipefail
 # happened when this was invoked via `bash -x` with --image/--secure/--debug-keep.
 #
 # Consume our own flags from $@ before falling back to usage_*.
-CLI_IMAGE=""; CLI_FS=""; CLI_SECURE=""; CLI_EXPECT_FAIL=""; CLI_DEBUG_KEEP=""; CLI_REUSE_DISK=""; CLI_LUKS_PASS=""
+CLI_IMAGE=""; CLI_FS=""; CLI_SECURE=""; CLI_EXPECT_FAIL=""; CLI_DEBUG_KEEP=""; CLI_REUSE_DISK=""; CLI_LUKS_PASS=""; CLI_IN_PLACE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --image)       CLI_IMAGE="$2"; shift 2 ;;
@@ -30,6 +31,7 @@ while [ $# -gt 0 ]; do
         --expect-fail) CLI_EXPECT_FAIL=true; shift ;;
         --debug-keep)  CLI_DEBUG_KEEP=true; shift ;;
         --reuse-disk)  CLI_REUSE_DISK="$2"; shift 2 ;;
+        --in-place)    CLI_IN_PLACE=true; shift ;;
         --luks-passphrase) CLI_LUKS_PASS="$2"; shift 2 ;;
         *) break ;;
     esac
@@ -41,6 +43,7 @@ FS="${CLI_FS:-${usage_filesystem:-btrfs}}"
 EXPECT_FAIL="${CLI_EXPECT_FAIL:-${usage_expect_fail:-}}"
 DEBUG_KEEP="${CLI_DEBUG_KEEP:-${usage_debug_keep:-}}"
 REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+IN_PLACE="${CLI_IN_PLACE:-${usage_in_place:-}}"
 LUKS_PASS="${CLI_LUKS_PASS:-${usage_luks_passphrase:-}}"
 
 # The image default depends on the mode, so it is resolved here rather than in
@@ -96,6 +99,8 @@ fi
 # validate boot behaviour. Both #396 kargs fall squarely in the second category.
 if [ -n "${REUSE_DISK}" ]; then
     [ -f "${REUSE_DISK}" ] || { echo "ERROR: --reuse-disk file not found: ${REUSE_DISK}" >&2; exit 1; }
+elif [ -n "${IN_PLACE}" ]; then
+    echo "ERROR: --in-place only applies with --reuse-disk." >&2; exit 1
 fi
 
 if ! command -v qemu-system-x86_64 &>/dev/null; then
@@ -151,7 +156,10 @@ fi
 # Ephemeral, test-only SSH keypair, discarded with WORKDIR on exit.
 ssh-keygen -t ed25519 -N '' -C 'krytis-boot-test ephemeral' -f "${WORKDIR}/id_boottest" -q
 
-if [ -n "${REUSE_DISK}" ]; then
+if [ -n "${REUSE_DISK}" ] && [ -n "${IN_PLACE}" ]; then
+    echo "==> [1/5] Reusing ${REUSE_DISK} in place (no install, no root; the boot writes to it)..."
+    DISK="${REUSE_DISK}"
+elif [ -n "${REUSE_DISK}" ]; then
     echo "==> [1/5] Reusing ${REUSE_DISK} (no install, no root)..."
     # Reflink where the filesystem supports it so a 15G image costs nothing, and
     # so the source disk is never mutated by the boot.

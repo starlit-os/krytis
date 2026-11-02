@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#MISE description="Put an older systemd-boot on an installed LUKS disk's ESP, boot it, and assert systemd-boot-update.service brings the loader back up to date (#1328)"
+#USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Installed ENCRYPTED disk, as left by 'mise run luks-install-test --keep'. A copy is booted; the original is not modified"
+#USAGE flag "--passphrase <s>" default="testpassphrase" help="LUKS passphrase the disk was installed with"
+#USAGE flag "--old-image <ref>" default="ghcr.io/starlit-os/krytis:26.08.202610111750-sealed" help="Local image whose systemd-boot is OLDER than the installed one; its loader is planted on the ESP"
+#USAGE flag "--keep" help="Keep the workdir (disk copy, extracted loaders) for inspection"
+
+set -euo pipefail
+
+# The update path #1328 found broken: bootc never rewrites the ESP's loader, so it
+# moves only when systemd-boot-update.service (`bootctl --graceful update`) finds the
+# ESP and a newer systemd-boot in /usr. On a LUKS root systemd-gpt-auto-generator
+# never generates the ESP mount (volatile-root names the dm-crypt mapping), so the unit
+# logged "Couldn't find EFI system partition, skipping.", exited 0, and installed
+# machines kept their install-time loader forever. config/esp-automount.bst supplies
+# the mount. This proves the whole chain on a real encrypted install: plant an older
+# loader offline, boot once, and require the image's own loader back on the ESP.
+#
+# Secure Boot stays off: boot-test can only answer the LUKS prompt by injecting
+# console=ttyS0 through systemd-stub, which the stub refuses under enforcement (see
+# boot-test). The update logic does not depend on enforcement.
+
+CLI_DISK=""; CLI_PASS=""; CLI_OLD=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --disk)       CLI_DISK="$2"; shift 2 ;;
+        --passphrase) CLI_PASS="$2"; shift 2 ;;
+        --old-image)  CLI_OLD="$2"; shift 2 ;;
+        --keep)       CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+DISK="${CLI_DISK:-${usage_disk:-/var/tmp/krytis-install.img}}"
+PASS="${CLI_PASS:-${usage_passphrase:-testpassphrase}}"
+OLD_IMAGE="${CLI_OLD:-${usage_old_image:-ghcr.io/starlit-os/krytis:26.08.202610111750-sealed}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+for t in mcopy mdir sfdisk qemu-system-x86_64; do
+    command -v "$t" >/dev/null || { echo "ERROR: ${t} not found." >&2; exit 1; }
+done
+[ -f "${DISK}" ] || {
+    echo "ERROR: no installed disk at ${DISK}" >&2
+    echo "  Produce one:  mise run build-iso --sealed --debug && mise run luks-install-test --keep" >&2
+    exit 1
+}
+podman image exists "${OLD_IMAGE}" || {
+    echo "ERROR: ${OLD_IMAGE} is not in local storage. podman pull it, or pass --old-image." >&2
+    exit 1
+}
+
+# shellcheck source=mise/lib/esp.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/esp.sh"
+
+WORKDIR=$(mktemp -d /var/tmp/krytis-esp-update-test.XXXXXX)
+cleanup() { if [ -n "${KEEP}" ]; then echo "==> Kept ${WORKDIR}"; else rm -rf "${WORKDIR}"; fi; }
+trap cleanup EXIT
+
+echo "==> [1/4] Copying ${DISK} and reading its loaders..."
+cp --reflink=auto "${DISK}" "${WORKDIR}/disk.raw"
+esp_offset "${WORKDIR}/disk.raw" >/dev/null || { echo "ERROR: ${DISK} has no ESP." >&2; exit 1; }
+esp_get "${WORKDIR}/disk.raw" "${ESP_LOADERS[0]}" "${WORKDIR}/installed.efi" || {
+    echo "ERROR: ${DISK} has no ${ESP_LOADERS[0]} — not a systemd-boot install." >&2; exit 1; }
+CID=$(podman create "${OLD_IMAGE}" true)
+podman cp "${CID}":/usr/lib/systemd/boot/efi/systemd-bootx64.efi "${WORKDIR}/old.efi" >/dev/null
+podman rm "${CID}" >/dev/null
+NEW_VER=$(loader_version "${WORKDIR}/installed.efi")
+OLD_VER=$(loader_version "${WORKDIR}/old.efi")
+echo "    installed  $(loader_info "${WORKDIR}/installed.efi")"
+echo "    to plant   $(loader_info "${WORKDIR}/old.efi")  (${OLD_IMAGE})"
+# bootctl update only ever moves a loader FORWARD (version_check() in
+# src/bootctl/bootctl-install.c), so the planted one must be strictly older.
+if [ -z "${OLD_VER}" ] || [ -z "${NEW_VER}" ] || [ "${OLD_VER}" = "${NEW_VER}" ] \
+        || [ "$(printf '%s\n%s\n' "${OLD_VER}" "${NEW_VER}" | sort -V | head -1)" != "${OLD_VER}" ]; then
+    echo "ERROR: ${OLD_IMAGE}'s systemd-boot (${OLD_VER:-?}) is not older than the installed one (${NEW_VER:-?})." >&2
+    echo "       Pass --old-image with an older systemd." >&2
+    exit 1
+fi
+
+echo "==> [2/4] Planting systemd-boot ${OLD_VER} on the copy's ESP..."
+for f in "${ESP_LOADERS[@]}"; do
+    esp_put "${WORKDIR}/disk.raw" "${WORKDIR}/old.efi" "${f}"
+    esp_get "${WORKDIR}/disk.raw" "${f}" "${WORKDIR}/check.efi"
+    cmp -s "${WORKDIR}/check.efi" "${WORKDIR}/old.efi" || { echo "ERROR: planting ${f} did not stick." >&2; exit 1; }
+    rm -f "${WORKDIR}/check.efi"
+done
+
+# --in-place: boot-test otherwise boots a reflinked copy of --reuse-disk, and the
+# update would land on a disk this task never reads.
+echo "==> [3/4] Booting the copy once (boot-test --reuse-disk --in-place --luks-passphrase)..."
+if ! ./mise/tasks/boot-test --reuse-disk "${WORKDIR}/disk.raw" --in-place --luks-passphrase "${PASS}"; then
+    echo "FAIL: the disk with the planted loader did not boot healthy, so the update was never" >&2
+    echo "      given a chance. Rerun with --keep and inspect ${WORKDIR}." >&2
+    exit 1
+fi
+
+echo "==> [4/4] Verdict: the ESP's loaders after one boot"
+FAILED=""
+for f in "${ESP_LOADERS[@]}"; do
+    rm -f "${WORKDIR}/after.efi"
+    if ! esp_get "${WORKDIR}/disk.raw" "${f}" "${WORKDIR}/after.efi"; then
+        printf '    %-34s absent\n' "${f}"; FAILED=1; continue
+    fi
+    printf '    %-34s %s\n' "${f}" "$(loader_info "${WORKDIR}/after.efi")"
+    cmp -s "${WORKDIR}/after.efi" "${WORKDIR}/installed.efi" || FAILED=1
+done
+if [ -n "${FAILED}" ]; then
+    echo "FAIL: the ESP still carries systemd-boot ${OLD_VER}. systemd-boot-update.service did not" >&2
+    echo "      update it: on a LUKS root that means no ESP mount was generated, so check the image" >&2
+    echo "      ships /usr/lib/systemd/system-generators/krytis-esp-automount-generator" >&2
+    echo "      (config/esp-automount.bst)." >&2
+    exit 1
+fi
+echo "==> PASS: one boot brought both loaders from ${OLD_VER} back to ${NEW_VER} on an encrypted root."
