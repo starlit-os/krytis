@@ -134,7 +134,7 @@ images signed via GitHub Actions OIDC" at all.
 Note the asymmetry: `cosign verify` handles URI SANs perfectly well, which is exactly what
 the CI step above relies on. It is only `policy.json` that cannot.
 
-An upstream fix exists but has not landed (as of 2026-10-11). [`containers/image#2235`](https://github.com/containers/image/pull/2235)
+No upstream fix has landed (as of 2026-11-02). [`containers/image#2235`](https://github.com/containers/image/pull/2235)
 ("Accept URI for Sigstore Signed Images") would have added URI-SAN support to the `fulcio`
 block, but after stalling on DCO/review friction from February 2024 it was **closed
 unmerged** on 2025-08-26 when `containers/image` folded into the `containers/container-libs`
@@ -143,16 +143,37 @@ monorepo (since renamed `podman-container-tools/container-libs`). The demand mov
 ("Extend Fulcio signature acceptance options to support 'workflow identity'"), and
 [`podman-container-tools/container-libs#625`](https://github.com/podman-container-tools/container-libs/pull/625)
 (opened 2026-02-04) implements it: a `buildSignerURI` match on Fulcio's OID
-`1.3.6.1.4.1.57264.1.9` extension, closing #34. As of 2026-10-11 it is open and blocked,
-with one contributor LGTM, repeated pings to the maintainers, and no maintainer review;
-last activity 2026-05-25. So the timeline is: #625 merges, *then* it reaches the
-`containers/image` version `bootc` vendors. Treat host-side keyless enforcement as
-unavailable, not imminent.
+`1.3.6.1.4.1.57264.1.9` extension, closing container-libs#34. As of 2026-11-02 it is open and blocked: all
+checks pass, but no review has been submitted at all. One contributor said LGTM in a
+comment, and two pings to the maintainers got no reply. Last activity was 2026-05-25.
 
-The workaround — a long-lived static key whose `keyPath` verification `policy.json` *can*
-express, signed alongside the keyless signature — means storing and rotating a key, the
-exact thing keyless signing was chosen to avoid. That is a Security Gate tradeoff under
-AGENTS.md, tracked in **#418**, not a pending chore. The original design for it is at
+container-libs#625 is not the only candidate design. On 2026-09-02 a commenter on container-libs#34 proposed
+`subjectBuildConfig`, which can't be combined with `subjectEmail`. It does exact-match only
+on the typed extensions `.12` (source repository URI), `.14` (source repository ref) and
+`.18` (build config URI), and leaves `.9`, the extension container-libs#625 matches, as a later addition.
+A prototype is on a fork branch; no PR and no maintainer reply as of 2026-11-02. So the
+`policy.json` field name for workflow identity is unsettled, not just unmerged. Don't
+sketch a keyless policy against either shape.
+
+The maintainer's position is on record in
+[podman#29973](https://github.com/podman-container-tools/podman/pull/29973), Podman's own
+design doc for signing its machine-OS images, which hit the same gap. On 2026-10-21
+`mtrmac` confirmed c/image has no `policy.json` option for workflow-identity fields: there
+is "demand for supporting this … but I think it rather expands the scope."
+
+So the timeline is: one design merges, *then* it reaches the `containers/image` version
+`bootc` vendors. Treat host-side keyless enforcement as unavailable, not imminent.
+
+The workaround is a long-lived static key, signed alongside the keyless signature, which
+`policy.json` *can* verify with `keyPath`. It means storing and rotating a key, the exact
+thing keyless signing was chosen to avoid. But it isn't only a stopgap. In the same
+podman#29973 thread, `mtrmac` argued that a static key can be recovered after a compromise:
+generate a new key, re-sign past versions, and ship a policy that trusts only the new one.
+Public-instance Fulcio has no equivalent, because you don't control its root and can't
+revoke an individual signature. His best fallback there was renaming the workflow and
+re-signing everything under the new identity. Keyless enforcement would therefore not be a
+strict upgrade even after upstream lands. That is a Security Gate tradeoff under AGENTS.md,
+tracked in **#418**, not a pending chore. The original design for it is at
 `docs/design/cosign-keyless-signing.md` §§ 3–4.
 
 ## Where a `policy.json` has to live, and why the sketched path is wrong
