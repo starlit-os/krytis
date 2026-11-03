@@ -977,6 +977,107 @@ strings are `""` / `"yes"` / `"no"`.
 `org.gnome.keyring.SystemPrompter` when gnome-shell or a live `gcr-prompter` already holds it;
 treat `requestName` failure as "stay out of the way", not as an error.
 
+### Implementing `GcrPrompt` in Python (PyGObject) segfaults gcr: the user_data never arrives
+
+Found by the #1502 Phase 0 spike (2026-11-03, krytis image `26.08.202611011748`: GLib
+2.90.1, PyGObject 3.58.1, gcr 4.4.1, oo7-daemon 0.7.0-alpha). A Python class implementing
+`Gcr.Prompt`, returned from `Gcr.SystemPrompter`'s `new-prompt` signal, gets every vfunc call,
+every property and the GTK4 dialog right. Then **gcr segfaults in `on_prompt_password` the
+moment the prompt completes**, so no answer ever reaches the caller, and `secret-tool` hangs.
+
+- **Cause.** gcr calls `prompt_password_async(prompt, cancellable, callback, user_data)`.
+  PyGObject hands the vfunc a `gi.CCallback` that stores gcr's `user_data` (the field
+  type in `GcrPromptInterface` is annotated `closure=3`), and passes the `user_data`
+  argument itself as `None`. But `Gio.AsyncReadyCallback`'s own `data` parameter has **no
+  `(closure)` annotation**, unlike `GLib.SourceFunc`'s and `GLib.HFunc`'s `user_data`. So when
+  you call the `CCallback`, PyGObject treats `data` as an ordinary nullable pointer and
+  passes `NULL` instead of the stored value. That happens whether you call it directly or
+  hand it to `Gio.Task.new`. gcr then dereferences `NULL` as its `ActivePrompt`. GLib `main`
+  still lacks the annotation (`gio/giotypes.h`, checked 2026-11-03), so the gap will
+  outlive a GLib bump. It hits **any** Python implementation of a GIO-style
+  `*_async` vfunc that C code calls, not just gcr.
+- **Proof, not a fix.** If you read the stored pointer out of PyGObject's private
+  `PyGICCallback` struct (`ctypes.c_void_p.from_address(id(callback) + 32)`) and pass it as
+  the third argument, the whole path works: gcr's own `GcrSystemPrompt` client gets the
+  password back byte-for-byte, and oo7 unlocks, rejects a wrong password with gcr's
+  *"The unlock password was incorrect"* re-prompt, and stores the item through `sx-aes-1`.
+  That pins the cause, but don't ship it, because the offset depends on PyGObject's private
+  layout.
+- **Smaller PyGObject traps on the same path:**
+  - `Gcr.SystemPrompter.new(mode, 0)`, the documented "I'll handle `new-prompt`" form, raises
+    `ValueError: Invalid GType`. Use `Gcr.SystemPrompter(mode=…)`, which is what the C
+    constructor's `prompt_type == 0` branch does.
+  - `Gcr.SecretExchange.get_secret()` segfaults. It's bound as a list of strings.
+    `begin()`, `receive()` and `send()` work, and those are the only calls a *prompter*
+    needs. Only the caller side reads the secret, and a test can use `Gcr.SystemPrompt`
+    for that.
+- **What the spike confirmed works.** `Gcr-4.typelib`, `Gtk-4.0.typelib` and PyGObject are
+  already in the image (`gnome-build-meta.bst:sdk/gcr.bst` installs the typelib, checked with
+  `bst artifact list-contents`). gcr's property sync, queueing and `sx-aes-1` all behave
+  once the callback fires.
+- **Test-harness notes for a private bus.**
+  - Set `GDK_DEBUG=no-portals`, or GTK activates a whole `xdg-desktop-portal` stack on the
+    `dbus-run-session` bus.
+  - With a scratch `XDG_RUNTIME_DIR`, make `WAYLAND_DISPLAY` an absolute path so the dialog
+    still reaches the compositor.
+  - In a fresh oo7 home, the first `store` raises an **unlock** prompt, not a
+    `password-new` one. Whatever you type becomes the Login password.
+  - After a dismissed unlock, oo7 correctly emits `Completed(true)`, but `secret-tool store`
+    then sits idle until it is killed. So a cancel test must assert on the prompt traffic,
+    not on `secret-tool` exiting.
+
+### A Rust prompter (zbus + gtk4-rs + gtk4-layer-shell) passes against oo7 and gcr's client
+
+This was the #1502 Phase 0 Rust spike (2026-11-03, same image as above), built after the
+Python route failed. It implements the three `org.gnome.keyring.internal.Prompter` methods
+by hand. It was run twice with two `sx-aes-1` backends, and both pass the same checks:
+gcr's `GcrSystemPrompt` gets the password back byte for byte, oo7 unlocks, re-prompts after
+a wrong password and stores the item, and `dbus-monitor` shows 11 `[sx-aes-1]` payloads and
+no plaintext password. What it takes:
+
+- **Get `sx-aes-1` from libgcr-4 over FFI, not a Rust port.** A prompter needs only
+  `gcr_secret_exchange_new(NULL)`, `_begin`, `_receive` and `_send(secret | NULL, len)`.
+  These are plain C calls returning transfer-full `gchar *` (free them with `g_free`), with
+  no callbacks, so the PyGObject failure above can't happen here. That's about 20 lines of
+  `extern "C"` behind `#[link(name = "gcr-4")]`, and the image already ships
+  `libgcr-4.so.4` through `gnome-build-meta.bst:sdk/gcr.bst`. It's also what the noctalia
+  fork links. The alternative is porting it, as the first run did: DH over the RFC 2409
+  1536-bit group, HKDF-SHA256 and AES-128-CBC on RustCrypto crates, from oo7's
+  `server/src/gnome/{crypto,secret_exchange}.rs`. That port matched oo7's known-answer
+  vector, but krytis then owns the DH code. It also can't come from the `oo7` crate, whose
+  public (`unstable`) crypto uses the 1024-bit Secret Service group: its prime is 128
+  bytes, where `sx-aes-1` needs 192.
+- **Don't use zbus's `#[interface]`/`ObjectServer` for the prompter object.** Those
+  methods reply only when the handler returns, so they can't guarantee the
+  `BeginPrompting` reply goes out before the `PromptReady` it triggers (see reply ordering
+  above). Read method calls from `zbus::MessageStream`, then call
+  `conn.reply(&header, &()).await` and only after that spawn `PromptReady`. Checked in
+  `dbus-monitor`: on every session the reply went out before `PromptReady`. In zbus 6 the
+  `ObjectServer` only starts on `Connection::object_server()` or `Builder::serve_at()`,
+  so a raw stream doesn't race it.
+- **Use one DH keypair per prompting session**, and put its public key in both the first
+  `PromptReady` (reply `""`) and every later one. oo7 ignores the first payload and derives
+  the key from the `public` field in the final `PromptReady` (`server/src/gnome/prompter.rs`
+  at oo7 `27aa206`). gcr's client also reads the first one. One keypair works for both
+  clients, as the spike's runs showed. A cancel replies `"no"` with a public-only payload,
+  which is what gcr's own prompter sends (seen in `dbus-monitor`).
+- **gtk4-layer-shell needs no introspection from Rust.** The `gtk4-layer-shell` crate links
+  the C library directly, and krytis's `desktop/gtk4-layer-shell.bst` (`-Dintrospection=false`)
+  is enough. With `WAYLAND_DEBUG=client` you can see
+  `get_layer_surface(…, 3 /* overlay */, "krytis-prompter")`,
+  `set_keyboard_interactivity(1)` and a `wl_keyboard.enter` on that surface. This was
+  checked on **umbriel** (the session the spike ran in), not niri. To check a layer surface,
+  use `WAYLAND_DEBUG=client`; `niri msg` needs `NIRI_SOCKET` and only works under niri.
+- **Footprint.** With the gcr FFI, `Cargo.lock` has 113 crates (zbus 6.2.1, gtk4 0.11.5,
+  gtk4-layer-shell 0.8.1, zeroize). The RustCrypto port needed 147 crates and gave a 3.9 MB
+  release binary. zbus 6 doesn't pull in tokio. Those are the crates a `cargo2`-vendored
+  element has to carry.
+- **Building without a dev image.** The host ships no headers or `pkg-config`. An Arch
+  container with the same GTK 4.24.1, gtk4-layer-shell 1.3.0 and glibc 2.44 as the image
+  builds a binary that `ldd` resolves entirely against the host's `/usr/lib`. It then runs
+  on the host, next to the host's oo7.
+- **Not covered by the spike:** the caller-vanished cleanup, the idle exit and theming.
+
 ## oo7 v0→v1 keyring migration is destructive on rollback
 
 When oo7-daemon first starts, it migrates the existing gnome-keyring `login.keyring` (v0 format) to `~/.local/share/keyrings/v1/login.keyring` (oo7 v1 format) and removes the original file.
