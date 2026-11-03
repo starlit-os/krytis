@@ -100,7 +100,7 @@ workflow run" — but `policy.json`'s `keyPath` verification can check it
 today). If workflow-identity matching ever lands (via
 `podman-container-tools/container-libs#625`, the competing `subjectBuildConfig` proposal on
 `container-libs#34`, or a successor) and bootc picks it up, the static-key host enforcement
-could be replaced by keyless enforcement. #418 is that follow-up. Replacing it gives
+could be replaced by keyless enforcement. #1504 tracks that revisit. Replacing it gives
 something up, though. A static key can be rotated after a compromise, but public Fulcio
 offers no root control or per-signature revocation, as `mtrmac` argued in
 [podman#29973](https://github.com/podman-container-tools/podman/pull/29973) (2026-10-21). So

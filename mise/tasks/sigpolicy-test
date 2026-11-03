@@ -100,13 +100,20 @@ echo "    refuse ${REFUSE_DIGEST}: no static signature"
 WORKDIR=$(mktemp -d /var/tmp/krytis-sigpolicy-test.XXXXXX)
 DISK="${WORKDIR}/test.raw"
 REG_NAME="krytis-sigpolicy-test-$$"
-FROM_TAG="localhost/krytis-sigpolicy-from:$$"
+# One fixed tag, not per-run: generate-disk also copies it into root's podman
+# store, which this rootless cleanup can't reach, so per-run tags piled up there
+# at 7 GB each.
+FROM_TAG="localhost/krytis-sigpolicy-from:latest"
 
 QEMU_PID=""
 cleanup() {
     [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
     podman rm -f "${REG_NAME}" >/dev/null 2>&1 || true
-    podman untag "${FROM_TAG}" >/dev/null 2>&1 || true
+    if [ -n "${FROM}" ]; then
+        podman untag "${FROM_TAG}" >/dev/null 2>&1 || true
+        sudo -n podman rmi "${FROM_TAG}" >/dev/null 2>&1 \
+            || echo "==> Root's podman store still holds ${FROM_TAG}: sudo podman rmi ${FROM_TAG}"
+    fi
     if [ -n "${KEEP}" ]; then
         echo "==> WORKDIR kept at ${WORKDIR}"
     else

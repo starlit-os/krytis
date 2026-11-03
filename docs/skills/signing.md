@@ -287,7 +287,11 @@ allocating the disk it rejects a stale `--image` tag that lacks the `/usr` polic
 and checks both published refs with cosign on the host. `generate-disk` fallocates `--size`,
 so the host needs that much free, plus about 7 GB per image the test pulls or pushes.
 `generate-disk` can't install a digest reference (podman save/load rejects it), so
-`--upgrade-from` tags it locally first. The complete 2026-11-03 run upgraded from the
+`--upgrade-from` tags it locally first, as `localhost/krytis-sigpolicy-from:latest`.
+`generate-disk` copies that tag into **root's** podman store too, out of reach of the
+rootless cleanup. The tag is fixed so reruns replace it rather than stacking one 7 GB copy
+per run (the per-run `$$` tag did that); cleanup removes it only if sudo is still cached,
+and otherwise prints the `sudo podman rmi`. The complete 2026-11-03 run upgraded from the
 pre-policy image, rebooted into the locally built policy image, observed the keyless
 refusal, and staged the published static-signed digest.
 
@@ -351,6 +355,7 @@ re-signing everything under the new identity. Keyless enforcement would therefor
 strict upgrade even after upstream lands. The owner weighed that under AGENTS.md's Security
 Gate and chose the static key on 2026-11-02 (#418); § Static-key signature (#418) is what
 shipped. The original design for it is at `docs/design/cosign-keyless-signing.md` §§ 3–4.
+Revisiting keyless enforcement once upstream lands is #1504.
 
 ## Where a `policy.json` has to live, and why the sketched path is wrong
 
