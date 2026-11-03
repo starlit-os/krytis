@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+#MISE description="Assert the built image's containers signature policy is the one hosts will enforce: readable, key present and matching cosign.pub, local transports open (#418)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to check (must already be built/loaded)"
+"""Gate for config/container-sigpolicy.bst (#418).
+
+bootc reads policy.json on every pull with no opt-in, so a policy that is
+broken in a way the build can't see stops every host's next upgrade. Each
+check below is one way that happens:
+
+  shadowed     /etc/containers/policy.json exists. containers/image searches
+               /etc before /usr/share, so the shipped policy would be ignored
+               and nothing enforced (freedesktop-sdk ships an accept-all copy).
+  unparsable   the image's own skopeo fails to load the policy. Checked by
+               running `skopeo copy` from a missing oci layout: the policy is
+               loaded first, so the error must be about the source, not the
+               trust policy.
+  default      "default" is not exactly [reject] (signing.md § Where a
+               policy.json has to live, point 3).
+  transport    a transport containers/image knows has no entry: under a reject
+               default it would refuse everything, containers-storage installs
+               included.
+  missing key  a keyPath/keyPaths file is absent from the image. One missing
+               file fails the whole requirement, even when another listed key
+               would verify (zirconium-hawaii b2ac956, #479).
+  stale key    no key the krytis scope trusts is the repo's cosign.pub, the
+               key publish.yml signs with.
+  no lookaside the krytis scope has no use-sigstore-attachments: true in any
+               registries.d file, so no signature is ever found.
+
+What it can't do offline is watch a refusal: that needs a registry. `mise run
+sigpolicy-test` does it in a VM against real published digests.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+SCOPE = "ghcr.io/starlit-os/krytis"
+POLICY = "/usr/share/containers/policy.json"
+ETC_POLICY = "/etc/containers/policy.json"
+REGISTRIES_D = ["/usr/share/containers/registries.d", "/etc/containers/registries.d"]
+# Every transport name the image's containers/image accepts in a policy
+# (skopeo 1.24.1 parsed all of these on 2026-11-02). Under "default": reject,
+# a transport missing here refuses all of its images.
+TRANSPORTS = {
+    "atomic", "containers-storage", "dir", "docker", "docker-archive",
+    "docker-daemon", "oci", "oci-archive", "ostree", "sif", "tarball",
+}
+LOCAL_TRANSPORTS = TRANSPORTS - {"docker", "atomic"}
+
+# One container start; everything the checks need comes back as JSON.
+PROBE = r"""
+set -u
+out=$(skopeo copy -q oci:/nonexistent-sigpolicy-check:x dir:/tmp/sigpolicy-check 2>&1)
+python3 - "$out" <<'PY'
+import glob, json, os, sys
+policy = "/usr/share/containers/policy.json"
+data = {"skopeo_error": sys.argv[1], "etc_policy": os.path.exists("/etc/containers/policy.json")}
+try:
+    data["policy"] = json.load(open(policy))
+except Exception as e:
+    data["policy_error"] = f"{type(e).__name__}: {e}"
+data["files"] = {}
+for d in ("/usr/share/containers/registries.d", "/etc/containers/registries.d"):
+    for f in sorted(glob.glob(d + "/*.yaml")):
+        data["files"][f] = open(f).read()
+keys = []
+for req in data.get("policy", {}).get("transports", {}).get("docker", {}).get("SCOPE", []):
+    keys += [req["keyPath"]] if "keyPath" in req else req.get("keyPaths", [])
+data["keys"] = {k: (open(k).read() if os.path.exists(k) else None) for k in keys}
+print(json.dumps(data))
+PY
+""".replace("SCOPE", SCOPE)
+
+
+def pem_der(pem: str) -> bytes:
+    return subprocess.run(
+        ["openssl", "pkey", "-pubin", "-outform", "DER"],
+        input=pem.encode(), capture_output=True, check=True,
+    ).stdout
+
+
+def main() -> int:
+    image = os.environ.get("usage_image") or "localhost/krytis:latest"
+    args = sys.argv[1:]
+    if "--image" in args:
+        image = args[args.index("--image") + 1]
+    os.chdir(subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True, check=True).stdout.strip())
+
+    if subprocess.run(["podman", "image", "exists", image]).returncode != 0:
+        print(f"==> FAILED: no such image '{image}' — run 'mise run build' first.", file=sys.stderr)
+        return 1
+
+    print(f"==> Checking the container signature policy inside {image}...")
+    run = subprocess.run(["podman", "run", "--rm", "--entrypoint", "sh", image, "-c", PROBE],
+                         capture_output=True, text=True)
+    if run.returncode != 0:
+        print(run.stdout + run.stderr, file=sys.stderr)
+        print("==> sigpolicy-check FAILED: the probe did not run.", file=sys.stderr)
+        return 1
+    data = json.loads(run.stdout.strip().splitlines()[-1])
+
+    problems = []
+    if data["etc_policy"]:
+        problems.append(f"shadowed: {ETC_POLICY} exists and is read before {POLICY}")
+    # skopeo loads the policy before it opens the source, so a loadable policy
+    # leaves exactly the missing-layout error.
+    err = data["skopeo_error"]
+    if "index.json" not in err:
+        problems.append(f"unparsable: the image's skopeo failed before reaching the source: {err}")
+
+    policy = data.get("policy")
+    if policy is None:
+        problems.append(f"unparsable: {POLICY}: {data.get('policy_error')}")
+    else:
+        if policy.get("default") != [{"type": "reject"}]:
+            problems.append(f"default: {policy.get('default')!r}, want [{{'type': 'reject'}}]")
+        transports = policy.get("transports", {})
+        for t in sorted(TRANSPORTS - transports.keys()):
+            problems.append(f"transport: no entry for '{t}', so the reject default refuses all of it")
+        for t in sorted(LOCAL_TRANSPORTS & transports.keys()):
+            if transports[t].get("") != [{"type": "insecureAcceptAnything"}]:
+                problems.append(f"transport: '{t}' is local and must accept anything, got {transports[t]!r}")
+        reqs = transports.get("docker", {}).get(SCOPE)
+        if not reqs or not all(r.get("type") == "sigstoreSigned" for r in reqs):
+            problems.append(f"scope: docker '{SCOPE}' must require sigstoreSigned, got {reqs!r}")
+
+    keys = data["keys"]
+    for path, pem in keys.items():
+        if pem is None:
+            problems.append(f"missing key: {path} is listed but absent (#479: one missing file fails the whole requirement)")
+    repo_der = pem_der(open("cosign.pub").read())
+    present = [p for p in keys.values() if p is not None]
+    if not any(pem_der(p) == repo_der for p in present):
+        problems.append(f"stale key: none of {sorted(keys)} is the repo's cosign.pub")
+
+    if not any(SCOPE in text and "use-sigstore-attachments: true" in text
+               for text in data["files"].values()):
+        problems.append(f"no lookaside: no registries.d file sets use-sigstore-attachments for {SCOPE}")
+
+    for f in sorted(data["files"]):
+        print(f"    registries.d: {f}")
+    for k in sorted(keys):
+        print(f"    key: {k}")
+    if problems:
+        for p in problems:
+            print(f"    FAIL  {p}", file=sys.stderr)
+        print("==> sigpolicy-check FAILED. See docs/skills/signing.md § Host enforcement (#418).", file=sys.stderr)
+        return 1
+    print(f"==> sigpolicy-check PASSED: {POLICY} is the policy in force, parses, requires a "
+          f"signature from cosign.pub for {SCOPE}, and leaves local transports open.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,25 @@
+{
+    "default": [{"type": "reject"}],
+    "transports": {
+        "docker": {
+            "ghcr.io/starlit-os/krytis": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "/usr/share/pki/containers/krytis.pub",
+                    "signedIdentity": {"type": "matchRepository"}
+                }
+            ],
+            "": [{"type": "insecureAcceptAnything"}]
+        },
+        "atomic": {"": [{"type": "insecureAcceptAnything"}]},
+        "containers-storage": {"": [{"type": "insecureAcceptAnything"}]},
+        "dir": {"": [{"type": "insecureAcceptAnything"}]},
+        "docker-archive": {"": [{"type": "insecureAcceptAnything"}]},
+        "docker-daemon": {"": [{"type": "insecureAcceptAnything"}]},
+        "oci": {"": [{"type": "insecureAcceptAnything"}]},
+        "oci-archive": {"": [{"type": "insecureAcceptAnything"}]},
+        "ostree": {"": [{"type": "insecureAcceptAnything"}]},
+        "sif": {"": [{"type": "insecureAcceptAnything"}]},
+        "tarball": {"": [{"type": "insecureAcceptAnything"}]}
+    }
+}

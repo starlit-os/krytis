@@ -15,3 +15,5 @@ depends:
   - core/efibootmgr.bst
   - config/bootc.bst
   - config/secureboot-loader-conf.bst
+  # Refuses ghcr.io/starlit-os/krytis images without the static-key signature (#418).
+  - config/container-sigpolicy.bst

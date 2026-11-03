@@ -123,8 +123,8 @@ The sealed half repeats the same five steps against `krytis-sealed-digests.env`.
 
 ## Static-key signature (#418)
 
-Hosts can't check the keyless signature (§ Host-side enforcement does not exist, and cannot
-today), so on 2026-11-02 the owner chose option 1 of #418: sign every published image a
+Hosts can't check the keyless signature (§ Hosts can't check the keyless signature), so on
+2026-11-02 the owner chose option 1 of #418: sign every published image a
 second time with a long-lived key that `policy.json` *can* verify, until upstream supports
 workflow identities. Keyless signing stays; it is what CI verifies against `publish.yml`'s
 identity and what puts the image in Rekor.
@@ -207,23 +207,98 @@ file fails the whole requirement, #479); sign with both keys until hosts have ta
 image; then sign with the new key only and drop the old one from the policy. After a
 compromise the same steps apply, re-signing whatever `:latest`/`:sealed` should point at.
 
-## Host-side enforcement does not exist, and cannot today
+## Host enforcement (#418)
 
-Signatures are attestations for consumers to check. **Nothing on a krytis host refuses an
-unsigned image yet**: the image ships freedesktop-sdk's `/etc/containers/policy.json`,
-whose default is `insecureAcceptAnything`. That is a policy choice, not a bootc gap, and the
-static key above is what will change it. What *can't* happen is the host checking the keyless
-signature, which is worth knowing before someone tries to "just add a `policy.json`" for it.
+`config/container-sigpolicy.bst`, in `stacks/bootc.bst`, makes every krytis host refuse a
+`ghcr.io/starlit-os/krytis` image that lacks the static-key signature. It ships:
 
-bootc does consult `policy.json` on the composefs backend krytis uses, and with no opt-in.
-From bootc v1.17.3's source: the composefs pull (`crates/lib/src/bootc_composefs/repo.rs`,
-`pull_composefs_direct`) passes a default `ImageProxyConfig`, so skopeo runs without
-`--insecure-policy`, and no code in bootc or composefs-oci 0.9.4 sets `insecure_policy`.
-`--enforce-container-sigpolicy` belongs to the ostree path: there it marks the origin
-`ostree-image-signed` and refuses a policy whose default is `insecureAcceptAnything`. So once
-an image ships a policy that requires a signature, every later `bootc upgrade` enforces it,
-with no `bootc switch` step. The same fact makes a broken policy block every host's next
-upgrade. [INFERENCE: read from source, not yet observed in a VM.]
+| Path | Content |
+|---|---|
+| `/usr/share/containers/policy.json` | `default: reject`; docker scope `ghcr.io/starlit-os/krytis` requires `sigstoreSigned` with `keyPath` `/usr/share/pki/containers/krytis.pub` and `matchRepository`; every other docker image and every other transport is `insecureAcceptAnything` |
+| `/usr/share/containers/registries.d/krytis.yaml` | `use-sigstore-attachments: true` for that scope, so the legacy `.sig` tag is read at all |
+| `/usr/share/pki/containers/krytis.pub` | the repo's `cosign.pub`, the element's second `kind: local` source |
+
+and an integration command that deletes freedesktop-sdk's accept-all
+`/etc/containers/policy.json`, which is searched before `/usr/share`.
+
+What changes for a user: anything that pulls `ghcr.io/starlit-os/krytis` (`bootc upgrade`,
+`bootc switch`, `podman pull`) needs the static signature. Other images and local transports
+are untouched, including the `containers-storage` installs `generate-disk` and fisherman do
+and `mise run switch-local`. Images published before the static key existed are refused, so
+`bootc switch` to an old version tag fails.
+
+**Enforced with no opt-in, observed.** bootc v1.17.3's composefs pull
+(`crates/lib/src/bootc_composefs/repo.rs`, `pull_composefs_direct`) passes a default
+`ImageProxyConfig`, so skopeo runs without `--insecure-policy`, and nothing in bootc or
+composefs-oci 0.9.4 sets `insecure_policy`. `--enforce-container-sigpolicy` only matters on
+the ostree path, where it refuses a policy whose default is `insecureAcceptAnything`. In
+`mise run sigpolicy-test` on 2026-11-03, a plain `bootc switch` to the keyless-only
+`26.08.202611011748` digest failed, with nothing staged:
+
+```
+error: Switching: Composefs Switching: Checking if image ghcr.io/starlit-os/krytis@sha256:b817c759…
+is pulled: Getting container info: Opening image docker://ghcr.io/starlit-os/krytis@sha256:b817c759…:
+failed to invoke method OpenImage: A signature was required, but no signature exists
+```
+
+The same run then switched to and staged static-signed digest
+`sha256:d0e79929af74f35cfd32cf5b2d5ee971c72f90fda9ee07445862224325983b01`,
+published by [run 41625659851](https://github.com/starlit-os/krytis/actions/runs/41625659851).
+
+The flip side is that a broken policy blocks every host's next upgrade, which is what
+`sigpolicy-check` exists for.
+
+**Existing hosts drop the `/etc` copy when they upgrade.** The same run installed the
+pre-policy `26.08.202611011748` image (which has fdsdk's `/etc/containers/policy.json`),
+`bootc switch`ed to the new image and rebooted: `/etc/containers/policy.json` was gone and
+the shipped policy was in force. The `/etc` three-way merge deletes a file the new image
+no longer ships, as long as the host never modified it. A host whose copy *was* edited keeps
+it, and that copy wins: such a host enforces whatever it says.
+
+**Recovery if a bad policy ships.** `bootc rollback` returns to the previous deployment
+without pulling. On the host itself, writing an accept-all `/etc/containers/policy.json`
+overrides the shipped one until it is deleted again.
+
+**Lookup order, measured in the image** (skopeo 1.24.1, as root in a container from
+`localhost/krytis:latest`, 2026-11-02):
+
+- `policy.json`: `$HOME/.config/containers/` → `/etc/containers/` → `/usr/share/containers/`.
+  With none present, skopeo's error lists exactly those three paths.
+- `registries.d`: `/usr/share/containers/registries.d/` is read alongside `/etc`'s.
+  Removing `krytis.yaml` from it turned an accepted signed image into "no signature exists".
+- All eleven transport names in the shipped policy parse: `atomic`, `containers-storage`,
+  `dir`, `docker`, `docker-archive`, `docker-daemon`, `oci`, `oci-archive`, `ostree`, `sif`,
+  `tarball`.
+
+**Gate: `mise run sigpolicy-check`**, the last step of `mise run build`. It fails when
+`/etc/containers/policy.json` exists, the image's own skopeo can't load the policy, the
+default isn't `reject`, a transport is missing or a local one isn't open, a listed key file
+is absent (#479), no listed key is `cosign.pub`, or no `registries.d` file enables
+`use-sigstore-attachments`. To check that the policy loads offline, it runs `skopeo copy
+oci:/nonexistent…`: skopeo loads the policy before it opens the source, so a good policy
+leaves only the missing-`index.json` error. Each failure class was produced on purpose
+with a derived image and caught. It can't watch a refusal, which needs a registry.
+
+**VM test: `mise run sigpolicy-test`.** It installs the image (or, with `--upgrade-from
+<ref>`, a pre-policy one, and upgrades it through a local registry at `10.0.2.2`). It then
+asserts the policy in force, a refused `bootc switch` to `--refuse` (default: the
+`26.08.202611011748` digest) and an accepted one to `--accept` (default `:latest`). Before
+allocating the disk it rejects a stale `--image` tag that lacks the `/usr` policy layout,
+and checks both published refs with cosign on the host. `generate-disk` fallocates `--size`,
+so the host needs that much free, plus about 7 GB per image the test pulls or pushes.
+`generate-disk` can't install a digest reference (podman save/load rejects it), so
+`--upgrade-from` tags it locally first, as `localhost/krytis-sigpolicy-from:latest`.
+`generate-disk` copies that tag into **root's** podman store too, out of reach of the
+rootless cleanup. The tag is fixed so reruns replace it rather than stacking one 7 GB copy
+per run (the per-run `$$` tag did that); cleanup removes it only if sudo is still cached,
+and otherwise prints the `sudo podman rmi`. The complete 2026-11-03 run upgraded from the
+pre-policy image, rebooted into the locally built policy image, observed the keyless
+refusal, and staged the published static-signed digest.
+
+## Hosts can't check the keyless signature
+
+What *can't* happen is a host checking the keyless signature, which is worth knowing
+before someone tries to "just add a `policy.json`" for it.
 
 `containers-policy.json`'s `sigstoreSigned.fulcio` block requires **both** `oidcIssuer`
 and `subjectEmail`. Upstream's man page: *"Both `oidcIssuer` and `subjectEmail` are
@@ -280,13 +355,14 @@ re-signing everything under the new identity. Keyless enforcement would therefor
 strict upgrade even after upstream lands. The owner weighed that under AGENTS.md's Security
 Gate and chose the static key on 2026-11-02 (#418); § Static-key signature (#418) is what
 shipped. The original design for it is at `docs/design/cosign-keyless-signing.md` §§ 3–4.
+Revisiting keyless enforcement once upstream lands is #1504.
 
 ## Where a `policy.json` has to live, and why the sketched path is wrong
 
 *Source: zirconium-hawaii `4229691` → `d4e641b` → `f251073` — three commits, one thread.*
 
-Prerequisites for the day #418's static-key half is actually built. zirconium-hawaii does
-ship a container signature policy, and learned all three of these the hard way.
+zirconium-hawaii ships a container signature policy and learned all three of these the
+hard way. `config/container-sigpolicy.bst` (§ Host enforcement (#418)) follows them.
 
 **1. Ship it at `%{datadir}/containers` (`/usr/share/containers`), not `/etc/containers`.**
 Podman 6.0 — the version freedesktop-sdk 26.08 ships — and current bootc both read the
@@ -316,16 +392,13 @@ The workaround is `"default": [{"type": "reject"}]` plus an explicit
 `atomic`, `containers-storage`, `dir`, `oci`, `oci-archive`, `docker-archive`,
 `tarball`. Semantically identical, "just a lot uglier" in the commit's own words.
 
-**krytis exposure.** `docs/design/cosign-keyless-signing.md:189` opens the host-side
-enforcement design with "No existing element manages `/etc/containers/` config", then
-sketches a never-written `elements/core/container-sigpolicy.bst` writing
-`/etc/containers/policy.json` and `/etc/containers/registries.d/ghcr-starlit-os.yaml`.
-Both halves are wrong. `files/fakecap-manifest.tsv:353-356` shows krytis already inherits
+**What krytis took.** krytis inherits
 `/etc/containers/{policy.json,registries.conf,registries.conf.d/000-shortnames.conf,registries.d/default.yaml}`
-from `components/containers-common.bst` (plus `toolbox.conf` from
-`gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/toolbox.bst`) — so that element would land on an already-owned mutable
-path, which is also the wrong destination per point 1. Rewrite the sketch against
-`%{datadir}/containers` plus the `rm`/`mv` integration commands before anyone builds it.
+from `components/containers-common.bst` (`files/fakecap-manifest.tsv`). Only `policy.json`
+shadows anything, so only it is deleted. `registries.d` is merged from `/usr/share` and
+`/etc` rather than overridden, and `registries.conf` plays no part in signature checks, so
+neither is moved. The old design's sketch, an element writing into `/etc/containers`, would
+have landed on paths fdsdk already owns. That is the wrong destination per point 1.
 
 Point 3 is the one thing the design already got right: it uses
 `"default": [{"type": "reject"}]`. What is missing is *why* that is mandatory rather than
