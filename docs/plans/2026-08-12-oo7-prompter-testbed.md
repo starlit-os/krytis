@@ -28,8 +28,9 @@ provider*.
   evidence for the decision, not to pre-empt it.
 - **Breakage Gate.** Touches the PAM stack (`config/greetd-config.bst`) and the greeter
   session. Human sign-off required before any of this merges.
-- **Upstream Gate.** The prompter was proposed on 2026-10-20 as noctalia-dev/noctalia#4951.
-  Until a release contains it, it lives on a fork branch.
+- **Upstream Gate.** The prompter was proposed on 2026-10-20 as noctalia-dev/noctalia#4951,
+  which was closed unmerged on 2026-11-02 (secrets are out of noctalia's scope). It lives on
+  a fork branch until #1502 Phase 3 replaces it with the standalone krytis-prompter.
 
 ## Must not merge as-is
 
