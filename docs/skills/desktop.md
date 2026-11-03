@@ -456,7 +456,10 @@ on 2026-10-20 it also carried the lock-before-suspend fix in § The last frame b
 what resume shows; v5.3.0 ships upstream's own. The element's `ref:` states which
 commit; do not restate it here. The revert target (`noctalia-dev/noctalia` + `track: v*`)
 is written out in the element's `FORK PIN` comment as prose — there is no commented-out
-`sources:` block to uncomment.
+`sources:` block to uncomment. #1502 is how the pin ends: Phase 2 ships the standalone
+`desktop/krytis-prompter.bst` beside it, and Phase 3, once that is in a published image,
+turns noctalia's prompter off and makes the revert (`docs/design/secrets-service.md`
+§ *A standalone prompter: krytis-prompter*).
 
 **Branch tracking cannot see release tags, so the fork pin freezes the release stream too.**
 `bst source track` follows the branch head, so an upstream release produces no auto-track
@@ -519,7 +522,7 @@ Mapping:
 | `dependency('libwebp')` | already in closure (present since old pin) | — | — |
 | `dependency('libsecret-1', version: '>=0.20')` | `freedesktop-sdk.bst:components/libsecret.bst` | `depends` | shared lib (`libsecret-1.so`), linked at runtime |
 | `dependency('libsodium', version: '>=1.0.18')` | `desktop/libsodium.bst` (autotools, `kind: tar` release asset, `mise run libsodium-update`) | `depends` | shared lib (`libsodium.so.26`); not shipped by either junction, no build-system deps of its own |
-| `dependency('gcr-4')` | `gnome-build-meta.bst:sdk/gcr.bst` | `depends` | shared lib (`libgcr-4.so.4`), linked at runtime. Only required by builds carrying the native `org.gnome.keyring.SystemPrompter` work (`GcrSecretExchange`) — **`sdk/gcr.bst` is gcr-4; `sdk/gcr-3.bst` is the legacy prompter binary and is a different thing entirely**, see `docs/skills/pam.md` |
+| `dependency('gcr-4')` | `gnome-build-meta.bst:sdk/gcr.bst` | `depends` | shared lib (`libgcr-4.so.4`), linked at runtime. Only required by builds carrying the native `org.gnome.keyring.SystemPrompter` work (`GcrSecretExchange`). `desktop/krytis-prompter.bst` depends on it too, so gcr-4 stays in the image when Phase 3 of #1502 drops it here. **`sdk/gcr.bst` is gcr-4; `sdk/gcr-3.bst` is the legacy prompter binary and is a different thing entirely**, see `docs/skills/pam.md` |
 
 **This mapping is part of the change, not a follow-up — including when the new
 `dependency()` comes from a fork pin rather than an upstream release.** Bumping

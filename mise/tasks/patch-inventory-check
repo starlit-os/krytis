@@ -82,6 +82,10 @@ FIRST_PARTY = {
         "krytis's own Discord presence service, not a fork "
         "(docs/design/presence-bridge.md)"
     ),
+    "kitten-lily/krytis-prompter": (
+        "krytis's own org.gnome.keyring.SystemPrompter daemon, not a fork "
+        "(docs/design/secrets-service.md, #1502)"
+    ),
 }
 
 OWNED_RE = re.compile(
