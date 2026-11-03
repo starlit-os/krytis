@@ -722,7 +722,10 @@ explicit instruction naming that action.
 
 **What the first core PR needed beyond the fork commit** (noctalia-dev/noctalia#4951, the
 SystemPrompter, 2026-10-20). The template bot passed it on the first try. The krytis pin
-branch was not submittable as-is:
+branch was not submittable as-is. (The PR was then closed unmerged on 2026-11-02: noctalia's
+maintainers consider anything handling secrets out of the shell's scope, "the similar category
+of default apps". Weigh that before proposing another secrets- or keyring-adjacent feature
+there. The packaging lessons below still hold for any core PR.)
 
 - **A new library dependency touches seven files, not two.** Besides `meson.build` and
   `BUILDING.md`: upstream's CI package list (`ci.yml`, or the PR's own CI fails to

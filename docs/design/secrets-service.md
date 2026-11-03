@@ -119,7 +119,7 @@ and their mitigations:
 | **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | **none expected — accepted as a lasting oo7 limit on 2026-11-02.** Reported as linux-credentials/oo7#614. A maintainer replied on 2026-10-26 that the server cannot tell whether a locked item's attributes match a search. The issue was still open, with no linked PR, as of 2026-11-02 |
 | ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
-| **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | #1502 Phase 3: once krytis-prompter has shipped in a published image, turn noctalia's prompter off and repoint `desktop/noctalia.bst` to `noctalia-dev/noctalia` `track: v*`. (Or noctalia-dev/noctalia#4951 merges upstream, which the owner may yet keep open for other distros.) |
+| **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | #1502 Phase 3: once krytis-prompter has shipped in a published image, turn noctalia's prompter off and repoint `desktop/noctalia.bst` to `noctalia-dev/noctalia` `track: v*`. Upstreaming is not an exit: noctalia-dev/noctalia#4951 was closed unmerged on 2026-11-02, secrets being out of noctalia's scope. |
 | ~~**#806** — the login secret is lost to a startup race~~ **RESOLVED 2026-10-24** | ~~`pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers~~ | Upstream `b54f8e7` retries the helper connection asynchronously for 500 ms; krytis retains an independent `ExecStartPre` wait on `oo7-daemon.service`. Gated by `mise run oo7-login-race-test` | **met.** linux-credentials/oo7#615 merged as `b54f8e7`. Verified without the former downstream patch at that pin with `mise run oo7-login-race-test` |
 
 **The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
@@ -332,7 +332,9 @@ upstream `main` `87b203c68` (`v5.0.0-beta.8-135`)** and re-pinned in PR #606. Th
 been followed forward since — `elements/desktop/noctalia.bst` pins
 `v5.3.0-2-g1aab2f2f` as of 2026-10-20, still on `track: feat/system-prompter`. **Proposed
 upstream on 2026-10-20** as noctalia-dev/noctalia#4951, with feature request
-noctalia-dev/noctalia#4950. Both were open as of 2026-10-20. The PR branch
+noctalia-dev/noctalia#4950. **A maintainer closed both unmerged on 2026-11-02:** handling
+secrets is out of noctalia's scope. That left a standalone prompter as the only way off the
+fork (§ *A standalone prompter: krytis-prompter*). The PR branch
 (`feat/native-system-prompter`) is separate from the pin. It squashes the two commits onto
 upstream `main` and adds what upstream's `CONTRIBUTING.md` requires on top: a Settings →
 Security toggle, an entry in upstream's user docs (`shell.mdx`), and `gcr-4` in the CI, Nix

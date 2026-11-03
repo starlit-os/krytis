@@ -61,7 +61,9 @@ depends:
 # on for every unlock prompt, per the note above (two commits: the feature and
 # its BUILDING.md dependency entry). Proposed upstream on 2026-10-20 as
 # noctalia-dev/noctalia#4951 (issue noctalia-dev/noctalia#4950), from branch
-# feat/native-system-prompter, which is a separate branch from this pin.
+# feat/native-system-prompter, which is a separate branch from this pin. Both
+# were closed unmerged on 2026-11-02: secrets are out of noctalia's scope. The
+# standalone desktop/krytis-prompter.bst replaces this carry (#1502).
 #
 # Two carries went with the 2026-10-20 rebase onto v5.3.0, because v5.3.0
 # ships upstream's own version of each:
@@ -114,7 +116,8 @@ depends:
 # Revert to
 #   url: github:noctalia-dev/noctalia.git
 #   track: v*
-# once the prompter lands upstream (or is dropped). Tracking a branch instead
+# once #1502 Phase 3 turns this prompter off, desktop/krytis-prompter.bst having
+# shipped in a published image. Tracking a branch instead
 # of the v* tag glob means `bst source track` follows the branch head, not
 # releases -- expect more frequent auto-track PRs than usual until then, and
 # note that an unrelated commit on that branch changes what krytis ships.
