@@ -77,7 +77,7 @@ sources:
   - '*rc*'
   - '*alpha*'
   - '*beta*'
-  ref: v0.3.0-0-gcd6bac8b3b421d42074f520c38beac36fe2afb64
+  ref: v0.3.1-0-g4ca6420e2f42d12f75cf1b0f1eb4606d4efbc420
 - kind: cargo2
   url: crates:crates
   ref:
@@ -95,16 +95,16 @@ sources:
     sha: fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04
   - kind: registry
     name: cc
-    version: 1.9.0
-    sha: 877bf67ac8e52449eb2f9e98a344ea163beb70dd1f9eebe3cc5357dcfeaee4df
+    version: 1.11.0
+    sha: 375989decec1a0fa424442bed520fa12ede43a48475ce8c7417d2c69b32b5f6b
   - kind: registry
     name: cfg-if
     version: 1.0.5
     sha: 4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600
   - kind: registry
     name: crc32fast
-    version: 1.5.2
-    sha: 01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78
+    version: 1.5.4
+    sha: 5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04
   - kind: registry
     name: find-msvc-tools
     version: 0.1.15
@@ -135,8 +135,8 @@ sources:
     sha: 65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a
   - kind: registry
     name: log
-    version: 0.4.34
-    sha: f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6
+    version: 0.4.35
+    sha: 5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c
   - kind: registry
     name: memchr
     version: 2.8.3
@@ -219,12 +219,12 @@ sources:
     sha: 8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1
   - kind: registry
     name: ureq
-    version: 3.5.0
-    sha: cde93ff05758a36a851a398a772b0b79a82fbe3c186a46f2696baaeaf84c966b
+    version: 3.5.1
+    sha: e7be76686bdf7198002062423ca0d8cf9b75a27c8e1de804513b97e97b555d9d
   - kind: registry
     name: ureq-proto
-    version: 0.6.5
-    sha: 841583fc36089d7d59419568ae157f43a5a03a2e5a81ba87c77d1596ef46e922
+    version: 0.7.1
+    sha: 622dce33c252115466d83f63e9744a18f12b4406aae51a01c15ad8fcf1185eb3
   - kind: registry
     name: utf8-zero
     version: 0.8.1
@@ -235,8 +235,8 @@ sources:
     sha: ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b
   - kind: registry
     name: webpki-roots
-    version: 1.0.10
-    sha: 1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9
+    version: 1.0.11
+    sha: f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171
   - kind: registry
     name: windows-sys
     version: 0.52.0
