@@ -75,6 +75,7 @@ element does, its row's text is a review question.
 | `config/fido2-tasks.bst` | System-wide `mise fido2:*` enrollment and status tasks. |
 | `config/fido2-root-unlock.bst` | Makes the root volume try FIDO2 unlock. In base-system because the initramfs reads it from there. |
 | `config/fisherman-cleanup.bst` | Deletes what the ISO installer leaves on the physical root: a plain-text copy of the disk passphrase (#1280) and ~11G of install scratch (#1282). |
+| `config/esp-automount.bst` | Generator that automounts the ESP on a LUKS root, which systemd-gpt-auto-generator skips, so `systemd-boot-update.service` can update the boot loader (#1328). |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
 | `config/zram-generator.bst` | zram-generator's default config (zstd `zram0`, half of RAM). It used to ship with the generator; the `freedesktop-sdk-extra` element ships none. |

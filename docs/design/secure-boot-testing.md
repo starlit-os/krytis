@@ -25,7 +25,7 @@ in §2.
 | `Containerfile` (the `sealed` stage), `files/boot-keys/`, `files/microsoft-uefi-certs/` | T1 + **T2 in full** | This is the `.auth`/signing surface. #438 lived here |
 | `Containerfile.seal-uki`, anything affecting the composefs digest | T1 + T2 + T3 | The digest is verified at install time, not build time |
 | `elements/config/secureboot-loader-conf.bst`, `loader.conf` handling | T2 (`enroll-test`) + T4 | Enrollment policy is firmware-visible; the VM answer differs from hardware |
-| `mise/tasks/{build-iso,iso-container-build,verify-iso-payload}`, `scripts/iso-sd-boot.sh`, `live/` | T3 | The ISO is the only artifact that exercises the offline store |
+| `mise/tasks/{build-iso,iso-container-build,verify-iso-payload}`, `scripts/iso-sd-boot.sh`, `live/` | T3 | The ISO is the only artifact that exercises the offline payload (the `/OCI` layout and its `media-input.json` receipt) |
 | Kernel cmdline / `files/bootc-config/*.toml` | T1 + T2 + T4 | A UKI freezes the cmdline; FIDO2 unlock depends on it (trap T-9) |
 | Publishing (`push`, `publish.yml`) | T1 (CI now runs `enroll-test` against the published `:sealed` tag automatically — the sealed-publishing part of G-1 is resolved, see §6) | `publish.yml` builds and pushes sealed since #450; `publish_sealed=false` opts a run out |
 | Nothing — periodic confidence check | T0 + T1 + T2 | ~10 minutes, catches drift from dependency bumps |
@@ -65,7 +65,7 @@ T3 needs ~60 GB free on `/var/tmp`
 | `mise run docs-links` | every `docs/…` reference, markdown link, backticked repo-relative path and backticked `mise run <task>` resolves | nothing about behaviour |
 | `scripts/parse-efi-auth.py <f.auth>` | each signature list carries a parseable certificate, and prints its subject | that the firmware will *accept* the file (signature, timestamp ordering, variable name) |
 | `mise run generate-ovmf-vars` | the test varstore's db matches the sealed image's `db.auth` byte count, and refuses to finish when it does not | that either one is *correct* — only that they agree |
-| `mise run verify-iso-payload` | the ISO's embedded store holds the exact image ID expected, under every `containers-storage:` name the baked installer recipe requests (#1248) | that the image boots |
+| `mise run verify-iso-payload` | the ISO's `/OCI` layout is intact (every blob's digest and size) and its config digest is the exact image ID expected; the `media-input.json` receipt pins that layout; the baked installer recipe's `image`/`imgref`/`targetImgref` equal the receipt's `image` (#1248, #1479) | that the image boots |
 
 `parse-efi-auth.py` is the cheapest gate that would have caught #438: the shipped
 files reported `SignatureSize=16` on all five entries.
@@ -91,10 +91,12 @@ firmware. It reads each list's `SignatureSize` field; 16 means no certificate.
 | `mise run boot-test --reuse-disk <disk> [--secure]` | 20 s–4 min | boot + health on an already-installed disk, unprivileged | any first-boot behaviour: host keys, `systemd-firstboot`, `/etc` writability, and enrollment policy (trap T-4) |
 | `mise run upgrade-test` | ~3 min + pull | `bootc upgrade` on an installed sealed system, then a reboot into the result, still enforcing and healthy | anything about a *newer* image — it follows whatever the configured stream holds (previously broken, see the closed G-2) |
 | `mise run selfenroll-test` | **66 s** | the full chain on a real installed disk against a pristine firmware — see T3 below, where it belongs in the sequence | the manual enrollment prompt (a VM auto-enrols) |
+| `mise run esp-update-test` | ~1 min | on an **encrypted** installed disk, `systemd-boot-update.service` finds the ESP (`config/esp-automount.bst`) and replaces an older planted systemd-boot with the image's own on one boot (#1328) | enforcement: it boots without Secure Boot, because `boot-test` can't answer the LUKS prompt under it |
 
-The last two need an installed disk, which T3's `iso-install-test` leaves behind at
-`/var/tmp/krytis-install.img`. Both boot a *copy* of it, so the disk stays a
-first-boot disk and can be reused (trap T-4).
+The last three need an installed disk: T3's `iso-install-test` leaves one behind at
+`/var/tmp/krytis-install.img`, and `esp-update-test` needs the encrypted one
+`luks-install-test --keep` leaves at the same path. All three boot a *copy* of it, so
+the disk stays a first-boot disk and can be reused (trap T-4).
 
 ⚠ = `generate-disk` needs `CAP_SYS_ADMIN` for loop devices and a real mount; no
 rootless path exists. On a host without passwordless sudo, use T3 instead — it
@@ -114,8 +116,8 @@ mise run iso-install-test --secure --expect-fail   # ~11 min, negative
 
 | Gate | Proves | Cannot prove |
 |---|---|---|
-| `build-iso --sealed` | the payload is embedded byte-identically (store image ID equals `:sealed`'s) | that the composefs digest survives — inferred from byte identity, confirmed at install |
-| `iso-install-test --secure` | ISO → live session → fisherman → `bootc install` → boot under enforcement, plus `recipe.json`/offline-store/`targetImgref` all working | first-boot **self**-enrollment (the varstore is pre-enrolled here) |
+| `build-iso --sealed` | the payload is embedded with its content unchanged (layout config digest equals `:sealed`'s image ID; layers are gzip-recompressed, which leaves the config and diff_ids alone) | that the composefs digest survives — inferred from config-digest identity, confirmed at install |
+| `iso-install-test --secure` | ISO → live session → fisherman → `bootc install` → boot under enforcement, plus `recipe.json`/`media-input.json`/`/OCI` layout/`targetImgref` all working | first-boot **self**-enrollment (the varstore is pre-enrolled here) |
 | `iso-install-test --secure --expect-fail` | an unsigned install is refused under enforcement | same signature-isolation caveat as T2 |
 
 `--debug` is mandatory for both install tests: the installer is driven over SSH and

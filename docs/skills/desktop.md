@@ -308,9 +308,10 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   override a key but cannot *remove* one: there is no unbind syntax, and an
   invalid action only logs `ignoring keybind` (verified against umbriel's
   `src/config/fields_keybinds.cpp` and `config_merge.cpp` at the pinned ref).
-  To switch an upstream bind off, re-point it at a no-op (`spawn:true`). Every
+  To switch an upstream bind off, re-point it at a no-op (`spawn true`). Every
   upstream bind krytis has no niri counterpart for is still live — `Mod+T`,
-  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, and the scratchpad move/restore pair.
+  `Mod+P`, `Mod+F1`, `Mod+Shift+1..9`, `Mod+Alt+Left`/`Right` (previous/next tab),
+  and the scratchpad move/restore pair.
   They are enumerated in `files/umbriel/binds.toml`'s header so the divergence
   is auditable.
 - **Seven upstream binds are overridden.** Five mean something different under
@@ -343,20 +344,30 @@ familiar key that behaves differently is worse than one that does nothing.
 
 | niri | gap |
 |---|---|
-| `toggle-column-tabbed-display` (`Mod+W`) | no tabbed columns at all — zero `tab` actions, zero schema keys |
 | `center-visible-columns` (`Mod+Ctrl+C`) | only `column-center`, which is niri's `center-column` (`Mod+C`) |
 | `reset-window-height` (`Mod+Ctrl+R`) | secondary extent can cycle and modify, not reset |
 | `screenshot-window` (`Alt+Print`) | no window capture at keybind level: umbriel has no screenshot action, and `noctalia msg` offers only `screenshot-region`, `screenshot-fullscreen [pick\|all]` and `screenshot-annotate` |
-| `urgent-color` | no urgency colour anywhere in the schema |
-| `tab-indicator`, `recent-windows` | subsystems do not exist |
-| `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` exposes only `match.namespace` + four blur keys; `colors.backdrop` is a colour, not placement |
+| `urgent-color` on focus-ring / border | `[colors.border]` has no urgency colour; the schema's only one is `colors.tab_bar.urgent` |
+| `recent-windows` | subsystem does not exist |
+| `place-within-backdrop` on `^noctalia-backdrop` | `[[layer_rule]]` matches on `namespace`, `layer` and `at_startup` and sets four blur keys, nothing positional; `colors.backdrop` is a colour, not placement |
 | `draw-border-with-background false` | no equivalent |
-| `animations { slowdown 2.0 }` | no global multiplier; 54 separate `animation.*.duration_ms` keys |
+| `animations { slowdown 2.0 }` | no global multiplier. The top-level `animation.duration_ms` (250) is only the fallback for events on non-spring curves. A spring sets its own duration and ignores `duration_ms`, and `[animation.border]` / `[animation.windows_opacity]` default to `spring:1,900` (upstream `docs/user/animation.md`). Slowing everything means re-tuning the twelve per-event tables one by one |
 | `clip-to-geometry true` | not exposed independently of `corner_radius` |
 
 `Mod+Ctrl+F` is niri's `expand-column-to-available-width`, also absent — but
 upstream already binds that key to `window-toggle-maximize` and a table merge
 cannot remove a bind, so it is left as upstream set it.
+
+**Tabbed columns are no longer a gap.** Upstream `ec677ac8` (2026-10-02) added tab groups,
+and its packaged config binds `Mod+W` to `column-toggle-tabbed`, which krytis inherits as
+niri's `toggle-column-tabbed-display`. In a column with no groups it tabs the whole column,
+as niri does (upstream `docs/user/layout.md` § Tab groups). The packaged config also binds
+`Mod+Alt+Left`/`Right` to the previous/next tab. Those keys have no niri counterpart and don't
+clash with krytis's `Mod+Alt+L`. niri's `tab-indicator` colours are deliberately **not** ported
+(decided 2026-11-02). umbriel styles the bar through the eight `colors.tab_bar.*` keys, and
+the plan is to let noctalia's Umbriel template supply them, as it does every other live colour.
+As of noctalia v5.3.0 the template doesn't set `[colors.tab_bar]`, so the bar uses upstream's
+default palette. Revisit only if that becomes a problem.
 
 #### noctalia's Umbriel template: a schema mismatch, fixed by the v5.2.0 bump
 
@@ -1170,12 +1181,34 @@ it runs anywhere the image does, including CI.
 It exists because nothing previously connected `files/umbriel/` to the binary that
 reads it: `desktop/umbriel.bst` tracks `refs/heads/main` and is ref-bumped daily, and
 `bst source track` cannot re-vendor a `kind: local` data file. Run it after any
-`chore(deps): update umbriel` bump.
+`chore(deps): update umbriel` bump, **before merging it**: PR checks never run this gate
+(`docs/skills/ci-runner.md` § PR build gate: `build-changed.yml`, blind spot 4), so #1450
+merged green and the break first showed up in `publish`. A bump PR's `track-bst-sources`
+branch builds locally like any other: `mise run build --pull` in its worktree.
 
 **The subcommand moved.** `umbriel validate` became `umbriel config validate` upstream in
 `f66d6a8` (2026-09-27, `feat(cli): add umbriel config schema and move validate under config`);
 the bare form is gone, not aliased. The task picks the form out of `umbriel help` rather than
 assuming either, so it spans pins on both sides of that commit.
+
+**Action arguments moved from `name:arg` to words.** Upstream `e8ab5b00` (2026-10-29,
+`refactor(ipc)!: replace name:arg actions with word arguments and typed IPC requests`)
+turned `"spawn:seance"` into `"spawn seance"`, `"column-move-to-workspace:1"` into
+`"column-move-to-workspace 1"`, `"window-modify-primary-extent:-0.1"` into
+`"window-modify-primary-extent -0.1"`. No compatibility parse: `parseAction` in
+`src/config/keybind_parse.cpp` looks the whole `spawn:seance` token up as an action name, finds
+none, and the config fails validation. It broke the 2026-11-02 scheduled publish at
+`umbriel-config-validate` after the `cd09f82` ref bump. The same rename applies to `umbriel msg`
+and `[events]` command lines (`output-disable eDP-1`); `docs/user/actions.md` upstream lists
+every action's argument shape.
+
+**The diagnostic locations point at the wrong file.** That run reported all 29 bad binds,
+but the twelve on keys upstream's packaged default *also* binds (`Mod+Return`, bare `Mod`,
+`Mod+Space`, `Mod+Tab`, the eight `XF86*` keys) came out as
+`/usr/share/umbriel/config.toml:<line>`. That is the base layer's location for the key, not
+`binds.toml`, where the bad value lives. The other seventeen carry no location at all. Reading
+the paths literally sends you to upstream's file, which is correct. Fix `files/umbriel/*.toml`
+by grepping for the old shape, not by following the line numbers.
 
 ## SSH agent: gcr-ssh-agent and `SSH_AUTH_SOCK`
 
@@ -1805,15 +1838,28 @@ unsupported. Supporting facts:
 **Resolving routing headlessly** — no session, GPU, seat or root needed:
 
 ```shell
-podman run --rm -e XDG_CURRENT_DESKTOP=niri localhost/krytis:latest sh -c \
-  'timeout 5 dbus-run-session -- /usr/libexec/xdg-desktop-portal --verbose 2>&1'
+podman run --rm -e XDG_CURRENT_DESKTOP=niri --entrypoint sh localhost/krytis:latest -c \
+  'dbus-run-session -- sh -c "/usr/libexec/xdg-desktop-portal --verbose & \
+   gdbus wait --session --timeout 60 org.freedesktop.portal.Desktop; kill \$!" 2>&1'
 ```
 
 xdp logs `Using portal configuration file '<path>' for desktop '<d>'` per config loaded,
 then `Using <backend>.portal for org.freedesktop.impl.portal.<Iface> (…)` for each
-interface it can serve — that line *is* the routing decision. Backends then fail to
-activate in the container; harmless, routing is decided before activation. An interface
-with no backend logs `Found '<x>' in configuration for …` but no `Using` line.
+interface it can serve — that line *is* the routing decision. An interface with no backend
+logs `Found '<x>' in configuration for …` but no `Using` line. Backends fail to activate in
+the container, and that is harmless for routing, but it is not free. xdp registers the
+portals one by one, and each registration activates its backend *synchronously* before the
+next `Using` line is written. Every xdg-desktop-portal-gtk activation spawns a process that
+dies with `cannot open display`. On an idle host the whole run takes ~1 s. With a build and
+a QEMU guest running, it once took more than 4 s.
+
+**End the probe on xdp's bus name, not on a clock.** xdp registers every portal in its
+bus-acquired handler and requests `org.freedesktop.portal.Desktop` only after that
+(`src/xdp-main.c`, xdg-desktop-portal 1.22.1). Owning the name therefore means every `Using`
+line is out: `gdbus wait --session --timeout <s> org.freedesktop.portal.Desktop` returns at
+that moment. The task used a fixed `timeout 4` until 2026-11-02. On a loaded host the cut-off
+output showed Umbriel with `0 of 21 interface(s) served` and sixteen `MISMATCH` lines. Every
+one of them was false, and re-running on the same image passed.
 
 **`mise run portal-routing-check`** runs that resolution for `niri` and `Umbriel` in one
 container and compares every interface against the EXPECTED tables in
@@ -1822,8 +1868,9 @@ classifies, any `Error loading …` warning, a desktop with no routing file load
 `/etc/xdg` key whose removal changes nothing because the same file's `default=` or the
 upstream `/usr/share` file already resolves it that way (`REDUNDANT`: delete the key), and
 an Umbriel `none` pin for an interface `umbriel.portal` now declares (`STALE NONE`: drop
-the pin; `OWN_BACKEND` in the task). It runs at the end of `mise run build`. A deliberate
-routing change edits the EXPECTED rows in the same commit.
+the pin; `OWN_BACKEND` in the task). A probe whose xdp never owns its name within the
+60 s ceiling fails as `NOT READY`, and nothing is compared. It runs at the end of
+`mise run build`. A deliberate routing change edits the EXPECTED rows in the same commit.
 
 **Guarding a `none` pin.** A `none` pin keeps the interface at `none` whatever gets
 installed, so the EXPECTED table alone stays green when the pin goes stale. Check for that

@@ -523,19 +523,22 @@ element change touching systemd invalidates an existing `:sealed` image — reru
 offline install payload. Two non-obvious requirements, both of which otherwise
 produce late, confusing failures:
 
-**1. Byte identity.** The payload injector — `live/iso-tools/payload-prep.sh`, in this
+**1. Byte identity (of the content).** The payload injector — `live/iso-tools/payload-prep.sh`, in this
 repo — writes `/usr/lib/bootc/install/00-defaults.toml` (a `root-mount-spec`) into every
-payload, adds `/etc/containers/storage.conf` on the composefs backend krytis uses, and
+payload, adds a vfs `/etc/containers/storage.conf` (left over from the pre-#1479 VFS embed), and
 re-commits the result twice with `buildah commit --squash` (the second pass only to
 relabel `ostree.final-diffid` on the squashed layer). The krytis *image* ships neither
-file — the live environment's own copies come from `live/src/configure-live-krytis.sh`
-and are a separate thing — and each `buildah run`/`commit` round trip can bump `/tmp` and
+file — the live environment's own `00-defaults.toml` comes from `live/src/configure-live-krytis.sh`
+and is a separate thing — and each `buildah run`/`commit` round trip can bump `/tmp` and
 `/var/tmp` mtimes, the same, and only, discrepancy that broke the UKI digest before
 (§ `bootc container ukify` must run in a throwaway stage). Any of the three invalidates
 the `composefs=` digest baked into the UKI's frozen cmdline, and `bootc install` then
 aborts with `The UKI has the wrong composefs= parameter (is 'sha512:X', should be
 sha512:Y')`. `PAYLOAD_SEALED=1` makes the pipeline pass the payload through untouched.
-Skipping only the `00-defaults.toml` injection — which is what issue #371 originally
+"Untouched" means the config and the uncompressed layers (diff_ids): since #1479 the
+oci-archive → OCI layout step gzips the layers, which changes the layer *blob* digests
+but not the config digest (the image ID) or the rootfs the composefs digest is computed
+over. Skipping only the `00-defaults.toml` injection — which is what issue #371 originally
 scoped — is **not** enough.
 
 `PAYLOAD_SEALED=1` is honoured twice over, because both halves of the pipeline live here:
@@ -547,16 +550,17 @@ invoked directly. Squashfs assembly is `iso-sd-boot.sh`'s own inline
 dakota-iso carried a duplicate in a second entry point, `scripts/build-live-squashfs.sh`,
 that krytis never reached and deliberately did not port — do not go looking for it here.)
 
-**2. `targetImgref`, not just the store key.** `live/src/configure-live-krytis.sh` bakes
-one ref into four `recipe.json` fields: `imgref`, `targetImgref`, `image`,
-`local_imgref`. Change only the embedded *content* and the install succeeds while
+**2. `targetImgref`, not just the embedded content.** `live/src/configure-live-krytis.sh` bakes
+one ref into three `recipe.json` fields: `imgref`, `targetImgref`, `image`, and
+`scripts/iso-sd-boot.sh` writes the same ref as `image` and `targetImgref` of
+`/etc/bootc-installer/media-input.json`. Change only the embedded *content* and the install succeeds while
 `targetImgref` still points at `…/krytis:latest`. The first `bootc upgrade` on the
 freshly sealed system then pulls the **unsigned** image and installs its unsigned UKI,
 and the enrolled firmware refuses to boot it. (bootc writes only the UKI. The loader on
 the ESP is a separate story, see § The ESP's systemd-boot is updated by systemd, not
-bootc — and not on a LUKS root.) Change only
-`payload_ref` and `local_imgref` no longer resolves in the offline store, failing
-the install immediately. `PAYLOAD_REF` moves both together; `build-iso --sealed`
+bootc.) Change only
+`payload_ref` and the recipe's `image` no longer equals the receipt's, so fisherman
+refuses the install immediately (#1479). `PAYLOAD_REF` moves both together; `build-iso --sealed`
 sets it to `ghcr.io/starlit-os/krytis:sealed`. Verify on an installed system with
 `bootc status --json | jq '.spec.image.image'`.
 
@@ -570,33 +574,43 @@ during it" discipline as `boot-test`'s UKI presence check.
 
 ### Assert the embed on the finished ISO, not inside the pipeline
 
-Once the sealed path is a pass-through, byte identity is true *by construction*, so
+Once the sealed path is a pass-through, content identity is true *by construction*, so
 asserting it inside `scripts/iso-sd-boot.sh` would be tautological.
 `mise run verify-iso-payload` reads the **finished ISO** instead, which is the only
-place that proves the whole chain (`podman save` → oci-archive → `skopeo copy` → VFS
-store → squashfs → ISO) preserved the image. It also catches the "wrong tag embedded"
+place that proves the whole chain (`podman save` → oci-archive → `skopeo copy` → gzip OCI
+layout → ISO `/OCI`) preserved the image. It also catches the "wrong tag embedded"
 class of bug that already bit once (#417/#425). `build-iso --sealed` runs it
 automatically.
 
-The invariant is image-ID equality, established empirically:
+The invariant is image-ID equality:
 
-- a VFS containers-storage records `vfs-images/images.json` as a list of
-  `{"id": …, "names": [...]}`, where `id` is exactly
-  `podman inspect <tag> --format '{{.Id}}'` (the config digest, no `sha256:` prefix);
+- the layout's manifest names a config blob whose digest is exactly
+  `podman inspect <tag> --format '{{.Id}}'` (with a `sha256:` prefix);
+  `scripts/iso-oci-layout.py` reads it from the ISO and hashes every blob against its
+  descriptor on the way. Before #1479 the same ID was read from a VFS store's
+  `vfs-images/images.json`;
+- `skopeo copy --dest-compress-format gzip` into the layout rewrites layer blobs but
+  carries the config over unchanged, so the config digest survives it. Measured
+  2026-11-02: the layout built from `ghcr.io/starlit-os/krytis:26.08.202611011748-sealed`
+  has config `sha256:e5a813e4211b…`, the image's `podman inspect .Id`. The install from
+  it passed `iso-install-test --secure`, so bootc's own digest check agreed;
 - `podman save --format oci-archive` round-trips both the config digest and the
   layer diff_id unchanged for krytis's images (they are already OCI-format, so no
   manifest conversion happens). Checked against `:sealed`: ID `0b00a10aad1a…`,
   diff_id `e2ae30e0f0ac…`, identical before and after the archive round trip.
 
-Byte identity is a *stronger* claim than digest equality, which is what makes it
-the right assertion — and it needs no privileged mount and no digest recomputation.
+Config-digest equality covers the diff_ids, so it pins the uncompressed rootfs the
+composefs digest is computed over — and it needs no privileged mount and no composefs
+digest recomputation.
 The authoritative digest check is `bootc install` itself, which recomputes and
 names both digests in its error; the QEMU install test is therefore the end-to-end
 digest proof, and this gate is the cheap regression net in front of it.
 
-Reading the payload out of the ISO needs neither root nor a 5GB extract: walk the
+Reading the receipt and recipe out of the ISO needs neither root nor a 5GB extract: walk the
 ISO 9660 directory records to find `LiveOS/squashfs.img`'s extent, then
-`unsquashfs -offset <lba*2048> -cat <iso> <path>`. File data in an ISO is
+`unsquashfs -offset <lba*2048> -cat <iso> <path>`. The `/OCI` layout sits on the ISO
+tree itself, so `scripts/iso-oci-layout.py` reads it from the Joliet directory records
+the same way. File data in an ISO is
 contiguous — including across the multi-extent records `-iso-level 3` uses for
 files over 4GB — so the first record's extent is the start of the squashfs. Assert
 the `hsqs` magic at the computed offset so a layout change fails loudly instead of
@@ -1175,8 +1189,11 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   is `chattr +i` by default, and the task restores that afterwards.
 - **fwupd's `dbxtool -a` is a thin wrapper around the same write** (attributes `0x67`,
   verified in `plugins/uefi-dbx/fu-dbxtool.c`). Its two guards are an already-applied
-  check and a scan of the ESP for binaries the update would revoke. The ESP is not
-  mounted on krytis, so in practice it needs `-f`, which turns both guards off.
+  check and a scan of the ESP for binaries the update would revoke. It needs `-f` when
+  it can't find a mounted ESP, which turns both guards off. That was the case on every
+  LUKS install until #1328 (§ The ESP's systemd-boot is updated by systemd, not bootc).
+  Whether fwupdtool now runs without `-f` through the `/boot` automount hasn't been
+  checked.
   `dbx-append apply` re-implements both. The ESP scan reads `EFI/` with `mcopy` straight
   off the partition named by `LoaderDevicePartUUID`, so the ESP is never mounted, and it
   refuses if any `.efi` there would be *newly* revoked.
@@ -1202,7 +1219,7 @@ result is from the #535 ThinkPad (`21HES06C1G`, UEFI N3QET52W 1.52) on 2026-10-1
   (`docs/secure-boot-enrollment.md` § The keys never rotate (#447)), so clearing keys
   and re-enrolling is the only way.
 
-## The ESP's systemd-boot is updated by systemd, not bootc — and not on a LUKS root
+## The ESP's systemd-boot is updated by systemd, not bootc
 
 Measured for #1328 on 2026-11-02. bootc v1.17.3 never writes `EFI/systemd/` or
 `EFI/BOOT/`. `install_systemd_boot()` (`bootctl install`) runs only at install time.
@@ -1232,14 +1249,14 @@ Two limits apply even when it works:
   shim, and krytis's chain has no shim.
 - **It only acts when `/EFI/systemd/` is non-empty.** That holds for bootc installs.
 
-**On a LUKS root it never runs at all.** The unit logs `Couldn't find EFI system
-partition, skipping.` and exits 0, so nothing flags it. On `adora` (ThinkPad, FIDO2
-LUKS, image `26.08.202611011748`) the firmware still boots systemd-boot **260.2** from
-`\EFI\BOOT\BOOTX64.EFI` (`bootctl status`) while the image ships 262.1. Nothing mounts
-the ESP: `boot.automount` is `not-found`. The cause is read from source and
-consistent with both machines. A root-run `SYSTEMD_LOG_LEVEL=debug
-/usr/lib/systemd/system-generators/systemd-gpt-auto-generator` would confirm it and has
-not been run yet:
+**On a LUKS root it never ran, until `config/esp-automount.bst`.** The unit logged
+`Couldn't find EFI system partition, skipping.` and exited 0, so nothing flagged it. On
+`adora` (ThinkPad, FIDO2 LUKS, image `26.08.202611011748`) the firmware still boots
+systemd-boot **260.2** from `\EFI\BOOT\BOOTX64.EFI` (`bootctl status`) while the image
+ships 262.1. Nothing mounts the ESP there: `boot.automount` is `not-found`. The cause,
+read from source (a root-run `SYSTEMD_LOG_LEVEL=debug
+/usr/lib/systemd/system-generators/systemd-gpt-auto-generator` would show it directly
+and has not been run):
 
 1. bootc's initramfs (`crates/initramfs/src/lib.rs`) symlinks
    `/run/systemd/volatile-root` to the device under `/sysroot`. On LUKS that is
@@ -1253,10 +1270,35 @@ not been run yet:
 On a plain root, `volatile-root` names the partition, the generator finds the disk's
 GPT, and `boot.mount` ("EFI System Partition Automount") appears in the boot log.
 
-So the installs that matter most, encrypted ones, keep their install-time loader
-forever. Anything that has to rewrite the loader, or check it (`dbx-append`'s ESP scan
-already reads the ESP with mtools via `LoaderDevicePartUUID` for exactly this reason),
-must find the ESP from `LoaderDevicePartUUID` itself and not trust `/boot` or `/efi`.
+**The fix is `config/esp-automount.bst` (#1328):** a generator,
+`/usr/lib/systemd/system-generators/krytis-esp-automount-generator`, that writes the
+units gpt-auto would have written: `boot.mount` and `boot.automount`, same options
+(`fmask=0177,dmask=0077,…,noexec,nosymfollow`), same 120 s idle timeout, same fsck
+dependency, same choice of `/boot` and then `/efi`. It targets the partition named by
+`LoaderDevicePartUUID`, and it does this only when `volatile-root` is a device-mapper
+device. Plain roots keep gpt-auto's own units. Its units go to the normal generator
+directory and gpt-auto's to the late one, so if systemd ever fixes
+`blockdev_get_root()` the two overlap harmlessly. It's the generator and not a drop-in
+for `systemd-boot-update.service` so that everything else looking for `/boot`
+(`bootctl status`, fwupd) sees the same ESP on LUKS as on plain installs. That those
+tools then behave is expected but not measured.
+
+Measured 2026-11-02 with **`mise run esp-update-test`**, the regression gate:
+- A sealed image carrying the generator, installed through the ISO to an encrypted root
+  (`mise run luks-install-test --keep`), booted with `Set up automount boot.automount`
+  and `Mounted boot.mount - EFI System Partition Automount` in its boot log.
+- With systemd-boot 261.3 planted on both loader paths of a copy of that disk, one boot
+  brought both back to the image's 262.1, byte-identical to the image's binary.
+
+The gate runs without Secure Boot, because `boot-test` can only answer the LUKS prompt
+by injecting `console=ttyS0` through systemd-stub, which the stub refuses under
+enforcement. It boots with `boot-test --reuse-disk --in-place`. Without `--in-place`,
+`boot-test` boots a reflinked copy, and the update lands on a disk the gate never reads.
+The first version of this gate fell into exactly that and reported a false FAIL.
+
+Anything else that has to rewrite the loader, or check it, must still find the ESP
+from `LoaderDevicePartUUID` itself and not rely on `/boot` or `/efi` being mounted.
+`dbx-append`'s ESP scan already reads the ESP with mtools that way.
 
 ## A sealed UKI's frozen cmdline breaks every installer that expects to inject kargs
 

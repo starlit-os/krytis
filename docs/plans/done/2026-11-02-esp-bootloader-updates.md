@@ -1,9 +1,9 @@
 # Investigate ESP bootloader updates
 
-**Issue:** #1328 · **Status (2026-11-02): steps 0–3 done; step 4 written up.** The loader is
-updated after an upgrade, but by systemd's `systemd-boot-update.service` rather than by
-bootc, and only on a non-LUKS root. On a LUKS root it stays at the install-time version.
-One link in the LUKS cause is still unverified (see step 3).
+**Issue:** #1328 · **Status (2026-11-02): done.** The loader is updated after an upgrade by
+systemd's `systemd-boot-update.service`, not by bootc. On a LUKS root that never happened,
+because gpt-auto generates no ESP mount there. `config/esp-automount.bst` now generates it,
+and `mise run esp-update-test` proves the update on an encrypted install (step 5).
 
 #1328 asks whether a sealed krytis install ever picks up a newer signed systemd-boot after
 `bootc upgrade`. Two documents disagree. The issue assumes bootc never touches the loader.
@@ -182,16 +182,41 @@ deadline. Neither affects the ESP measurement, which is read offline.
 - `mise/tasks/upgrade-test`: prints the ESP loader hashes and versions before and after,
   plus the target image's, if it is local.
 - Open questions for the fix (Breakage and Security Gates):
-  1. Make the ESP visible on LUKS: fix `blockdev_get_root()` upstream (trace dm-crypt in
-     the `volatile-root` branch), have bootc link the originating partition, or ship an
-     `--esp-path=` / mount drop-in for `systemd-boot-update.service` that resolves the
-     ESP from `LoaderDevicePartUUID`.
+  1. ~~Make the ESP visible on LUKS~~: chose a krytis generator that recreates gpt-auto's
+     ESP automount (option B on #1328), over a drop-in for `systemd-boot-update.service`
+     alone, a carried bootc patch, or a custom update unit. See step 5.
   2. ~~Version gating~~: accepted. #447 decided keys never rotate (2026-11-02), so a
      same-version re-sign never needs to propagate, and SBAT isn't enforced without shim.
-  3. Ordering against `dbx-append`: loaders must be current before any append that would
-     revoke the old hash.
+  3. Ordering against `dbx-append`: unchanged. `dbx-append apply` already refuses while
+     any `.efi` on the ESP would be newly revoked, and on LUKS installs that refusal now
+     clears by itself once the loaders update.
 - #1328: result posted, re-sized for the fix.
-- Archive this plan to `docs/plans/done/` in the PR that lands the result.
+
+## Step 5: the fix (done)
+
+- `files/esp-automount/krytis-esp-automount-generator`, shipped by
+  `elements/config/esp-automount.bst` in `stacks/base-system.bst`. It acts only when
+  `/run/systemd/volatile-root` is a device-mapper device. It then writes gpt-auto's
+  `boot.mount` and `boot.automount` (same options, fsck dependency and 120 s idle timeout)
+  for the `LoaderDevicePartUUID` partition, into the normal generator directory.
+- Smoke on `adora` (LUKS, unprivileged, into a temp dir): it generated units for
+  `/dev/disk/by-partuuid/aa6b184e-…`, the partition `bootctl status` reports, and
+  `systemd-analyze verify` was clean. In a container with no `volatile-root` it generated
+  nothing.
+- End to end, 2026-11-02:
+  - `mise run build` and `seal-uki`, then `build-iso --sealed --debug` and
+    `luks-install-test --keep`: PASS. The boot log shows
+    `Set up automount boot.automount - EFI System Partition Automount` and
+    `Mounted boot.mount`.
+  - `mise run esp-update-test`: PASS. systemd-boot 261.3, planted on both loader paths,
+    went back to the image's 262.1 (`87659802acfbae7a`) after one boot.
+- New permanent gate: `mise/tasks/esp-update-test`. It needed `boot-test --in-place`,
+  because `boot-test --reuse-disk` boots a reflinked copy and the update landed on a disk
+  the gate never read; the first run reported a false FAIL. The ESP helpers moved to
+  `mise/lib/esp.sh`, which `upgrade-test` now shares.
+- Not done as a negative control in a VM: the same gate against an image without the
+  generator. The pre-fix behaviour is `adora`'s (no `boot.automount`, loader 260.2 under
+  a 262.1 image).
 
 ## Out of scope, found here
 

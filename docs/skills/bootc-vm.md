@@ -992,10 +992,10 @@ partition matches exactly), ruling out a missing/wrong EFI variable. Why the ESP
 unmounted was answered later, by #1328: on a LUKS root, gpt-auto-generator follows
 `/run/systemd/volatile-root` to the dm-crypt mapping, finds no GPT there, and generates
 no ESP mount. A plain root gets `boot.mount`. bootc mounts the ESP itself when it writes
-a UKI, so this does not block `bootc switch`/`upgrade`. It does stop
-`systemd-boot-update.service` from ever refreshing the loader. See
-`docs/skills/secure-boot.md` § The ESP's systemd-boot is updated by systemd, not bootc —
-and not on a LUKS root.
+a UKI, so this does not block `bootc switch`/`upgrade`. It did stop
+`systemd-boot-update.service` from ever refreshing the loader, until
+`config/esp-automount.bst` started generating the mount for LUKS roots. See
+`docs/skills/secure-boot.md` § The ESP's systemd-boot is updated by systemd, not bootc.
 
 **Fix: switch to an image with the same boot-entry shape as what's currently running.**
 `mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s
@@ -1087,10 +1087,10 @@ After uncommenting: `mise run lint && mise run generate-disk`.
 
 `mise run boot-test` installs with `bootc install to-disk --via-loopback` straight
 from a local image. That is *not* how a user installs Krytis, and it exercises
-none of the ISO machinery: no offline VFS store, no live installer, no
-`recipe.json`, no `targetImgref`. `mise run iso-install-test` boots the live ISO
+none of the ISO machinery: no `/OCI` payload layout, no `media-input.json`
+receipt, no live installer, no `recipe.json`, no `targetImgref`. `mise run iso-install-test` boots the live ISO
 in QEMU and drives fisherman over SSH, which is the real path — so it is the only
-test that can catch a broken payload embed, a wrong store key, or an imgref that
+test that can catch a broken payload embed, a recipe that does not match the receipt, or an imgref that
 sends the installed system to the wrong upgrade stream.
 
 | Command | Exercises |

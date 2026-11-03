@@ -50,6 +50,9 @@ include/runtime.yml                       # freedesktop-sdk's (included by proje
 include/meson.build                       # wlroots' own source tree; cited by desktop.md
 docs/user/configuration.md                # noctalia-dev/umbriel's own docs; cited by desktop.md and files/umbriel/*.toml
 docs/user/keybinds.md                     # noctalia-dev/umbriel's own docs; cited by files/umbriel/binds.toml for the screenshot route
+docs/user/actions.md                      # noctalia-dev/umbriel's own docs; cited by desktop.md and files/umbriel/binds.toml for action argument shapes
+docs/user/layout.md                       # noctalia-dev/umbriel's own docs; cited by desktop.md for tab-group semantics
+docs/user/animation.md                    # noctalia-dev/umbriel's own docs; cited by desktop.md for spring-curve animation defaults
 patches/freedesktop-sdk/0003-openssh-Use-etc-ssh-as-sysconfdir.patch  # gnome-build-meta's patch set; cited by bst.md
 scripts/Makefile.in                       # xdg-utils' own source tree; cited by desktop.md
 scripts/build-live-squashfs.sh            # dakota-iso's; cited by dakota-iso.md, secure-boot.md

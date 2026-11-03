@@ -122,7 +122,7 @@ sources:
 - kind: git_repo
   url: github:kitten-lily/noctalia.git
   track: feat/system-prompter
-  ref: v5.3.0-2-g1aab2f2f829f7ffae1658a51f87b00c981c959d5
+  ref: v5.4.1-2-g5e2cedc34ed45612419bc71b6fc14ec956518372
 # launch_apps_as_systemd_services defaults to true (upstream: false). With
 # false, every app started from the launcher, dock or taskbar is a child of
 # noctalia and lives in its cgroup. config/noctalia-service.bst runs noctalia

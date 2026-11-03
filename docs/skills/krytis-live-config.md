@@ -114,23 +114,26 @@ time. `bootc install` recomputes that digest over the image it installs and abor
 "The UKI has the wrong composefs= parameter" on any mismatch.
 
 **Why it bites here:** `live/iso-tools/payload-prep.sh` mutates every payload it embeds —
-`00-defaults.toml`, `/etc/containers/storage.conf`, and two `buildah commit --squash`
+`00-defaults.toml`, a vfs `/etc/containers/storage.conf`, and two `buildah commit --squash`
 round trips whose only observable effect can be a `/tmp` + `/var/tmp` mtime bump. All
 three invalidate the digest. Harmless for unsealed payloads (no digest to invalidate),
 which is why it went unnoticed until krytis became the first sealed payload.
 
 **Fix:** `PAYLOAD_SEALED=1` makes `scripts/iso-sd-boot.sh` skip payload prep entirely, and
-`live/iso-tools/payload-prep.sh` honours the same flag, so the store receives the image
-byte for byte. `PAYLOAD_REF` moves the store key and recipe.json's
-imgref/targetImgref/image/local_imgref together — moving only one breaks either the
-install (local_imgref unresolvable) or the first `bootc upgrade` (targetImgref points at
+`live/iso-tools/payload-prep.sh` honours the same flag, so the embedded payload keeps the
+image's config and uncompressed layers unchanged (since #1479 the layers are gzipped into
+an OCI layout, which leaves the config digest and diff_ids alone). `PAYLOAD_REF` moves
+`media-input.json`'s image/targetImgref and recipe.json's imgref/targetImgref/image
+together — moving only one breaks either the install (fisherman refuses a recipe `image`
+that is not the receipt's) or the first `bootc upgrade` (targetImgref points at
 the unsigned image, which the enrolled firmware then refuses).
 
 **Aside, unrelated to sealing:** on the *unsealed* path that `/etc/containers/storage.conf`
 injection goes into the payload, so every system installed from an unsealed ISO carries it
 and has its podman pinned to the vfs driver. Inherited from upstream dakota-iso and
 probably not intended; not changed during the port, which deliberately left unsealed
-behaviour byte-identical.
+behaviour byte-identical. It outlived its reason in #1479: the live session no longer
+reads a vfs store at all, so the injection now only affects the installed system.
 
 ### DEBUG ISOs need an sshd drop-in — krytis is pubkey-only (2026-08-01)
 
@@ -196,7 +199,7 @@ live/
     configure-live-krytis.sh # live-env setup: liveuser, greetd autologin, polkit, installer
     install-flatpaks.sh      # bootc-installer flatpak + Flathub reconcile
     flatpaks                 # Flathub app IDs to pre-install
-    build-iso.sh             # xorriso/mtools ESP assembly
+    build-iso.sh             # xorriso/mtools ESP assembly; --oci-layout grafts the payload at /OCI
     krytis/
       images/
         krytis-logo.png      # tour image for the installer UI
@@ -209,11 +212,12 @@ krytis/
   tag                        # latest
   registry                   # starlit-os
 scripts/
-  iso-sd-boot.sh             # squashfs assembly + ISO assembly driver
+  iso-sd-boot.sh             # OCI layout + media-input.json + squashfs + ISO assembly driver
+  iso-oci-layout.py          # reads and digest-checks the ISO's /OCI layout (verify-iso-payload)
 mise/tasks/
   iso-container-build        # builds localhost/krytis-installer from live/Containerfile
   build-iso                  # end-to-end: iso-tools → live container → squashfs → ISO
-  verify-iso-payload         # asserts the finished ISO embeds the expected image
+  verify-iso-payload         # asserts the finished ISO embeds the expected image and the receipt/recipe bind to it
 ```
 
 **The live installer container is the caller's job:** `scripts/iso-sd-boot.sh` does not
@@ -255,7 +259,7 @@ tuna-os/fisherman#219 landed — see the installer-source note below):
 | `mise/tasks/iso-install-test` | Top-level gate: calls `iso-e2e-test --install-only`, then `boot-test` |
 
 **Composefs-only simplification:** upstream dakota-iso's `plain-install-qemu.sh` had two
-branches, composefs (VFS) and ostree/bootcDirect. Krytis is always composefs, so only the
+branches, composefs (then a VFS store) and ostree/bootcDirect. Krytis is always composefs, so only the
 composefs branch was ported into `scripts/iso-install-fisherman.sh`, which therefore takes
 just `<target> <ssh_port> <monitor_live_socket>` — no `<fisher_repo>` argument, because
 there is no go binary to build. #1247 finished the job on the build side: the
@@ -461,6 +465,88 @@ and writes `state/deploy/<hash>/etc/hostname` directly — confirmed in the inst
 Its only other action patched Universal Blue's `rechunker-group-fix.service`, which
 krytis has never shipped, and which had been printing "deployment etc/ not found" on
 every run instead of patching anything.
+
+### fisherman requires a media-input.json receipt and a read-only OCI layout on live media (#1479, 2026-11-02)
+
+**What:** every krytis ISO stopped installing. fisherman exited before touching the disk:
+
+```
+fatal: required local source is absent or unreadable; refusing installation: live media requires /etc/bootc-installer/media-input.json
+```
+
+**Why:** as of 2026-11-02, tuna-os/fisherman
+[`eecb1106`](https://github.com/tuna-os/fisherman/commit/eecb1106)
+([tuna-os/fisherman#393](https://github.com/tuna-os/fisherman/pull/393), merged
+2026-10-31, first shipped in bootc-installer release `v2026.10.31-23e47c51`) makes
+`/etc/bootc-installer/media-input.json` mandatory whenever the host carries the
+`/etc/bootc-installer/live-iso-mode` marker, which `configure-live-krytis.sh` writes. krytis
+had no receipt: its payload was a VFS containers-storage in the squashfs, found through a
+`containers-storage:` `local_imgref`. Nothing in krytis changed. `live/src/install-flatpaks.sh`
+downloads bootc-installer from `releases/latest/download/` unpinned (§ The installer
+flatpak carries fisherman), and that bundle carries fisherman, so the next ISO build picked
+up the new contract with no announcement and no krytis commit to bisect to.
+
+**The contract** (tuna-os/fisherman README § Embedded live media,
+`cmd/fisherman/host_recipe.go` `resolveMediaInput`,
+`internal/install/bound_media_linux.go` `PreflightBoundOCIMediaInput`, as of 2026-11-02):
+
+- The receipt is MediaInput v1: `schemaVersion` 1, `kind`, `image`,
+  `platformManifestDigest`, `indexDigest`, `configDigest`, `ociLayoutPath`,
+  `targetImgref`, `platform`, `catalogVersion`, `qualificationID`. `platform` must be
+  `linux/amd64`.
+- The layout directory and every blob must sit on a **read-only filesystem** (`statfs`
+  `ST_RDONLY`), with no symlinks, and every blob's digest and size are checked. The live
+  root is an overlay with a writable upper layer, so a layout inside the squashfs fails
+  this check. krytis grafts the layout onto the ISO 9660 tree at `/OCI`
+  (`live/src/build-iso.sh --oci-layout`); dmsquash-live mounts the ISO read-only at
+  `/run/initramfs/live`, so `ociLayoutPath` is `/run/initramfs/live/OCI`. tuna-os/tacklebox
+  does the same (`internal/purefs/offlinemedia.go`).
+- The recipe is bound to the receipt. Its `image` must be empty, the receipt's `image`, or
+  exactly `oci:<ociLayoutPath>`; its `targetImgref`, if set, must equal the receipt's.
+  fisherman then runs bootc with `--source-imgref oci:<ociLayoutPath>` and
+  `--target-imgref <receipt targetImgref>`. With a receipt it does no offline-store
+  discovery at all, so `local_imgref`, `containers-storage:` refs and a live
+  `storage.conf` have nothing to do.
+
+**What krytis does now:**
+
+- `scripts/iso-sd-boot.sh` converts the payload's oci-archive with `skopeo copy
+  --dest-compress --dest-compress-format gzip oci-archive:… oci:<layout>:<ref>` and writes
+  `media-input.json` into the squashfs root with `kind` `krytis-live`, `image` =
+  `targetImgref` = `PAYLOAD_REF`, and the manifest and config digests read from the layout.
+- `configure-live-krytis.sh` writes `recipe.json` with `imgref` = `targetImgref` = `image`
+  = `PAYLOAD_REF` (bare, no `containers-storage:` prefix) and no `local_imgref`; the
+  template `live/src/etc/bootc-installer/recipe.json` dropped the key too. The VFS
+  `storage.conf` block is gone; the `live-iso-mode` marker stays.
+- gzip because `podman save` emits uncompressed layers. Recompressing changes the layer
+  digests but not the config digest (the image ID) or the diff_ids, so a sealed UKI's
+  composefs digest still matches. Measured 2026-11-02 with
+  `mise run iso-install-test --secure` on an ISO built around
+  `26.08.202611011748-sealed`:
+  - fisherman logged `Offline: using embedded media image /run/initramfs/live/OCI`;
+  - bootc ran with `--source-imgref oci:/run/initramfs/live/OCI --target-imgref
+    ghcr.io/starlit-os/krytis:sealed`;
+  - the installed disk passed `boot-test --secure` under enforcement.
+
+  The cost is ISO size, about 1.8 GB more, because the opaque layer no longer
+  deduplicates against the live root (`mise.md` § The offline payload is an OCI layout
+  on the ISO, bound by `media-input.json` (#1479)).
+- `scripts/iso-install-fisherman.sh` (the E2E install) reads the live session's
+  `media-input.json` `image`, fails if it differs from `PAYLOAD_REF`, and puts that bare ref
+  in its recipe. The old `podman image exists` check and its silent `docker://` network
+  fallback are gone: with the marker present there is no network path to fall back to.
+- `mise run verify-iso-payload` (run by every `build-iso`) reads `media-input.json` and
+  `recipe.json` from the squashfs and the `/OCI` layout from the ISO
+  (`scripts/iso-oci-layout.py`, which checks every blob's digest and size). It asserts:
+  sealed builds, layout config digest == `podman inspect .Id`; always, receipt
+  `schemaVersion`/`platform`/`ociLayoutPath` and both digests match the layout, receipt
+  `targetImgref` == `image`, recipe `image`/`imgref`/`targetImgref` == receipt `image`, and
+  no `local_imgref`. `--names-only` skips only the ID check.
+
+**Lesson:** an unpinned `latest` download is a dependency on upstream's contract, not just
+its code. When an ISO install fails with a fisherman refusal and nothing in krytis
+changed, compare the bootc-installer release the build fetched against the last good one
+first.
 
 ### The installer's TPM2 default is turned off by hiding the TPM from its probe (2026-10-15)
 

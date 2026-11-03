@@ -65,7 +65,7 @@ default_floating_size_px = { width = 1080, height = 920 }
 #   - `draw-border-with-background false` for ghostty and zed. umbriel has no
 #     key controlling whether the border is filled behind a translucent window.
 #   - layer-rule { match namespace="^noctalia-backdrop"; place-within-backdrop
-#     true }. umbriel's [[layer_rule]] exposes only match.namespace plus four
-#     blur keys -- there is no placement control, so noctalia's
-#     backdrop-behind-the-overview effect cannot be reproduced. colors.backdrop
-#     is a colour, not a placement.
+#     true }. umbriel's [[layer_rule]] matches on namespace, layer and
+#     at_startup and sets only four blur keys -- there is no placement
+#     control, so noctalia's backdrop-behind-the-overview effect cannot be
+#     reproduced. colors.backdrop is a colour, not a placement.

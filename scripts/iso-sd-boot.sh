@@ -7,14 +7,15 @@
 #
 #   TARGET            — variant directory name (always "krytis")
 #   OUTPUT_DIR        — directory for the final ISO and intermediate artifacts
-#   WORKDIR           — working directory for CS staging and squashfs root
+#   WORKDIR           — working directory for the squashfs root
 #   DEBUG             — 0 (default) or 1 to enable SSH in the live env
 #   INSTALLER_CHANNEL — stable (default) or dev
 #   COMPRESSION       — fast (default) or release
 #   PAYLOAD_REF       — OCI ref of the offline install payload. Overrides
 #                       <target>/payload_ref when set; the same ref is forwarded
 #                       to the live-installer container build so recipe.json's
-#                       imgref/targetImgref/image/local_imgref move with it.
+#                       imgref/targetImgref/image move with it, and is written
+#                       as media-input.json's image/targetImgref.
 #   PAYLOAD_SEALED    — 0 (default) or 1. 1 embeds the payload byte-identically:
 #                       payload prep is skipped entirely so no file is injected
 #                       and no layer is re-committed. Required for a sealed (signed
@@ -52,7 +53,7 @@ echo "=== Disk space before squashfs assembly ==="
 df -h "${OUTPUT_DIR}"
 
 if ! findmnt -n -o FSTYPE -T "${WORKDIR}" 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
-    echo "Hint: ${WORKDIR} is not an XFS/BTRFS mount.  For faster VFS import, mount one." >&2
+    echo "Hint: ${WORKDIR} is not an XFS/BTRFS mount.  For a faster squashfs root, mount one." >&2
 fi
 
 AVAILABLE_KB=$(df --output=avail -B1024 "${OUTPUT_DIR}" | tail -1 | tr -d ' ')
@@ -72,22 +73,24 @@ fi
 
 SQUASHFS="${OUTPUT_DIR}/${TARGET}-rootfs.sfs"
 BOOT_TAR="${OUTPUT_DIR}/${TARGET}-boot-files.tar"
-CS_STAGING="${WORKDIR}/${TARGET}-cs-staging"
+# The embedded payload as an OCI image layout. It goes on the ISO 9660 tree at
+# /OCI, grafted by live/src/build-iso.sh rather than copied, and NOT into the
+# squashfs: fisherman only accepts a layout on a read-only filesystem (statfs
+# ST_RDONLY on the directory and every blob), and the live root is an overlay
+# whose upper layer is writable. dmsquash-live mounts the ISO itself read-only at
+# /run/initramfs/live, so that is where the live system finds it.
+OCI_LAYOUT="${OUTPUT_DIR}/${TARGET}-payload-layout"
+OCI_LAYOUT_LIVE_PATH="/run/initramfs/live/OCI"
 SQUASHFS_ROOT="${WORKDIR}/${TARGET}-sfs-root"
 PAYLOAD_OCI="${OUTPUT_DIR}/${TARGET}-payload.oci.tar"
 
-trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${PAYLOAD_OCI}' 2>/dev/null || true" EXIT
+trap "rm -rf '${SQUASHFS}' '${BOOT_TAR}' '${PAYLOAD_OCI}' '${OCI_LAYOUT}' 2>/dev/null || true" EXIT
 
-# Krytis is single-target and always composefs: the payload is embedded as a
-# read-only VFS containers-storage at /var/lib/containers/storage, the layout
-# the live storage.conf (live/src/configure-live-krytis.sh), the installer
-# recipe and verify-iso-payload all assume. The per-variant composefs/
-# bootloader files and the live_target/-nvidia indirection dakota-iso uses to
-# choose between layouts were removed in #1247 — a blank file there used to
-# send this script down an overlay branch while payload-prep.sh took the VFS
-# one (docs/skills/dakota-iso.md § `cat f | tr -d … || echo default` loses its
-# default without pipefail).
-echo "=== Building offline VFS OCI store for ${PAYLOAD_IMAGE} ==="
+# Krytis is single-target and always composefs (#1247). The payload is embedded
+# as an OCI layout plus /etc/bootc-installer/media-input.json, the receipt
+# fisherman requires on live media since tuna-os/fisherman eecb1106 (#1479).
+# verify-iso-payload checks both on the finished ISO.
+echo "=== Building offline OCI layout for ${PAYLOAD_IMAGE} ==="
 
 # Payload prep needs buildah + skopeo + python3. On hosts without buildah
 # (e.g. immutable Krytis) set ISO_TOOLS_IMAGE to run the step inside the
@@ -102,7 +105,7 @@ echo "=== Building offline VFS OCI store for ${PAYLOAD_IMAGE} ==="
 # when mounted the nested userns can't take the storage lock. The oci-archive
 # transport works identically rootless and rootful.
 PAYLOAD_INPUT="${OUTPUT_DIR}/${TARGET}-payload-input.oci.tar"
-trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${PAYLOAD_OCI}' '${PAYLOAD_INPUT}' 2>/dev/null || true" EXIT
+trap "rm -rf '${SQUASHFS}' '${BOOT_TAR}' '${PAYLOAD_OCI}' '${PAYLOAD_INPUT}' '${OCI_LAYOUT}' 2>/dev/null || true" EXIT
 echo "=== Exporting ${PAYLOAD_IMAGE} to oci-archive for payload prep ==="
 podman save --format oci-archive -o "${PAYLOAD_INPUT}" "${PAYLOAD_IMAGE}"
 podman rmi "${PAYLOAD_IMAGE}" || true
@@ -133,8 +136,8 @@ else
     fi
 
     # Sealed runs alias PAYLOAD_OCI at PAYLOAD_INPUT, so removing the input here
-    # would delete the archive before _ns_build_squashfs imports it. The EXIT trap
-    # (set above, fires after the store import) cleans it up either way.
+    # would delete the archive before _ns_build_squashfs converts it. The EXIT trap
+    # (set above, fires after the conversion) cleans it up either way.
     rm -f "${PAYLOAD_INPUT}"
 fi
 
@@ -144,7 +147,7 @@ fi
 # interpolation of shell vars into the bash -c argument. Instead we export them
 # and the inner bash inherits them directly.
 export OUTPUT_DIR WORKDIR TARGET PAYLOAD_IMAGE COMPRESSION
-export CS_STAGING SQUASHFS_ROOT SQUASHFS BOOT_TAR PAYLOAD_OCI
+export SQUASHFS_ROOT SQUASHFS BOOT_TAR PAYLOAD_OCI OCI_LAYOUT OCI_LAYOUT_LIVE_PATH
 
 _ns_build_squashfs() {
     set -euo pipefail
@@ -157,39 +160,42 @@ _ns_build_squashfs() {
     OVERLAY_WORK=$(mktemp -d "${SQUASHFS_ROOT}_work_XXXXXX")
 
     ns_cleanup() {
-        umount "${SQUASHFS_ROOT}/var/lib/containers/storage" 2>/dev/null || true
         umount "${SQUASHFS_ROOT}" 2>/dev/null || true
         podman image unmount "localhost/${TARGET}-installer" 2>/dev/null || true
         rm -rf "${OVERLAY_UPPER}" "${OVERLAY_WORK}" 2>/dev/null || true
-        rm -rf "${CS_STAGING}" "${SQUASHFS_ROOT}" 2>/dev/null || true
+        rm -rf "${SQUASHFS_ROOT}" 2>/dev/null || true
     }
     trap ns_cleanup EXIT
 
     MOUNT=$(podman image mount "localhost/${TARGET}-installer")
     PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:$PATH
 
-    echo "=== Disk space before OCI store embed ==="
+    echo "=== Disk space before OCI layout conversion ==="
     df -h "${OUTPUT_DIR}"
     [[ "${WORKDIR}" != "${OUTPUT_DIR}" ]] && df -h "${WORKDIR}"
 
-    SQUASHFS_STORAGE="${CS_STAGING}/var/lib/containers/storage"
-    STORAGE_CONF=$(mktemp "${OUTPUT_DIR}/live-storage-XXXXXX.conf")
-    mkdir -p "${SQUASHFS_STORAGE}"
-    printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
-    echo 'Importing OCI image into squashfs VFS containers-storage...'
+    # oci-archive → OCI layout. podman save writes uncompressed layers, which
+    # would put ~7GB of raw tar on the ISO; gzip them, as the registry copy is.
+    # Recompression changes the layer digests but not the diff_ids or the config,
+    # so the image ID and the sealed UKI's composefs digest (computed over the
+    # uncompressed rootfs) are unchanged. gzip rather than zstd: it is what every
+    # `bootc upgrade` from ghcr.io already decodes. skopeo comes from the live
+    # installer image, as the old VFS import did, so the host needs none.
+    rm -rf "${OCI_LAYOUT}"
+    mkdir -p "${OCI_LAYOUT}"
+    echo 'Converting the payload to a gzip OCI layout...'
     podman run --rm \
         --privileged \
         -v "${PAYLOAD_OCI}:/payload.oci.tar:ro" \
-        -v "${SQUASHFS_STORAGE}:/vfs-storage" \
-        -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
+        -v "${OCI_LAYOUT}:/layout" \
         "localhost/${TARGET}-installer" \
-        sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
-    rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
+        sh -c "mkdir -p /var/tmp && skopeo copy --dest-compress --dest-compress-format gzip oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} oci:/layout:${PAYLOAD_IMAGE}"
+    rm -f "${PAYLOAD_OCI}"
 
-    echo "=== Disk space after OCI store embed ==="
+    echo "=== Disk space after OCI layout conversion ==="
     df -h "${OUTPUT_DIR}"
     [[ "${WORKDIR}" != "${OUTPUT_DIR}" ]] && df -h "${WORKDIR}"
-    du -sh "${CS_STAGING}" 2>/dev/null || true
+    du -sh "${OCI_LAYOUT}" 2>/dev/null || true
 
     echo 'Building unified squashfs source tree using bind mounts...'
     mkdir -p "${SQUASHFS_ROOT}"
@@ -208,9 +214,42 @@ _ns_build_squashfs() {
         cp -a "${MOUNT}/." "${SQUASHFS_ROOT}/"
     fi
 
-    mkdir -p "${SQUASHFS_ROOT}/var/lib/containers/storage"
-    echo "Copying VFS store into squashfs root..."
-    cp -a "${CS_STAGING}/var/lib/containers/storage/." "${SQUASHFS_ROOT}/var/lib/containers/storage/"
+    # The receipt fisherman binds the install to (tuna-os/fisherman
+    # internal/install/mediainput.go, MediaInput v1). It names the layout's
+    # live path and pins its platform manifest and config digests, which are
+    # only known now, after the conversion above, so it is written into the
+    # live root here rather than by configure-live-krytis.sh. image and
+    # targetImgref are both PAYLOAD_IMAGE: recipe.json's image must equal
+    # `image`, and `targetImgref` is what the installed system follows on
+    # `bootc upgrade`.
+    mkdir -p "${SQUASHFS_ROOT}/etc/bootc-installer"
+    python3 - "${OCI_LAYOUT}" "${PAYLOAD_IMAGE}" "${OCI_LAYOUT_LIVE_PATH}" \
+        > "${SQUASHFS_ROOT}/etc/bootc-installer/media-input.json" <<'PY'
+import json, sys
+layout, image, live_path = sys.argv[1:]
+with open(f"{layout}/index.json") as f:
+    manifests = json.load(f)["manifests"]
+if len(manifests) != 1:
+    sys.exit(f"expected one manifest in {layout}/index.json, found {len(manifests)}")
+digest = manifests[0]["digest"]
+with open(f"{layout}/blobs/{digest.replace(':', '/', 1)}") as f:
+    config = json.load(f)["config"]["digest"]
+json.dump({
+    "schemaVersion": 1,
+    "kind": "krytis-live",
+    "image": image,
+    "platformManifestDigest": digest,
+    "indexDigest": "",
+    "configDigest": config,
+    "ociLayoutPath": live_path,
+    "targetImgref": image,
+    "platform": "linux/amd64",
+    "catalogVersion": "",
+    "qualificationID": "",
+}, sys.stdout, indent=2)
+print()
+PY
+    cat "${SQUASHFS_ROOT}/etc/bootc-installer/media-input.json"
 
     echo "=== Disk space after creation of squashfs root ==="
     df -h "${OUTPUT_DIR}"
@@ -263,6 +302,7 @@ PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" \
     bash "live/src/build-iso.sh" \
         --title "${LIVE_TITLE}" \
         --label "${LIVE_LABEL}" \
+        --oci-layout "${OCI_LAYOUT}" \
         "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/${TARGET}-live.iso"
 
 echo "ISO ready: ${OUTPUT_DIR}/${TARGET}-live.iso"

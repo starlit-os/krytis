@@ -121,8 +121,9 @@ config:
     # entire session after a normal homed greetd login.
     #
     # pam_u2f would cover classic users here, before pam_unix (absent authfile
-    # falls through) -- but it is DISABLED on this testbed branch as the
-    # workaround for krytis#585.
+    # falls through) -- but it is DISABLED as the permanent workaround for
+    # krytis#585, which was accepted as a lasting oo7 limit on 2026-11-02
+    # (linux-credentials/oo7#614).
     #
     # Why: pam_u2f is `sufficient`, so a successful FIDO2 auth ends the auth
     # stack before pam_unix runs. Nothing ever populates PAM_AUTHTOK, so
@@ -139,8 +140,9 @@ config:
     #
     # This is a mitigation, not a fix. Anything that re-locks mid-session (a
     # `systemctl --user restart oo7-daemon`, an explicit lock) puts #585 back
-    # in play. Restore this line once #585 is fixed upstream, or if this
-    # branch is ever reworked to keep gnome-keyring.
+    # in play. Restore this line only if oo7 gains a way to match attributes
+    # on a locked keyring, or libsecret searches again after an unlock; see
+    # docs/design/secrets-service.md section "Revisit trigger".
     #
     # Only the *greeter* path is affected. sudo and sshd get pam_u2f from
     # config/u2f-config.bst (system-auth / password-auth), which this #585
