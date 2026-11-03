@@ -115,6 +115,7 @@ element does, its row's text is a review question.
 | `desktop/xdg-desktop-portal-umbriel.bst` | Umbriel's Screencast/Screenshot portal backend. |
 | `config/xdg-desktop-portal-routing.bst` | krytis's portal routing for niri and Umbriel (#1028, #1029, #1054). |
 | `desktop/oo7.bst` | oo7 Secret Service daemon, `pam_oo7.so` and Secret portal backend. Replaces gnome-keyring. |
+| `desktop/krytis-prompter.bst` | Standalone D-Bus-activated `org.gnome.keyring.SystemPrompter` for oo7's unlock prompts (#1502). |
 | `config/ssh-agent-env.bst` | fish drop-in pointing `SSH_AUTH_SOCK` at gcr-ssh-agent. |
 | `config/proton-pass-keyring.bst` | Keeps pass-cli's local key in the Secret Service instead of the kernel keyring. |
 | `desktop/xwayland-satellite.bst` | Rootless XWayland manager for niri. Carried here instead of gnome-build-meta's (#499). |
@@ -187,7 +188,7 @@ element does, its row's text is a review question.
 | `deps/python3-pyudev.bst` | `desktop/solaar.bst` | pyudev, the libudev binding. |
 | `desktop/cage.bst` | `config/greetd-config.bst` | cage, the kiosk compositor that hosts the greeter. |
 | `desktop/greetd.bst` | `config/greetd-config.bst` | greetd, the login manager daemon. |
-| `desktop/gtk4-layer-shell.bst` | `desktop/ghostty.bst` | gtk4-layer-shell library. |
+| `desktop/gtk4-layer-shell.bst` | `desktop/ghostty.bst`, `desktop/krytis-prompter.bst` | gtk4-layer-shell library. |
 | `desktop/kmscon.bst` | `config/kmscon.bst` | kmscon, a KMS/DRM virtual console. |
 | `desktop/libqalculate.bst` | `desktop/noctalia.bst` | libqalculate library. |
 | `desktop/libsodium.bst` | `desktop/noctalia.bst` | libsodium crypto library. |
