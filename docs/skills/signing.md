@@ -232,7 +232,7 @@ and `mise run switch-local`. Images published before the static key existed are 
 `ImageProxyConfig`, so skopeo runs without `--insecure-policy`, and nothing in bootc or
 composefs-oci 0.9.4 sets `insecure_policy`. `--enforce-container-sigpolicy` only matters on
 the ostree path, where it refuses a policy whose default is `insecureAcceptAnything`. In
-`mise run sigpolicy-test` on 2026-11-02, a plain `bootc switch` to the keyless-only
+`mise run sigpolicy-test` on 2026-11-03, a plain `bootc switch` to the keyless-only
 `26.08.202611011748` digest failed, with nothing staged:
 
 ```
@@ -240,6 +240,10 @@ error: Switching: Composefs Switching: Checking if image ghcr.io/starlit-os/kryt
 is pulled: Getting container info: Opening image docker://ghcr.io/starlit-os/krytis@sha256:b817c759…:
 failed to invoke method OpenImage: A signature was required, but no signature exists
 ```
+
+The same run then switched to and staged static-signed digest
+`sha256:d0e79929af74f35cfd32cf5b2d5ee971c72f90fda9ee07445862224325983b01`,
+published by [run 41625659851](https://github.com/starlit-os/krytis/actions/runs/41625659851).
 
 The flip side is that a broken policy blocks every host's next upgrade, which is what
 `sigpolicy-check` exists for.
@@ -278,12 +282,14 @@ with a derived image and caught. It can't watch a refusal, which needs a registr
 **VM test: `mise run sigpolicy-test`.** It installs the image (or, with `--upgrade-from
 <ref>`, a pre-policy one, and upgrades it through a local registry at `10.0.2.2`). It then
 asserts the policy in force, a refused `bootc switch` to `--refuse` (default: the
-`26.08.202611011748` digest) and an accepted one to `--accept` (default `:latest`). Both refs
-are checked with cosign on the host first, so the accept case can't run until a published
-image carries the static signature. `generate-disk` fallocates `--size`, so the host needs
-that much free, plus about 7 GB per image the test pulls or pushes. `generate-disk` can't
-install a digest reference (podman save/load rejects it), so `--upgrade-from` tags it locally
-first.
+`26.08.202611011748` digest) and an accepted one to `--accept` (default `:latest`). Before
+allocating the disk it rejects a stale `--image` tag that lacks the `/usr` policy layout,
+and checks both published refs with cosign on the host. `generate-disk` fallocates `--size`,
+so the host needs that much free, plus about 7 GB per image the test pulls or pushes.
+`generate-disk` can't install a digest reference (podman save/load rejects it), so
+`--upgrade-from` tags it locally first. The complete 2026-11-03 run upgraded from the
+pre-policy image, rebooted into the locally built policy image, observed the keyless
+refusal, and staged the published static-signed digest.
 
 ## Hosts can't check the keyless signature
 

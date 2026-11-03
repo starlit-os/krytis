@@ -73,6 +73,15 @@ resolve() { skopeo inspect --format '{{.Digest}}' "docker://$1"; }
 ACCEPT_DIGEST=$(resolve "${ACCEPT}") || { echo "ERROR: cannot resolve ${ACCEPT}" >&2; exit 1; }
 REFUSE_DIGEST=$(resolve "${REFUSE}") || { echo "ERROR: cannot resolve ${REFUSE}" >&2; exit 1; }
 
+# Reject a stale local tag before spending tens of minutes installing and
+# booting it. The VM still checks the upgraded filesystem independently.
+if ! podman run --rm --entrypoint /bin/sh "${IMAGE}" -c \
+    'test ! -e /etc/containers/policy.json && test -e /usr/share/containers/policy.json'
+then
+    echo "ERROR: ${IMAGE} does not carry the #418 policy layout; rebuild or pass --image." >&2
+    exit 1
+fi
+
 echo "==> [0/6] Checking the refs' signatures on the host..."
 static_signed() { cosign verify --key cosign.pub --new-bundle-format=false "${REPO}@$1" >/dev/null 2>&1; }
 if ! static_signed "${ACCEPT_DIGEST}"; then
