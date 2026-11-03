@@ -983,6 +983,12 @@ jobs:
             element: desktop/oo7.bst
             branch: auto/track-oo7
             title: "chore(deps): update oo7"
+          # Unlock path: every release needs `mise run krytis-prompter-test`
+          # and a human merge (docs/design/secrets-service.md).
+          - group: manual-merge
+            element: desktop/krytis-prompter.bst
+            branch: auto/track-krytis-prompter
+            title: "chore(deps): update krytis-prompter"
           - group: manual-merge
             element: desktop/xwayland-satellite.bst
             branch: auto/track-xwayland-satellite

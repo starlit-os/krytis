@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+#MISE description="Drive the built krytis-prompter with gcr's own client on a private bus: activation, reply ordering, sx-aes-1, close, idle exit (#1502)"
+#USAGE flag "--artifact <dir>" help="Directory holding an already-checked-out desktop/krytis-prompter.bst artifact (default: check out a fresh one)"
+#USAGE flag "--keep" help="Keep the scratch directory and print its path"
+
+# The gate for desktop/krytis-prompter.bst, the org.gnome.keyring.SystemPrompter
+# oo7 calls for every unlock prompt. docs/design/secrets-service.md
+# § A standalone prompter: krytis-prompter.
+#
+# What it proves about the ARTIFACT (not the source tree):
+#   1. The install layout: the binary reports the tracked version; the D-Bus
+#      activation file and the user unit name the paths the element installs;
+#      the unit has no [Install] section, so the global user preset can't
+#      enable it; every shared library resolves on this host.
+#   2. The protocol, against gcr's real client (Gcr.SystemPrompt, what
+#      gnome-keyring and seahorse use) on a private bus that starts the binary
+#      through a copy of its own activation file:
+#        - BeginPrompting's reply goes out before the PromptReady it triggers.
+#          gcr's client breaks otherwise (docs/skills/pam.md § Writing an
+#          `org.gnome.keyring.SystemPrompter` provider), and only a real client
+#          catches it;
+#        - PromptReady carries an sx-aes-1 exchange;
+#        - PerformPrompt is answered, and the GTK dialog opens on this session;
+#        - StopPrompting closes it and PromptDone follows;
+#        - the daemon then idle-exits.
+#
+# What it can't: type the password. The secret's byte-for-byte round trip
+# needs a person (or a scripted UI); krytis-prompter's own CI covers it with a
+# scripted UI, and its `mise run live-check` with a person, on every release.
+#
+# Needs a graphical session: the dialog really opens on this compositor for
+# about two seconds, then the test closes it. Isolation is the same as
+# oo7-prompter-test: a private bus with its own XDG_RUNTIME_DIR, so the live
+# session's prompter (noctalia's or krytis-prompter's) is never touched.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+ARTIFACT="${usage_artifact:-}"
+KEEP="${usage_keep:-false}"
+
+SCRATCH="$(mktemp -d /var/tmp/krytis-prompter-test.XXXXXX)"
+cleanup() {
+    if [ "$KEEP" = "true" ]; then
+        echo "==> scratch kept at $SCRATCH"
+    else
+        rm -rf "$SCRATCH"
+    fi
+}
+trap cleanup EXIT
+
+if [ -z "$ARTIFACT" ]; then
+    ARTIFACT="$SCRATCH/artifact"
+    echo "==> Checking out desktop/krytis-prompter.bst..."
+    # --deps none: only the element's own files are needed, and the default
+    # (run) checks out the whole runtime closure (noctalia-session-try's note).
+    mise run bst artifact checkout --deps none desktop/krytis-prompter.bst --directory "$ARTIFACT" >/dev/null || {
+        echo "==> FAILED to check out desktop/krytis-prompter.bst — build it first."
+        exit 1
+    }
+fi
+
+fail=0
+check() { # check <description> <command...>
+    local what="$1"; shift
+    if "$@"; then
+        echo "    ok: $what"
+    else
+        echo "    FAIL: $what"
+        fail=1
+    fi
+}
+
+BIN="$ARTIFACT/usr/bin/krytis-prompter"
+ACTIVATION="$ARTIFACT/usr/share/dbus-1/services/org.gnome.keyring.SystemPrompter.service"
+UNIT="$ARTIFACT/usr/lib/systemd/user/krytis-prompter.service"
+
+echo "==> Install layout"
+for f in "$BIN" "$ACTIVATION" "$UNIT"; do
+    if [ ! -e "$f" ]; then
+        echo "==> FAILED: $f is missing from the artifact"
+        exit 1
+    fi
+done
+
+# The ref is `v<version>-0-g<sha>`; a stale artifact reports another version.
+want="$(sed -n 's/^  ref: v\([0-9][^-]*\)-0-g.*/\1/p' elements/desktop/krytis-prompter.bst | head -1)"
+got="$("$BIN" --version 2>&1)"
+check "binary reports the tracked version ($want): $got" [ "$got" = "krytis-prompter $want" ]
+check "activation file names the bus name" grep -qx 'Name=org.gnome.keyring.SystemPrompter' "$ACTIVATION"
+check "activation file execs /usr/bin/krytis-prompter" grep -qx 'Exec=/usr/bin/krytis-prompter' "$ACTIVATION"
+check "activation file hands off to the user unit" grep -qx 'SystemdService=krytis-prompter.service' "$ACTIVATION"
+check "user unit execs /usr/bin/krytis-prompter" grep -qx 'ExecStart=/usr/bin/krytis-prompter' "$UNIT"
+check "user unit owns the bus name" grep -qx 'BusName=org.gnome.keyring.SystemPrompter' "$UNIT"
+check "user unit has no [Install] section (activation only)" bash -c "! grep -q '^\[Install\]' '$UNIT'"
+check "every shared library resolves on this host" bash -c "! ldd '$BIN' | grep -q 'not found'"
+
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    echo "==> SKIPPED the protocol run: no WAYLAND_DISPLAY — run this from inside a graphical session."
+    exit "$fail"
+fi
+
+echo "==> Protocol run against gcr's client (the dialog opens for about two seconds)"
+
+# The test bus has only this service directory, holding a copy of the shipped
+# activation file pointed at the artifact's binary, with a short idle timeout so
+# the idle exit is observable. No SystemdService=: a private dbus-daemon has no
+# systemd to hand off to, so it execs Exec= directly.
+mkdir -p "$SCRATCH/services" "$SCRATCH/run" "$SCRATCH/bus"
+chmod 700 "$SCRATCH/run"
+sed -e "s|^Exec=.*|Exec=$BIN --idle-timeout 2|" -e '/^SystemdService=/d' \
+    "$ACTIVATION" >"$SCRATCH/services/org.gnome.keyring.SystemPrompter.service"
+cat >"$SCRATCH/bus.conf" <<EOF
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:dir=$SCRATCH/bus</listen>
+  <auth>EXTERNAL</auth>
+  <servicedir>$SCRATCH/services</servicedir>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+
+cat >"$SCRATCH/client.py" <<'PYEOF'
+# gcr's own client: open (BeginPrompting), password (PerformPrompt), then close
+# (StopPrompting) while the dialog is up. Prints one CLIENT line per outcome.
+import gi
+gi.require_version("Gcr", "4")
+from gi.repository import Gcr, GLib
+
+loop = GLib.MainLoop()
+prompt = Gcr.SystemPrompt.open(10, None)
+print("CLIENT opened", flush=True)
+prompt.set_title("krytis-prompter-test")
+prompt.set_message("This closes by itself; type nothing.")
+
+def done(source, result):
+    try:
+        secret = source.password_finish(result)
+        print(f"CLIENT password-finished secret={'set' if secret else 'none'}", flush=True)
+    except GLib.Error as e:
+        print(f"CLIENT password-finished error={e.message}", flush=True)
+    loop.quit()
+
+def close():
+    prompt.close(None)
+    print("CLIENT closed", flush=True)
+    return False
+
+prompt.password_async(None, done)
+GLib.timeout_add(2000, close)
+GLib.timeout_add_seconds(10, loop.quit)
+loop.run()
+PYEOF
+
+# Absolute WAYLAND_DISPLAY: XDG_RUNTIME_DIR now points at the scratch dir, and a
+# relative name would resolve there. GDK_DEBUG=no-portals keeps GTK from
+# activating a portal stack on the test bus, and GTK_A11Y=none from looking for
+# an accessibility bus it doesn't have. docs/skills/pam.md § Implementing
+# `GcrPrompt` in Python (PyGObject) segfaults gcr, test-harness notes.
+case "$WAYLAND_DISPLAY" in
+    /*) display="$WAYLAND_DISPLAY" ;;
+    *) display="${XDG_RUNTIME_DIR:?}/$WAYLAND_DISPLAY" ;;
+esac
+export WAYLAND_DISPLAY="$display" GDK_DEBUG=no-portals GTK_A11Y=none XDG_RUNTIME_DIR="$SCRATCH/run" SCRATCH BIN
+
+dbus-run-session --config-file="$SCRATCH/bus.conf" -- bash -c '
+    dbus-monitor --session >"$SCRATCH/monitor.log" 2>&1 &
+    monitor=$!
+    sleep 0.5
+    timeout 20 /usr/bin/python3 "$SCRATCH/client.py" >"$SCRATCH/client.log" 2>&1
+    echo "client-exit=$?" >>"$SCRATCH/client.log"
+
+    # Idle exit: the name goes away within the 2 s timeout plus slack.
+    for _ in $(seq 50); do
+        dbus-send --session --print-reply --dest=org.freedesktop.DBus / \
+            org.freedesktop.DBus.NameHasOwner string:org.gnome.keyring.SystemPrompter \
+            2>/dev/null | grep -q "boolean false" && { echo idle-exited >"$SCRATCH/idle"; break; }
+        sleep 0.1
+    done
+    sleep 0.3
+    kill "$monitor" 2>/dev/null
+'
+
+echo "    client:"
+sed 's/^/      /' "$SCRATCH/client.log"
+
+/usr/bin/python3 - "$SCRATCH/monitor.log" "$BIN" <<'PYEOF' || fail=1
+# Splits dbus-monitor's text output into messages and checks their order.
+import re, sys
+
+log, binary = sys.argv[1], sys.argv[2]
+head = re.compile(r"^(method call|method return|signal|error) .*?sender=(\S+) -> destination=(\S+) serial=(\d+)(?: reply_serial=(\d+))?(?:.*member=(\w+))?")
+msgs = []
+for line in open(log, errors="replace"):
+    m = head.match(line)
+    if m:
+        kind, sender, dest, serial, reply, member = m.groups()
+        msgs.append({"kind": kind, "sender": sender, "dest": dest, "serial": serial,
+                     "reply": reply, "member": member, "body": ""})
+    elif msgs:
+        msgs[-1]["body"] += line
+
+def index(pred):
+    return next((i for i, m in enumerate(msgs) if pred(m)), None)
+
+def call(member):
+    return index(lambda m: m["kind"] == "method call" and m["member"] == member)
+
+def reply_to(i):
+    if i is None:
+        return None
+    return index(lambda m: m["kind"] in ("method return", "error") and m["reply"] == msgs[i]["serial"]
+                 and m["dest"] == msgs[i]["sender"])
+
+ok = True
+def check(what, cond):
+    global ok
+    print(f"    {'ok' if cond else 'FAIL'}: {what}")
+    ok &= bool(cond)
+
+begin, ready = call("BeginPrompting"), call("PromptReady")
+begin_reply = reply_to(begin)
+check("BeginPrompting was answered with a method return",
+      begin_reply is not None and msgs[begin_reply]["kind"] == "method return")
+check("BeginPrompting's reply went out before PromptReady",
+      None not in (begin_reply, ready) and begin_reply < ready)
+check("PromptReady carries an sx-aes-1 exchange", ready is not None and "[sx-aes-1]" in msgs[ready]["body"])
+perform = call("PerformPrompt")
+perform_reply = reply_to(perform)
+check("PerformPrompt (password) was answered with a method return",
+      perform is not None and '"password"' in msgs[perform]["body"]
+      and perform_reply is not None and msgs[perform_reply]["kind"] == "method return")
+stop, done = call("StopPrompting"), call("PromptDone")
+check("StopPrompting was answered", reply_to(stop) is not None)
+check("PromptDone followed StopPrompting", None not in (stop, done) and stop < done)
+sys.exit(0 if ok else 1)
+PYEOF
+
+check "the client opened, prompted and closed without errors" \
+    bash -c "grep -q 'CLIENT opened' '$SCRATCH/client.log' && grep -q 'CLIENT closed' '$SCRATCH/client.log' && grep -q 'client-exit=0' '$SCRATCH/client.log'"
+check "the daemon idle-exited after the session closed" [ -e "$SCRATCH/idle" ]
+
+if [ "$fail" -eq 0 ]; then
+    echo "==> krytis-prompter-test passed."
+else
+    echo "==> krytis-prompter-test FAILED (rerun with --keep to inspect monitor.log)"
+fi
+exit "$fail"
