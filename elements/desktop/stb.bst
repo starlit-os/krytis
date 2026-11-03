@@ -28,11 +28,11 @@ sources:
 - kind: git_repo
   url: github:nothings/stb.git
   track: refs/heads/master
-  ref: 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5
+  ref: d14d46f6b44456eb88beac58cba833a4135d4c89
 - kind: git_repo
   url: github:nothings/stb_image_resize.git
   track: refs/heads/main
-  ref: 2768987dbd7119eb840104b7a3f96ff09d21a7b4
+  ref: 703100c5f8a0b75b4861e401db567f1d82d545b8
   directory: stb_image_resize
 
 config:
