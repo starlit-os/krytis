@@ -37,11 +37,11 @@ sources:
 - kind: tar
   (?):
   - arch == "x86_64":
-      url: tailscale_pkgs:tailscale_1.104.4_amd64.tgz
-      ref: 624ea093d47d62cf56f17b8332d74b8decda4a1faa610ebc60a1de334b2b3dc9
+      url: tailscale_pkgs:tailscale_1.104.5_amd64.tgz
+      ref: 720cbbccbfc03d8b55df72afc19e5a72e31b0f65934700aa6fa38074d4ad7bf7
   - arch == "aarch64":
-      url: tailscale_pkgs:tailscale_1.104.4_arm64.tgz
-      ref: a1c249ce6bdebef62e1ae3b997595555bce2ae4709bf95a718e9ca7a129dad7e
+      url: tailscale_pkgs:tailscale_1.104.5_arm64.tgz
+      ref: e900b0e6e25023a1e504b2c237ce2a32ea0535e006f8c1a1097a490886493b6c
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
