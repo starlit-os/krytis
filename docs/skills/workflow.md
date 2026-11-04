@@ -305,7 +305,7 @@ A path-only rule over-counts. #1517 (2026-11-04) edited only comments in `elemen
 mise run bst show --deps none --format '%{name} %{key}' overrides/btrfs-progs.bst
 ```
 
-Both printed `16ac10e3`, so the image was unchanged and #1517 skipped the build. Equal keys on the touched elements are enough, because every element's key is a function of its own config, its sources and its dependencies' keys. Don't compare `oci/krytis/image.bst`: `oci/os-release.bst` takes `%{commit}` from the generated `include/image-version.yml`, so the image's key differs on every commit even when nothing else changed.
+Both printed `16ac10e3`, so the image was unchanged and #1517 skipped the build. Equal keys on the touched elements are enough, because every element's key is a function of its own config, its sources and its dependencies' keys. Don't compare `oci/krytis/image.bst`. `oci/os-release.bst` bakes in the version stamp from `include/image-version.yml`, and that stamp moves on any commit that touches `elements/`, even a comment-only one. So in exactly the case this check exists for, the image's key differs. (Before #1521 the stamp moved on every commit.)
 
 **The comment exemption covers only BuildStream YAML.** A `kind: patch` or `kind: local` source hashes the file's bytes, comment lines included, so a comment edit in `patches/**` or `files/**` changes the key and rebuilds the element. #1517 left a stale "as of" line in `patches/btrfs-progs/flush-zeroing-before-discard.patch`'s header for this reason. A dated line reads as old, not false, and it isn't worth an image rebuild.
 
