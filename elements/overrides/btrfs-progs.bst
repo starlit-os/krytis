@@ -22,7 +22,9 @@ kind: autotools
 # junction and checks that the patch still applies.
 #
 # Delete this element, the patch, the check task and the overrides entry once
-# the junction's btrfs-progs persists the zeroing before it discards (#1302).
+# the junction's btrfs-progs no longer loses the zeroing to the discard
+# (#1302). Upstream's fix, kdave/btrfs-progs#1200, gets there by discarding
+# first, not by flushing.
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-autotools.bst

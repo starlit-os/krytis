@@ -12,10 +12,10 @@
 # the patch source and the `freedesktop-sdk.bst:` prefixes. It then checks that
 # the patch still applies to the pinned ref.
 #
-# When it fails, either resync the copy, or, if the junction's btrfs-progs now
-# persists the zeroing before it discards, delete the override element, the
-# patch, this task and the overrides entry in elements/freedesktop-sdk.bst
-# (#1302 lists everything).
+# When it fails, either resync the copy, or, if the junction's btrfs-progs no
+# longer loses the zeroing to the discard (kdave/btrfs-progs#1200 discards
+# first, then zeroes), delete the override element, the patch, this task and
+# the overrides entry in elements/freedesktop-sdk.bst (#1302 lists everything).
 
 set -euo pipefail
 
@@ -95,7 +95,7 @@ else
     fi
     if ! git -C "$CLONE" apply --check "$ROOT/$PATCH"; then
         echo "==> $PATCH no longer applies cleanly to btrfs-progs $BTRFS_TAG." >&2
-        echo "    If upstream now flushes the zeroing before the discard, drop the carry (#1302)." >&2
+        echo "    If upstream no longer loses the zeroing to the discard (kdave/btrfs-progs#1200), drop the carry (#1302)." >&2
         FAILED=1
     fi
 fi
@@ -103,7 +103,7 @@ fi
 if [ "$FAILED" -ne 0 ]; then
     echo
     echo "    Resync $OVERRIDE, or drop the override if the junction's btrfs-progs"
-    echo "    now persists the zeroing before it discards (#1302)."
+    echo "    no longer loses the zeroing to the discard (#1302)."
     exit 1
 fi
 
