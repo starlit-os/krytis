@@ -312,7 +312,7 @@ whose body gives no reason), so as of 2026-10-14 the lesson has no live example 
 the rule stands on its own.
 
 **Krytis exposure.** `.github/workflows/verify-sealed.yml:22-24` triggers on
-`workflow_run` off `"Publish krytis image"`, and then at `:71`/`:74` runs
+`workflow_run` off `"Publish krytis image"`, and then at `:111`/`:114` runs
 `podman pull ghcr.io/starlit-os/krytis:sealed` and hands the same **mutable tag** to
 `mise run enroll-test` — re-resolved at pull time, with nothing tying it to the run that
 triggered it. The producer already computes the receipt: the `Build and push sealed

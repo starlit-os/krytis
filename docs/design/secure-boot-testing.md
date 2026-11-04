@@ -333,8 +333,10 @@ time `.github/workflows/` held only `publish.yml`, `track-bst-sources.yml` and
   `mise run docs-links`, `mise run mise-lock --check`, `mise run mise-pin-check`,
   plus shell and python syntax checks.
 - `verify-sealed.yml` (#457) runs `mise run enroll-test` against the **published**
-  `ghcr.io/starlit-os/krytis:sealed` after every successful `publish.yml` run,
-  installing QEMU/OVMF/virt-firmware and `chmod`ing `/dev/kvm` exactly as the
+  `ghcr.io/starlit-os/krytis:sealed` after every successful `publish.yml` run that
+  actually published. A run whose `check` job skipped the publish leaves `:sealed`
+  unchanged, so the test is skipped too (since 2026-11-04). It installs
+  QEMU/OVMF/virt-firmware and `chmod`s `/dev/kvm` exactly as the
   KVM probe below predicted.
 - `build-iso.yml` runs `mise run build-iso` on the always-on VPS runner, on
   `workflow_dispatch`. `build-iso` ends with `verify-iso-payload` itself (ID + recipe-name

@@ -2041,8 +2041,14 @@ image change. The `publish` job runs on `!cancelled() &&
 needs.check.outputs.publish != 'false'`. A failed check, a registry error and
 the `force_publish` dispatch input all leave the output anything but `false`,
 so each costs a redundant publish, never a missed one. Two consequences:
-- A skipped run concludes **success**, so `verify-sealed.yml`
-  (`workflow_run` on success) re-tests the unchanged `:sealed`.
+- A skipped run concludes **success**, which fires `verify-sealed.yml`
+  (`workflow_run` on success). Its `published` job reads the run's jobs
+  through the API and skips the enrollment test when the `publish` job
+  concluded `skipped`. It skips only on that positive answer: an API error
+  or a renamed `publish` job leaves the test running. Seen working on
+  2026-11-04: publish run 41804057030 (`publish: skipped`) gave
+  `skipped=true`; real publish run 41709771737 (`publish: success`) gave
+  nothing, so the test runs.
 - After a manual rollback (`mise run promote --image-digest <older>`),
   `:latest` no longer matches `:<version>`, so the next scheduled publish
   re-promotes the current version, as every scheduled publish did before.
