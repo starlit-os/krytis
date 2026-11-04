@@ -1,6 +1,6 @@
 --- a/src/config/config_types.h
 +++ b/src/config/config_types.h
-@@ -1301,7 +1301,7 @@
+@@ -1373,7 +1373,7 @@
    bool showLocation = true;
    bool appIconColorize = false;
    std::optional<ColorSpec> appIconColor;

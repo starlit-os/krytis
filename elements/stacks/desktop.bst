@@ -72,22 +72,19 @@ depends:
   # NOTE: sdk/gcr-3.bst is deliberately NOT pulled in. gnome-keyring depended on it
   # transitively and that is how gcr-prompter reached the image; this testbed drops
   # it on purpose. Unlock prompts go to org.gnome.keyring.SystemPrompter, served by
-  # krytis-prompter below and, until #1502 Phase 3, by noctalia's fork prompter.
-  # See docs/design/secrets-service.md.
+  # krytis-prompter below. See docs/design/secrets-service.md.
   - desktop/oo7.bst
   #
   # krytis-prompter: the standalone, D-Bus-activated SystemPrompter oo7 calls for
-  # every unlock prompt (#1502). Activated on demand, so it answers even while
-  # noctalia is stopped; noctalia's prompter owns the name whenever noctalia runs,
-  # and krytis-prompter steps aside then.
+  # every unlock prompt (#1502). Activated on demand, so it answers whether or not
+  # noctalia is running.
   - desktop/krytis-prompter.bst
   #
   # ssh-agent-env: exports SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/gcr/ssh for fish.
-  # gcr-4 arrives transitively via desktop/krytis-prompter.bst and
-  # desktop/noctalia.bst, and brings gcr-ssh-agent.socket with it, but nothing
-  # pointed clients at it; oo7 has no ssh-agent of its own. Guarded on the
-  # variable being unset and the socket existing, so it is inert outside a live
-  # user session.
+  # gcr-4 arrives transitively via desktop/krytis-prompter.bst, and brings
+  # gcr-ssh-agent.socket with it, but nothing pointed clients at it; oo7 has no
+  # ssh-agent of its own. Guarded on the variable being unset and the socket
+  # existing, so it is inert outside a live user session.
   - config/ssh-agent-env.bst
   #
   # proton-pass-keyring: PROTON_PASS_LINUX_KEYRING=dbus, so pass-cli parks its

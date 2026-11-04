@@ -110,8 +110,8 @@ still in force.
 ### Current decision — ship oo7, accept the outstanding bugs
 
 Deliberate call, made with the failure modes measured rather than guessed. Krytis ships
-oo7 + a native SystemPrompter (noctalia's, joined by the standalone krytis-prompter in
-#1502 Phase 2; § *A standalone prompter: krytis-prompter*), tracking the measured risks
+oo7 + a native SystemPrompter (noctalia's fork prompter until #1502, then the standalone
+krytis-prompter; § *A standalone prompter: krytis-prompter*), tracking the measured risks
 and their mitigations:
 
 | Accepted | Consequence | Workaround in tree | Exit condition |
@@ -119,7 +119,7 @@ and their mitigations:
 | **#585** — a locked collection reads back as "no such secret" | libsecret callers get a silent wrong answer, not a prompt | FIDO2 login disabled, so `pam_oo7 auto_start` unlocks at login and the collection is never locked — **but see #806: this workaround was silently inoperative from 2026-08-14 to 2026-09-10**, because the unlock it depends on never happened on a fresh boot | **none expected — accepted as a lasting oo7 limit on 2026-11-02.** Reported as linux-credentials/oo7#614. A maintainer replied on 2026-10-26 that the server cannot tell whether a locked item's attributes match a search. The issue was still open, with no linked PR, as of 2026-11-02 |
 | ~~**#588** — prompter detection picks the CLI prompter~~ **RESOLVED 2026-08-27** | ~~every unlock prompt fails with `CliPrompter does not exist`~~ | none — `patches/oo7/prompter-detect-session-type.patch` deleted | **met.** Upstream `f6a8624a` (oo7#558) added a `from_logind` → `from_environ(pid)` → `from_systemd_user_environment()` cascade that covers a peer logind cannot attribute. Verified unpatched at ref `e830f53d` with `mise run oo7-prompter-test` |
 | **oo7#506** — no FIDO2/passwordless unlock path | FIDO2 login cannot unlock the keyring at all | — (this is *why* FIDO2 login is off) | upstream direction exists |
-| **noctalia fork pin** | `bst source track` follows a branch head, not the `v*` glob | — | #1502 Phase 3: once krytis-prompter has shipped in a published image, turn noctalia's prompter off and repoint `desktop/noctalia.bst` to `noctalia-dev/noctalia` `track: v*`. Upstreaming is not an exit: noctalia-dev/noctalia#4951 was closed unmerged on 2026-11-02, secrets being out of noctalia's scope. |
+| ~~**noctalia fork pin**~~ **RESOLVED 2026-11-04** | ~~`bst source track` follows a branch head, not the `v*` glob~~ | none | **met, by replacement.** noctalia-dev/noctalia#4951 was closed unmerged (2026-11-02, secrets out of noctalia's scope), so #1502 shipped krytis-prompter and then repointed `desktop/noctalia.bst` to `noctalia-dev/noctalia` `track: v*` (Phase 3). |
 | ~~**#806** — the login secret is lost to a startup race~~ **RESOLVED 2026-10-24** | ~~`pam_oo7` and `oo7-daemon` each read the other's socket once, ~38 ms apart, so the login collection stays locked all session — and #585 then turns that into silent wrong answers~~ | Upstream `b54f8e7` retries the helper connection asynchronously for 500 ms; krytis retains an independent `ExecStartPre` wait on `oo7-daemon.service`. Gated by `mise run oo7-login-race-test` | **met.** linux-credentials/oo7#615 merged as `b54f8e7`. Verified without the former downstream patch at that pin with `mise run oo7-login-race-test` |
 
 **The residual risk, stated plainly.** The #585 workaround is not airtight: it removes the
@@ -128,10 +128,6 @@ and their mitigations:
 re-lock it, and from that point every read returns "no such secret" until the session is
 restarted. There is no warning and no prompt. If a user reports "my saved passwords vanished",
 check `Locked` on the collection before anything else.
-
-The fork pin is the other live risk: it is a moving target that `bst source track` will follow,
-so an unrelated commit on that branch can change what krytis ships. Pin discipline matters more
-than usual until #1502 Phase 3 drops the pin.
 
 **Autologin is a third way in, and the live ISO hits it every boot.** greetd's
 `initial_session` collects no password, so `pam_oo7 auto_start` stashes nothing and the
@@ -618,13 +614,19 @@ prompting session open. The dialog is an overlay layer surface with exclusive ke
 focus, so it can't open behind a fullscreen window, themed from noctalia's GTK template
 and `[shell]` settings.
 
-**Phase 2: both prompters ship.** noctalia still runs its own prompter
-(`shell.secret_prompter = true` in `files/noctalia-skel/settings.toml`), and because
-niri spawns noctalia at session start, noctalia owns the name whenever it runs.
-krytis-prompter answers only while noctalia is down. That is deliberate. If the new
-daemon misbehaves in the field, unlock still works through noctalia. Phase 3, a
-separate PR once this has shipped in a published image, turns noctalia's prompter off,
-repoints `desktop/noctalia.bst` to upstream `track: v*`, and removes the fork-pin row.
+**Two phases.** In Phase 2 (#1508) both prompters shipped. noctalia still ran its own
+prompter (`shell.secret_prompter = true` in `files/noctalia-skel/settings.toml`), and
+because niri spawns noctalia at session start, it owned the name whenever it ran;
+krytis-prompter answered only while noctalia was down. That way, if the new daemon
+misbehaved in the field, unlock still worked through noctalia. Phase 3 followed once
+a published image (`26.08.202611032058`) carried krytis-prompter: it dropped the skel
+key, repointed `desktop/noctalia.bst` to upstream `track: v*` at `v5.4.1` (the fork's
+base, so nothing else changed), dropped noctalia's `sdk/gcr.bst`, and removed the
+fork-pin row. **Existing accounts get no migration** (decided 2026-11-03). Their
+`settings.toml` may still say `secret_prompter = true`, but upstream noctalia has no
+such key: at `v5.4.1` an unknown key in a known section is a warning, `unknown setting`
+(`src/config/config_validate.cpp:237`), and the rest of the config loads. Nothing
+competes with krytis-prompter for the name.
 
 **The gate: `mise run krytis-prompter-test`.** A BuildStream sandbox can't run
 `dbus-daemon` (`docs/skills/bst.md` § *Unit tests needing a D-Bus session cannot run in
@@ -662,8 +664,18 @@ upstream in v0.1.1 ([krytis-prompter § Activation](https://github.com/kitten-li
     password was incorrect*. The right password stored the item.
   - Every item read back. The bus carried only `[sx-aes-1]` payloads, never the
     plaintext password.
-- **Not yet on niri** (the live session was Umbriel), and not yet through a booted
-  image's own oo7.
+- **Not yet on niri** (the live session was Umbriel).
+
+**Verified on a booted published image (2026-11-04, `26.08.202611032058`, Umbriel
+session, noctalia running with `secret_prompter` gone from its settings).** Nothing
+owned the name while noctalia ran, so every prompt went through the image's own
+activation file and `krytis-prompter.service`, against the image's own `oo7-daemon`:
+- `CreateCollection` on a throwaway collection raised the new-password dialog and created
+  it. After locking it, a store raised the unlock dialog and succeeded.
+- `systemctl --user restart oo7-daemon` left Login locked. The next `secret-tool store`
+  activated krytis-prompter, a wrong password was rejected (`incorrect secret`) and
+  re-prompted, and the right one unlocked Login and stored the item. This is the
+  mid-session-restart case behind pop-os/cosmic-epoch#3453.
 
 ## Secret portal (oo7-portal) — shipping since #1028
 
@@ -752,12 +764,10 @@ workaround?". Re-read this doc when any of these move:
   the patch stopped applying to the reworked code.
 - **oo7#506 gains a maintainer-endorsed direction** → revisit FIDO2 login independently of
   #585; the two reasons it is off are separable.
-- **krytis-prompter has shipped in a published image** → #1502 Phase 3: remove
-  `shell.secret_prompter = true` from `files/noctalia-skel/settings.toml` (and decide how
-  existing accounts lose it), repoint `elements/desktop/noctalia.bst` back to
-  `noctalia-dev/noctalia` with `track: v*`, and drop noctalia's `sdk/gcr.bst` dependency if
-  `GcrSecretExchange` was its only use. gcr stays in the image through
-  `desktop/krytis-prompter.bst`.
+- ~~**krytis-prompter has shipped in a published image**~~ → **fired 2026-11-04;** #1502
+  Phase 3 removed the skel key, repointed `elements/desktop/noctalia.bst` to
+  `noctalia-dev/noctalia` `track: v*` and dropped its `sdk/gcr.bst`. gcr stays in the
+  image through `desktop/krytis-prompter.bst`.
 - **`desktop/niri.bst` pins a release containing niri `02fdd8e758`** ("portals: add oo7 as
   secret portal") → delete the Secret key from `files/xdg-desktop-portal/niri-portals.conf`
   (and the file, if it is the last key). `mise run portal-routing-check` fails with

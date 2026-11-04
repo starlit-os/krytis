@@ -449,19 +449,17 @@ or `track-mise` CI job is needed. A matrix entry in the `track` job in
 
 ## noctalia (shell) build dependencies
 
-`desktop/noctalia.bst` also uses `git_repo`, but **not** `track: v*` today: it carries a
-fork pin, `github:kitten-lily/noctalia.git` `track: feat/system-prompter`, for the native
-`org.gnome.keyring.SystemPrompter` provider oo7 needs. From 2026-10-08 to the v5.3.0 rebase
-on 2026-10-20 it also carried the lock-before-suspend fix in § The last frame before sleep is
-what resume shows; v5.3.0 ships upstream's own. The element's `ref:` states which
-commit; do not restate it here. The revert target (`noctalia-dev/noctalia` + `track: v*`)
-is written out in the element's `FORK PIN` comment as prose — there is no commented-out
-`sources:` block to uncomment. #1502 is how the pin ends: Phase 2 ships the standalone
-`desktop/krytis-prompter.bst` beside it, and Phase 3, once that is in a published image,
-turns noctalia's prompter off and makes the revert (`docs/design/secrets-service.md`
-§ *A standalone prompter: krytis-prompter*).
+`desktop/noctalia.bst` also uses `git_repo` with `track: v*` against upstream
+`noctalia-dev/noctalia`, plus one krytis patch (`docs/design/carried-patches.md`). So
+upstream releases arrive as ordinary `auto/track-noctalia` PRs. From 2026-08 to 2026-11 it
+was instead pinned to the `kitten-lily/noctalia` fork's `feat/system-prompter` branch, for
+the native `org.gnome.keyring.SystemPrompter` oo7 needs. Upstream declined that
+(noctalia-dev/noctalia#4951), and #1502 replaced it with the standalone
+`desktop/krytis-prompter.bst` (`docs/design/secrets-service.md` § *A standalone prompter:
+krytis-prompter*). The two paragraphs below are what that fork pin taught; they apply to
+any future fork pin.
 
-**Branch tracking cannot see release tags, so the fork pin freezes the release stream too.**
+**Branch tracking cannot see release tags, so a fork pin freezes the release stream too.**
 `bst source track` follows the branch head, so an upstream release produces no auto-track
 PR at all — between 2026-09-08 and 2026-09-25 upstream shipped v5.1.0 and nothing in the
 repo could say the image was a release behind. Advancing it is manual and has three steps
@@ -522,7 +520,7 @@ Mapping:
 | `dependency('libwebp')` | already in closure (present since old pin) | — | — |
 | `dependency('libsecret-1', version: '>=0.20')` | `freedesktop-sdk.bst:components/libsecret.bst` | `depends` | shared lib (`libsecret-1.so`), linked at runtime |
 | `dependency('libsodium', version: '>=1.0.18')` | `desktop/libsodium.bst` (autotools, `kind: tar` release asset, `mise run libsodium-update`) | `depends` | shared lib (`libsodium.so.26`); not shipped by either junction, no build-system deps of its own |
-| `dependency('gcr-4')` | `gnome-build-meta.bst:sdk/gcr.bst` | `depends` | shared lib (`libgcr-4.so.4`), linked at runtime. Only required by builds carrying the native `org.gnome.keyring.SystemPrompter` work (`GcrSecretExchange`). `desktop/krytis-prompter.bst` depends on it too, so gcr-4 stays in the image when Phase 3 of #1502 drops it here. **`sdk/gcr.bst` is gcr-4; `sdk/gcr-3.bst` is the legacy prompter binary and is a different thing entirely**, see `docs/skills/pam.md` |
+| ~~`dependency('gcr-4')`~~ | ~~`gnome-build-meta.bst:sdk/gcr.bst`~~ | — | Fork-pin only (the native SystemPrompter's `GcrSecretExchange`); upstream `meson.build` has no gcr, so #1502 Phase 3 dropped it here. gcr-4 stays in the image through `desktop/krytis-prompter.bst`. **`sdk/gcr.bst` is gcr-4; `sdk/gcr-3.bst` is the legacy prompter binary and is a different thing entirely**, see `docs/skills/pam.md` |
 
 **This mapping is part of the change, not a follow-up — including when the new
 `dependency()` comes from a fork pin rather than an upstream release.** Bumping
