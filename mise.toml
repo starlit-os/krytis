@@ -18,7 +18,7 @@ bat = "0.26.1"
 # this key, and that is what lets it refresh mise.lock in the same commit as
 # the bump. A [tool_alias] short name is invisible to Renovate
 # (`unsupported-datasource`) and leaves the lockfile stale.
-"github:protonpass/pass-cli" = "2.5.1"
+"github:protonpass/pass-cli" = "2.7.0"
 # fnox: the front end `mise run pull-keys` / `generate-keys` actually call
 # (fnox.toml maps the six UEFI key secrets onto the Proton Pass vault). It was
 # only ever installed globally, so `pull-keys` worked on the maintainer's box and
