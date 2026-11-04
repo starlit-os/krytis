@@ -49,7 +49,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | greetd | `git.sr.ht/~kennylevinsen/greetd`, `github.com/kennylevinsen/greetd` (mirror) | Vuln-remediation patches `elements/desktop/greetd.bst`. | Partial | No project rule. **SourceHut's ToS bans LLM-written or LLM-assisted code, tickets and emails** on the platform. Patches go to `greetd-devel@lists.sr.ht`. |
 | freedesktop-sdk | `gitlab.com/freedesktop-sdk/freedesktop-sdk` | Junction. `elements/overrides/vim.bst`, `elements/overrides/btrfs-progs.bst` and `elements/overrides/python3-pil.bst` mirror its elements; the last also vendors fdsdk's own `patches/python3-pil/drop-pybind.patch` from freedesktop-sdk!35059. `elements/core/efitools.bst` keeps two of its dropped patches. | No | Nothing in the repo, wiki or the freedesktop.org CoC. Commit subjects are capitalised, imperative, ≤ 50 characters. |
 | efitools | `git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git` | Patches `elements/core/efitools.bst`. | No | Nothing in the tree. Patches go to `sbsigntools@groups.io`, kernel-style with `Signed-off-by` [INFERENCE]. |
-| btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). Bug report kdave/btrfs-progs#1198 and fix kdave/btrfs-progs#1199 (both open as of 2026-11-02). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. Its own commits carry `Assisted-by: LLM (<role>)` trailers. The kernel's policy (no agent `Signed-off-by`; it dropped `Assisted-by` on 2026-10-14) is context. |
+| btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). Bug report kdave/btrfs-progs#1198 (open as of 2026-11-04). Its fix kdave/btrfs-progs#1199 was closed unmerged on 2026-11-02 in favour of the maintainer's kdave/btrfs-progs#1200 (open as of 2026-11-04). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. Its own commits carry `Assisted-by: LLM (<role>)` trailers. The kernel's policy (no agent `Signed-off-by`; it dropped `Assisted-by` on 2026-10-14) is context. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
 | Ghostty | `github.com/ghostty-org/ghostty` | Own patch `elements/desktop/ghostty.bst`. | Yes | AI allowed. **Disclose the tool and its extent.** The human must fully understand the code. No AI media. Slop gets you on a public denounce list. PRs need a vouch and a pre-accepted issue. Its `AGENTS.md` tells agents never to open issues or PRs. |
 | oo7 | `github.com/linux-credentials/oo7` | Contributions linux-credentials/oo7#614 (krytis#585, open as of 2026-11-02; a maintainer replied 2026-10-26 that it can't be fixed server-side, and krytis accepted it as a lasting limit) and linux-credentials/oo7#615 (krytis#806, merged 2026-10-24). Also waits on oo7#506. | No | No contributor docs, and the org `.github` has none either. |
@@ -188,6 +188,11 @@ nothing was found, so an absence is evidenced and not assumed.
   October 2026 (`git log --format='%(trailers)' -n 300 devel`, checked 2026-11-02). The krytis
   fix for #1302 used `Assisted-by: LLM (exposing the bug, coding)`, no `Signed-off-by`, and a
   PR body that discloses the tool and the testing.
+- How it went (kdave/btrfs-progs#1199, 2026-11-02): Qu Wenruo replied the same day that he
+  was fine merging it but had "some LLM specific comments" for a review. He then closed the
+  PR without posting that review and opened his own fix, kdave/btrfs-progs#1200, which
+  references the report with `Issue: #1198`. No review had been posted as of 2026-11-04,
+  so what the LLM-specific comments were is unknown.
 
 ### ananicy-cpp
 

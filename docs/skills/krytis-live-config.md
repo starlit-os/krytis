@@ -629,9 +629,18 @@ GUI starts fisherman with `flatpak-spawn --host pkexec` (bootc-installer's
 `fisherman_runner.py`), and the installer flatpak bundles no mkfs. `mise run mkfs-reformat-test`
 boots the live ISO and runs `luksFormat` followed by fisherman's own `mkfs.btrfs -f -L root`
 on the VM disk. It fails while the LUKS signature survives. Upstream tracking: #1302,
-reported as kdave/btrfs-progs#1198 and proposed as kdave/btrfs-progs#1199 (both open as of
-2026-11-02). On hardware, whether the bug shows depends on what the drive returns after
-TRIM [INFERENCE, not tested].
+reported as kdave/btrfs-progs#1198. The carried patch went up as kdave/btrfs-progs#1199,
+which the maintainer closed unmerged on 2026-11-02 in favour of his own fix,
+kdave/btrfs-progs#1200 (open, not on `devel`, as of 2026-11-04). On hardware, whether the
+bug shows depends on what the drive returns after TRIM [INFERENCE, not tested].
 
-**Remove when:** the junction's btrfs-progs persists the zeroing before the discard
-(`mise run btrfs-progs-check` fails once the patch stops applying).
+**Remove when:** the junction's btrfs-progs no longer loses the zeroing to the discard.
+`mise run btrfs-progs-check` fails once the patch stops applying, and kdave/btrfs-progs#1200
+rewrites the lines the patch touches. Judge the upstream code by what it does, not by
+whether it matches our patch. kdave/btrfs-progs#1200 doesn't flush before the discard, as
+the carry does. It moves the discard ahead of the zeroing, zeroes with `BLKZEROOUT`, and
+falls back to buffered writes plus `fsync()`. This entry's first exit condition, "persists
+the zeroing before the discard", described the carry's mechanism. Read literally, that
+condition would have kept the carry after upstream fixed the bug. **State a carry's exit
+condition as the effect upstream must have (the zeroes reach the disk), not as our fix's
+shape.** Verify it with `mise run mkfs-reformat-test` before you drop the carry.
