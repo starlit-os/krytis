@@ -45,6 +45,14 @@ name: Vulnerability Diff
 # silently disable the gate. A blocked PR that must land takes a
 # .grype.yaml ignore rule (reviewed, in-tree, effective on the same PR),
 # not `--clear`; see docs/skills/sbom.md for that call.
+#
+# Skipped when no scan input changed (the `inputs` job). With the same
+# inputs on both sides, both scans run the same graph through the same tools
+# against the same database in one run, so the diff is empty by
+# construction. Spending two scans to prove that is what docs-only and
+# workflow-only PRs used to pay. The required check still reports: `diff`
+# passes with a summary saying why nothing was scanned, and it fails if
+# `inputs` itself didn't succeed.
 
 on:
   pull_request:
@@ -64,7 +72,61 @@ env:
   NEW_VULN_FAIL_ON: ${{ vars.NEW_VULN_FAIL_ON }}
 
 jobs:
+  inputs:
+    name: Check for changed scan inputs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      scan: ${{ steps.compare.outputs.scan }}
+    steps:
+      # Trees only: comparing two commits needs neither history nor blobs.
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          filter: blob:none
+          sparse-checkout: .github/workflows/vuln-diff.yml
+          sparse-checkout-cone-mode: false
+
+      # Everything that can change either side's Grype report:
+      # - the BuildStream graph buildstream-sbom reads (`load-image`'s own
+      #   `sources` list: elements, files, patches, project.conf, include);
+      # - the scan pipeline: the tasks, the PURL enrichment script, the
+      #   ignore rules, and the pinned grype (mise.toml/mise.lock) and
+      #   buildstream/buildstream-sbom (pyproject.toml/uv.lock) versions;
+      # - this gate itself: this workflow and the diff script, so a change
+      #   to either is exercised on its own PR.
+      # Compared against base.sha, the exact commit the base scan would
+      # check out, not the merge base: that is the pair the diff compares.
+      # A path missing here makes a real change skip the gate, so when the
+      # scan pipeline gains an input, add it.
+      - name: Compare scan inputs between base and head
+        id: compare
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --depth=1 --filter=blob:none origin "$BASE_SHA"
+          # --no-renames: list both sides of a rename, and skip the
+          # similarity check that would fetch blobs into this blobless clone.
+          CHANGED=$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+            elements/ files/ patches/ project.conf include/ \
+            .grype.yaml mise.toml mise.lock pyproject.toml uv.lock \
+            mise/tasks/vuln-scan mise/tasks/sbom mise/tasks/generate-image-version \
+            scripts/enrich-sbom-purls.py scripts/vuln-diff.py \
+            .github/workflows/vuln-diff.yml)
+          if [ -n "$CHANGED" ]; then
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+            echo "Scan inputs changed between ${BASE_SHA:0:12} and ${HEAD_SHA:0:12}:"
+            echo "$CHANGED"
+          else
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+            echo "No scan input changed between ${BASE_SHA:0:12} and ${HEAD_SHA:0:12}; skipping both scans."
+          fi
+
   scan:
+    needs: inputs
+    if: needs.inputs.outputs.scan == 'true'
     name: Scan ${{ matrix.side }} for vulnerabilities
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -136,23 +198,41 @@ jobs:
     # This job's name is the required status check in ruleset "Main"
     # ("Diff vulnerabilities vs base"). Keep it exactly.
     name: Diff vulnerabilities vs base
-    needs: scan
+    needs: [inputs, scan]
     # always(): a required check that is SKIPPED counts as passing. If a scan
     # failed and this job were skipped, the PR would be mergeable with no
-    # diff at all. The first step turns a failed scan into a failure here.
+    # diff at all. The first step turns a failed input check or a failed
+    # scan into a failure here. Scans skipped because no input changed are
+    # the one skip that passes, and it says so in the summary.
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
+      - name: Require the input check
+        if: needs.inputs.result != 'success'
+        run: |
+          echo "::error::The scan-input check did not succeed (result: ${{ needs.inputs.result }}); cannot tell whether a scan was needed."
+          exit 1
+
+      - name: Report skipped scans
+        if: needs.inputs.outputs.scan == 'false'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          echo "No scan input changed against base \`${BASE_SHA:0:12}\`, so both Grype reports would be identical. Scans skipped; nothing to diff." | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Require both scans
-        if: needs.scan.result != 'success'
+        if: needs.inputs.outputs.scan == 'true' && needs.scan.result != 'success'
         run: |
           echo "::error::A vulnerability scan did not succeed (scan result: ${{ needs.scan.result }}); no diff to report."
           exit 1
 
-      # HEAD's copy of the diff tool, never the base's: an older base commit
-      # (stacked PR, pre-rebase) may not carry the current version, or any.
+      # The steps below need both reports, so they run only when the scans
+      # did. HEAD's copy of the diff tool, never the base's: an older base
+      # commit (stacked PR, pre-rebase) may not carry the current version, or
+      # any.
       - name: Checkout PR head
+        if: needs.inputs.outputs.scan == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -160,6 +240,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download both reports
+        if: needs.inputs.outputs.scan == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: vuln-diff-scan-*
@@ -167,6 +248,7 @@ jobs:
           path: ${{ runner.temp }}
 
       - name: Report gate posture
+        if: needs.inputs.outputs.scan == 'true'
         # State the posture in the summary, because "no failure" is
         # ambiguous on its own — report-only and "blocking, nothing found"
         # look identical otherwise.
@@ -197,6 +279,7 @@ jobs:
           printf '%s\n' "$POSTURE" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Diff vulnerability reports
+        if: needs.inputs.outputs.scan == 'true'
         # Standard library only, so the runner's python3 does; no mise or
         # uv setup in this job.
         run: |
