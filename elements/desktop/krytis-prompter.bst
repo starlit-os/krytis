@@ -11,11 +11,10 @@
 # user preset has nothing to enable (docs/skills/bst.md § User units fall
 # through too).
 #
-# Until #1502 Phase 3, noctalia's fork prompter (desktop/noctalia.bst) also
-# serves the name and, being spawned at session start, owns it whenever
-# noctalia runs. krytis-prompter claims the name with DO_NOT_QUEUE and exits
-# if it is taken, so the two never fight: this element is what answers while
-# noctalia is stopped or restarting.
+# It is the only SystemPrompter in the image. noctalia's fork prompter served
+# the name too until #1502 Phase 3 repointed desktop/noctalia.bst to upstream.
+# krytis-prompter claims the name with DO_NOT_QUEUE and exits if it is taken,
+# so it still steps aside for gnome-shell or another prompter.
 #
 # Install rules mirror upstream's `mise run install` (mise/tasks/install),
 # which this sandbox has no mise to run.

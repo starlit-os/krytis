@@ -604,7 +604,8 @@ the same shape, so write the PR from the start rather than a krytis patch to cle
 - **If the pinned release lags `upstream/main`, carry a second branch.** The PR branch stays on
   `main`; a rebase onto the pinned tag is what krytis builds. noctalia did this: it proposed
   `feat/native-system-prompter` (on `main`) while `elements/desktop/noctalia.bst` pinned
-  `feat/system-prompter` (on v5.3.0); see `docs/design/carried-patches.md`.
+  `feat/system-prompter` (on v5.3.0) until #1502 retired the pin; see
+  `docs/design/carried-patches.md` § Historical carries.
 
 **Fork CI may be off.** `kitten-lily/seance` has its workflows disabled (by the owner,
 2026-10-21). Run upstream's CI commands locally before calling a branch green, and never push a

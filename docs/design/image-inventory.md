@@ -107,7 +107,7 @@ element does, its row's text is a review question.
 | `config/greeter-config-seed.bst` | First-boot seed of `/var/lib/noctalia-greeter/greeter.toml`. |
 | `desktop/niri.bst` | niri, the default Wayland compositor. |
 | `desktop/umbriel.bst` | Umbriel, the opt-in second Wayland compositor (#774). |
-| `desktop/noctalia.bst` | noctalia shell, built from the `kitten-lily/noctalia` fork. |
+| `desktop/noctalia.bst` | noctalia shell, upstream releases with one krytis patch. |
 | `config/noctalia-service.bst` | Runs noctalia as a user service in `session.slice`, out of systemd-oomd's reach (#1253). |
 | `config/battery-power-profile-hook.bst` | Battery/AC power-profile switch script for noctalia's hooks. Opt-in. |
 | `desktop/ghostty.bst` | Ghostty terminal. |

@@ -102888,8 +102888,6 @@
 /./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/power/power_profiles_service.h	desktop/noctalia.bst	monthly
 /./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/secret/secret_collection_probe.cpp	desktop/noctalia.bst	monthly
 /./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/secret/secret_collection_probe.h	desktop/noctalia.bst	monthly
-/./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/secrets/secret_prompter.cpp	desktop/noctalia.bst	monthly
-/./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/secrets/secret_prompter.h	desktop/noctalia.bst	monthly
 /./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/session_bus.cpp	desktop/noctalia.bst	monthly
 /./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/session_bus.h	desktop/noctalia.bst	monthly
 /./usr/lib/debug/source/desktop/noctalia.bst/src/dbus/session_bus_poll_source.h	desktop/noctalia.bst	monthly

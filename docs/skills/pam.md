@@ -1,78 +1,57 @@
 # PAM & Keyring Skills
 
-## noctalia native SystemPrompter: pinning a fork branch, not a tag — and why gcr-3 is no longer a fallback
+## Who answers `org.gnome.keyring.SystemPrompter`: krytis-prompter, after noctalia's fork prompter
 
-`elements/desktop/noctalia.bst` is pinned to `kitten-lily/noctalia`'s
-`feat/system-prompter` branch (not upstream `noctalia-dev/noctalia`) for a native
-`org.gnome.keyring.SystemPrompter` provider. It went in as an interim step over the
-*then*-shipping gnome-keyring backend (PR #574) and shipped for real alongside the oo7
-cutover in #594 (2026-08-15); #84 was closed as completed on 2026-09-04. The prompter was proposed upstream on 2026-10-20 as noctalia-dev/noctalia#4951 and closed unmerged on 2026-11-02 (secrets are out of noctalia's scope); #1502's standalone `desktop/krytis-prompter.bst` replaces it. Two non-obvious
-mechanics from doing this:
+**Today:** `desktop/krytis-prompter.bst` is the image's only SystemPrompter (#1502). It is
+D-Bus-activated: `/usr/share/dbus-1/services/org.gnome.keyring.SystemPrompter.service`
+hands off to `krytis-prompter.service`, which nothing starts at login. So there is no
+startup race, and a prompt still works while noctalia is stopped or restarting.
+`desktop/noctalia.bst` builds upstream `noctalia-dev/noctalia` at `v*` tags. Design:
+`docs/design/secrets-service.md` § *A standalone prompter: krytis-prompter*.
+
+**Before (2026-08-12 to 2026-11-04):** noctalia served the name itself, from the
+`kitten-lily/noctalia` fork's `feat/system-prompter` branch. It went in as an interim step
+over the *then*-shipping gnome-keyring backend (PR #574) and shipped for real alongside the
+oo7 cutover in #594 (2026-08-15). It was proposed upstream as noctalia-dev/noctalia#4951
+and closed unmerged on 2026-11-02, secrets being out of noctalia's scope. #1502 Phase 2
+shipped krytis-prompter beside it, and Phase 3 dropped the fork and the
+`secret_prompter = true` skel key. Lessons from that period that still apply:
 
 **`git_repo` sources can pin `track:` to a branch name, not just a tag glob.**
-BuildStream doesn't care whether the `track:` value resolves to a tag or a
-branch ref — `bst source track` follows whatever it names. Pinning
-`track: feat/system-prompter` means `bst source track` starts following that
-branch's head instead of `v*` release tags, so auto-track PRs land more often
-while the pin is in effect. There's history for this exact pattern in this
-element already (`fix/wifi-persist-polkit-async`, dropped once upstream
-shipped the equivalent fix independently) — same playbook: pin, test, drop
-once upstreamed or supersede.
+BuildStream doesn't care whether the `track:` value resolves to a tag or a branch ref, and
+`bst source track` follows whatever it names. A branch pin follows the head instead of `v*`
+release tags, so it never offers a release (`docs/skills/desktop.md` § noctalia (shell)
+build dependencies). This element had used the same playbook before, for
+`fix/wifi-persist-polkit-async`, dropped once upstream shipped the equivalent fix
+independently: pin, test, drop once upstreamed or superseded.
 
-**gcr-3 and gcr-4 coexist without conflict — but gcr-3 is no longer in the image.** The
-coexistence finding was real, and it is what made the interim step possible: different
-sonames (`libgcr-base-3.so`/`libgcr-3.so` vs `libgcr-4.so`), different D-Bus surface, so
-adding `sdk/gcr.bst` (gcr-4) for noctalia's `GcrSecretExchange` link alongside
-gnome-keyring's transitive `sdk/gcr-3.bst` broke nothing. **That arrangement lasted one
-commit.** The next commit in the same PR (#594) swapped gnome-keyring for oo7 in
-`stacks/desktop.bst`, taking gcr-3 — and with it the `gcr-prompter` binary and its
-`org.gnome.keyring.SystemPrompter.service` D-Bus activation file — out of the image
-entirely. Confirmed against `files/fakecap-manifest.tsv`: `/usr/libexec/gcr-ssh-agent`
-and `/usr/libexec/gcr4-ssh-askpass` are present (both from `sdk/gcr.bst`, gcr-4),
+**gcr-3 and gcr-4 coexist without conflict — but gcr-3 is no longer in the image.** They
+have different sonames (`libgcr-base-3.so`/`libgcr-3.so` vs `libgcr-4.so`) and different
+D-Bus surfaces, so adding `sdk/gcr.bst` (gcr-4) beside gnome-keyring's transitive
+`sdk/gcr-3.bst` broke nothing. **That arrangement lasted one commit.** The next commit in
+#594 swapped gnome-keyring for oo7 in `stacks/desktop.bst`, taking gcr-3 out of the image,
+and with it the `gcr-prompter` binary and its D-Bus activation file. gcr-4 is still in the
+image, now through `desktop/krytis-prompter.bst`: `/usr/libexec/gcr-ssh-agent` and
+`/usr/libexec/gcr4-ssh-askpass` are present (`files/fakecap-manifest.tsv`), and
 `gcr-prompter` is not.
 
-**So noctalia's prompter owns the name outright; it is not a first-come overlay on an
-inert fallback.** The handoff mechanic itself still holds — noctalia's `SecretPrompter`
-constructor calls `requestName()` and throws if the name is already owned, so it declines
-gracefully rather than forcing a takeover — but on krytis there is nothing left to
-decline to. If noctalia's prompter is disabled, crashes, or loses a startup race, nothing
-answers `org.gnome.keyring.SystemPrompter` at all, and per § *No prompter on the bus means
-libsecret callers hang* below that is an indefinite hang in every libsecret caller, not a
-degraded mode. Both `elements/stacks/desktop.bst` and `elements/desktop/noctalia.bst`
-carry that warning in-tree. The startup race is still a non-issue in krytis specifically:
-`files/niri/startup.kdl` only `spawn-at-startup`s `noctalia`, and every manual-unlock
-scenario (secondary keyring, `CreateCollection`, `ChangePassword`) is an interactive,
-mid-session action — noctalia has been running the whole session by the time any of those
-fire.
+**Nothing else answers the name, so its one provider has to work.** If krytis-prompter is
+missing, fails to start, or exits early, nothing answers `org.gnome.keyring.SystemPrompter`.
+Per § *No prompter on the bus means libsecret callers hang* below, that is an indefinite hang
+in every libsecret caller, not a degraded mode. `mise run krytis-prompter-test` gates every
+krytis-prompter re-pin for this reason. A prompter must also not grab the name from
+gnome-shell or a live `gcr-prompter`. noctalia's threw if `requestName()` failed, and
+krytis-prompter claims with `DO_NOT_QUEUE` and exits.
 
-**`secret_prompter = true` in `/etc/skel` reaches new accounts only — every existing user
-silently keeps the prompter off.** `noctalia-skel.bst` says so in a comment ("one-shot copy,
-not a synced default: it only reaches newly-created accounts"), and this option is the first
-time that limitation has real consequences: an upgraded machine ships the prompter binary,
-ships the skel default, and still has nothing owning `org.gnome.keyring.SystemPrompter`.
-
-Observed on a live upgraded system: `~/.local/state/noctalia/settings.toml` carried
-`polkit_agent = true` from an older skel copy but no `secret_prompter`, `busctl --user list`
-showed no `org.gnome.keyring.*` owner at all, and noctalia was running the whole time. There
-is no warning; the feature is simply absent.
-
-Fix per existing account — noctalia's config watcher picks it up live, no restart needed
-(verified: the running process acquired the name within ~4s of the file changing, which also
-exercises the `syncSecretPrompter` reload path):
-
-```shell
-# under [shell] in ~/.local/state/noctalia/settings.toml
-secret_prompter = true
-```
-
-Confirm with `busctl --user list | grep SystemPrompter` — the owner should be noctalia's PID.
-
-**Verified end to end on a live niri session** (with oo7 as the backend, but the prompter path
-is backend-independent): store a secret, `secret-tool lock --collection=Login`, then store
-again. noctalia's panel appears, and the daemon log shows an 11-second gap between the client
-connecting and `Successfully created item` — the prompt being read and answered — after which
-a secret stored *before* the lock read back correctly. So the unlock genuinely restored access
-rather than just letting the new write through.
+**A setting seeded through `/etc/skel` reaches new accounts only.** `secret_prompter = true`
+was the first skel key where that mattered. An upgraded machine shipped the prompter and the
+skel default, and still had nothing owning the name, because its
+`~/.local/state/noctalia/settings.toml` predated the key (observed: `busctl --user list`
+showed no `org.gnome.keyring.*` owner while noctalia ran, with no warning anywhere). The fix
+then was to add the key per account; noctalia's config watcher picked it up within ~4 s.
+Removing it in Phase 3 needed no migration: upstream noctalia has no such key, and at
+`v5.4.1` an unknown key in a known section only logs `unknown setting`
+(`src/config/config_validate.cpp:237`). A leftover `secret_prompter = true` is inert.
 
 ## systemd-homed users: FIDO2 login belonged to homed, not pam_u2f — until #759/#532 retired it
 
@@ -836,7 +815,7 @@ the attempt-1 patch, and it only bites if a secret is requested over ssh.
 Because oo7 has now broken this twice and then fixed it once, all via unrelated mechanisms,
 the check is a task rather than an investigation. It runs the built `oo7-daemon` on a private
 D-Bus session (`dbus-run-session`) with its own `XDG_DATA_HOME`/`XDG_RUNTIME_DIR`, stands a
-stub in noctalia's place as the owner
+stub in the prompter's place as the owner
 of `org.gnome.keyring.SystemPrompter`, and stores a secret into the fresh (locked) `login`
 collection to force a prompt. A pass is the stub being called; a fail is `CliPrompter`
 appearing in the daemon or client log.
@@ -876,6 +855,21 @@ a patch.
 krytis#588 was closed on this, 2026-08-27. The Upstream Gate note that used to sit here — reporting
 the gap to oo7 needing an explicit go-ahead — is moot: upstream found and fixed it
 independently in oo7#558.
+
+### A caller with no Secret Service session gets the CLI prompter
+
+oo7 decides the prompter per call, from the session the caller opened. `Prompt.Prompt`
+looks up the sender's `OpenSession` peer info (`server/src/prompt/mod.rs` at
+`e55a1b10`), and `prompter_type()` treats *no* peer info as non-graphical. So a client
+that triggers a prompt without having called `OpenSession` lands on
+`org.freedesktop.secrets.CliPrompter` even in a graphical session:
+`CLI prompter failed: … Name "org.freedesktop.secrets.CliPrompter" does not exist`. That
+reads exactly like a #588 regression, and it isn't one. Found 2026-11-04 when a test script
+using libsecret's `Secret.Service.get_sync(LOAD_COLLECTIONS)` called `CreateCollection`.
+With `OPEN_SESSION` added, the same call went to the GNOME prompter. `secret-tool` and real
+applications open a session before they store, so they are unaffected. Before treating a
+CLI-prompter error as a detection bug, check the daemon log for `Client … connected,
+session:` from that caller; its absence means this.
 
 ## A locked oo7 collection returns "no such secret", not a prompt
 
@@ -935,11 +929,11 @@ niri sets `WAYLAND_DISPLAY`, so oo7 always resolves to `PrompterType::GNOME` the
 
 **The prompter didn't disappear in GCR4 — it moved into each desktop shell, which is the part that matters for niri.** `gnome-shell`'s `js/ui/components/keyring.js` subclasses `Gcr.SystemPrompter` directly: `class KeyringPrompter extends Gcr.SystemPrompter`, and `enable()` calls `Gio.DBus.session.own_name('org.gnome.keyring.SystemPrompter', …)` itself — gnome-shell *is* the D-Bus service under real GNOME, built on top of GCR4 as a library, not a separate process. KDE Plasma has its own equivalent (this is exactly why oo7's `Plasma` prompter type is a separate code path from `GNOME` in `prompt/mod.rs`). **niri has no such component.** There is no third-party or generic shell-level `Gcr.SystemPrompter` implementation for wlroots/smithay compositors — the only thing standing in for it is the legacy GCR3 `gcr-prompter` binary, which upstream GNOME itself no longer builds by default (GCR4 is what ships in current GNOME; GCR3 survives only as a compatibility package for consumers like gnome-keyring that still need the old prompter binary — krytis was one of those until #594, and is not any more).
 
-**This is not a theoretical risk — it is a confirmed, still-open failure mode on a structurally similar non-shell compositor** (re-checked 2026-10-11). [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453) (COSMIC, wlroots-adjacent, no gnome-shell) reports exactly this: `gcr-prompter` (GCR3) *is* installed and its `.service` file *is* present, login-time PAM auto-unlock works fine, but a **mid-session** daemon restart (e.g. a package upgrade) leaves the login keyring locked with no path back — the prompter fails to activate in COSMIC's session D-Bus environment (reporter's suspected cause: missing `WAYLAND_DISPLAY`/`DISPLAY` in the D-Bus activation environment, unconfirmed), `gnome-keyring-daemon` times out after ~25s waiting on `create system prompt`, then **crashes**, leaving the libsecret caller wedged forever rather than returning a clean error. This downgrades the "Low risk" framing in the section above — the env-timing hazard is real and reproduced in the wild on a peer environment, not just theoretically low-probability from `import-environment` timing. **The activation half of this is checked for krytis-prompter (2026-11-03, #1502):** in a live Umbriel session with `noctalia.service` stopped, a `GcrSystemPrompt` on the real session bus activated the v0.1.1 binary through `SystemdService=krytis-prompter.service`, and the dialog reached the compositor as an overlay layer surface with keyboard focus (`WAYLAND_DEBUG=client` in the journal), so the user manager's activation environment carried the display. **Still owed:** the same on niri, and the oo7-restart path on a booted image, where the check above drove oo7 on a private bus instead: lock a non-login collection, restart `oo7-daemon` mid-session, and confirm an unlock dialog actually appears rather than hanging.
+**This is not a theoretical risk — it is a confirmed, still-open failure mode on a structurally similar non-shell compositor** (re-checked 2026-10-11). [pop-os/cosmic-epoch#3453](https://github.com/pop-os/cosmic-epoch/issues/3453) (COSMIC, wlroots-adjacent, no gnome-shell) reports exactly this: `gcr-prompter` (GCR3) *is* installed and its `.service` file *is* present, login-time PAM auto-unlock works fine, but a **mid-session** daemon restart (e.g. a package upgrade) leaves the login keyring locked with no path back — the prompter fails to activate in COSMIC's session D-Bus environment (reporter's suspected cause: missing `WAYLAND_DISPLAY`/`DISPLAY` in the D-Bus activation environment, unconfirmed), `gnome-keyring-daemon` times out after ~25s waiting on `create system prompt`, then **crashes**, leaving the libsecret caller wedged forever rather than returning a clean error. This downgrades the "Low risk" framing in the section above — the env-timing hazard is real and reproduced in the wild on a peer environment, not just theoretically low-probability from `import-environment` timing. **krytis passes this scenario (2026-11-04, booted published image `26.08.202611032058`, Umbriel session, nothing owning the name until activation):** `systemctl --user restart oo7-daemon` left Login locked, and the next `secret-tool store` activated `krytis-prompter.service` through the image's own activation file. The dialog appeared, a wrong password was rejected (`incorrect secret`) and re-prompted, and the right one unlocked Login and stored the item. The day before, `WAYLAND_DEBUG=client` in the journal showed the activated dialog as an overlay layer surface with keyboard focus, so the user manager's activation environment carries the display. **Still owed:** the same under niri.
 
-**Longer-term architectural question, since answered by building one — twice.** The reasoning above lands on "krytis would depend indefinitely on a component upstream GNOME has already deprecated in favour of shell-owned prompters", and the answer krytis took was to stop depending on it: noctalia reimplements the small `org.gnome.keyring.SystemPrompter` D-Bus surface itself and links only `GcrSecretExchange` from gcr-4 — see § *Writing an `org.gnome.keyring.SystemPrompter` provider* below. What stays true is the *diagnosis*: there is still no third-party or generic shell-level `Gcr.SystemPrompter` implementation for wlroots/smithay compositors. So a prompter that lives inside noctalia leaves nothing to fall back to whenever noctalia is down, which is why #1502 added a second, standalone one: `desktop/krytis-prompter.bst`, D-Bus-activated, which answers whenever noctalia's isn't there (`docs/design/secrets-service.md` § *A standalone prompter: krytis-prompter*).
+**Longer-term architectural question, since answered by building one — twice.** The reasoning above lands on "krytis would depend indefinitely on a component upstream GNOME has already deprecated in favour of shell-owned prompters", and the answer krytis took was to stop depending on it: noctalia's fork reimplemented the small `org.gnome.keyring.SystemPrompter` D-Bus surface and linked only `GcrSecretExchange` from gcr-4 — see § *Writing an `org.gnome.keyring.SystemPrompter` provider* below. What stays true is the *diagnosis*: there is still no third-party or generic shell-level `Gcr.SystemPrompter` implementation for wlroots/smithay compositors. A prompter inside the shell left nothing to fall back to whenever noctalia was down, and upstream declined it anyway, so #1502 replaced it with a standalone one: `desktop/krytis-prompter.bst`, D-Bus-activated (`docs/design/secrets-service.md` § *A standalone prompter: krytis-prompter*).
 
-**The env-timing risk documented in `docs/skills/desktop.md` § *Toolkit Vulkan / Wayland Environment* does not reach either prompter krytis ships.** That section warns `niri-session`'s `systemctl --user import-environment` fires too late for *early* D-Bus-activated services (pipewire, xdg-desktop-portal). noctalia's prompter is not D-Bus-activated at all — `files/niri/startup.kdl` `spawn-at-startup`s `noctalia`, so it is already running and already owns the bus name before any prompt can happen. krytis-prompter *is* D-Bus-activated, through its `systemd --user` unit (`SystemdService=krytis-prompter.service`), so it gets the user manager's environment — but lazily, on the first `BeginPrompting`, which is the same timing that kept the old `gcr-prompter` safe: long after `import-environment`. The boot-test assertion that paragraph asked for is still worth having: `secret-tool lock` a non-login collection, trigger `Unlock()`, and confirm a dialog actually appears — once with noctalia running and once after `systemctl --user stop noctalia`.
+**The env-timing risk documented in `docs/skills/desktop.md` § *Toolkit Vulkan / Wayland Environment* does not reach krytis-prompter.** That section warns `niri-session`'s `systemctl --user import-environment` fires too late for *early* D-Bus-activated services (pipewire, xdg-desktop-portal). krytis-prompter is D-Bus-activated through its `systemd --user` unit (`SystemdService=krytis-prompter.service`), so it gets the user manager's environment, but lazily, on the first `BeginPrompting`. That is the same timing that kept the old `gcr-prompter` safe: long after `import-environment`. Verified under Umbriel (above); niri is still owed.
 
 ## Writing an `org.gnome.keyring.SystemPrompter` provider: reply ordering is the whole game
 
@@ -986,7 +980,7 @@ idle-exiting daemon quits under it. krytis-prompter v0.1.0 shipped exactly this;
 tests started the daemon before the client called, so only driving the artifact through
 its activation file (`mise run krytis-prompter-test`, 2026-11-03) showed it. On the bus it
 looks like `RequestName` → `AddMatch` → nothing → `ReleaseName` one idle-timeout later.
-noctalia's prompter never hit this because it isn't activated: it claims the name at
+noctalia's fork prompter never hit this because it wasn't activated: it claimed the name at
 startup, long before any caller. Fix and regression test:
 [krytis-prompter § Activation](https://github.com/kitten-lily/krytis-prompter/blob/main/docs/skills/protocol.md#activation).
 
