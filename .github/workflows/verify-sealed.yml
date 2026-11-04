@@ -31,15 +31,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  enroll:
-    name: Key enrollment (QEMU)
-    runs-on: ubuntu-26.04
-    timeout-minutes: 20
+  published:
+    # Did the publish this run hangs off actually publish? publish.yml's
+    # `check` job skips its `publish` job when the version is already live
+    # (mise run publish-check), and that run still concludes success. Testing
+    # :sealed after it would re-test an image no run produced, so skip.
+    #
+    # Skips only on a positive "skipped". A missing `publish` job (renamed in
+    # publish.yml) or an API error leaves the output empty and the test runs:
+    # a fault costs one redundant test, never a missed one.
+    name: Check the publish ran
     # A failed publish may not have pushed a sealed image at all; re-testing the
     # previous one would report on an artifact this run did not produce.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      skipped: ${{ steps.publish-job.outputs.skipped }}
+    steps:
+      - name: Read the publish job's conclusion
+        id: publish-job
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          CONCLUSION=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" \
+            --jq '.jobs[] | select(.name == "publish") | .conclusion') || {
+            echo "::warning::could not read run ${RUN_ID}'s jobs; testing :sealed anyway"
+            exit 0
+          }
+          echo "publish job of run ${RUN_ID}: ${CONCLUSION:-<not found>}"
+          if [ "$CONCLUSION" = skipped ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "Publish run ${RUN_ID} skipped its publish job (version already live), so :sealed is unchanged. Enrollment test skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+  enroll:
+    name: Key enrollment (QEMU)
+    needs: published
+    # `!cancelled()` so a failed `published` job still tests (fault-tolerant,
+    # as above); a skipped one means the publish run itself failed.
+    if: >-
+      !cancelled() &&
+      needs.published.result != 'skipped' &&
+      needs.published.outputs.skipped != 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
