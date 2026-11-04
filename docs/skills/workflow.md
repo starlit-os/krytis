@@ -293,11 +293,23 @@ measured in tens of minutes.
 
 ## Skip `mise lint`/`boot-test` When the Diff Can't Touch the Image
 
-AGENTS.md § Verification reads as unconditional — "every PR must confirm `mise lint` passed and the image booted" — but both are `Containerfile`-driven, `podman build`-based checks (see `docs/skills/mise.md` § `mise lint` is a real multi-stage `podman build`). They provide zero signal for a PR that touches no image-relevant path: no `.bst` element, no `Containerfile`, no `files/` content baked into the image, no mise task that feeds `load-image`. A `.github/workflows/*.yml` or `docs/**` change cannot change what `podman build -f Containerfile .` produces — running a multi-minute (or, per `mise.md`, multi-hundred-second) full image rebuild against it validates unrelated surface, not the diff under review.
+AGENTS.md § Verification requires `mise lint` and a boot only for a PR that changes the image, and says so explicitly since 2026-11-04. Both checks are `Containerfile`-driven `podman build`s (see `docs/skills/mise.md` § `mise lint` is a real multi-stage `podman build`). A diff that changes nothing `podman build -f Containerfile .` produces gets no signal from them, only a multi-minute rebuild of an image identical to `main`'s.
 
 Confirmed 2026-09-10 on #793 (issue #656, a `track-bst-sources.yml` GitHub-App-token change plus a `docs/skills/bst.md` addition, no `.bst`/`Containerfile` touched): started `mise run lint` out of habit, was stopped mid-run — the meaningful check for that diff was already green as the PR's own "Static gates" CI job (workflow YAML/schema validation), which returns in seconds instead of minutes.
 
-**Scope the verification to what the diff can affect.** For an image-affecting PR (any `.bst` element, `Containerfile`, `files/`, or image-feeding mise task), the gate above still applies in full — don't use this section to skip it. For a PR that is provably confined to workflow YAML, docs, or CI-only scripts, cite the relevant CI job (or a targeted command — `mise run docs-links`, `actionlint`-equivalent static gate) instead of reflexively reaching for `mise lint`/`boot-test`.
+**Deciding whether a diff changes the image.** Start with `mise run build-changed --dry-run`. It classifies every changed path the way the PR build gate does: `.bst` elements by name, `files/` and `patches/` mapped to the elements that source them, `project.conf` and `include/` as graph-wide, and the rest as `not a BuildStream input`. If every row is `not a BuildStream input` and no `Containerfile*` changed, the image is unchanged. `Containerfile*` is not a BuildStream input, but it builds the image `lint` checks, and its `sealed` stage builds the published one, so a change to it always needs the gate.
+
+A path-only rule over-counts. #1517 (2026-11-04) edited only comments in `elements/overrides/btrfs-progs.bst`, and `build-changed --dry-run` still listed that element as `build`. BuildStream leaves YAML comments out of the cache key, so compare keys for the touched elements on the branch and on `origin/main` (the main checkout, or `git worktree add --detach <dir> origin/main`):
+
+```shell
+mise run bst show --deps none --format '%{name} %{key}' overrides/btrfs-progs.bst
+```
+
+Both printed `16ac10e3`, so the image was unchanged and #1517 skipped the build. Equal keys on the touched elements are enough, because every element's key is a function of its own config, its sources and its dependencies' keys. Don't compare `oci/krytis/image.bst`: `oci/os-release.bst` takes `%{commit}` from the generated `include/image-version.yml`, so the image's key differs on every commit even when nothing else changed.
+
+**The comment exemption covers only BuildStream YAML.** A `kind: patch` or `kind: local` source hashes the file's bytes, comment lines included, so a comment edit in `patches/**` or `files/**` changes the key and rebuilds the element. #1517 left a stale "as of" line in `patches/btrfs-progs/flush-zeroing-before-discard.patch`'s header for this reason. A dated line reads as old, not false, and it isn't worth an image rebuild.
+
+**Scope the verification to what the diff can affect.** A PR that changes the image gets the full gate. Don't use this section to skip it. A PR that doesn't verifies what it does change: `mise run docs-links` for docs, running a changed task, or the CI job that covers a workflow, cited in the PR body along with why the image gates don't apply. A change to the build or boot pipeline itself (`load-image`, `lint`, the image gates, `generate-disk`, `boot-test`) doesn't change the image either, but it is verified by running that task, which means a build.
 
 ## Stacked PRs
 
