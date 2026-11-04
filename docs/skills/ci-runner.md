@@ -2016,12 +2016,30 @@ oci/krytis/stack.bst, oci/krytis/manifest.bst, oci/krytis/runtime.bst,
 oci/krytis/filesystem.bst, oci/krytis/image.bst
 ```
 
-All 8 sit downstream of `mise run generate-image-version`, which bakes a
-build timestamp into the image version string — every independent build run
-gets a unique version stamp, so these 8 (and only these 8, the very top of
-the graph) can never cache-match across separate runs, on any runner.
-`oci/krytis/image.bst` itself will never be a genuine bow hit across builds;
-that's inherent to versioning each build uniquely, not something to fix.
+All 8 sit downstream of `mise run generate-image-version`'s stamp in
+`include/image-version.yml`. `core/os-release.bst` and `oci/os-release.bst`
+bake it in, and the other six depend on them. Those two runs were at
+different stamps. **Since 2026-11-04 the stamp is the last commit that changed
+the image, not HEAD.** It is the newest first-parent commit that touches
+`elements/`, `files/`, `patches/`, `project.conf`, `include/`, a `Containerfile`
+or the BuildStream install (`pyproject.toml`/`uv.lock`), and it records that
+commit's date and SHA (`KRYTIS_COMMIT`). Two builds at the same image inputs now get the
+same keys for these 8 too. That includes a docs- or CI-only commit on top of `main`
+and a cache-warm run followed by a publish run. The old wording here ("a build
+timestamp", "can never cache-match across separate runs") was wrong even before:
+the stamp was HEAD's commit date, never wall-clock time.
+A scheduled publish on a day with no image-changing merge therefore pushes the
+same `:<version>` again. That was already the case on days with no merges at
+all. `publish.yml` has no guard that skips an existing version.
+
+**A shallow clone breaks the match.** In a depth-1 clone the only commit looks
+like it added every path, so the task stamps HEAD and prints a warning. The
+keys then differ from a full-history build at the same tree.
+`cache-warm.yml`, `publish.yml` and `bench-cold-build.yml` check out with
+`fetch-depth: 0` and `filter: blob:none` for that reason. A path-limited `git log`
+reads trees, not blobs, and the full history is about 33 MiB packed. A workflow that only reads the graph
+(`vuln-scan`, `vuln-diff`, `build-changed`, the track jobs) can stay shallow:
+nothing it does depends on the stamp's value.
 
 **A third, unrelated failure mode looks identical in the log but isn't a
 key mismatch at all:** a `does not have artifact <hash> cached` message

@@ -1034,7 +1034,10 @@ status code: it failed at 10:33:49 (`journalctl -b -1 -u bootc-finalize-staged`)
 the staged boot entry was never written, and the reboot came back up on the **old**
 deployment with no error on screen. Seeing an image older than the one you upgraded to
 (compare `KRYTIS_COMMIT` in `/usr/lib/os-release` with what you expected) is how this
-usually surfaces.
+usually surfaces. Since 2026-11-04 `KRYTIS_COMMIT` names the last commit that changed
+the image, not the HEAD it was built from. Compare it with `git log -1 --first-parent
+<ref> -- <inputs>` (the path list is in `mise/tasks/generate-image-version`), not with
+`<ref>` itself.
 
 **Recovery:** move the orphaned state dir aside. bootc 1.17.1's composefs status
 (`crates/lib/src/bootc_composefs/status.rs`) skips a boot entry whose origin file is

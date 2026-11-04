@@ -125,6 +125,11 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        # Full history, blobless: generate-image-version stamps the last
+        # commit that changed the image (see cache-warm.yml's checkout).
+        with:
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Maximize build space
         # Migrated off ublue-os/remove-unwanted-software (#703, untagged

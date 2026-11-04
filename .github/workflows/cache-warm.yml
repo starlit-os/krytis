@@ -51,6 +51,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        # Full history, blobless: generate-image-version stamps the last
+        # commit that changed the image, which a depth-1 clone can't find. The
+        # stamp feeds the top of the graph, so it has to match publish's and
+        # local builds' for those artifacts to be cache hits.
+        with:
+          fetch-depth: 0
+          filter: blob:none
 
       # The persistent VPS accumulates state between jobs that an ephemeral
       # runner never would.

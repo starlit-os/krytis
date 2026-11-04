@@ -3770,12 +3770,16 @@ inputs. `bst show --format '%{name} %{full-key}' oci/krytis/stack.bst` returned
 all 905 keys byte-identical across both deletions (#942, #954), so no rebuild
 and no image change follows from either.
 
-**Hold HEAD fixed for that comparison.** `mise run generate-image-version`
-writes `include/image-version.yml` from `git log -1 --format=%cd` — HEAD's
-commit date, not wall clock — so comparing keys taken at two different commits
-moves `core/os-release.bst`, `core/initramfs.bst` and `oci/krytis/stack.bst`
-for reasons unrelated to the change under test. `git stash`, re-measure, `git
-stash pop` at one HEAD instead.
+**Hold the image inputs fixed for that comparison.** `mise run
+generate-image-version` stamps `include/image-version.yml` with the last
+first-parent commit that touched the image's inputs (`elements/`, `files/`,
+`patches/`, `project.conf`, `include/`, `Containerfile*`, `pyproject.toml`/`uv.lock`;
+the list is in the task). Comparing keys across a commit that touches any of them moves
+`core/os-release.bst`, `core/initramfs.bst` and `oci/krytis/stack.bst` for
+reasons unrelated to the change under test. A comment-only `.bst` edit moves
+them as well, because the rule goes by path. `git stash`, re-measure, `git stash pop` at one HEAD
+instead. Commits that touch none of those paths, such as docs, workflows or mise
+tasks, keep the stamp and the keys.
 
 **The apparent contradiction with `ci-runner.md` § Why every freedesktop-sdk
 artifact pull missed is resolved, not open.** That entry records

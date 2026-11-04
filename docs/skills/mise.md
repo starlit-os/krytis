@@ -258,7 +258,8 @@ skips even the `bst show` cache-key check when no tracked source changed —
 touch this list:
 - **`include/image-version.yml` is deliberately excluded.** It's rewritten
   unconditionally by `generate-image-version` on every build (mtime always
-  bumps) even though its content is a pure function of `git log -1` — including
+  bumps) even though its content is a pure function of git history (the last
+  commit that changed the image inputs) — including
   it would make the freshness check never hit. `.git/HEAD` and
   `.git/refs/heads/**` are tracked instead: they're the actual signal (any
   commit, amend, or rebase updates one of them) without the churn.
