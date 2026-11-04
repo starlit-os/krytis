@@ -425,6 +425,29 @@ ubuntu-26.04`) instead of piggybacking on a real publish run.
   passing, so letting it skip would make a PR with a broken scan mergeable.
   Its name is the required check in ruleset "Main" and must not change.
 
+  **Both scans are skipped when no scan input changed (2026-11-04).** An
+  `inputs` job runs `git diff --name-only base.sha head.sha` over the paths
+  that can change a Grype report:
+  - the BuildStream graph (`elements/`, `files/`, `patches/`, `project.conf`,
+    `include/`);
+  - the scan pipeline (`.grype.yaml`, `mise.toml`/`mise.lock` for grype,
+    `pyproject.toml`/`uv.lock` for buildstream-sbom, the `vuln-scan`, `sbom` and
+    `generate-image-version` tasks, `scripts/enrich-sbom-purls.py`);
+  - the gate itself (`vuln-diff.yml`, `scripts/vuln-diff.py`).
+
+  If none of these changed, both sides would produce the same report against
+  the same database, so `scan` is skipped. `Diff vulnerabilities vs base` then
+  passes and writes the reason to the job summary. It still fails if `inputs`
+  didn't succeed, so a broken input check can't wave a PR through. Compare
+  against `base.sha`, not the merge base, because the base scan checks out
+  `base.sha`. **The path list is now part of the gate's correctness.** A new
+  input to the scan pipeline that isn't listed lets a real change skip the
+  scan, so add it to the list in the same PR. A workflow path filter
+  (`on.pull_request.paths`) can't do this job: it skips the whole workflow,
+  and a required check that never reports leaves the PR blocked, not passed.
+  The skip was checked locally against #1518 (docs only, `scan=false`) and
+  #1517 (an element comment edit, `scan=true`).
+
   **Grype's database comes from the Actions cache (#1156).** Every fresh
   runner used to download and import the ~3 GB database on its first Grype
   call: ~73s of the head scan, against ~8s for the base scan that reused it
