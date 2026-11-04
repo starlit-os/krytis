@@ -1039,8 +1039,9 @@ every scheduled run would have republished `:latest` and never touched `:sealed`
 healthy. `verify-sealed.yml` would have kept passing too, because it tests
 whatever `:sealed` currently is, not whether this run produced it.
 
-Resolve it once at job level rather than at each guard, so the sites cannot
-drift apart:
+Resolve it once rather than at each guard, so the sites cannot drift apart. It
+was job-level until 2026-11-04 and is workflow-level now, because the `check`
+job reads it too:
 
 ```yaml
 env:
@@ -2016,12 +2017,48 @@ oci/krytis/stack.bst, oci/krytis/manifest.bst, oci/krytis/runtime.bst,
 oci/krytis/filesystem.bst, oci/krytis/image.bst
 ```
 
-All 8 sit downstream of `mise run generate-image-version`, which bakes a
-build timestamp into the image version string — every independent build run
-gets a unique version stamp, so these 8 (and only these 8, the very top of
-the graph) can never cache-match across separate runs, on any runner.
-`oci/krytis/image.bst` itself will never be a genuine bow hit across builds;
-that's inherent to versioning each build uniquely, not something to fix.
+All 8 sit downstream of `mise run generate-image-version`'s stamp in
+`include/image-version.yml`. `core/os-release.bst` and `oci/os-release.bst`
+bake it in, and the other six depend on them. Those two runs were at
+different stamps. **Since 2026-11-04 the stamp is the last commit that changed
+the image, not HEAD.** It is the newest first-parent commit that touches
+`elements/`, `files/`, `patches/`, `project.conf`, `include/`, a `Containerfile`
+or the BuildStream install (`pyproject.toml`/`uv.lock`), and it records that
+commit's date and SHA (`KRYTIS_COMMIT`). Two builds at the same image inputs now get the
+same keys for these 8 too. That includes a docs- or CI-only commit on top of `main`
+and a cache-warm run followed by a publish run. The old wording here ("a build
+timestamp", "can never cache-match across separate runs") was wrong even before:
+the stamp was HEAD's commit date, never wall-clock time.
+
+Since 2026-11-04 the publish is skipped when there is nothing new to publish.
+`publish.yml`'s first job, `check`, runs `mise run publish-check`, which
+reports `publish=false` only when `:<version>` is pushed **and** `:latest`
+resolves to the same digest (with the sealed half, the same holds for
+`:<version>-sealed` and `:sealed`). It doesn't stop at "the tag exists": a
+run that pushed the version tag and then failed to sign or promote leaves
+`:latest` on the old digest, and skipping then would strand it until the next
+image change. The `publish` job runs on `!cancelled() &&
+needs.check.outputs.publish != 'false'`. A failed check, a registry error and
+the `force_publish` dispatch input all leave the output anything but `false`,
+so each costs a redundant publish, never a missed one. Two consequences:
+- A skipped run concludes **success**, so `verify-sealed.yml`
+  (`workflow_run` on success) re-tests the unchanged `:sealed`.
+- After a manual rollback (`mise run promote --image-digest <older>`),
+  `:latest` no longer matches `:<version>`, so the next scheduled publish
+  re-promotes the current version, as every scheduled publish did before.
+
+The check job calls the task raw (no mise setup: it needs only git, curl and
+jq), so it passes `--sealed` as `usage_sealed` in the step's `env`. A raw call
+gets no flag parsing, and a task reads its flags from those variables.
+
+**A shallow clone breaks the match.** In a depth-1 clone the only commit looks
+like it added every path, so the task stamps HEAD and prints a warning. The
+keys then differ from a full-history build at the same tree.
+`cache-warm.yml`, `publish.yml` and `bench-cold-build.yml` check out with
+`fetch-depth: 0` and `filter: blob:none` for that reason. A path-limited `git log`
+reads trees, not blobs, and the full history is about 33 MiB packed. A workflow that only reads the graph
+(`vuln-scan`, `vuln-diff`, `build-changed`, the track jobs) can stay shallow:
+nothing it does depends on the stamp's value.
 
 **A third, unrelated failure mode looks identical in the log but isn't a
 key mismatch at all:** a `does not have artifact <hash> cached` message

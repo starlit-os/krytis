@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#MISE description="Is there anything new to publish? Checks whether this commit's image version is already pushed and promoted on ghcr"
+#USAGE flag "--registry <registry>" default="ghcr.io/starlit-os/krytis" help="Registry and image path the image lives under"
+#USAGE flag "--sealed" help="Also require :<version>-sealed to be pushed and promoted to :sealed"
+#USAGE flag "--version <version>" help="Check this version instead of generating this commit's"
+
+# publish.yml's first job. The version (include/image-version.yml) names the
+# last commit that changed the image, so a scheduled publish with no
+# image-changing merge since the last one would rebuild and re-push an image
+# that is already live. This skips that run.
+#
+# "Already published" means the version tag exists AND the floating tag points
+# at it: :latest == :<version> (and, with --sealed, :sealed ==
+# :<version>-sealed). A run that pushed the version tag but failed before
+# `mise run promote` leaves :latest on the old digest, so the next run must
+# publish again rather than skip. The same goes for a manual rollback (`mise
+# run promote --image-digest <older>`): the next publish re-promotes the
+# current version, which is what a scheduled publish has always done.
+#
+# Any doubt means publish: an unreachable or erroring registry gives
+# publish=true with a warning, so a failure here costs a redundant publish,
+# never a missed one.
+#
+# Output: prints the decision; under GitHub Actions, also writes
+# `publish=true|false` and `version=<v>` to $GITHUB_OUTPUT and the reason to
+# the job summary. Always exits 0 unless the version can't be determined.
+set -euo pipefail
+
+REGISTRY="${usage_registry:-ghcr.io/starlit-os/krytis}"
+SEALED="${usage_sealed:-false}"
+
+if [[ -n "${usage_version:-}" ]]; then
+    VERSION=$usage_version
+else
+    # Raw call, like load-image: a raw call never runs a `depends`.
+    ./mise/tasks/generate-image-version >/dev/null
+    VERSION=$(grep '^image-version:' include/image-version.yml | awk '{print $2}' | tr -d "'")
+fi
+if [[ -z "$VERSION" ]]; then
+    echo "==> ERROR: include/image-version.yml has no image-version" >&2
+    exit 1
+fi
+
+HOST=${REGISTRY%%/*}
+REPO=${REGISTRY#*/}
+
+decide() {
+    local publish=$1 reason=$2
+    echo "==> publish=${publish}: ${reason}"
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+        printf 'publish=%s\nversion=%s\n' "$publish" "$VERSION" >> "$GITHUB_OUTPUT"
+    fi
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        # shellcheck disable=SC2016  # the backticks are Markdown, not a command
+        printf '**publish=%s** for `%s`: %s\n' "$publish" "$VERSION" "$reason" >> "$GITHUB_STEP_SUMMARY"
+    fi
+    exit 0
+}
+
+# Anonymous pull token: the package is public. A failure here is a registry
+# problem, so publish.
+TOKEN=$(curl -fsS "https://${HOST}/token?scope=repository:${REPO}:pull" | jq -r '.token // empty') || TOKEN=""
+if [[ -z "$TOKEN" ]]; then
+    echo "::warning::could not get a pull token from ${HOST}"
+    decide true "registry token request failed; publishing to be safe"
+fi
+
+ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json'
+
+# Prints the tag's manifest digest. Returns 1 on 404 (no such tag), 2 on any
+# other failure.
+digest() {
+    local headers code
+    headers=$(curl -sS -I -H "Authorization: Bearer ${TOKEN}" -H "Accept: ${ACCEPT}" \
+        "https://${HOST}/v2/${REPO}/manifests/$1") || return 2
+    code=$(printf '%s\n' "$headers" | awk 'NR == 1 {print $2}')
+    [[ "$code" == 404 ]] && return 1
+    [[ "$code" == 200 ]] || return 2
+    printf '%s\n' "$headers" | awk 'tolower($1) == "docker-content-digest:" {print $2}' | tr -d '\r'
+}
+
+# Checks <version tag> is pushed and <floating tag> points at it.
+check_pair() {
+    local version_tag=$1 floating_tag=$2 v f rc
+    rc=0; v=$(digest "$version_tag") || rc=$?
+    case $rc in
+        1) decide true ":${version_tag} is not pushed" ;;
+        2) echo "::warning::could not read :${version_tag} from ${REGISTRY}"
+           decide true "registry lookup for :${version_tag} failed; publishing to be safe" ;;
+    esac
+    rc=0; f=$(digest "$floating_tag") || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "::warning::could not read :${floating_tag} from ${REGISTRY}"
+        decide true "registry lookup for :${floating_tag} failed; publishing to be safe"
+    fi
+    if [[ "$v" != "$f" ]]; then
+        decide true ":${version_tag} is pushed (${v:7:12}) but :${floating_tag} is ${f:7:12}; the last publish did not promote it"
+    fi
+    echo "==> :${version_tag} is pushed and :${floating_tag} points at it (${v:7:12})"
+}
+
+check_pair "$VERSION" latest
+if [[ "$SEALED" == "true" ]]; then
+    check_pair "${VERSION}-sealed" sealed
+fi
+decide false "${VERSION} is already published and promoted$([[ "$SEALED" == "true" ]] && echo ', sealed included')"

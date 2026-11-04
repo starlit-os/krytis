@@ -78,6 +78,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        # Full history, blobless: generate-image-version stamps the last
+        # commit that changed the image (see cache-warm.yml's checkout).
+        with:
+          fetch-depth: 0
+          filter: blob:none
 
       # Same cleanup as cache-warm.yml's step of this name; see the comments
       # there. Needed before the wipe below: `rm -rf` fails on a dead FUSE

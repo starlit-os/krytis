@@ -42,6 +42,10 @@ on:
         description: 'Run on the self-hosted runner instead of Blacksmith'
         type: boolean
         default: false
+      force_publish:
+        description: 'Publish even if this version is already pushed and promoted (re-sign, refresh the SBOM and vulnerability report)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -52,8 +56,69 @@ concurrency:
   group: krytis-publish
   cancel-in-progress: false
 
+env:
+  # Every `inputs.*` is null on a `schedule` event, so a bare
+  # `if: inputs.publish_sealed` would silently skip the whole sealed
+  # half of the publish job on every cron run — republishing :latest and
+  # never refreshing :sealed, which is the artifact users actually boot
+  # under Secure Boot. Resolved once here rather than repeated at each
+  # sealed step, so they cannot drift apart. Workflow-level because the
+  # check job reads it too.
+  #
+  # The other inputs are safe when null and deliberately left alone:
+  # report_only falsy means the severity gate blocks (the strict default),
+  # force_self_hosted falsy means Blacksmith, force_publish falsy means the
+  # check below decides, and allow_branch_publish falsy is fine because a
+  # scheduled run always carries the default branch, which the ref gate
+  # accepts.
+  PUBLISH_SEALED: ${{ github.event_name == 'schedule' || inputs.publish_sealed }}
+
 jobs:
+  check:
+    # Skip the publish when there is nothing new to publish. The image
+    # version names the last commit that changed the image (mise/tasks/
+    # generate-image-version), so a run with no image-changing merge since
+    # the last publish would rebuild, re-push and re-sign an image that is
+    # already live. `mise run publish-check` says publish=false only when
+    # :<version> is pushed and :latest points at it (and the same for
+    # :<version>-sealed and :sealed when the sealed half runs); a run that
+    # failed before promote, or any registry error, gives publish=true.
+    #
+    # force_publish skips the check, so its output is empty and the publish
+    # job runs. So does a failed check job: see the publish job's `if`.
+    name: Check for an unpublished version
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        # Full history, blobless: the version stamp is the last commit that
+        # changed the image, which a depth-1 clone can't find. It has to be
+        # the stamp the publish job will compute.
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Is this version already published?
+        id: check
+        if: ${{ !inputs.force_publish }}
+        # Raw call: it needs only git, curl and jq, which the runner has, so
+        # no mise setup. A raw call gets no flag parsing; the task reads its
+        # flags from usage_* variables, which `mise run` would set from
+        # `--sealed`, so set the one it needs here.
+        env:
+          usage_sealed: ${{ env.PUBLISH_SEALED }}
+        run: ./mise/tasks/publish-check
+
   publish:
+    needs: check
+    # Runs unless the check positively said there is nothing to publish.
+    # `!cancelled()` instead of the default `success()` so a failed check job
+    # (empty output) still publishes: a broken check costs a redundant
+    # publish, never a missed one.
+    if: ${{ !cancelled() && needs.check.outputs.publish != 'false' }}
     # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
     # runner (docs/skills/ci-runner.md) to debug on the real hardware or
     # work around a Blacksmith outage/limit. Nothing else in this job is
@@ -75,19 +140,6 @@ jobs:
     runs-on: ${{ inputs.force_self_hosted && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 420
     env:
-      # Every `inputs.*` is null on a `schedule` event, so a bare
-      # `if: inputs.publish_sealed` would silently skip the whole sealed
-      # half of this job on every cron run — republishing :latest and
-      # never refreshing :sealed, which is the artifact users actually boot
-      # under Secure Boot. Resolved once here rather than repeated at each
-      # sealed step, so they cannot drift apart.
-      #
-      # The other three inputs are safe when null and deliberately left
-      # alone: report_only falsy means the severity gate blocks (the strict
-      # default), force_self_hosted falsy means Blacksmith, and
-      # allow_branch_publish falsy is fine because a scheduled run always
-      # carries the default branch, which the ref gate accepts.
-      PUBLISH_SEALED: ${{ github.event_name == 'schedule' || inputs.publish_sealed }}
       # The signer identity every verification in this job pins: publish.yml in
       # THIS repo at THIS ref. The older `@refs/heads/.*` accepted a signature
       # from any branch, so a check proved "some branch of this repo signed it"
@@ -125,6 +177,11 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        # Full history, blobless: generate-image-version stamps the last
+        # commit that changed the image (see cache-warm.yml's checkout).
+        with:
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Maximize build space
         # Migrated off ublue-os/remove-unwanted-software (#703, untagged
