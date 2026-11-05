@@ -9,7 +9,7 @@
 #
 # buildah + xorriso are the tools that drive this container; the rest ride
 # along so the payload-prep and ISO-assembly steps are fully self-contained.
-FROM registry.fedoraproject.org/fedora-minimal:latest@sha256:a0fa256d4a905e2c66ef824e938a070a601e421e870df0cf2db9adb7256141ca
+FROM registry.fedoraproject.org/fedora-minimal:latest@sha256:fb62febb3e8e8463aca27f4f10aed070f4eb008d1764e7ffcbda987ecdcbb95f
 
 RUN microdnf install -y --setopt=install_weak_deps=False \
         buildah \
