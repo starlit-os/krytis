@@ -1,6 +1,6 @@
 # Upstream AI-contribution policies
 
-Status: **current as of 2026-10-15**. For every upstream project krytis is holding
+Status: **current as of 2026-11-04**. For every upstream project krytis is holding
 something against, this file records whether that project has written rules about
 AI/LLM-assisted contributions, and what they say. `mise run upstream-policy-check`
 fails when the set of rows and the set of upstreams disagree.
@@ -51,7 +51,6 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | efitools | `git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git` | Patches `elements/core/efitools.bst`. | No | Nothing in the tree. Patches go to `sbsigntools@groups.io`, kernel-style with `Signed-off-by` [INFERENCE]. |
 | btrfs-progs | `git.kernel.org/pub/scm/linux/kernel/git/kdave/btrfs-progs.git`, `github.com/kdave/btrfs-progs` (issues, PRs) | Own patch `elements/overrides/btrfs-progs.bst` (#1302). Bug report kdave/btrfs-progs#1198 (open as of 2026-11-04). Its fix kdave/btrfs-progs#1199 was closed unmerged on 2026-11-02 in favour of the maintainer's kdave/btrfs-progs#1200 (open as of 2026-11-04). | No | Nothing in the tree. Patches go to linux-btrfs@vger.kernel.org or as GitHub PRs, and it cites the kernel's DCO. Its own commits carry `Assisted-by: LLM (<role>)` trailers. The kernel's policy (no agent `Signed-off-by`; it dropped `Assisted-by` on 2026-10-14) is context. |
 | ananicy-cpp | `gitlab.com/ananicy-cpp/ananicy-cpp` | Backport `elements/desktop/ananicy-cpp.bst`. | No | No contributor docs at all. |
-| Ghostty | `github.com/ghostty-org/ghostty` | Own patch `elements/desktop/ghostty.bst`. | Yes | AI allowed. **Disclose the tool and its extent.** The human must fully understand the code. No AI media. Slop gets you on a public denounce list. PRs need a vouch and a pre-accepted issue. Its `AGENTS.md` tells agents never to open issues or PRs. |
 | oo7 | `github.com/linux-credentials/oo7` | Contributions linux-credentials/oo7#614 (krytis#585, open as of 2026-11-02; a maintainer replied 2026-10-26 that it can't be fixed server-side, and krytis accepted it as a lasting limit) and linux-credentials/oo7#615 (krytis#806, merged 2026-10-24). Also waits on oo7#506. | No | No contributor docs, and the org `.github` has none either. |
 | xwayland-satellite | `github.com/Supreeeme/xwayland-satellite` | Patch `elements/desktop/xwayland-satellite.bst`. | Yes | Pinned issue Supreeeme/xwayland-satellite#512: AI-assisted PRs are fine if you understand them. **No pasted LLM issues, comments, PR descriptions or review replies.** |
 | GNOME (gnome-build-meta) | `gitlab.gnome.org/GNOME/gnome-build-meta` | `elements/desktop/xwayland-satellite.bst` bypasses its `sdk/xwayland-satellite.bst`. | No | gnome-build-meta has no rule, and there is no GNOME-wide one. Extensions, Circle and Discourse ban AI-generated work, and many modules (Loupe, Calendar, …) ban LLM contributions outright. Check the module's own CONTRIBUTING. |
@@ -65,6 +64,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | fish-shell | `github.com/fish-shell/fish-shell` | fish-shell/fish-shell#8553 (conf.d order), `docs/skills/mise.md`. | Yes | **Ban.** "We do not accept contributions created with generative artificial intelligence tools", covering PRs, issues, comments and artwork. |
 | Pangolin CLI | `github.com/fosrl/cli` | `elements/core/pangolin-cli.bst` works around fosrl/cli#27. Tracked in #915. | Yes | AI allowed, but **disclosure is required** in the PR template and the bug form. A CLA goes in every PR body. |
 | niri | `github.com/niri-wm/niri` | niri-wm/niri#1966, niri-wm/niri#3587 and niri-wm/niri#823 (missing portals) shape `files/xdg-desktop-portal/niri-portals.conf`. | Yes | **Ban on creating anything with an LLM**: code, issues, comments or reviews. LLM translation is allowed if you attach the original. PR and issue checkboxes say "I did not use an LLM". |
+| xdg-desktop-portal-gtk4 (JohnRTitor fork) | `github.com/JohnRTitor/xdg-desktop-portal-gtk4` | JohnRTitor/xdg-desktop-portal-gtk4#1 (Notification fixes, opened by `kitten-lily` on 2026-11-03, open as of 2026-11-04), cited in #181 as a candidate backend. | No | No rule. The repo ships `.agents/AGENTS.md` coding rules for agents, so agent-assisted work is expected there. |
 | OpenRazer | `github.com/openrazer/openrazer` | Plan to carry openrazer/openrazer#2719 (#1224). | No | Nothing written. A maintainer thanked a contributor for disclosing AI use, and contributors disclose without being asked. |
 | polkit | `github.com/polkit-org/polkit` | polkit-org/polkit#704 (setuid-less pkexec) affects `elements/config/polkit-agent-sandbox.bst`. | Yes | AI allowed. **State the tool and its extent** in the PR or issue. The submitter is fully responsible. A large volume of generated content slows review. |
 | COSMIC | `github.com/pop-os/cosmic-epoch` | pop-os/cosmic-epoch#3453 (libsecret hangs without a prompter), `docs/design/secrets-service.md`. | Yes | **Pop!\_OS-wide ban**: no LLM content in issues or PRs, including code, comments and descriptions. A CI-enforced PR checkbox applies, and PRs without it are closed. |
@@ -72,8 +72,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | systemd | `github.com/systemd/systemd` | Open homed resize issues (`docs/skills/pam.md`) and systemd/systemd#37079 (dmem cgroup). | Yes | AI allowed if you understand and edit the output. **No AI credit in commits** ("no Co-Developed-By or Co-Authored-By or anything similar"). **No agent may open PRs or post for you.** Warning, then ban. Disclosure was dropped 2026-06. |
 | fedora-atomic-desktops-sealed | `github.com/travier/fedora-atomic-desktops-sealed` | travier/fedora-atomic-desktops-sealed#13 (UKI addons in bootc), tracked in #545. | No | Personal repo with no rule. Fedora's AI policy (disclose, `Assisted-by:` recommended) applies only by [INFERENCE]. |
 | ublue-os image-template | `github.com/ublue-os/image-template` | ublue-os/image-template#215 (strict signature policy), `docs/design/cosign-keyless-signing.md`. | No | No rule. Universal Blue requires that "you have authored 100% of the content". projectbluefin's agents are told never to write to `ublue-os/*`. |
-| Zen Browser | `github.com/zen-browser/desktop` | Native-messaging issues (`docs/design/native-messaging-proxy.md`) and Flatpak migration issues (#1237). | No | Nothing written, but maintainers close PRs that look AI-generated (zen-browser/desktop#15898). |
-| Flathub (Zen manifest) | `github.com/flathub/app.zen_browser.zen` | flathub/app.zen_browser.zen#109 and flathub/app.zen_browser.zen#57 block #1237. | Yes | Flathub-wide: **manifests must not contain AI-generated or AI-assisted content**. Other generated material must be disclosed. AI must not open submission PRs or write their commit messages, descriptions or replies. |
+| Zen Browser | `github.com/zen-browser/desktop` | Native-messaging issues zen-browser/desktop#11084 and zen-browser/desktop#10622 (`docs/design/native-messaging-proxy.md`). | No | Nothing written, but maintainers close PRs that look AI-generated (zen-browser/desktop#15898). |
 | arboard | `github.com/1Password/arboard` | 1Password/arboard#209 (Wayland clipboard backend), `docs/design/proton-pass-flatpak.md`. | No | No contributor docs. |
 | umbriel | `github.com/noctalia-dev/umbriel` | noctalia-dev/umbriel#259 (XWayland grabs), tracked in #1055. | No | No rule. Conventional Commits. |
 | seance | `github.com/no1msd/seance` | Own patch `elements/desktop/seance.bst` (omp agent tracking from `kitten-lily/seance`, kitten-lily/seance#1); proposed as no1msd/seance#23 (issue no1msd/seance#22) on 2026-10-22, #1018 stage 3. no1msd/seance#21, cited in #1018. no1msd/seance#13 moved with the session-restore work to kitten-lily/seance#11. | No | No rule. Bigger features go to a Discussion first. |
@@ -85,12 +84,12 @@ The same trailer is a requirement at some upstreams and grounds for rejection at
 Grouped by what happens to an AI-assisted krytis patch sent as-is:
 
 - **Refused, whatever the disclosure:** niri, fish-shell, COSMIC, greetd (SourceHut ToS),
-  rust-lang/rust (unless pre-arranged), the Flathub manifest repo, and GNOME modules with
-  a Loupe-style ban. Here a patch must be human-written, or it stays a downstream carry.
+  rust-lang/rust (unless pre-arranged), and GNOME modules with a Loupe-style ban. Here a
+  patch must be human-written, or it stays a downstream carry.
 - **Accepted with the trailer krytis already writes:** vim (requires `Assisted-by:`).
   Fedora recommends the same trailer.
-- **Accepted with disclosure in another form:** Ghostty (tool and extent), Renovate
-  (extent, plus who replies), polkit (tool and extent), Pangolin CLI (template field).
+- **Accepted with disclosure in another form:** Renovate (extent, plus who replies), polkit
+  (tool and extent), Pangolin CLI (template field).
   The trailer helps, but the PR body still needs the statement.
 - **Accepted, but the trailer must change:** systemd (no AI credit of any kind in commits),
   Podman and container-libs (strip LLM metadata; all prose human-written), bootc
@@ -99,10 +98,10 @@ Grouped by what happens to an AI-assisted krytis patch sent as-is:
   close a PR.
 
 Three rules apply regardless of policy. The human must be able to explain the change
-(Ghostty, systemd, Podman, polkit, bootc and COSMIC write this down). Issue text, review
-replies and comments must be human-written at niri, Podman, systemd, xwayland-satellite,
-COSMIC, Flathub and fish-shell. And agents must not open the PR or issue themselves
-(systemd, Ghostty, Renovate, Flathub). That matches krytis's Upstream Gate.
+(systemd, Podman, polkit, bootc and COSMIC write this down). Issue text, review replies and
+comments must be human-written at niri, Podman, systemd, xwayland-satellite, COSMIC and
+fish-shell. And agents must not open the PR or issue themselves (systemd, Renovate). That
+matches krytis's Upstream Gate.
 
 ## Details
 
@@ -199,20 +198,6 @@ nothing was found, so an absence is evidenced and not assumed.
 - The repo root has no CONTRIBUTING, templates or `docs/`. Issue and MR searches for
   AI/LLM found no policy. MR !45 discloses AI help and has no maintainer reply as of
   2026-10-15.
-
-### Ghostty
-
-- [AI_POLICY.md](https://github.com/ghostty-org/ghostty/blob/main/AI_POLICY.md): "All AI
-  usage in any form must be disclosed. You must state the tool you used … along with the
-  extent". "The human-in-the-loop must fully understand all code." "No AI-generated media".
-  Slop authors go on "our public denouncement list. This list will block all future
-  contributions." Maintainers are exempt.
-- [CONTRIBUTING.md](https://github.com/ghostty-org/ghostty/blob/main/CONTRIBUTING.md):
-  "Using AI to write code is fine." The vouch request must be written "in your own voice".
-  Unvouched PRs are auto-closed. PRs must be "associated with a previously accepted issue".
-- [AGENTS.md](https://github.com/ghostty-org/ghostty/blob/main/AGENTS.md) tells agents:
-  "Never create an issue. Never create a PR."
-- As of: AI_POLICY.md `00c33eaf72` (2026-02-15).
 
 ### oo7
 
@@ -365,6 +350,21 @@ nothing was found, so an absence is evidenced and not assumed.
 - As of: `7256ccf627` (2026-09-20). The niri-wm org `.github` repo wasn't checked (API
   rate limit).
 
+### xdg-desktop-portal-gtk4 (JohnRTitor fork)
+
+- A fork of mahkoh/xdg-desktop-portal-gtk4 that is developed on its own (the AUR `-git`
+  package builds it). The root has README, `BUILD.md`, `TESTING.md` and `.agents/AGENTS.md`,
+  with no CONTRIBUTING, AI_POLICY or issue/PR templates. `.github/` holds only `actions/`
+  and `workflows/`, and the owner has no `.github` repo. mahkoh's upstream has no
+  contributor files either.
+- `.agents/AGENTS.md` (`5b563de0a6`, 2026-08-06) is Rust/GTK coding rules for agents. It
+  says nothing about disclosure, trailers or who opens PRs.
+- Issue and PR searches for AI, LLM, generated, Claude and Copilot found nothing. None of
+  the last 100 `master` commits carries an AI trailer.
+- JohnRTitor/xdg-desktop-portal-gtk4#1 (2026-11-03) carries `Assisted-by: OpenAI Codex`
+  and had no reply as of 2026-11-04.
+- As of: `master` `8f88da61d3` (2026-10-02).
+
 ### OpenRazer
 
 - [DEVELOPMENT.md](https://github.com/openrazer/openrazer/blob/master/DEVELOPMENT.md) is the
@@ -447,16 +447,6 @@ nothing was found, so an absence is evidenced and not assumed.
   (Contributor Covenant 2.1) have no AI text. A member closed
   [zen-browser/desktop#15898](https://github.com/zen-browser/desktop/pull/15898) (2026-10-11): "this seems very
   AI generated". PRs target `dev`, with `{bugId}: {message}` commits.
-
-### Flathub (Zen manifest)
-
-- [Requirements § Generative AI policy](https://docs.flathub.org/docs/for-app-authors/requirements):
-  "Flathub manifests must not contain AI-generated or AI-assisted content. Disclosure does
-  not exempt manifests from this restriction." "AI tools or agents must not open or
-  automate Flathub submission pull requests, or generate their commit messages,
-  descriptions, review comments, or replies." Repeat violations can mean a permanent ban.
-- `flathub/app.zen_browser.zen` holds only the manifest, so every PR there is a manifest
-  change.
 
 ### arboard
 

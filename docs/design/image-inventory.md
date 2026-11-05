@@ -214,7 +214,6 @@ element does, its row's text is a review question.
 
 | Element | Replaces | Why |
 |---|---|---|
-| `overrides/frei0r.bst` | `freedesktop-sdk.bst:components/frei0r.bst` | Builds with SSE 4.1 disabled on x86_64 until upstream fixes a type mismatch (dyne/frei0r#228, dyne/frei0r#239). |
 | `overrides/vim.bst` | `freedesktop-sdk.bst:components/vim.bst` | Adds a patch that hides gvim's desktop entry from the app menu (#241). |
 | `core/sudo-rs.bst` | `freedesktop-sdk.bst:components/sudo.bst` | sudo-rs, a memory-safe sudo, in place of sudo. |
 | `overrides/btrfs-progs.bst` | `freedesktop-sdk.bst:components/btrfs-progs.bst` | Patched so `mkfs.btrfs` erases old signatures, such as LUKS headers, on a disk that ignores TRIM (#1294). |

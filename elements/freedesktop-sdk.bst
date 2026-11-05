@@ -62,7 +62,6 @@ config:
     components/systemd.bst: gnome-build-meta.bst:core-deps/systemd.bst
     components/systemd-ukify.bst: gnome-build-meta.bst:core-deps/systemd-ukify.bst
     components/systemd-libs.bst: gnome-build-meta.bst:core-deps/systemd-libs.bst
-    components/frei0r.bst: overrides/frei0r.bst
     components/vim.bst: overrides/vim.bst
     components/sudo.bst: core/sudo-rs.bst
     # mkfs.btrfs flushes its signature-wiping zeroes before it discards (#1294,
