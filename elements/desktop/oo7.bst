@@ -94,7 +94,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-304-g27aa206c9a35f5dcbbe134d6c1df9d45f44b3e7d
+  ref: v0.6.0-alpha-307-g437ed0e953dfed71b62e285cf24212b88ba62beb
 
 - kind: cargo2
   url: crates:crates
@@ -675,8 +675,8 @@ sources:
     sha: 9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d
   - kind: registry
     name: rustix
-    version: 1.1.5
-    sha: 891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d
+    version: 1.1.6
+    sha: e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa
   - kind: registry
     name: rustversion
     version: 1.0.23
@@ -911,16 +911,16 @@ sources:
     sha: 1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e
   - kind: registry
     name: zbus
-    version: 6.1.0
-    sha: fcff5faa63a63d5b81051740f7382017f10b3440b3f401d97f0cf0b3b39c62d9
+    version: 6.2.1
+    sha: 0ddb2961d9587ef9f24ad14cde1c3bc4c5edc9f1525932a8cffdd5bd98886eb9
   - kind: registry
     name: zbus_macros
-    version: 6.1.0
-    sha: 5bba6e2bfe19571dc81b3e0be9f8daec6e5422db3e2eea2e766a859553e7bd37
+    version: 6.2.1
+    sha: 083b38add47c340fc12ec560124fb1d9c23acb584f7021099f85ec6587a03c54
   - kind: registry
     name: zbus_utils
-    version: 6.0.0
-    sha: c27a055b114bd9fc3686e90f62bd1fe612d523fc5f620bac3b1d2f42d3f6cab8
+    version: 6.1.0
+    sha: af55e52da295311b368c45bcae221f020e28e97a2420360170ce389218e76ec7
   - kind: registry
     name: zcheapstr
     version: 1.1.0
