@@ -1681,6 +1681,37 @@ Proton-CachyOS `cachyos-11.0-20261015-slr` (its `win32u.so` carries the `GrabPoi
 string): with both games on the Wayland driver the pointer leaves the window freely. The
 Wine paths above are `master` on that date.
 
+## WoW camera rotation can run away on native Wayland: reset raw input
+
+World of Warcraft Forever under Faugus can intermittently keep turning the camera in
+the direction of the last mouse movement. On 2026-11-07 the same live prefix reproduced
+it under native Wine Wayland on both umbriel and niri, but not under Xwayland. Resetting
+WoW's raw-input CVar stopped the observed recurrence without restarting the game:
+
+```text
+/console rawMouseEnable 0
+/console rawMouseEnable 1
+```
+
+Enter the commands separately. A clean game exit normally writes the final value to
+`_forever_/WTF/Config.wtf`; its absence while WoW is still running does not show that the
+live command failed. This was verified with Proton-CachyOS
+`cachyos-11.0-20261015-slr`, with `PROTON_ENABLE_WAYLAND=1`, `winewayland.drv` forced
+on, and `winex11.drv` disabled.
+
+The native-Wayland-only trigger is bounded but its exact cause is not yet proven. Wine
+commit [`4083c839`](https://gitlab.winehq.org/wine/wine/-/commit/4083c839ea1b1de50dfaed1a97be6572c5268c19)
+uses `wp_pointer_warp_v1` for `SetCursorPos` when the compositor advertises it; otherwise
+Wine retains the older lock/position-hint fallback, which that commit says has subtle side
+effects. As of 2026-11-07, [niri #3988](https://github.com/niri-wm/niri/issues/3988) and
+[Umbriel #736](https://github.com/noctalia-dev/umbriel/issues/736) are open for adding
+that protocol. Umbriel commit `e0da106` creates relative-pointer and pointer-constraint
+globals in Umbriel's `src/server/server.cpp`, but no pointer-warp global. Both compositors
+therefore leave this Wine version on the fallback. That matches
+the compositor-independent reproduction, but no `WAYLAND_DEBUG` trace captured an event
+that ran away, so treat the CVar reset as the first native-Wayland test rather than proof
+of a compositor or Wine defect.
+
 Two things that cost time:
 
 - **Check which driver the game is really on.** A Faugus entry's launch-argument
