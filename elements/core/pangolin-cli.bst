@@ -83,11 +83,11 @@ sources:
   filename: pangolin-cli
   (?):
   - arch == "x86_64":
-      url: github_files:fosrl/cli/releases/download/0.20.0/pangolin-cli_linux_amd64
-      ref: 2af7c8263871ebabde51b2e5b95249085b8827dde3f27c940509ce3fa74d471e
+      url: github_files:fosrl/cli/releases/download/0.21.0/pangolin-cli_linux_amd64
+      ref: c34937dc21f6e447e1023b5e5f36fb2266c997c3866e979a7cead23b4a3736c6
   - arch == "aarch64":
-      url: github_files:fosrl/cli/releases/download/0.20.0/pangolin-cli_linux_arm64
-      ref: 4eda576506895a9b271377759fe416e00bdcf815cd5bd9056ea67dc38265705d
+      url: github_files:fosrl/cli/releases/download/0.21.0/pangolin-cli_linux_arm64
+      ref: 4dc81fd11076593452d39c2ce77ad9ba4767115557a012da03aed7450bf23039
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
