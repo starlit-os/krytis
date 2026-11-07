@@ -1781,6 +1781,26 @@ element and a name-based check reports them as false gaps: `core/linux-cachyos.b
 by `kernel-update`, and `desktop/zig.bst` by `ghostty-update` (which bumps Zig when ghostty's
 `minimum_zig_version` moves). A naive name match over-reported 12 gaps where there were 9.
 
+**A `track:` line is half of the path.** A `git_repo` element with `track: v*` still never
+moves unless `track-bst-sources.yml` lists it in a `track` matrix group or a check task watches
+it. `overrides/frei0r.bst` had the glob and no matrix entry, so it sat on v3.1.3 for eleven
+weeks after upstream's v3.3.0 fixed the bug it worked around. It was dropped on 2026-11-04.
+The audit for this half:
+
+```bash
+# git_repo/anitya elements with a track: glob that the workflow never names
+for f in $(grep -rlE 'kind:\s*(git_repo|git_module|anitya)' elements/); do
+    grep -qE '^\s*track:' "$f" || continue
+    e=${f#elements/}; n=$(basename "$f" .bst)
+    grep -qE "$e|\b$n\b" .github/workflows/track-bst-sources.yml || echo "$e"
+done
+```
+
+On 2026-11-04 it listed eight elements. Five are junction mirrors that have their own check
+task (`btrfs-progs-check`, `python3-pil-check`, `gtk3-mirror-check`, `libdisplay-info-check`).
+`desktop/mesa-all-codecs.bst` says in its header that it follows the junction bump by hand.
+`core/openssh.bst` and `dev/virt-firmware.bst` had no update path.
+
 ### Removing an element touches more than the element (#1194)
 
 An element with its own update path is wired into about seven files, and only the first two
@@ -4838,7 +4858,7 @@ Requirements for cache hit:
 
 fdsdk's `components/vim.bst` builds vim with an unpatched autotools `./configure` — no `--disable-gui` flag is set, so `configure` autodetects X11/GTK in the build sandbox and builds both `vim` and `gvim`, installing **two** desktop files: `runtime/vim.desktop` and `runtime/gvim.desktop`. fdsdk already carries a local patch (`patches/vim/vim-not-show-in-gnome.patch`) that sets `NoDisplay=true` on `vim.desktop` (the terminal one) — but leaves `gvim.desktop` untouched, so gvim shows up as a stray app-menu entry.
 
-Fix: override `components/vim.bst` (same `overrides/<name>.bst` pattern as `frei0r.bst`/`sudo-rs.bst`) with an element identical to upstream's, plus one extra `kind: patch` source that sets `NoDisplay=true` on `gvim.desktop` the same way. The original `vim-not-show-in-gnome.patch` must also be copied into `patches/vim/` locally — a `kind: patch` source path is resolved within the current project, it cannot reach into the fdsdk junction's `patches/` directory.
+Fix: override `components/vim.bst` (same `overrides/<name>.bst` pattern as `btrfs-progs.bst`/`python3-pil.bst`) with an element identical to upstream's, plus one extra `kind: patch` source that sets `NoDisplay=true` on `gvim.desktop` the same way. The original `vim-not-show-in-gnome.patch` must also be copied into `patches/vim/` locally — a `kind: patch` source path is resolved within the current project, it cannot reach into the fdsdk junction's `patches/` directory.
 
 ```yaml
 # elements/freedesktop-sdk.bst

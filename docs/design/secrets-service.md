@@ -209,7 +209,7 @@ daemon-restart prompts happen in the user's running niri session, which noctalia
 the long-term goal of upstreaming it or shipping it as a noctalia plugin.
 
 **Why noctalia is a good fit, not just the only option:**
-- v5 (krytis was on `v5.0.0-beta.7` when this was written; `v5.3.0` as of 2026-10-20) is a from-scratch native C++23 rewrite with **no Qt or
+- v5 (krytis was on `v5.0.0-beta.7` when this was written; `v5.4.1` as of 2026-11-02) is a from-scratch native C++23 rewrite with **no Qt or
   GTK dependency at all** — confirmed via upstream's own README and `libsodium.bst`/`stb.bst`
   comments in this repo. This removes the QML/Quickshell integration problem entirely; there
   is no JS/GObject-introspection bridge to fight.
@@ -324,9 +324,10 @@ available.
 
 Built and verified on `kitten-lily/noctalia`, branch `feat/system-prompter`. Originally commit
 `ba821c7da` on upstream `main` at `8403cb987` (`v5.0.0-beta.8-36`); **rebased 2026-08-17 onto
-upstream `main` `87b203c68` (`v5.0.0-beta.8-135`)** and re-pinned in PR #606. The branch has
-been followed forward since — `elements/desktop/noctalia.bst` pins
-`v5.3.0-2-g1aab2f2f` as of 2026-10-20, still on `track: feat/system-prompter`. **Proposed
+upstream `main` `87b203c68` (`v5.0.0-beta.8-135`)** and re-pinned in PR #606. The branch was
+followed forward through every release up to `v5.4.1-2-g5e2cedc3` (2026-11-02), on
+`track: feat/system-prompter`, until #1502 returned `elements/desktop/noctalia.bst` to
+upstream `v5.4.1` on 2026-11-04. **Proposed
 upstream on 2026-10-20** as noctalia-dev/noctalia#4951, with feature request
 noctalia-dev/noctalia#4950. **A maintainer closed both unmerged on 2026-11-02:** handling
 secrets is out of noctalia's scope. That left a standalone prompter as the only way off the

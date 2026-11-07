@@ -1377,6 +1377,33 @@ authenticate` on 2026-10-20 (#1319). The same command run synchronously in a pty
 for the PIN and passed. Give it a long timeout instead: a `boot-test` that installs Flatpaks
 at first boot ran for about 10 minutes.
 
+**A tool pty may still be invisible to the human.** The agent's `pty: true` satisfies
+sudo's terminal check, but some harnesses keep that pty private. If the human cannot see
+or type into it, cancel that run and open the task in a visible Rex tab instead:
+
+```bash
+rex whoami --json
+rex window new -s <session-id> "Boot test" -c <worktree> \
+  --keep-open --json -- mise run boot-test
+```
+
+The new tab takes focus by default and returns its `window_id` and `block_ids`. The human
+types the PIN/password and touches the key **in that tab**. Never ask for a credential in
+chat, pass it through `rex send`, or capture the terminal while the prompt is active.
+After the prompt has cleared, an agent can monitor and prove the result without handling
+input:
+
+```bash
+rex block call -s <session-id> -b <block-id> process
+rex capture -s <session-id> -b <block-id> --trim --unwrap
+```
+
+`process.last_exit` is the command result; `rex wait` also returns the command's nonzero
+exit status, so a failed wait is not necessarily a Rex failure. Keep the tab open until
+the output is captured, then close it. Verified 2026-11-04 with `boot-test`: the private
+tool pty could authenticate but the user could not reach its second FIDO2 PIN prompt; the
+same task in a Rex tab accepted input normally.
+
 Run the root step once, then iterate unprivileged: `generate-disk --disk /var/tmp/<name>.raw`
 followed by `--reuse-disk /var/tmp/<name>.raw` on each test. Each test copies the disk or
 boots it without installing, so one install serves `boot-test` and `oomd-test` alike.
