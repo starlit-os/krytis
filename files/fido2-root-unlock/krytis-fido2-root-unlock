@@ -1,0 +1,84 @@
+#!/bin/bash
+# FIDO2 pre-attempt for the gpt-auto root volume, run in the INITRD by
+# krytis-fido2-root-unlock.service, before the generated systemd-cryptsetup@root.service.
+#
+# Why a wrapper and not a bare systemd-cryptsetup ExecStart (#1058): the attempt has to
+# be able to ask for a security-key PIN without ever asking for the disk PASSPHRASE.
+# systemd-cryptsetup can't express that on its own:
+#
+#   - Without headless=yes, a failed token attempt falls through to a passphrase prompt
+#     of its own, and the pre-attempt stalls the boot ahead of the real prompt (measured
+#     2026-08-08, docs/skills/fido2.md § The pre-attempt MUST be `headless=yes`).
+#   - With headless=yes, PIN querying is disabled too: a credential enrolled with a
+#     client PIN fails with "PIN querying disabled via 'headless' option. Use the '$PIN'
+#     environment variable." (systemd v262 src/cryptsetup/cryptsetup.c,
+#     crypt_activate_by_token_pin_ask_password()).
+#
+# That message is the way through. The plugin path reads $PIN even when headless
+# (acquire_pins_from_env_variable()), so this script:
+#
+#   1. tries headless with no PIN, exactly what the unit did before. A touch-only token
+#      unlocks here, and a volume with no FIDO2 token fails here quickly, so the
+#      passphrase-only case (mise run luks-boot-test) is unchanged;
+#   2. only if that attempt reports the headless-PIN message (a PIN-requiring token is
+#      enrolled), asks for the PIN with systemd-ask-password, bounded and skippable,
+#      and retries headless with $PIN set.
+#
+# The PIN prompt is the only prompt this script can raise, so it never competes with
+# the generated unit for the password agent. An empty answer or a timeout means "use
+# the passphrase": the script fails, and the generated unit asks for it as before.
+#
+# Two PIN tries, not more: an authenticator blocks PIN entry after three consecutive
+# wrong PINs until it is re-plugged (FIDO_ERR_PIN_AUTH_BLOCKED), and the passphrase
+# fallback is always one step away.
+#
+# Bounds (the unit's TimeoutSec must exceed their sum, see #547):
+#   attempt 1                 token-timeout=10s + timeout=20s at most
+#   each PIN try (x2)         PIN_TIMEOUT for the prompt + timeout=20s for the touch
+set -u
+
+# Overridable only so mise run fido2-root-unlock-script-test can stub both binaries;
+# the unit sets neither, so the initrd always runs the real ones.
+CRYPTSETUP="${KRYTIS_CRYPTSETUP:-/usr/lib/systemd/systemd-cryptsetup}"
+ASK_PASSWORD="${KRYTIS_ASK_PASSWORD:-systemd-ask-password}"
+DEV=/dev/gpt-auto-root-luks
+OPTS='fido2-device=auto,headless=yes,token-timeout=10s,timeout=20s'
+PIN_TIMEOUT=60
+NEEDS_PIN="PIN querying disabled via 'headless' option"
+
+attach() {
+    # console: systemd-cryptsetup's errors must reach our stdout pipe so the PIN case
+    # can be recognised; we echo them to stderr ourselves, which lands in the journal.
+    SYSTEMD_LOG_TARGET=console "$CRYPTSETUP" \
+        attach root "$DEV" '' "$OPTS" 2>&1
+}
+
+out=$(attach)
+rc=$?
+[ -n "$out" ] && printf '%s\n' "$out" >&2
+[ "$rc" -eq 0 ] && exit 0
+case "$out" in
+    *"$NEEDS_PIN"*) ;;
+    *) exit 1 ;;
+esac
+
+prompt='Security key PIN to unlock the disk (leave empty to use the passphrase):'
+for _ in 1 2; do  # two PIN tries, see above
+    PIN=$("$ASK_PASSWORD" --timeout="$PIN_TIMEOUT" --icon=drive-harddisk \
+        --id=krytis-fido2-root-unlock:root --no-tty "$prompt") || PIN=''
+    if [ -z "$PIN" ]; then
+        echo "No security key PIN entered; leaving the unlock to the passphrase prompt." >&2
+        exit 1
+    fi
+    out=$(PIN="$PIN" attach)
+    rc=$?
+    unset PIN
+    [ -n "$out" ] && printf '%s\n' "$out" >&2
+    [ "$rc" -eq 0 ] && exit 0
+    case "$out" in
+        *"$NEEDS_PIN"*) prompt='Wrong PIN. Security key PIN (leave empty to use the passphrase):' ;;
+        *) exit 1 ;;
+    esac
+done
+echo "Security key PIN rejected twice; leaving the unlock to the passphrase prompt." >&2
+exit 1

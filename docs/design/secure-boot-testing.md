@@ -203,9 +203,10 @@ actually running it, with expected values and failure signatures, is
       `rd.luks.options=`, so FIDO2 was never attempted. Fixed by #543/#544
       (`elements/config/fido2-root-unlock.bst`'s `krytis-fido2-root-unlock.service`), whose
       presence in the initrd `elements/core/initramfs.bst` asserts at build time. The
-      unlock itself has **not** been re-run on hardware since. That unit runs
-      `headless=yes`, so the credential must be enrolled touch-only — see
-      `docs/skills/fido2.md` § *`mise fido2:enroll-luks` does not pass that flag*.
+      unlock itself has **not** been re-run on hardware since. Since #1058 a credential
+      enrolled with a PIN works too: the unit's wrapper asks for the PIN (`docs/skills/fido2.md`
+      § A PIN-requiring credential: the wrapper asks for the PIN itself). Re-run with a
+      PIN-set key: expect a PIN prompt, then a touch, then no passphrase prompt.
 - [x] `bootc upgrade` to a newer sealed image, then reboot, still enforcing. #535.
 - [x] `bootc rollback` under enforcement. #535.
 

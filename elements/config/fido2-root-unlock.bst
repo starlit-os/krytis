@@ -6,12 +6,15 @@
 # "No valid TPM2 token data found" and no FIDO2 attempt at all, with the karg present
 # on /proc/cmdline throughout.
 #
-# Ships two files, and the split is the whole design:
+# Ships three files. The unit/drop-in split is the whole design:
 #
 #   krytis-fido2-root-unlock.service   tries FIDO2 BEFORE the generated unit, with an
 #                                      ExecStart `-` prefix so failure is ignored
 #   50-krytis-fido2-root.conf          a one-line condition skipping the generated
 #                                      unit when that attempt already won
+#   /usr/libexec/krytis-fido2-root-unlock
+#                                      the attempt itself: headless attach, plus a
+#                                      PIN prompt for a PIN-requiring token (#1058)
 #
 # Nothing overrides the generated ExecStart. An earlier version of this change did, and
 # mise run luks-boot-test caught the regression: a missing FIDO2 token in the header is
@@ -19,9 +22,9 @@
 # root's options turned the passphrase prompt into emergency mode on every machine
 # without an enrolled key. The files carry the full reasoning.
 #
-# Both must reach the INITRD, not just the rootfs — root is unlocked before
+# All three must reach the INITRD, not just the rootfs — root is unlocked before
 # switch-root. dracut does not copy drop-ins or extra units for generator-created units
-# on its own, so elements/core/initramfs.bst names both paths in install_items+=. Being
+# on its own, so elements/core/initramfs.bst names all three paths in install_items+=. Being
 # staged in the rootfs alone would be invisible.
 #
 # See docs/skills/fido2.md § gpt-auto-generator owns the root's crypt options, and #250.
@@ -44,6 +47,9 @@ config:
 
     install -Dm644 krytis-fido2-root-unlock.service \
         "%{install-root}%{indep-libdir}/systemd/system/krytis-fido2-root-unlock.service"
+
+    install -Dm755 krytis-fido2-root-unlock \
+        "%{install-root}%{libexecdir}/krytis-fido2-root-unlock"
   - "%{install-extra}"
 
 sources:

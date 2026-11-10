@@ -1383,7 +1383,7 @@ Expected: the FIDO2 switch is visible and (if a key is detected) defaulted on; i
 
 - [ ] **Step 4: Reboot the installed disk and confirm boot behavior**
 
-Expected: boot unlocks the root with a FIDO2 touch. #250, the boot-time race this plan was written around, closed on 2026-08-12, and `krytis-fido2-root-unlock.service` now handles root unlock. A passphrase prompt is no longer the accepted failure mode. It means a regression, or a slot enrolled with a PIN, which a headless boot cannot answer (#1058, so enroll touch-only). Either way, confirm the passphrase fallback still unlocks.
+Expected: boot unlocks the root with a FIDO2 touch. #250, the boot-time race this plan was written around, closed on 2026-08-12, and `krytis-fido2-root-unlock.service` now handles root unlock. A passphrase prompt is no longer the accepted failure mode. It means a regression, or a slot enrolled with a PIN on an image older than #1058, whose headless boot cannot answer it. Since #1058 the boot asks for the PIN, and #1058 decided to keep it, so installer enrollment should not force touch-only either. Either way, confirm the passphrase fallback still unlocks.
 
 - [ ] **Step 5: Record the result**
 
