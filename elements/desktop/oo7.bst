@@ -94,7 +94,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: refs/heads/main
-  ref: v0.6.0-alpha-316-gc08174562e3ba041b58d957d94c88ff97dcaab0a
+  ref: v0.6.0-alpha-321-g90913883d1d92af635d915d34928ee1bc8536a9d
 
 - kind: cargo2
   url: crates:crates
