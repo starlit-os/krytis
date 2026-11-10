@@ -483,6 +483,18 @@ What had to change around it:
   (`import_environment()` in `src/main.rs`), and `files/niri/config.kdl` adds
   `XDG_SESSION_DESKTOP` for its own children. The one thing niri loses is
   `XDG_SESSION_DESKTOP=niri` in the user manager, which niri never imported itself.
+- **Umbriel needs `WLR_RENDERER_ALLOW_SOFTWARE=1` on machines without a GPU driver.**
+  Found on the first `iso-boot-live` run (2026-11-10). In a VM with no virgl, wlroots finds
+  only llvmpipe and refuses it: `[render/egl.c:325] Software rendering detected, please use
+  the WLR_RENDERER_ALLOW_SOFTWARE environment variable to proceed`, then umbriel logs
+  `failed to create fx_renderer`, `umbriel.service` exits 1, and greetd shows the greeter
+  instead of the live session. niri (smithay) has no such check, so it ran on llvmpipe
+  silently. The variable is in `environment.d/90-krytis-session.conf`, which feeds the user
+  manager that `umbriel.service` runs under. It only lets wlroots accept a software
+  renderer, it never picks one, so real GPUs are unaffected. With it set, the same VM
+  reached an Umbriel session with noctalia and `xdg-desktop-portal-umbriel` running.
+  `compositor-smoke --shipped-config` passed on the same head, so it is no guard for this;
+  `iso-boot-live` is.
 - **xwayland-satellite runs only under niri.** Its user unit is
   `WantedBy=graphical-session.target`, which Umbriel binds too. An `ExecCondition`
   on `XDG_CURRENT_DESKTOP` keeps it from starting a second X server next to
@@ -1392,6 +1404,7 @@ Toolkit hints go in **`environment.d/`** only, never `/etc/environment`:
 | `QT_WAYLAND_FORCE_DPI` | `physical` | Qt DPI from physical display |
 | `ELECTRON_OZONE_PLATFORM_HINT` | `auto` | Electron native Wayland via ozone |
 | `_JAVA_AWT_WM_NONREPARENTING` | `1` | Java AWT apps render correctly on Wayland |
+| `WLR_RENDERER_ALLOW_SOFTWARE` | `1` | Lets umbriel (wlroots) start on llvmpipe in a VM without a GPU driver; see § Umbriel is the default session (#1566) |
 
 `XDG_CURRENT_DESKTOP` and `XDG_SESSION_DESKTOP` used to be here too, set to `niri`, and in
 `/etc/environment`. #1566 dropped them, because an image-wide value is wrong for every
