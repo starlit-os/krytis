@@ -475,7 +475,8 @@ gap was found later; #181's own table adds an Access column for each candidate.
 | xdg-desktop-portal-xapp | yes | – | – | **links `gtk+-3.0`** (`src/meson.build`), so it is ruled out |
 | xdg-desktop-portal-kde | yes | yes | yes | Qt6 + KF6 closure and Qt-styled dialogs; measure the closure with `docs/skills/bst.md` § Survey the reverse-dep set before assuming a junction library is "already there" |
 | xdg-desktop-portal-dde | yes | yes | – | Qt6 + Deepin libraries; likely the same objection as KDE |
-| luminous, cosmic, wlr, hyprland, gtk4 (AUR git) | – | – | – | none of the three |
+| luminous, cosmic, wlr, hyprland | – | – | – | none of the three |
+| xdg-desktop-portal-gtk4 ([JohnRTitor's fork](https://github.com/JohnRTitor/xdg-desktop-portal-gtk4), which the AUR `-git` package builds) | yes | yes | yes | Rust + GTK4; also implements Access. A four-feature build (`access,email,inhibit,notification`) works. Its Notification fixes (JohnRTitor/xdg-desktop-portal-gtk4#1) were merged 2026-11-10 and released in `v1.6.0`, which satisfies #181's adoption test, so krytis would package upstream directly with no fork. (The old "none of the three" verdict described mahkoh's original FileChooser-only repository.) |
 | xdg-desktop-portal-umbriel (noctalia-dev, already shipped) | not yet | not yet | – | these two would sit naturally next to its ScreenCast/Screenshot; proposing that upstream needs a go-ahead (Upstream Gate) |
 | a small krytis-owned backend | bridge to `org.freedesktop.ScreenSaver` | bridge to `org.freedesktop.Notifications` | optional | new code, e.g. Rust with ashpd's backend API. This is exactly what xdp-gtk does for the two, minus GTK. |
 
