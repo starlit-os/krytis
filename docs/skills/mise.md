@@ -1408,9 +1408,11 @@ Run the root step once, then iterate unprivileged: `generate-disk --disk /var/tm
 followed by `--reuse-disk /var/tmp/<name>.raw` on each test. Each test copies the disk or
 boots it without installing, so one install serves `boot-test` and `oomd-test` alike.
 
-The same applies to commit signing: `env -u SSH_AUTH_SOCK git commit` in a pty, with the
-human touching the key when asked (see [`workflow.md`](workflow.md) § `agent refused
-operation` is a missed touch window, not a broken setup).
+Commit signing does **not** need any of this. `env -u SSH_AUTH_SOCK git commit` asks for a
+key touch only, never a PIN, so it runs from the agent's ordinary shell with no pty and no
+Rex tab. The human only has to be at the key when it blinks (see [`workflow.md`](workflow.md)
+§ `agent refused operation` is a missed touch window, not a broken setup). Opening a visible
+tab just to commit is wasted ceremony; the maintainer confirmed this 2026-11-10.
 
 ## `boot-test` provisions the guest with systemd credentials, not disk edits
 
