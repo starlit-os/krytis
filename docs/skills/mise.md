@@ -1910,7 +1910,44 @@ The container path doesn't see the host's `~/.config` at all, so its only settin
 the generated ones. CI sets the quota explicitly where it matters: `publish.yml` keeps
 the old 50G on the hosted runner, and `build-changed.yml` sets 200G on the VPS.
 
-A full fdsdk bootstrap from a cold cache needs ~50G. If the disk itself is low (check `df -h ~/.cache/buildstream`), run `podman system prune --all --force` first — old krytis build images accumulate quickly and can consume hundreds of GB.
+A full fdsdk bootstrap from a cold cache needs ~50G. When the disk itself is low, check
+`df -h /var` first. The error comes from that 5% reserve, not from the size of the
+cache: on a 930G `/var`, casd refuses to commit once less than ~46.5G is free. That is
+`bst.md` § Reclaiming disk when a build hits "Insufficient storage quota". Free space
+with `mise run clean-cache` (`--dry-run` first), **not** `podman system prune --all`.
+`--all` removes every image no container is using, tagged ones included, so it would
+also delete `localhost/krytis:latest` and `:sealed`.
+
+### Run `clean-cache` between full verification rounds
+
+A full verification round leaves about 40G behind. A round here means `build`,
+`boot-test`, `seal-uki`, `build-iso --debug`, `iso-boot-live` and `iso-install-test`.
+What it leaves:
+
+- the superseded `krytis:latest`, `:sealed` and `:sealed-base` images, now untagged, at
+  ~7G each
+- the `build-iso` intermediates
+- `output/krytis-live.iso`, ~7G
+- `/var/tmp/krytis-install.img`, up to its 64G sparse size
+
+The 46.5G reserve sits on top of all that. On a 930G `/var` that was 92% full at the
+start, one round was all that fit. The **second** round's `build` then failed in
+`oci/krytis/image.bst` with `Insufficient storage quota`, after the gates had passed
+on the first (2026-11-10, stack 1581). Before starting another round:
+
+```bash
+mise run clean-cache --min-age 0   # dangling images, build scratch, VM scratch no running qemu holds
+rm -f output/krytis-live.iso       # clean-cache doesn't touch output/; build-iso writes a new one
+df -h /var                         # want well over 46.5G + ~40G free
+```
+
+`--min-age 0` is needed because the default `24` skips VM scratch that is only minutes
+old, which is exactly what the previous round left. The open-in-a-running-process guard
+still protects a VM that is still up. Stop any `iso-boot-live` VM first: `e2e_monitor
+<sock> quit` from `scripts/e2e-lib.sh`. clean-cache also refuses to run while a
+`buildah` or `bst` process is live. A verify script that was interrupted mid-`build-iso`
+can leave its `buildah from oci-archive:…` running. Check with `pgrep -af buildah` and
+end that process first.
 
 ## Fish vendor_conf.d load order
 
