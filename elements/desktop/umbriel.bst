@@ -1,7 +1,8 @@
-# Umbriel -- wlroots-based Wayland compositor built by the noctalia-dev team,
-# additive/opt-in alongside desktop/niri.bst (design decision: #774, tracked
-# implementation: #775). Ships as a second selectable greetd session; niri
-# remains the default.
+# Umbriel -- wlroots-based Wayland compositor built by the noctalia-dev team.
+# Added opt-in alongside desktop/niri.bst (design decision: #774, tracked
+# implementation: #775), and the default session since #1566: the greeter
+# preselects it where no session is saved, and the live ISO autologins into
+# it. niri stays selectable until its removal (#1567).
 #
 # umbrielfx (Umbriel's own hard fork of SceneFX -- scene graph + GLES2
 # renderer) builds in-tree via `subdir('umbrielfx')` in meson.build as a

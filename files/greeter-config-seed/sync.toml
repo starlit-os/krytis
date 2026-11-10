@@ -1,0 +1,9 @@
+# noctalia-greeter sync.toml, seeded once to /var/lib/noctalia-greeter/sync.toml
+# by greeter-config-seed.service, only when the greeter has no saved session
+# (#1566). The greeter owns this file afterwards and rewrites it after every
+# login, keeping whatever session the user picked.
+#
+# "Umbriel" is umbriel.desktop's Name=; noctalia-greeter matches it, ignoring
+# case, against each session's name and then its desktop id.
+[session]
+last = "Umbriel"

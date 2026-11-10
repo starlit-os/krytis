@@ -5,7 +5,7 @@
 # elements/core/gnome-disk-utility.bst so that one meson option can be flipped:
 # -Dgsd_plugin=false, which drops the gnome-settings-daemon notification
 # plug-in and with it g-s-d's entire closure (nine elements krytis can never
-# run under niri — see the element header).
+# run under niri or umbriel — see the element header).
 #
 # A mirrored element rots silently: bumping the gnome-build-meta junction moves
 # upstream's tarball and dependency list while the copy keeps building the old

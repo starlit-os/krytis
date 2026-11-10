@@ -22,6 +22,12 @@ kind: manual
 # rules). Seeding a real config.kdl here means noctalia's template hits
 # its "already exists" branch instead, which only *appends* the include
 # line -- additive, not destructive.
+#
+# Since #1566 files/noctalia-skel/settings.toml lists "umbriel" instead of
+# "niri", so new accounts don't run the niri template at all and niri sessions
+# go unthemed by noctalia. The seed still matters for accounts that enable
+# the niri template themselves, and for older accounts whose settings.toml
+# still lists it. It goes away with niri (#1567).
 
 depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst

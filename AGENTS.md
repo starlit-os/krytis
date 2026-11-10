@@ -2,7 +2,7 @@
 
 Krytis is a [BuildStream 2](https://buildstream.build/) project producing a bootc OCI desktop image built on [Freedesktop SDK](https://gitlab.com/freedesktop-sdk/freedesktop-sdk). No RPMs. No dnf. No container package overlays. BST elements only.
 
-Stack: **niri** (Wayland compositor) + **greetd** + **noctalia-greeter** + **bootc**.
+Stack: **Umbriel** (Wayland compositor; niri still ships as a second session until #1567) + **greetd** + **noctalia-greeter** + **bootc**.
 
 Load **[docs/SKILL.md](docs/SKILL.md)** for the full reference skill tree. Only load docs relevant to your task.
 

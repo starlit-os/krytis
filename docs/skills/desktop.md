@@ -1,6 +1,6 @@
 # Desktop Stack Reference
 
-Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU driver configuration.
+Load when working with greetd, noctalia-greeter, wlroots, Umbriel, niri, or the mesa GPU driver configuration.
 
 ## Component Map
 
@@ -9,8 +9,8 @@ Load when working with greetd, noctalia-greeter, wlroots, niri, or the mesa GPU 
 | `greetd` | `desktop/greetd.bst` | Login session manager; ships the systemd unit |
 | `noctalia-greeter-compositor` | `desktop/noctalia-greeter.bst` | wlroots compositor run by greetd |
 | `noctalia-greeter` | `desktop/noctalia-greeter.bst` | Wayland client (UI) spawned by the compositor |
-| `niri` | `desktop/niri.bst` | User session compositor (Rust/smithay, not wlroots) |
-| `umbriel` | `desktop/umbriel.bst` | Second, opt-in user session compositor (C++/wlroots) — see below |
+| `umbriel` | `desktop/umbriel.bst` | Default user session compositor (C++/wlroots) since #1566 — see below |
+| `niri` | `desktop/niri.bst` | Second user session compositor (Rust/smithay, not wlroots), kept for one release as the rollback; removal is #1567 |
 | `xdg-desktop-portal-umbriel` | `desktop/xdg-desktop-portal-umbriel.bst` | Screencast/Screenshot portal backend for umbriel |
 | `wlroots.so` | `desktop/wlroots.bst` | Shared by noctalia-greeter-compositor |
 
@@ -19,9 +19,10 @@ Config (PAM, greetd.toml, sysusers, tmpfiles, systemd drop-ins): `config/greetd-
 
 `noctalia-dev/umbriel` — wlroots-based (C++23), scrolling/dwindle/master
 layouts, built by the same team as `desktop/noctalia.bst` and described
-upstream as "Noctalia's compositor side". Decision (#774): **additive**,
-not a niri replacement — ships as a second selectable greetd session
-(`umbriel.desktop` next to `niri.desktop`), niri stays the default.
+upstream as "Noctalia's compositor side". It came in additive (#774), as a
+second selectable greetd session (`umbriel.desktop` next to `niri.desktop`),
+and became the default session in #1566. See § Umbriel is the default
+session (#1566) below for what "default" means and what changed with it.
 
 Dependency overlap with the existing niri/noctalia stack is unusually high:
 `desktop/wlroots.bst` is already pinned to `0.20.2`, inside umbriel's
@@ -296,8 +297,11 @@ podman run --rm -v "$PWD/files/umbriel:/etc/xdg/umbriel:ro,Z" \
   `XDG_SESSION_TYPE`.** umbriel owns them and refuses overrides (upstream
   `docs/user/configuration.md` § Environment). niri's `environment` block sets
   all three; porting them is not merely redundant, it is rejected. umbriel
-  publishes `XDG_CURRENT_DESKTOP=Umbriel` itself, which is what selects
-  `umbriel-portals.conf`: krytis's `/etc/xdg` copy (`default=umbriel;gnome;gtk;`, #1029)
+  publishes `XDG_CURRENT_DESKTOP=umbriel` itself (lower case: `setenv()` in
+  `src/server/server.cpp`; `DesktopNames=Umbriel` in `umbriel.desktop` is not
+  what reaches the session), which is what selects `umbriel-portals.conf`
+  (xdg-desktop-portal lower-cases desktop names before the lookup, so the
+  `Umbriel` used in `umbriel-portal-smoke` selects the same file): krytis's `/etc/xdg` copy (`default=umbriel;gnome;gtk;`, #1029)
   ahead of `xdg-desktop-portal-umbriel`'s own (`default=umbriel;gtk`). The other ten
   variables port unchanged.
 - **`general.autostart` entries are command *lines*, not argv.** Verified in a
@@ -435,6 +439,63 @@ independently — the portal is a separate, younger repo). Both use
 `kind: git_repo`, `track: refs/heads/main` (same branch-tracking pattern as
 `desktop/stb.bst` below) until upstream cuts a first release each, then
 switch to `track: v*`.
+
+## Umbriel is the default session (#1566)
+
+"Default" means three things, decided by the owner on 2026-11-09 and each with its
+own mechanism. niri stays in the image and in the greeter's picker for one release,
+as the rollback. Removing it is #1567.
+
+- **The greeter preselects Umbriel, it doesn't pin it.** A saved session choice always
+  wins. noctalia-greeter v1.7.0 resolves the initial session as `--session`, then
+  `[session] default` in `greeter.toml`, then `[session] last` in `sync.toml`
+  (`resolveInitialSessionName()` in `src/greeter/greeter_preferences.cpp`). The first
+  two override a saved choice, so krytis uses neither. Instead,
+  `config/greeter-config-seed.bst` seeds `/var/lib/noctalia-greeter/sync.toml` with
+  `[session] last = "Umbriel"`. With nothing saved at all, the greeter would take
+  the first session sorted by lower-cased name, which is niri. The name is matched
+  ignoring case against each session's `Name=` and then its desktop id
+  (`findSessionIndex()`).
+- **The seed must not run over a choice the greeter hasn't migrated yet.** v1.7.0
+  moved the last session out of `greeter.toml` into `sync.toml`, and it migrates
+  from two legacy places, `state.toml` (the old name of `sync.toml`) and a
+  `[session] last` key in `greeter.toml`. But it migrates only when `sync.toml`
+  does not exist (`migrateLegacyRuntimeKeysToSync()`). A seed written next to either
+  legacy file would therefore make the greeter skip the migration and replace a
+  saved niri with Umbriel. `greeter-config-seed.sh` seeds `sync.toml` only when none
+  of the three holds a session. `mise run greeter-config-seed-test` covers the seven
+  starting states.
+- **The live ISO autologins into Umbriel.** `[initial_session] command =
+  "start-umbriel"`, the same launcher upstream's `umbriel.desktop` names. See
+  `docs/skills/krytis-live-config.md` § The live session autologins into Umbriel,
+  not niri (#1566).
+
+What had to change around it:
+
+- **No image-wide `XDG_CURRENT_DESKTOP` or `XDG_SESSION_DESKTOP`.**
+  `config/greetd-config.bst` used to set `niri` in both `/etc/environment` and
+  `environment.d/90-krytis-session.conf`. That reached Umbriel sessions: pam_env
+  puts `/etc/environment` into the login environment, `start-umbriel` imports the
+  whole login environment into the user manager before `umbriel.service` starts,
+  and environment.d seeds the manager when it starts. Each compositor now sets its
+  own. Umbriel `setenv()`s `umbriel` and imports it. niri sets
+  `XDG_CURRENT_DESKTOP=niri` as a session and imports it
+  (`import_environment()` in `src/main.rs`), and `files/niri/config.kdl` adds
+  `XDG_SESSION_DESKTOP` for its own children. The one thing niri loses is
+  `XDG_SESSION_DESKTOP=niri` in the user manager, which niri never imported itself.
+- **xwayland-satellite runs only under niri.** Its user unit is
+  `WantedBy=graphical-session.target`, which Umbriel binds too. An `ExecCondition`
+  on `XDG_CURRENT_DESKTOP` keeps it from starting a second X server next to
+  Umbriel's own Xwayland (#1040).
+- **The noctalia skel themes Umbriel, not niri.** `files/noctalia-skel/settings.toml`
+  lists the `umbriel` template instead of `niri`. `config/umbriel-skel.bst` already
+  seeds the tier-1 config that template needs (#982).
+- **`scripts/krytis-diag`** collects `umbriel.service` and `umbriel-session.target`
+  as well as niri's logs.
+
+The owner accepted the remaining Umbriel gaps against niri: no Background or
+Wallpaper portal (#1055), and the keybind gaps in § Capability gaps — no umbriel
+equivalent exists.
 
 ## noctalia-greeter source and config
 
@@ -625,16 +686,21 @@ the texture load in `GreeterSurface::initialize()` and the layout allocation —
 better than the old `no-brand-logo.patch` it replaced.
 
 The greeter reads its config from `/var/lib/noctalia-greeter/greeter.toml`
-(`packageConfPath()` → `syncedDataDirectory() / "greeter.toml"`). This is **mutable runtime
-state** — `saveGreeterPreferences()` does read-modify-write on it to persist the user's
-last session and color scheme. With no `greeter.toml` at all the greeter uses built-in
-defaults (`hideLogo = false`), so the logo shows — an absent file does not hide it.
+(`packageConfPath()` → `syncedDataDirectory() / "greeter.toml"`). Since v1.7.0 that file
+is declarative: the greeter never writes it, and keeps its own state (last session,
+scheme, output layout) in `sync.toml` next to it. Before v1.7.0 `greeter.toml` held that
+state too, and the greeter still migrates it out on first run (§ Umbriel is the default
+session (#1566)). With no `greeter.toml` at all the greeter uses built-in defaults
+(`hideLogo = false`), so the logo shows — an absent file does not hide it.
 
-Seeding is done by `config/greeter-config-seed.bst` (closes #296): a read-only template at
-`/usr/share/noctalia-greeter/greeter.toml` (`hide_logo = true`) plus a oneshot
-`greeter-config-seed.service` gated on `ConditionPathExists=!/var/lib/noctalia-greeter/greeter.toml`
-that `install -D -o greeter -g greeter`s the template into place once, then never runs
-again. The unit orders `After=systemd-tmpfiles-setup.service systemd-sysusers.service`
+Seeding is done by `config/greeter-config-seed.bst` (closes #296): read-only templates at
+`/usr/share/noctalia-greeter/greeter.toml` (`hide_logo = true`) and, since #1566,
+`/usr/share/noctalia-greeter/sync.toml` (`[session] last = "Umbriel"`), plus a oneshot
+`greeter-config-seed.service` that runs while either target is missing
+(`ConditionPathExists=|!…/greeter.toml` and `|!…/sync.toml`, an OR). The script
+`install -D -o greeter -g greeter`s each missing file into place and never overwrites one;
+`sync.toml` additionally waits for the legacy-state check described in § Umbriel is the
+default session (#1566). The unit orders `After=systemd-tmpfiles-setup.service systemd-sysusers.service`
 (the `greeter` user comes from `greetd-config.bst`'s sysusers.d; the tmpfiles `d` line for
 `/var/lib/noctalia-greeter` comes from upstream noctalia-greeter itself since v1.1.0) and
 `Before=greetd.service` so the seed lands before the greeter's first read. Pattern notes:
@@ -1315,8 +1381,6 @@ Toolkit hints go in **`environment.d/`** only, never `/etc/environment`:
 | Variable | Value | Effect |
 |---|---|---|
 | `XDG_SESSION_TYPE` | `wayland` | Also in `/etc/environment` — logind/pam_systemd critical |
-| `XDG_CURRENT_DESKTOP` | `niri` | Also in `/etc/environment` — desktop identification |
-| `XDG_SESSION_DESKTOP` | `niri` | Session desktop for xdg-desktop-portal backend selection |
 | `GSK_RENDERER` | `vulkan` | GTK4 scene-kit uses Vulkan renderer (radv via compat-vulkan-link) |
 | `GDK_BACKEND` | `wayland` | Forces GDK Wayland backend for GTK3 apps (GTK4 auto-detects) |
 | `EGL_PLATFORM` | `wayland` | EGL platform hint for Wayland |
@@ -1329,6 +1393,16 @@ Toolkit hints go in **`environment.d/`** only, never `/etc/environment`:
 | `ELECTRON_OZONE_PLATFORM_HINT` | `auto` | Electron native Wayland via ozone |
 | `_JAVA_AWT_WM_NONREPARENTING` | `1` | Java AWT apps render correctly on Wayland |
 
+`XDG_CURRENT_DESKTOP` and `XDG_SESSION_DESKTOP` used to be here too, set to `niri`, and in
+`/etc/environment`. #1566 dropped them, because an image-wide value is wrong for every
+session but one and it reached Umbriel sessions (§ Umbriel is the default session (#1566)).
+Each compositor now imports its own name into the user manager before
+`graphical-session.target`. The trade-off is the one the "Why not rely on niri's
+`environment {}` block alone?" paragraph above describes: a service D-Bus-activated *before*
+that import now sees no desktop name instead of `niri`. xdg-desktop-portal is the one that
+cares. It isn't activated that early in practice: its first callers (noctalia, apps) start
+after `graphical-session.target`.
+
 **Do not set `SDL_VIDEODRIVER=wayland`** in `environment.d` or `/etc/environment`. SDL2 apps break when this is forced: SDL2's own Wayland auto-detection (`SDL_VIDEODRIVER` unset) is more reliable than overriding it unconditionally. Setting it caused regressions in SDL2 apps that need fallback paths.
 
 ### XDG autostart runs, but `OnlyShowIn=GNOME` entries never do
@@ -1338,14 +1412,14 @@ Toolkit hints go in **`environment.d/`** only, never `/etc/environment`:
 Both halves matter when judging whether a package's `/etc/xdg/autostart/*.desktop` will do
 anything on krytis, and each is easy to get backwards:
 
-- **Autostart is processed.** niri's `niri.service` carries
-  `Wants=xdg-desktop-autostart.target` / `Before=xdg-desktop-autostart.target`, so
+- **Autostart is processed.** niri's `niri.service` and Umbriel's `umbriel-session.target`
+  both carry `Wants=xdg-desktop-autostart.target` / `Before=xdg-desktop-autostart.target`, so
   `systemd-xdg-autostart-generator` turns every `/etc/xdg/autostart` entry into a user unit
   on each session. This is not GNOME-only plumbing that krytis skipped — an entry shipped by
   any element (`sdk/at-spi2-core.bst`, `core-deps/localsearch.bst`,
   `components/xdg-user-dirs.bst` all ship one today) will be started.
 - **`OnlyShowIn`/`NotShowIn` still filter.** The generator translates them into conditions on
-  `XDG_CURRENT_DESKTOP`, which is `niri` here (table above). So a GNOME-scoped entry is
+  `XDG_CURRENT_DESKTOP`, which is `umbriel` or `niri` here, set by the compositor. So a GNOME-scoped entry is
   generated and then skipped — the binary behind it is dead weight, no matter how
   desktop-agnostic the binary itself is.
 

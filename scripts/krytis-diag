@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# krytis-diag — collect niri/greetd session failure diagnostics
+# krytis-diag — collect Umbriel/niri/greetd session failure diagnostics
 #
-# Run from tty2 (Ctrl+Alt+F2) after a failed or hung niri session.
+# Run from tty2 (Ctrl+Alt+F2) after a failed or hung desktop session.
 # Saves output to ~/krytis-diag-YYYYMMDD-HHMMSS.txt and also prints to
 # the terminal.
 #
@@ -70,6 +70,18 @@ if [ -r /var/log/noctalia-greeter.log ]; then
 else
   try_sudo cat /var/log/noctalia-greeter.log
 fi
+
+# ── Umbriel (the default session, #1566) ────────────────────────────────────
+sep "UMBRIEL SESSION LOG — user journal (this boot)"
+# umbriel.service runs the compositor; umbriel-session.target is what pulls
+# in graphical-session.target, so its log shows a session that never started.
+journalctl --user -u umbriel.service -u umbriel-session.target -b --no-pager 2>/dev/null \
+  || echo "(user journal not available — Umbriel logs go here when session is active)"
+
+sep "UMBRIEL SESSION STATE"
+# `status` exits 3 for an inactive unit, so its exit code says nothing here;
+# print whatever it says, errors included.
+systemctl --user --no-pager status umbriel.service umbriel-session.target 2>&1 || :
 
 # ── niri ────────────────────────────────────────────────────────────────────
 sep "NIRI SESSION LOG — system journal (this boot)"

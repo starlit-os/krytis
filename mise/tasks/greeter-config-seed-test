@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#MISE description="Unit-test greeter-config-seed.sh: Umbriel is preselected only where the greeter has no saved session (#1566)"
+
+# Runs files/greeter-config-seed/greeter-config-seed.sh against a temp state
+# directory, once per starting state, and checks which files it writes. What it
+# can't show is noctalia-greeter actually reading the seeded sync.toml; that is
+# the installed-system check in #1566 (a fresh install's greeter preselects
+# Umbriel, and an account whose saved session is niri keeps it).
+
+set -euo pipefail
+
+SCRIPT=files/greeter-config-seed/greeter-config-seed.sh
+TEMPLATES=files/greeter-config-seed
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+FAIL=0
+# check <name> <setup> <want sync.toml: umbriel|kept|absent> <want greeter.toml: template|kept>
+check() {
+    local name=$1 setup=$2 want_sync=$3 want_conf=$4
+    local d="$WORK/$name"; mkdir -p "$d"
+    (cd "$d" && eval "$setup")
+    local before_sync="" before_conf=""
+    [ -f "$d/sync.toml" ] && before_sync=$(cat "$d/sync.toml")
+    [ -f "$d/greeter.toml" ] && before_conf=$(cat "$d/greeter.toml")
+    if ! KRYTIS_GREETER_STATE_DIR="$d" KRYTIS_GREETER_TEMPLATE_DIR="$TEMPLATES" \
+        KRYTIS_GREETER_NO_CHOWN=1 bash "$SCRIPT" >"$d.log" 2>&1; then
+        echo "FAIL  $name: script exited non-zero"; sed 's/^/      | /' "$d.log"; FAIL=1; return
+    fi
+    local got_sync got_conf
+    if [ ! -f "$d/sync.toml" ]; then got_sync=absent
+    elif [ -n "$before_sync" ] && [ "$(cat "$d/sync.toml")" = "$before_sync" ]; then got_sync=kept
+    elif cmp -s "$d/sync.toml" "$TEMPLATES/sync.toml"; then got_sync=umbriel
+    else got_sync=changed; fi
+    if [ -n "$before_conf" ] && [ "$(cat "$d/greeter.toml")" = "$before_conf" ]; then got_conf=kept
+    elif cmp -s "$d/greeter.toml" "$TEMPLATES/greeter.toml"; then got_conf=template
+    else got_conf=changed; fi
+    if [ "$got_sync" = "$want_sync" ] && [ "$got_conf" = "$want_conf" ]; then
+        echo "PASS  $name"
+    else
+        echo "FAIL  $name: sync.toml=$got_sync/$want_sync greeter.toml=$got_conf/$want_conf"
+        sed 's/^/      | /' "$d.log"; FAIL=1
+    fi
+}
+
+check fresh-install      ':'                                                          umbriel template
+check saved-niri         'printf "[session]\nlast = \"niri\"\n" >sync.toml'           kept    template
+check seeded-no-login    'printf "[appearance]\nhide_logo = true\n" >greeter.toml'    umbriel kept
+check legacy-state-toml  'printf "[session]\nlast = \"niri\"\n" >state.toml'          absent  template
+check legacy-conf-last   'printf "[appearance]\nhide_logo = true\n\n[session]\nlast = \"niri\"\n" >greeter.toml' absent kept
+check conf-other-last    'printf "[appearance]\nlast = \"x\"\n[session]\ndefault = \"\"\n" >greeter.toml'    umbriel kept
+check both-present       'printf "[session]\nlast = \"niri\"\n" >sync.toml; printf "[appearance]\nhide_logo = true\n" >greeter.toml' kept kept
+
+# The template must name the session the way umbriel.desktop does.
+if ! grep -qx 'last = "Umbriel"' "$TEMPLATES/sync.toml"; then
+    echo "FAIL  template: sync.toml does not set last = \"Umbriel\""; FAIL=1
+fi
+
+[ "$FAIL" -eq 0 ] && echo "==> greeter-config-seed-test passed" || exit 1

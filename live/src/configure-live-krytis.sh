@@ -6,11 +6,11 @@
 #
 # At this point the initramfs has already been replaced (by the Debian
 # initramfs-builder stage) with a dmsquash-live capable one.  This script
-# configures: live user, greetd autologin into niri, and passwordless sudo.
+# configures: live user, greetd autologin into Umbriel, and passwordless sudo.
 #
 # Krytis uses greetd + noctalia-greeter (not GDM).  The live session bypasses
 # the greeter entirely via greetd's initial_session, logging liveuser directly
-# into niri-session.
+# into an Umbriel session (start-umbriel, #1566).
 
 set -exo pipefail
 
@@ -139,12 +139,15 @@ EOF
 
 # ── Passwordless polkit for the live user ─────────────────────────────────────
 # The bootc-installer flatpak needs polkit authorization to run `bootc install`.
-# GNOME provides a polkit GUI agent via gnome-shell; niri ships none, so polkit
-# falls back to the text agent (pkttyagent), which fails in the Wayland session
-# with no controlling terminal:
+# The compositor is not where a polkit agent would come from: neither Umbriel
+# nor niri ships one. noctalia does (it registers as the session's agent,
+# docs/skills/desktop.md § noctalia runs as a user service), but its prompt
+# asks for liveuser's password and liveuser has none (`passwd --delete` above),
+# so there is nothing to type. Before noctalia's agent, polkit fell back to the
+# text agent (pkttyagent), which fails with no controlling terminal:
 #   Error creating textual authentication agent: Error opening current
 #   controlling terminal for the process ('/dev/tty'): No such device or address
-# Grant liveuser every polkit action without authentication so no agent is
+# Grant liveuser every polkit action without authentication so no prompt is
 # needed. Live-session only — installed systems never include this rule.
 mkdir -p /etc/polkit-1/rules.d
 cat > /etc/polkit-1/rules.d/49-live-nopasswd.rules <<'EOF'
@@ -188,14 +191,18 @@ ln -sf /dev/null /etc/systemd/system/systemd-firstboot.service
 
 # ── greetd autologin ──────────────────────────────────────────────────────────
 # Override /etc/greetd/config.toml (installed by greetd-config.bst) to add
-# initial_session so greetd auto-logs liveuser into niri without invoking
+# initial_session so greetd auto-logs liveuser into Umbriel without invoking
 # noctalia-greeter.
 #
 # WLR_RENDERER=pixman / WLR_NO_HARDWARE_CURSORS=1 are not needed for the
-# niri session itself — those env vars are required by cage (the greeter
-# compositor), not by niri.  niri handles its own renderer selection.
+# Umbriel session itself — those env vars are required by cage (the greeter
+# compositor), not by Umbriel, which picks its own renderer (GLES2 via
+# umbrielfx; desktop/wlroots.bst builds -Drenderers=gles2,vulkan for it).
 #
-# niri-session is installed by desktop/niri.bst at /usr/bin/niri-session.
+# start-umbriel is installed by desktop/umbriel.bst at /usr/bin/start-umbriel;
+# it is what upstream's data/umbriel.desktop runs (Exec=start-umbriel), so the
+# autologin starts the same session the greeter's "Umbriel" entry does. niri
+# stays in the image until #1567, but the live session no longer uses it.
 cat > /etc/greetd/config.toml <<'EOF'
 [terminal]
 vt = 1
@@ -205,7 +212,7 @@ command = "env WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 noctalia-greeter-se
 user = "greeter"
 
 [initial_session]
-command = "niri-session"
+command = "start-umbriel"
 user = "liveuser"
 EOF
 
@@ -310,7 +317,7 @@ recipe["tour"] = {
     "features": {
         "image": "/run/host/usr/share/bootc-installer/images/krytis-logo.png",
         "title": "What's the plan?",
-        "description": "Explore the niri desktop, test apps and workflows, and file issues. We iterate and improve."
+        "description": "Explore the Umbriel desktop, test apps and workflows, and file issues. We iterate and improve."
     },
     "community": {
         "image": "/run/host/usr/share/bootc-installer/images/krytis-logo.png",
@@ -375,8 +382,10 @@ cat > /usr/share/polkit-1/actions/org.bootcinstaller.Installer.policy << 'POLICY
 </policyconfig>
 POLICYEOF
 
-# Launchable desktop entry (niri does not run XDG autostart, so the user starts
-# it from the launcher; pass the recipe via the Flatpak sandbox host path).
+# Launchable desktop entry, deliberately not an autostart one: the session does
+# run XDG autostart (umbriel-session.target Wants=xdg-desktop-autostart.target),
+# but the installer should open when the user asks, from the launcher. The
+# recipe is passed via the Flatpak sandbox host path.
 mkdir -p /usr/share/applications
 cat > /usr/share/applications/krytis-installer.desktop << DTEOF
 [Desktop Entry]
