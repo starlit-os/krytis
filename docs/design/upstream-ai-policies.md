@@ -64,7 +64,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | fish-shell | `github.com/fish-shell/fish-shell` | fish-shell/fish-shell#8553 (conf.d order), `docs/skills/mise.md`. | Yes | **Ban.** "We do not accept contributions created with generative artificial intelligence tools", covering PRs, issues, comments and artwork. |
 | Pangolin CLI | `github.com/fosrl/cli` | `elements/core/pangolin-cli.bst` works around fosrl/cli#27. Tracked in #915. | Yes | AI allowed, but **disclosure is required** in the PR template and the bug form. A CLA goes in every PR body. |
 | niri | `github.com/niri-wm/niri` | niri-wm/niri#1966, niri-wm/niri#3587 and niri-wm/niri#823 (missing portals) shape `files/xdg-desktop-portal/niri-portals.conf`. | Yes | **Ban on creating anything with an LLM**: code, issues, comments or reviews. LLM translation is allowed if you attach the original. PR and issue checkboxes say "I did not use an LLM". |
-| xdg-desktop-portal-gtk4 (JohnRTitor fork) | `github.com/JohnRTitor/xdg-desktop-portal-gtk4` | JohnRTitor/xdg-desktop-portal-gtk4#1 (Notification fixes, opened by `kitten-lily` on 2026-11-03, open as of 2026-11-04), cited in #181 as a candidate backend. | No | No rule. The repo ships `.agents/AGENTS.md` coding rules for agents, so agent-assisted work is expected there. |
+| xdg-desktop-portal-gtk4 (JohnRTitor fork) | `github.com/JohnRTitor/xdg-desktop-portal-gtk4` | JohnRTitor/xdg-desktop-portal-gtk4#1 (Notification fixes, opened by `kitten-lily` on 2026-11-03, merged 2026-11-10 and released in v1.6.0), cited in #181 as a candidate backend. | No | No rule. The repo ships `.agents/AGENTS.md` coding rules for agents, so agent-assisted work is expected there. |
 | OpenRazer | `github.com/openrazer/openrazer` | Plan to carry openrazer/openrazer#2719 (#1224). | No | Nothing written. A maintainer thanked a contributor for disclosing AI use, and contributors disclose without being asked. |
 | polkit | `github.com/polkit-org/polkit` | polkit-org/polkit#704 (setuid-less pkexec) affects `elements/config/polkit-agent-sandbox.bst`. | Yes | AI allowed. **State the tool and its extent** in the PR or issue. The submitter is fully responsible. A large volume of generated content slows review. |
 | COSMIC | `github.com/pop-os/cosmic-epoch` | pop-os/cosmic-epoch#3453 (libsecret hangs without a prompter), `docs/design/secrets-service.md`. | Yes | **Pop!\_OS-wide ban**: no LLM content in issues or PRs, including code, comments and descriptions. A CI-enforced PR checkbox applies, and PRs without it are closed. |
@@ -361,9 +361,12 @@ nothing was found, so an absence is evidenced and not assumed.
   says nothing about disclosure, trailers or who opens PRs.
 - Issue and PR searches for AI, LLM, generated, Claude and Copilot found nothing. None of
   the last 100 `master` commits carries an AI trailer.
-- JohnRTitor/xdg-desktop-portal-gtk4#1 (2026-11-03) carries `Assisted-by: OpenAI Codex`
-  and had no reply as of 2026-11-04.
-- As of: `master` `8f88da61d3` (2026-10-02).
+- JohnRTitor/xdg-desktop-portal-gtk4#1 (2026-11-03) carries `Assisted-by: OpenAI Codex`.
+  The maintainer merged it on 2026-11-10 ("manually merged with the changes": the PR head
+  `560cecb` landed unchanged, followed by two notification hardening commits of their own)
+  and shipped it in `v1.6.0`. The trailer drew no comment, so disclosed agent-assisted PRs
+  are accepted in practice.
+- As of: `master` `18560f6` (2026-11-10).
 
 ### OpenRazer
 
