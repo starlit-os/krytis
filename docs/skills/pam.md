@@ -591,12 +591,11 @@ object path from the keyring *label*, giving `/org/freedesktop/secrets/collectio
 capital L. **0.7.0.alpha uses lowercase `login`**, matching gnome-keyring, and logs
 `Setting up collection 'login' (alias: default)` at startup.
 
-**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks `refs/heads/main`, which
-is well past 0.7.0.alpha. Do not read its `ref:` as a version — the describe prefix is
-permanently `v0.6.0-alpha-*` because upstream's `0.7.0.alpha` is a lightweight tag that
-git-describe ignores (the element says so, and `docs/skills/bst.md` § The track job's PR
-title/version covers what that breaks). Ask the running system instead — this answers it
-whatever the pin says, and does not depend on journal retention:
+**krytis is on the lowercase one.** `elements/desktop/oo7.bst` tracks oo7's release tags
+(0.7.1 as of 2026-11-10; it followed `refs/heads/main` before that). Images built while it
+tracked main have refs that read `v0.6.0-alpha-<n>-g<sha>`, which is not a version (see
+`docs/skills/bst.md` § The track job's PR title/version). Ask the running system instead.
+This works whatever the pin says, and it does not depend on journal retention:
 
 ```console
 $ busctl --user --list tree org.freedesktop.secrets | grep collection/

@@ -1662,9 +1662,15 @@ time this happens.)
 `bst source track` lists the remote's refs, keeps those matching `refs/(heads|tags)/<track>`
 minus any matching an `exclude:` pattern, and takes `max(…, key=version_sort_key)`
 (`buildstream_plugins_community/sources/_git_utils.py` `resolve_ref`). The key splits each
-ref into letter and digit runs and sorts letters *below* digits. So `v1.3.0-rc.1` loses to
-`v1.3.0`, but it beats `v1.2.1`. Once upstream tags the next release's first pre-release, an
-unguarded glob tracks to it. That is how #1323 bumped xdg-utils to `v1.3.0-rc.1`.
+ref into letter and digit runs and sorts letters *below* digits, but only when they meet at
+the same position. So `1.beta` loses to `1.0`. A pre-release with a suffix *after* the full
+version is a different case. `v1.3.0` is a prefix of `v1.3.0-rc.1`, and Python ranks a list
+below any longer list it is a prefix of. So **`v1.3.0-rc.1` beats `v1.3.0`** as well as
+`v1.2.1`, and only `v1.3.1` outranks it. (This section said the opposite until 2026-11-10.
+Checked against the pinned 2.5.0 `version_sort_key` with oo7's `0.8.0.beta` vs `0.8.0`.)
+Once upstream tags the next release's first pre-release, an unguarded glob tracks to it,
+and it stays there after the stable release ships. That is how #1323 bumped xdg-utils to
+`v1.3.0-rc.1`.
 
 - **A narrower glob doesn't help.** Patterns go through `fnmatch.translate`, where `*` spans
   `-` and `.`. `v*.*.*`, `*.*.*` and `v[0-9]*.[0-9]*.[0-9]*` all match `-rc.1`, `.pre1` and
@@ -1681,6 +1687,15 @@ freedesktop-sdk tags `26.08beta.4` and `26.08rc.2`, and Solaar `1.1.20rc3`. Extr
 `V_1_2PRE17`); sudo-rs `'*-dev*'`; vainfo `'*pre*'`. Mesa, Solaar and ddcutil had their own
 lists before this and kept them. Branch-tracking sources (`refs/heads/main`, `master`,
 `gnome-51`) and single-tag pins (`efibootmgr` `18`) need none.
+
+**The one deliberate exception is `desktop/oo7.bst` (2026-11-10).** It tracks
+`'[0-9]*.[0-9]*.[0-9]*'` with no pre-release excludes, because the maintainer chose to
+follow oo7's `x.y.0.alpha`/`.beta` tags for now. The price is the sort quirk above.
+After upstream tags `x.y.0` stable, track keeps returning `x.y.0.beta`. A hand-bumped `ref:`
+would be reverted by the next track. The fix is to add `'x.y.0.*'` to that element's
+`exclude:` and re-track. The leading digit keeps out upstream's stray `v0.6.0-alpha` tag.
+If the exception is dropped, add the standard patterns. oo7 has used `.alpha`, `.beta` and
+`-beta.3` (`0.1.0-beta.3`).
 
 **Junction mirrors are the exception: leave their `track:` exactly as upstream wrote it,
 with no added `exclude:`.** `elements/overrides/{btrfs-progs,libdisplay-info,libdecor,libportal,python3-pil}.bst`
@@ -1960,14 +1975,16 @@ Three constraints on any change here:
   too. GitHub runners ship GNU grep, so this only bites when reproducing the step locally.
 - **A version that did not change must not be printed.** The parse can succeed and still be
   wrong: a branch-tracked element whose nearest *annotated* tag is stale describes to that
-  tag forever. `desktop/oo7.bst` (`track: refs/heads/main`) reads
-  `v0.6.0-alpha-<n>-g<sha>` on every ref, because upstream's `0.7.0.alpha` is a **lightweight**
-  tag and `git describe` ignores those unless asked. Both sides of a bump then yield the same
-  string, so the body rendered `` `v0.6.0-alpha` → `v0.6.0-alpha` `` on every oo7 PR — a row
-  asserting no change, on a PR that exists only because something changed, naming a version
-  upstream is long past. The title had guarded on `OLD_VER != NEW_VER` since #401; the
-  **Version** row did not. Both guard on it now, so the row appears only when it says
-  something, and `Commits`/`Compare` carry the real delta either way.
+  tag forever. `desktop/oo7.bst` hit this while it tracked `refs/heads/main` (until
+  2026-11-10). Every ref read `v0.6.0-alpha-<n>-g<sha>`, because upstream's `0.7.0.alpha` is a
+  **lightweight** tag and `git describe` ignores those unless asked. Both sides of a bump then
+  yielded the same string, so the body rendered `` `v0.6.0-alpha` → `v0.6.0-alpha` `` on every
+  oo7 PR — a row asserting no change, on a PR that exists only because something changed,
+  naming a version upstream is long past. The title had guarded on `OLD_VER != NEW_VER` since
+  #401; the **Version** row did not. Both guard on it now, so the row appears only when it
+  says something, and `Commits`/`Compare` carry the real delta either way. Tracking a tag
+  glob avoids the problem entirely: the plugin names the ref after the matched tag, even a
+  lightweight one, so oo7 now reads `0.7.1-0-g4251a43…`.
 
 ### Verify a track: glob only matches the intended release channel
 

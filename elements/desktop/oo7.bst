@@ -78,11 +78,21 @@ config:
 sources:
 - kind: git_repo
   url: github:linux-credentials/oo7.git
-  # Tracking main, not tags: no tag yet carries the explicit libpam link in
-  # pam/build.rs (oo7#546) or the session-detection cascade below. Switch back
-  # to a tag glob once one exists past f6a8624a. The describe prefix reads
-  # v0.6.0-alpha-* because 0.7.0.alpha is a lightweight tag and git-describe
-  # ignores it; the trailing sha is the real pin.
+  # Tracks release tags, pre-releases INCLUDED (a deliberate exception to
+  # docs/skills/bst.md § `git_repo` tracking: every tag glob needs a pre-release
+  # `exclude:`). From 2026-08 to 2026-11-10 this tracked refs/heads/main,
+  # because no tag carried the libpam link (oo7#546), the session-detection
+  # cascade below (oo7#558) or the login-helper socket wait (oo7#615, krytis#806).
+  # 0.7.1 carries all three. It is cut from upstream's `0.7` release branch,
+  # so they are cherry-picks there (2c2ec6b, 0a26c98, 65a96e1), not the main
+  # SHAs. `git merge-base --is-ancestor <main-sha> 0.7.1` therefore says no;
+  # match on commit subject instead.
+  #
+  # Pre-release hazard: buildstream-plugins-community's version_sort_key ranks
+  # `0.8.0.beta` ABOVE `0.8.0`, because a key that is a prefix of another sorts
+  # lower. Once upstream tags x.y.0 stable, track stays on its newest
+  # pre-release. When that happens, add `x.y.0.*` to `exclude:` and re-track.
+  # The glob starts with a digit, which keeps out the stray `v0.6.0-alpha` tag.
   #
   # krytis carried patches/oo7/prompter-detect-session-type.patch here until
   # 2026-08-27. It is gone because upstream solved the same problem better in
@@ -93,13 +103,14 @@ sources:
   # is precisely the case krytis hit -- logind cannot attribute any client of
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
-  track: refs/heads/main
-  ref: v0.6.0-alpha-321-g90913883d1d92af635d915d34928ee1bc8536a9d
+  track: '[0-9]*.[0-9]*.[0-9]*'
+  ref: 0.7.1-0-g4251a43abce2a0633fa35cdf3cd360af1fa88bc0
 
 - kind: cargo2
   url: crates:crates
-  # oo7 main pins ashpd as a git dependency in Cargo.lock (seen on the
-  # 2026-10-30 track, #1408); without this alias its cargo2 `kind: git` entry trips
+  # oo7 main once pinned ashpd as a git dependency in Cargo.lock (seen on the
+  # 2026-10-30 track, #1408). 0.7.1's lock has no git sources, but the alias stays
+  # in case a future one does. Without it, a cargo2 `kind: git` entry trips
   # the fatal unaliased-url warning. The mapping makes `bst source track`
   # write `repo: github:…`; the plugin checks `repo:` as written, so the
   # mapping alone does not fix an existing raw URL. Same as core/bootc.bst.
@@ -224,8 +235,8 @@ sources:
     sha: ce2dc9ee5f88d11e0beb842c88b33c8a5cf0d1329c4b19494af42b07dbfe8896
   - kind: registry
     name: cc
-    version: 1.11.0
-    sha: 375989decec1a0fa424442bed520fa12ede43a48475ce8c7417d2c69b32b5f6b
+    version: 1.11.1
+    sha: 4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155
   - kind: registry
     name: cfg-if
     version: 1.0.5
@@ -404,16 +415,16 @@ sources:
     sha: 27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17
   - kind: registry
     name: inout
-    version: 0.2.5
-    sha: 3b5cf4372d022092674a83b8febf5865f7a573cc0c5baec5e49c879b6a20978f
+    version: 0.2.6
+    sha: 3a580c13f0ffc335ef42dd3f6b1a41b726051c5e1656d9a3aa6fddb3c5dfbbf9
   - kind: registry
     name: is_terminal_polyfill
     version: 1.70.2
     sha: a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695
   - kind: registry
     name: itoa
-    version: 1.0.18
-    sha: 8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682
+    version: 1.0.19
+    sha: 3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4
   - kind: registry
     name: js-sys
     version: 0.3.107
@@ -600,28 +611,28 @@ sources:
     sha: 985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9
   - kind: registry
     name: pyo3
-    version: 0.29.3
-    sha: 700d18fa267b73b9b521fd7e13580e2f446916f176cacee1ab63fcc8191f1655
+    version: 0.30.1
+    sha: 229ca13b8a15bb0d1487b81ab975bfcd97513416499a8312011b6036e42e0de4
   - kind: registry
     name: pyo3-async-runtimes
-    version: 0.29.0
-    sha: b3ef68daa7316a3fac65e5e18b2203f010346de1c1c53456811a2624673ab046
+    version: 0.30.0
+    sha: b877331c7817ccb6379e9d19a06993160141f1d0a386e55276128717df85e3fc
   - kind: registry
     name: pyo3-build-config
-    version: 0.29.3
-    sha: 7b3fc0c4d08f6bb10e71fe39dfb9e2f59c6eb6854e22ec8092f50c69a4499adb
+    version: 0.30.1
+    sha: 70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700
   - kind: registry
     name: pyo3-ffi
-    version: 0.29.3
-    sha: dfc0b8e19df29aad7086cf977bb0c2a2f143e30567eb113e9cf72b62ca698330
+    version: 0.30.1
+    sha: 5e7ff73c555c286d212d4ce7e5fbda845a973c4f61bd5f160f5f2c3c2a04d1c4
   - kind: registry
     name: pyo3-macros
-    version: 0.29.3
-    sha: 6100e8a4b5eba53afaa5ed078364851a0b2499c553a44c31026b929049b49dc6
+    version: 0.30.1
+    sha: c46d2e5862c7bb8207e3b639f713dda3c499933444784154c11d013c5a691b60
   - kind: registry
     name: pyo3-macros-backend
-    version: 0.29.3
-    sha: 6143877a16e82b5a727b7127ff4cd86858a24a28d745d72f43e6f227c7b1bdb3
+    version: 0.30.1
+    sha: 38b89f066f2ae72a2aef52d1537ca2fcd104440ebfadee06e97aa90738a25b9b
   - kind: registry
     name: quote
     version: 1.0.47
@@ -732,8 +743,8 @@ sources:
     sha: 0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5
   - kind: registry
     name: smallvec
-    version: 1.16.4
-    sha: d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8
+    version: 1.16.5
+    sha: 149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46
   - kind: registry
     name: socket2
     version: 0.6.5
@@ -752,8 +763,8 @@ sources:
     sha: 872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297
   - kind: registry
     name: syn
-    version: 3.0.9
-    sha: d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b
+    version: 3.0.10
+    sha: 4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79
   - kind: registry
     name: target-lexicon
     version: 0.13.5
@@ -844,8 +855,8 @@ sources:
     sha: 06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821
   - kind: registry
     name: uuid
-    version: 1.29.0
-    sha: 4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514
+    version: 1.29.2
+    sha: bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c
   - kind: registry
     name: valuable
     version: 0.1.1
@@ -940,12 +951,12 @@ sources:
     sha: 3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328
   - kind: registry
     name: zgvariant
-    version: 1.2.0
-    sha: 8dca004bfe7d03c9e68ae443e63b2c25c69ac2fcfc9c4f47bc3546ff04c102cc
+    version: 2.0.0
+    sha: 5576e785f58266b3c26ef3b35d5914991981226733376d8ce34d185c0fccb240
   - kind: registry
     name: zgvariant_derive
-    version: 1.2.0
-    sha: 1a5cbf304b5650a6be838eae8b9d400a84f7003faa1f68862c085f28d0357cb2
+    version: 2.0.0
+    sha: bd6ca94bb7097734710aa30f08cc9979045b220e743ca3a5d6cda1bed58396e9
   - kind: registry
     name: zmij
     version: 1.0.23
@@ -954,7 +965,3 @@ sources:
     name: zruntime
     version: 0.2.2
     sha: 23ef5ed7d628cdf0af82f93dfe03330a8e37383bf7422a1d3d6eb72326680be5
-  - kind: registry
-    name: zvariant_utils
-    version: 4.2.0
-    sha: bad0294361a320b694a328460dc73add56c306150f5cb6bfafc44446120008a3
