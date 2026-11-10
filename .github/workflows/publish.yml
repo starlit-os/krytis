@@ -283,6 +283,9 @@ jobs:
         # outlived evicted llvm/rust data once, and an index-only check passed.
         env:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+          # mise/tasks/bst sets no quota of its own since #1507. Keep the 50G
+          # cap it used to apply, so the hosted runner's disk can't fill.
+          BST_CACHE_QUOTA: 50G
         run: mise run toolchain-cache-check --pull
 
       - name: Scan for vulnerabilities (pre-build gate)
@@ -304,6 +307,8 @@ jobs:
       - name: Build oci/krytis/image.bst
         env:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+          # Same cap as the toolchain check above (#1507).
+          BST_CACHE_QUOTA: 50G
         run: mise run build --pull
 
       - name: Push version tag, attach SBOM + vulnerability report

@@ -77,8 +77,8 @@ re-run `mise run build --pull --force` — every BST artifact is already cached,
 actually re-run.
 
 **Check the right filesystem.** On a Fedora-derived host `$HOME` is typically its own
-btrfs subvolume: both `~/.local/share/containers/storage` and `~/.cache/buildstream` (50 GB
-default CAS quota, `BST_CACHE_QUOTA`) live there, and `df -h /var` can report hundreds of
+btrfs subvolume: both `~/.local/share/containers/storage` and `~/.cache/buildstream` (no CAS
+quota unless your BuildStream config or `BST_CACHE_QUOTA` sets one) live there, and `df -h /var` can report hundreds of
 GB free while the one that matters is at 100%. Use the paths, not the mountpoint you
 assume:
 
@@ -808,8 +808,8 @@ one of the flags, the task resolves a bow JWT (`BUILDBARN_PUSH_TOKEN`/`BUILDBARN
 env var first, else `fnox get` — see `fnox.toml`'s `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
 entries, sourced from the Krytis vault's "Buildbarn" item), writes a temp
 `buildstream.conf` wiring `https://bst-cache.werewolf-stonecat.ts.net:7981`/`:7982` (index/storage,
-`quadlet/buildbarn/certs/bow-server.crt` for TLS), and passes it via `bst --config` —
-never touching `~/.config/buildstream.conf`/`~/.config/buildstream/user.conf` on the
+`quadlet/buildbarn/certs/bow-server.crt` for TLS), and passes it via `bst --config`,
+layered over `~/.config/buildstream.conf` (read, never written; § BST CAS quota) on the
 host, and never mounting a persistent secret into the ephemeral `--container` build.
 `--push` also serves reads (a push-capable connection satisfies pulls too), so prefer
 it when you have push access; `--pull` is the read-only fallback.
@@ -1880,13 +1880,35 @@ BST's local CAS has an internal storage quota separate from OS disk space. Hitti
 OutOfSpaceException: Insufficient storage quota
 ```
 
-The `mise bst` task (both container and native paths) sets a default quota of 50G via `BST_CACHE_QUOTA`. This matches CI. Override per-run with:
+`mise bst` sets **no quota of its own** since #1507. A run is capped by the user's own
+BuildStream config, or not at all (BuildStream's default: no quota, 5% of the disk kept
+free). Cap one run explicitly with:
 
 ```bash
 BST_CACHE_QUOTA=60G mise load-image --container
 ```
 
-For the container path, the quota is written to `/root/.config/buildstream/user.conf` inside the container on each run. For the native path, it is appended to `~/.config/buildstream/user.conf` once (idempotent — skipped if `quota:` already present).
+What used to happen, and why it changed (#1507, observed 2026-11-03 on a 477 GB dedicated
+cache):
+
+- **`bst --config FILE` replaces the default user config; it does not merge.** BuildStream
+  2.7 (`_context.py`, `Context.load()`) looks for `$XDG_CONFIG_HOME/buildstream2.conf`, then
+  `buildstream.conf`, *only* when no `--config` is given. The task's `--pull`/`--push`
+  config carried `quota: 50G`, so one pull-only command passed `--quota-high=50G` to casd,
+  which evicted down to the 80% low watermark: the CAS went from 96 GB to 64 GB and the
+  next build started compiling the toolchain.
+- **`~/.config/buildstream/user.conf` is never read.** The native path used to append its
+  quota there, so flagless runs had no cap at all, and the same machine got different
+  caps depending on the flag. The container path wrote the same unread file inside the
+  container.
+
+Now the task writes a `--config` only when the run needs settings of its own (bow, or an
+explicit `BST_CACHE_QUOTA`). On the native path `scripts/bst-merge-user-config.py` layers
+that file over the user's default config, so `--pull` keeps the user's quota,
+`scheduler:` and `cachedir`; the bow config's `build: max-jobs: 4` is only a fallback.
+The container path doesn't see the host's `~/.config` at all, so its only settings are
+the generated ones. CI sets the quota explicitly where it matters: `publish.yml` keeps
+the old 50G on the hosted runner, and `build-changed.yml` sets 200G on the VPS.
 
 A full fdsdk bootstrap from a cold cache needs ~50G. If the disk itself is low (check `df -h ~/.cache/buildstream`), run `podman system prune --all --force` first — old krytis build images accumulate quickly and can consume hundreds of GB.
 

@@ -331,10 +331,12 @@ peak RAM, the run that clears it has to actually compile.
 ### …but that sizing only reaches callers that use the *default* user config
 
 `cache-warm.yml` writes `~/.config/buildstream.conf` and then runs `uv run bst`
-directly. Anything that builds through `mise/tasks/bst --pull`/`--push` does
-**not** inherit it: that script writes a temporary config (`mise/tasks/bst:92`)
-and passes it as `bst --config`, and `--config` *replaces* the default user
-configuration rather than merging with it.
+directly. Until #1507, anything that built through `mise/tasks/bst --pull`/`--push`
+did **not** inherit it: that script writes a temporary config and passes it as
+`bst --config`, and `--config` *replaces* the default user configuration rather than
+merging with it. Since #1507 the native path layers the temporary config over the
+default one (`scripts/bst-merge-user-config.py`), so the box's `scheduler:` sizing now
+reaches `--pull` builds too. The history below is why that matters.
 
 Verified empirically against the pinned BuildStream 2.7.0, not inferred from the
 `--config FILE  Configuration file to use` help text: with
@@ -847,10 +849,12 @@ Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` a
   CAS already holds the closure and most dependencies are local hits. There is only one
   such runner, so a PR build queues behind a running cache-warm, which can take hours after
   a junction bump. `timeout-minutes: 45` stops a runaway build from holding the box.
-- **`BST_CACHE_QUOTA: 100G`.** `mise/tasks/bst --pull` writes its own config with
-  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaces cache-warm's 100G. BuildStream passes the
+- **`BST_CACHE_QUOTA: 200G`.** Until #1507, `mise/tasks/bst --pull` wrote its own config with
+  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaced cache-warm's quota. BuildStream passes the
   quota to casd as `--quota-high`, so a 50G quota on a CAS that holds more would expire the
-  warm artifacts every later job relies on.
+  warm artifacts every later job relies on. The task now layers its config over the box's
+  `~/.config/buildstream.conf` and sets no quota itself (`docs/skills/mise.md` § BST CAS
+  quota); the explicit value stays as a guard.
 - **`--builders`/`--max-jobs` on the command line.** The same `--config` replacement drops
   cache-warm's concurrency sizing (§ …but that sizing only reaches callers that use the
   *default* user config). The task computes the same formula (2 GiB per compiler, at most

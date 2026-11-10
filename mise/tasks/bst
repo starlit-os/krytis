@@ -7,11 +7,14 @@
 #USAGE arg "<args>" var=#true help="bst subcommand and arguments (e.g. build stacks/base-system.bst)"
 
 # BST_FLAGS: appended to default flags; BST_FLAGS_OVERRIDE: replaces all defaults.
-# BST_CACHE_QUOTA: override the local CAS quota (default 40G).
+# BST_CACHE_QUOTA: cap the local CAS for this run (e.g. 50G). Unset = no cap
+# from this task: BuildStream uses whatever the user's own config says, or its
+# default (no quota, 5% of the disk kept free). See docs/skills/mise.md § BST
+# CAS quota for why the task no longer picks a size itself (#1507).
 set -euo pipefail
 
 DEFAULT_FLAGS="-o x86_64_v3 true --no-interactive"
-BST_CACHE_QUOTA="${BST_CACHE_QUOTA:-50G}"
+BST_CACHE_QUOTA="${BST_CACHE_QUOTA:-}"
 # The krytis-vps runner is a systemd service with no HOME in its environment.
 # Bash's `~` and BuildStream (Python's expanduser) both fall back to the passwd
 # entry there, so resolve it the same way rather than die under `set -u`.
@@ -57,6 +60,10 @@ fi
 # declares none since #942/#954, and the junctions' caches serve only their own
 # elements. bow is deliberately never declared in project.conf either — see
 # docs/skills/ci-runner.md and cache-warm.yml.
+# BST_CONFIG is the temporary config passed as `bst --config`, written only when
+# this run needs settings of its own (bow, BST_CACHE_QUOTA). On the native path
+# it is layered over the user's default config, because --config replaces that
+# file rather than merging with it (scripts/bst-merge-user-config.py).
 BOW_CONFIG=""
 BOW_TOKEN_FILE=""
 cleanup_bow() {
@@ -95,8 +102,6 @@ if [ "$PUSH" = "true" ] || [ "$PULL" = "true" ]; then
     BOW_CONFIG=$(mktemp)
     chmod 600 "$BOW_CONFIG"
     cat > "$BOW_CONFIG" <<EOF
-cache:
-  quota: ${BST_CACHE_QUOTA}
 build:
   max-jobs: 4
 artifacts:
@@ -155,6 +160,17 @@ EOF
     fi
 fi
 
+# An explicit BST_CACHE_QUOTA applies with or without bow. Without one, no
+# `cache:` key is written, so a --pull/--push run caps the cache exactly as a
+# flagless run does: by the user's own config, or not at all.
+if [ -n "$BST_CACHE_QUOTA" ]; then
+    if [ -z "$BOW_CONFIG" ]; then
+        BOW_CONFIG=$(mktemp)
+        chmod 600 "$BOW_CONFIG"
+    fi
+    printf 'cache:\n  quota: %s\n' "$BST_CACHE_QUOTA" >> "$BOW_CONFIG"
+fi
+
 if [ "$CONTAINER" = "true" ]; then
     mkdir -p "${HOME}/.cache/buildstream"
     EXTRA_MOUNTS=()
@@ -178,22 +194,17 @@ if [ "$CONTAINER" = "true" ]; then
         "${EXTRA_MOUNTS[@]}" \
         -w /src \
         "${BST2_IMAGE}" \
-        bash -c 'mkdir -p /root/.config/buildstream
-printf "cache:\n  quota: %s\n" "$1" > /root/.config/buildstream/user.conf
-shift; bst --colors "$@"' -- "${BST_CACHE_QUOTA}" "${CONFIG_ARGS[@]}" ${FLAGS} "$@"
+        bst --colors "${CONFIG_ARGS[@]}" ${FLAGS} "$@"
     exit $?
 fi
 
-# Native path: write quota to user.conf if not already set.
-USER_CONF="${HOME}/.config/buildstream/user.conf"
-if ! grep -q "quota:" "${USER_CONF}" 2>/dev/null; then
-    mkdir -p "$(dirname "${USER_CONF}")"
-    printf '\ncache:\n  quota: %s\n' "${BST_CACHE_QUOTA}" >> "${USER_CONF}"
-fi
-
+# Native path. Nothing is written to the user's own config: an earlier version
+# appended a quota to ~/.config/buildstream/user.conf, a file BuildStream never
+# reads (it reads buildstream2.conf, then buildstream.conf; #1507).
 CONFIG_ARGS=()
 if [ -n "$BOW_CONFIG" ]; then
     sed -i "s#__CERT_PATH__#$(pwd)/quadlet/buildbarn/certs/bow-server.crt#; s#__TOKEN_PATH__#${BOW_TOKEN_FILE}#" "$BOW_CONFIG"
+    uv run --quiet python3 scripts/bst-merge-user-config.py "$BOW_CONFIG"
     CONFIG_ARGS=(--config "$BOW_CONFIG")
 fi
 

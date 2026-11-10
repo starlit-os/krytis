@@ -75,9 +75,10 @@ jobs:
         env:
           # Pull-only: a PR build must never write to bow.
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
-          # Match cache-warm's casd quota on this box (200G since #1155).
-          # mise/tasks/bst defaults to 50G, and a lower quota than the cache
-          # already holds makes casd evict the warm artifacts every later job
-          # here relies on.
+          # Match cache-warm's casd quota on this box (200G since #1155). Since
+          # #1507 mise/tasks/bst layers its --pull config over the box's
+          # ~/.config/buildstream.conf, so this is belt and braces: a lower
+          # quota than the cache already holds makes casd evict the warm
+          # artifacts every later job here relies on.
           BST_CACHE_QUOTA: 200G
         run: mise run build-changed --base HEAD^1
