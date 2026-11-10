@@ -916,10 +916,22 @@ Two other directions were weighed and rejected. A systemd compile-time default f
 `secure-boot-enroll` was the cleanest candidate if it existed, but it would still
 be a build-time workaround for the same "value not on the ESP at handoff" gap, not
 a real fix, and was never confirmed to exist in the shipped systemd version.
-Writing `loader.conf` at install time needs a bootc install-time hook, which does
-not exist today. Either would require nontrivial new plumbing to change a state
-that already matches the design intent on the only surface that ships to users —
-real hardware. Not planned.
+Writing `loader.conf` at install time needed a bootc install-time hook, which did
+not exist when #444 was decided. Either would have required nontrivial new plumbing to
+change a state that already matches the design intent on the only surface that ships
+to users — real hardware.
+
+**The hook exists now (bootc v1.17.4, pinned on `main` since `f6e1e19`, 2026-11-04).**
+bootc-dev/bootc `cbd34248` ("sd-boot: Pick `loader.conf` from the image", bootc#2558)
+copies `/usr/lib/bootc/install/systemd-boot/loader.conf` from the image onto the ESP as
+`loader/loader.conf` right after `bootctl install`, overwriting bootctl's commented
+template (`install_systemd_boot()` in `crates/lib/src/bootloader.rs`). An image that
+ships `secure-boot-enroll manual` there has the setting in force on the very first
+boot, which would close the first-boot gap above and make the oneshot redundant for new
+installs. It does nothing for machines already installed, and it changes what a VM's
+first boot does (`if-safe` auto-enrolment, which `mise run selfenroll-test` relies on),
+so adopting it is a Breakage Gate decision, not a doc edit. Tracked in #1570; read from
+source 2026-11-10, not yet tested in a VM.
 
 **Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
 the source disk, so an install disk stays a first-boot disk no matter how many times
