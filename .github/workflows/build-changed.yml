@@ -5,8 +5,9 @@ name: Build changed elements
 # every Checks job green, and the first failure was publish, ~2h after merge.
 # `mise run build-changed` decides what to build and why; see its header and
 # docs/skills/ci-runner.md § PR build gate: `build-changed.yml` (#743) for the
-# blind spots. Not a required check: it skips fork PRs, and green does not mean
-# the image builds.
+# blind spots. Not a required check on its own: it skips fork PRs, and green
+# does not mean the image builds. ci-passed.yml's rollup does count it (#1562),
+# and accepts the skipped run a fork PR gets.
 #
 # Its own workflow, not a job in checks.yml: that workflow also runs on
 # `edited`, and its run-level concurrency would cancel a build here whenever
