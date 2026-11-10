@@ -1,0 +1,58 @@
+name: CI passed
+
+# One check the ruleset can require instead of a list of individual ones
+# (#1562). It waits for every other pull_request workflow on the PR's head
+# commit and passes only when all of them passed or were skipped. The logic is
+# scripts/ci-rollup.sh; run it locally with a PR's head SHA for the same answer.
+#
+# A new PR workflow is picked up with no edit here. The `required` list below
+# is only a floor: the names that must appear, so this check can't pass in the
+# moment before GitHub has created a sibling run for the same event. Add a
+# workflow to it when skipping that workflow entirely would be a bug.
+#
+# "Build changed elements" is in the floor, which makes it effectively
+# required (it was not before #1562). On a fork PR its job is skipped, the
+# run concludes as skipped, and the rollup accepts that.
+#
+# Re-running a failed job does not re-run this check. Re-run "CI passed" too
+# once the job is green, or push again.
+#
+# The timeout is GitHub-hosted's maximum. Build changed elements runs on the
+# single VPS runner and can queue behind a cache-warm run for hours; a rollup
+# that times out fails, and needs a re-run like any other.
+
+on:
+  pull_request:
+    # checks.yml also runs on `edited`; follow it so its newer run is the one
+    # judged.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ci-passed-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  rollup:
+    name: CI passed
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci-rollup.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Wait for every PR workflow and roll up the result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          scripts/ci-rollup.sh "$HEAD_SHA" \
+            "Checks" \
+            "Vulnerability Diff" \
+            "Build changed elements"

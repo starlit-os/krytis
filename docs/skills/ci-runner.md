@@ -331,10 +331,12 @@ peak RAM, the run that clears it has to actually compile.
 ### …but that sizing only reaches callers that use the *default* user config
 
 `cache-warm.yml` writes `~/.config/buildstream.conf` and then runs `uv run bst`
-directly. Anything that builds through `mise/tasks/bst --pull`/`--push` does
-**not** inherit it: that script writes a temporary config (`mise/tasks/bst:92`)
-and passes it as `bst --config`, and `--config` *replaces* the default user
-configuration rather than merging with it.
+directly. Until #1507, anything that built through `mise/tasks/bst --pull`/`--push`
+did **not** inherit it: that script writes a temporary config and passes it as
+`bst --config`, and `--config` *replaces* the default user configuration rather than
+merging with it. Since #1507 the native path layers the temporary config over the
+default one (`scripts/bst-merge-user-config.py`), so the box's `scheduler:` sizing now
+reaches `--pull` builds too. The history below is why that matters.
 
 Verified empirically against the pinned BuildStream 2.7.0, not inferred from the
 `--config FILE  Configuration file to use` help text: with
@@ -818,7 +820,9 @@ its local cache and would otherwise re-report a flaky failure instantly.
    can change every cache key, so building the changed elements could compile most of the
    graph. `mise run validate` still resolves it.
 3. **Fork PRs are skipped.** They get no secrets, so no bow token. That is why the gate is
-   not a required check.
+   not a required check on its own. It is in the floor of the `CI passed` rollup (#1562),
+   which accepts the skipped run a fork PR produces; see § One required check:
+   `ci-passed.yml` (#1562).
 4. **The image gates never run.** `mise run build` ends with `lint`,
    `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check`, and all of
    them need the assembled image, so only `publish` runs them. A bump that breaks shipped
@@ -845,10 +849,12 @@ Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` a
   CAS already holds the closure and most dependencies are local hits. There is only one
   such runner, so a PR build queues behind a running cache-warm, which can take hours after
   a junction bump. `timeout-minutes: 45` stops a runaway build from holding the box.
-- **`BST_CACHE_QUOTA: 100G`.** `mise/tasks/bst --pull` writes its own config with
-  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaces cache-warm's 100G. BuildStream passes the
+- **`BST_CACHE_QUOTA: 200G`.** Until #1507, `mise/tasks/bst --pull` wrote its own config with
+  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaced cache-warm's quota. BuildStream passes the
   quota to casd as `--quota-high`, so a 50G quota on a CAS that holds more would expire the
-  warm artifacts every later job relies on.
+  warm artifacts every later job relies on. The task now layers its config over the box's
+  `~/.config/buildstream.conf` and sets no quota itself (`docs/skills/mise.md` § BST CAS
+  quota); the explicit value stays as a guard.
 - **`--builders`/`--max-jobs` on the command line.** The same `--config` replacement drops
   cache-warm's concurrency sizing (§ …but that sizing only reaches callers that use the
   *default* user config). The task computes the same formula (2 GiB per compiler, at most
@@ -894,6 +900,46 @@ Verified 2026-10-07 against current `main`, re-applying #735's `-Dm440` to
 On the VPS all 67 toolchain artifacts were local hits, and checkout plus setup took under
 10 s once `cache: false` was in. A PR touching no BuildStream input finishes in seconds
 (run 37588594526). The first two VPS runs queued for 1h45m behind a dispatched cache-warm.
+
+## One required check: `ci-passed.yml` (#1562)
+
+`CI passed` waits for every other `pull_request` workflow run on the PR's head SHA and
+passes only when each one concluded `success`, `skipped` or `neutral`. The logic is
+`scripts/ci-rollup.sh`, which runs locally too: `GH_TOKEN=… scripts/ci-rollup.sh <head-sha>`
+gives the same verdict. The point is that ruleset "Main" can require this one check
+instead of a hand-kept list. Swapping the ruleset to it is a repo-settings change for a
+maintainer, not part of a PR.
+
+- **Poll workflow runs, not check runs.** A job behind `needs:` has no check run until
+  the jobs it waits on finish. Between vuln-diff's two `scan` jobs ending and its `diff`
+  job being queued, every check run that exists is complete, so a check-run poll can pass
+  a PR whose required gate hasn't started. A workflow run stays `in_progress` until its
+  last job ends. (`actions/runs?head_sha=<sha>&event=pull_request` gives them.)
+- **Keep a floor of required names anyway.** The rollup can poll before GitHub has
+  created a sibling run for the same event. The workflow passes `Checks`,
+  `Vulnerability Diff` and `Build changed elements` as names that must appear, and fails
+  if one hasn't within `CI_ROLLUP_GRACE` (600 s). Any other PR workflow is included with
+  no edit, so a new gate is covered as soon as it exists.
+- **Only the newest run per workflow counts.** `checks.yml` also runs on `edited` and
+  cancels its older run, so an older `cancelled` run is superseded, not a failure. The
+  rollup follows the same event types for the same reason.
+- **Why a polling workflow, not dakota's gate job.** dakota `1713308` makes a sometimes-skipped
+  check requirable with an `always()` gate job that `needs:` the conditional jobs (deferred in
+  #479 until krytis had such a check). That only works inside one workflow, because `needs:`
+  can't cross workflow files, and krytis's gates are three separate workflows on purpose
+  (`build-changed.yml` stays out of `checks.yml` so an `edited` event can't cancel a VPS build).
+  So the rollup reads the runs instead. Inside a single workflow, prefer dakota's pattern; the
+  `diff` job in `vuln-diff.yml` is already one (`if: always()`).
+- **A job re-run does not re-run the rollup.** Re-run `CI passed` after the fixed job
+  goes green, or push again.
+- **It can sit for hours.** `Build changed elements` has one VPS runner and queues behind
+  cache-warm (1h45m observed, above), so the rollup runs with GitHub-hosted's 360-minute
+  maximum. It polls every 30 s with the workflow's own token (`actions: read`), which
+  is far under the API limit.
+
+Verified 2026-11-10 against existing PR heads: #1569 and #1564 (all green → exit 0), a
+head whose `Checks` failed (exit 1, names it), a head with a cancelled `Vulnerability Diff`
+(exit 1), and a required name that never appears (exit 1 after the grace period).
 
 ## Cold-build benchmark: `bench-cold-build.yml` (#1126)
 

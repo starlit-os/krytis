@@ -190,7 +190,7 @@ bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section)
 
 **No `mokutil` or `sbctl` needed** in the image — build-time signing uses `sbsign`/`ukify` directly, and enrollment is handled by systemd-boot natively. Neither `mokutil` nor `sbctl` exists in the fdsdk junction.
 
-**`secure-boot-enroll manual` cannot be baked into `/usr`.** `loader.conf` lives on the ESP, which `bootc install` writes. `elements/config/secureboot-loader-conf.bst` ships a first-boot oneshot (`secure-boot-enroll.service`) that appends the line to `/boot/loader/loader.conf` instead — which is why the enrollment policy a guest reads back can post-date the firmware's own decision (trap T-4 in `docs/design/secure-boot-testing.md`).
+**`secure-boot-enroll manual` cannot be baked into `/usr`.** `loader.conf` lives on the ESP, which `bootc install` writes. `elements/config/secureboot-loader-conf.bst` ships a first-boot oneshot (`secure-boot-enroll.service`) that appends the line to `/boot/loader/loader.conf` instead — which is why the enrollment policy a guest reads back can post-date the firmware's own decision (trap T-4 in `docs/design/secure-boot-testing.md`). Since bootc v1.17.4 an image *can* ship an install-time `loader.conf` at `/usr/lib/bootc/install/systemd-boot/loader.conf`; whether krytis should is open (`docs/skills/secure-boot.md` § `secure-boot-enroll manual` works — but not on the first boot after install).
 
 **QEMU testing:** Use `virt-fw-vars --secure-boot --set-pk … --add-kek … --add-db …` to bake keys directly into an OVMF vars file (reference: travier `generate-ovmf-vars` recipe). This is the test path; `loader/keys/` is the real-hardware path.
 
