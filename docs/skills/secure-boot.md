@@ -40,6 +40,45 @@ travier's `fedora-atomic-desktops-sealed` `uki.sh` uses `ukify --measure` and ma
 
 Freedesktop SDK has no public `elements/components/sbsigntools.bst`. The real name is `sbsigntools-maybe.bst` — a `kind: stack` that conditionally depends on `components/_private/sbsigntools.bst` only when `target_arch` is in `["x86_64", "i686", "aarch64", "riscv64"]`. The `-maybe` suffix is a recurring freedesktop-sdk naming convention for arch-gated stacks over a `_private/` implementation element — grep `elements/components/*-maybe.bst` upstream before assuming a bare package name is the dependable path. krytis targets x86_64, so `sbsigntools-maybe.bst` resolves correctly.
 
+## Sign with `systemd-sbsign` and a pinned `SOURCE_DATE_EPOCH`, not `sbsign` (#1329)
+
+An Authenticode signature carries a signing time. sbsigntools' `sbsign` always stamps the
+current time and has no option to change it, so sealing the same commit twice with the same
+keys gave two different `systemd-bootx64.efi` files and two different UKIs. Nobody could
+rebuild a published `:sealed` image and get the same signed binaries back. systemd's
+`/usr/lib/systemd/systemd-sbsign` (in the image via `core-deps/systemd-base.bst`) takes the
+time from `SOURCE_DATE_EPOCH` instead (`asn1_timestamp()` in systemd v262
+`src/sbsign/sbsign.c`). Both signing steps now use it: the systemd-boot `RUN` in
+`Containerfile` and `bootc container ukify … --signtool systemd-sbsign` in
+`Containerfile.seal-uki`.
+
+- **The epoch is `db_crt`'s notBefore, not BuildStream's 2011 epoch.** The kernel's PKCS#7
+  verifier rejects a signing time outside the certificate's validity window. That limit is
+  on the kernel side (modules, kexec), not the firmware, but a time inside the window is
+  safe in both places. Dakota made the same choice (projectbluefin/dakota@e59afbe).
+- **The date is parsed with Python's `ssl.cert_time_to_seconds`, not `date -d`.** The
+  image's `/usr/bin/date` comes from `core/uutils-coreutils.bst`, and its `-d` parsing of
+  openssl's `Nov 10 10:00:00 2026 GMT` format is not GNU's. `python3` is in the image
+  because ukify needs it.
+- **ukify needs `--sign-kernel` with this signtool.** With no `--sign-kernel` or
+  `--no-sign-kernel`, ukify asks the signtool whether the embedded kernel is already signed,
+  and `SystemdSbSign.verify()` raises `NotImplementedError` (systemd v262
+  `src/ukify/ukify.py`). sbsign's answer for krytis's unsigned vmlinuz was "sign it", so
+  `--sign-kernel` keeps the old behaviour.
+- **The variable has to reach systemd-sbsign through two layers.** `bootc container ukify`
+  runs `ukify` with an inherited environment (bootc v1.17.4 `crates/lib/src/ukify.rs`, no
+  `env_clear`), and ukify runs systemd-sbsign with its own. So an `export` in the `RUN` is
+  enough.
+- **`systemd-sbsign` can't verify, so `sbverify --cert` follows each signing.** sbsigntools
+  stays in the image for `sbverify` and `sbsiglist` anyway.
+- **Krytis gains reproducibility, not smaller updates.** Dakota's motivation was layer
+  churn: a re-signed kernel forced a new kernel-modules layer on every update. A sealed
+  krytis image is one squashed layer (§ `--composefs-backend` requires a single layer), so
+  that doesn't apply here. The check is to seal the same commit twice and compare the
+  `sha256sum` of `/usr/lib/systemd/boot/efi/systemd-bootx64.efi` and
+  `/boot/EFI/Linux/krytis.efi` in the two images. The UKI only matches when its unsigned
+  inputs match too.
+
 ## `files/boot-keys/` filenames are case-sensitive: `PK`/`KEK` upper, `db` lower
 
 `mise/tasks/generate-keys` and `mise/tasks/pull-keys` both write `PK.key`/`PK.crt`, `KEK.key`/`KEK.crt`, `db.key`/`db.crt` — mixed case, not a uniform convention. Any task or Containerfile step that reads these files (e.g. `mise/tasks/seal-uki`'s `--secret src=` paths) must match this exact casing or silently miss the file on case-sensitive filesystems.
@@ -91,7 +130,7 @@ RUN --mount=type=bind,from=base,target=/target \
 Two more issues surface only after the rootfs fix, both worth checking on any future bootc/ukify version bump:
 
 - **`bootc container ukify` needs `/var/tmp` to exist.** bootc images intentionally ship `/var` empty (populated by `systemd-tmpfiles` at boot, not baked into the image), so ukify's temp composefs repo creation fails with `Creating new temp composefs repo: No such file or directory` unless the `RUN` step does `mkdir -p /var/tmp` first.
-- **The systemd-boot binary to sign is at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`, not `/boot/EFI/systemd/systemd-bootx64.efi`.** The latter path only exists on a target system after `bootctl install`/`bootc install` has populated the ESP — it's never present inside the container image itself. Sign the source path (`sbsign` needs a distinct output file, so sign to `.signed` and `mv` over the original) so the pre-signed binary is what gets installed later.
+- **The systemd-boot binary to sign is at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`, not `/boot/EFI/systemd/systemd-bootx64.efi`.** The latter path only exists on a target system after `bootctl install`/`bootc install` has populated the ESP — it's never present inside the container image itself. Sign the source path (the signer writes a distinct `--output` file, so sign to `.signed` and `mv` over the original) so the pre-signed binary is what gets installed later.
 
 Verified end-to-end on real keys: `objcopy -O binary --only-section=.cmdline` on the resulting UKI showed `quiet splash rd.luks.options=fido2-device=auto composefs=<64-char digest>`, and `sbverify --cert db.crt` passed for both the UKI and the signed systemd-boot binary.
 
@@ -199,7 +238,7 @@ error: Installing to disk: Setting up composefs boot: Setting up UKI boot:
 
 ```dockerfile
 FROM base AS sealed                  # stage 2: prepare the FINAL rootfs contents
-RUN ... sbsign ... mv ...            # sign systemd-boot, write any rootfs files
+RUN ... systemd-sbsign ... mv ...    # sign systemd-boot, write any rootfs files
 
 FROM sealed AS uki-builder           # stage 3: THROWAWAY — never becomes final
 ARG SEAL_SECURE_BOOT=false

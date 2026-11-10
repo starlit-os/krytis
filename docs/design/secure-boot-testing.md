@@ -75,7 +75,7 @@ files reported `SignatureSize=16` on all five entries.
 | Gate | Time | Proves | Cannot prove |
 |---|---|---|---|
 | `mise run lint` | ~2 min | the Containerfile builds; `bootc container lint` passes | anything about the sealed stage (`SEAL_SECURE_BOOT=false` there) |
-| `mise run seal-uki` | ~3.5 min | the two-phase sealed build succeeds; `sbsign` signs the loader; `assert_esl` confirms every signature list is non-empty; `bootc container ukify` computes a digest | that the digest *matches at install time* — only T3 checks that |
+| `mise run seal-uki` | ~3.5 min | the two-phase sealed build succeeds; `systemd-sbsign` signs the loader (signing time pinned to db's notBefore, #1329); `assert_esl` confirms every signature list is non-empty; `bootc container ukify` computes a digest | that the digest *matches at install time* — only T3 checks that |
 
 `assert_esl` is a build-time gate, so a regression of #438 fails here rather than in
 firmware. It reads each list's `SignatureSize` field; 16 means no certificate.
