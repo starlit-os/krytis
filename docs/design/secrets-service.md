@@ -701,6 +701,19 @@ prompt with no parent window); `search_items({app_id})`; write the found item's 
 `replace=true`, and write that. Inside the sandbox, libsecret uses the token as the key to the
 app's own keyring file, so **the token is the only key to everything that app stored**.
 
+**Only xdg-desktop-portal may call it (since oo7 0.7.1).** 0.7.1 builds the portal on
+ashpd 0.14.0, whose backend builder defaults to
+`CallerAuthorization::require_name("org.freedesktop.portal.Desktop")`
+(`src/backend/builder.rs:59`, `src/backend/caller.rs` in the ashpd crate). Every call from a
+peer that isn't the current owner of that name gets
+`org.freedesktop.portal.Error.NotAllowed: caller is not authorized to invoke this portal
+backend`. At `bf367dca` the check wasn't there: `oo7-portal-test` called the backend
+directly, with no name claimed, and passed. So any process on the session bus could pass
+any `app_id` to `RetrieveSecret` and get that app's token. Now only the frontend can, and the frontend gets
+`app_id` from the sandbox, not from the caller. The check trusts whoever owns the name, so
+it is only as strong as the session bus's name ownership. krytis routes this backend only
+through xdg-desktop-portal (`config/xdg-desktop-portal-routing.bst`). Nothing else calls it.
+
 ### Security Gate decision (2026-10-02)
 
 | # | Question | Decision |
@@ -731,7 +744,12 @@ app's own keyring file, so **the token is the only key to everything that app st
 
 ### The gate: `mise run oo7-portal-test`
 
-One `oo7-portal` process on a private bus, with the daemon restarted underneath it:
+One `oo7-portal` process on a private bus, with the daemon restarted underneath it. The
+driver stands in for xdg-desktop-portal: it first checks that a call from a peer without
+`org.freedesktop.portal.Desktop` is refused with `NotAllowed`, then claims that name on the
+private bus. Before that claim was added, the 0.7.1 re-pin failed T1 and T3 with
+`NotAllowed`, and T2 "passed" only because the refused call returned no token, never
+reaching the locked-keyring path it exists to test.
 
 - **T1** fresh keyring, Login unlocked through the login helper: a repeat call returns the same
   64-byte token, a second app gets a different one, Login holds exactly two token items.
@@ -741,7 +759,8 @@ One `oo7-portal` process on a private bus, with the daemon restarted underneath 
 - **T3** daemon restarted unlocked: the first app gets its T1 token back.
 
 Passed on upstream `bf367dca` (daemon from the image, portal built from the same pin) on
-2026-10-02. **Negative control:** the same run against a throwaway portal build whose lookup
+2026-10-02, and on the 0.7.1 release tag (daemon and portal from the same artifact) on
+2026-11-11. **Negative control:** the same run against a throwaway portal build whose lookup
 never matches (always mint) fails T1 (`a repeat call returns the same token`) and T3 (`gets
 its T1 token back`) — while the item count stays at two, because `replace=true` overwrites
 silently. That is exactly the failure this gate exists to catch on an oo7 re-pin.

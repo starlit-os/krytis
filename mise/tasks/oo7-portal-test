@@ -31,7 +31,10 @@
 #       bytes back, and Login still holds exactly two tokens.
 #
 # The portal's impl interface takes app_id as an argument, so the test calls
-# it directly; xdg-desktop-portal is not involved.
+# it directly; xdg-desktop-portal is not involved. Since oo7 0.7.1, the
+# portal's ashpd backend answers only the owner of org.freedesktop.portal.Desktop,
+# so the driver claims that name on its private bus first, after checking that
+# a caller without it is refused.
 #
 # Isolation follows oo7-login-race-test: a private D-Bus session, its own
 # XDG_DATA_HOME and OO7_PAM_SOCKET, so the live keyring is never touched. The
@@ -120,6 +123,7 @@ SECRETS = "org.freedesktop.secrets"
 SECRETS_PATH = "/org/freedesktop/secrets"
 LOGIN = "/org/freedesktop/secrets/collection/login"
 PORTAL_NAME = "org.freedesktop.impl.portal.desktop.oo7"
+FRONTEND_NAME = "org.freedesktop.portal.Desktop"
 TOKEN_LABEL = "Secret Portal token for "
 
 bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -266,6 +270,17 @@ try:
     check(locked() is False, "T1 Login came up unlocked")
     portal = spawn([PORTAL, "--verbose"], "portal.log")
     check(wait_for(lambda: has_owner(PORTAL_NAME), "oo7-portal"), "oo7-portal owns its bus name")
+
+    # Since oo7 0.7.1 (ashpd 0.14 backend), the portal answers only the current
+    # owner of org.freedesktop.portal.Desktop, i.e. xdg-desktop-portal. Check
+    # that a stranger is refused, then claim the name on this private bus and
+    # stand in for the frontend.
+    _, why = retrieve("org.krytis.Test")
+    check(why is not None and "not authorized" in why,
+          f"T1 a caller that does not own {FRONTEND_NAME} is refused ({why})")
+    owned = call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                  "RequestName", GLib.Variant("(su)", (FRONTEND_NAME, 4)), "(u)")[0]
+    check(owned == 1, f"the driver owns {FRONTEND_NAME}")
 
     a1, _ = show("org.krytis.Test", retrieve("org.krytis.Test"))
     a2, _ = show("org.krytis.Test again", retrieve("org.krytis.Test"))
