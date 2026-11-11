@@ -348,6 +348,12 @@ python3 -c 'd=open("/var/tmp/i.zstd","rb").read(); o=d.index(bytes([0x28,0xB5,0x
 zstdcat /var/tmp/main.zstd 2>/dev/null | cpio -t 2>/dev/null | grep -E 'libfido2|libtss2-tcti-device'
 ```
 
+Keep the explicit output file and work on the `/var/tmp` copy, never on the UKI on the
+ESP. `objcopy` without an output file rewrites its input in place, even with
+`--dump-section`, and on a signed UKI that strips the signature. The next boot of that
+entry then fails with `Unsupported`. See `docs/skills/secure-boot.md` § Never point
+`objcopy` at a UKI without an output file.
+
 ## `gpt-auto-generator` owns the root's crypt options, and only ever adds TPM2
 
 **This is why FIDO2 unlock of krytis's root has never worked, and it is not a missing
