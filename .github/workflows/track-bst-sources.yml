@@ -1176,8 +1176,8 @@ jobs:
           # digit filter drops non-version tags like "release-0-g<sha>".
           #
           # A branch-tracked element whose nearest ANNOTATED tag is stale gets a
-          # describe prefix that is real but wrong: desktop/oo7.bst tracks
-          # refs/heads/main and every ref reads v0.6.0-alpha-<n>-g<sha>, because
+          # describe prefix that is real but wrong: desktop/oo7.bst tracked
+          # refs/heads/main until 2026-11-10, and every ref read v0.6.0-alpha-<n>-g<sha>, because
           # upstream's 0.7.0.alpha is a lightweight tag and git-describe ignores
           # those. Both sides of the bump then describe to the same stale tag.
           # The title already guards on that (OLD_VER != NEW_VER below); the
