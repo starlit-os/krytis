@@ -1,5 +1,19 @@
 FROM localhost/krytis-input:latest AS base
 
+# systemd's clock epoch on the real root (#1595). After switch-root, PID 1
+# resets the clock to the newest of its 2011 built-in TIME_EPOCH and the mtime
+# of /usr/lib/clock-epoch whenever the RTC is more than 15 years past it. Only
+# the mtime counts. BuildStream stages every file at 2011, so
+# elements/core/initramfs.bst ships the file holding its epoch as text, and the
+# mtime is set here. The initrd has its own copy, set in that element. boot-test
+# fails if the clock is still reset. composefs keeps per-file mtimes, so this
+# survives `bootc install`.
+RUN e=$(cat /usr/lib/clock-epoch) && \
+    case "$e" in ''|*[!0-9]*) echo "FATAL: /usr/lib/clock-epoch holds '$e', want epoch seconds (#1595)" >&2; exit 1 ;; esac && \
+    touch -m -d "@$e" /usr/lib/clock-epoch && \
+    [ "$(stat -c %Y /usr/lib/clock-epoch)" = "$e" ] && \
+    echo "==> real-root clock epoch is $e"
+
 RUN bootc container lint
 
 # Uncomment to set a temporary root password for VM login during debugging.

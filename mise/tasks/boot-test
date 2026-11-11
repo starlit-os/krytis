@@ -767,6 +767,29 @@ else
     FAILED=1
 fi
 
+# systemd must not reset the clock to its epoch (#1595). PID 1 checks twice,
+# in the initrd and again after switch-root, and either check can reset it.
+# With BuildStream's 2011 timestamp as the epoch, every boot from 2026-11-11
+# came up in 2011. The first visible symptom was three flatpak units failing
+# with "GPGME: No data", far from the cause. This assertion is what caught the
+# first fix, which covered only the initrd.
+#
+# PID 1 logs the reset before it is connected to journald, so it arrives
+# through kmsg (_TRANSPORT=kernel, SYSLOG_IDENTIFIER=systemd), and its
+# DIRECTION= and MESSAGE_ID= fields are lost; _PID=1 matches nothing. So match
+# the text (systemd src/core/clock-warp.c), using only the part that doesn't
+# depend on the epoch source. The message names that source, such as
+# "built-in epoch" or "timestamp on /usr/lib/clock-epoch", and the next expiry
+# will name the second one.
+CLOCK_RESET=$(SSH journalctl -b -o cat --no-pager SYSLOG_IDENTIFIER=systemd 2>/dev/null | grep -E 'System time was further ahead than .*, clock reset to' || true)
+if [ -z "${CLOCK_RESET}" ]; then
+    echo "    clock was not reset to the systemd epoch"
+else
+    echo "    FAIL: systemd reset the system clock to its epoch at boot (#1595; see clock-epoch in core/initramfs.bst and the Containerfile):" >&2
+    printf '      %s\n' "${CLOCK_RESET}" >&2
+    FAILED=1
+fi
+
 # The live-ISO installer (fisherman) leaves two things on the physical root that
 # config/fisherman-cleanup.bst deletes: a plain-text LUKS passphrase under
 # /sysroot/etc (#1280, TPM-machine installs) and ~11G of scratch at
