@@ -558,7 +558,9 @@ An empty answer cannot select the fallback through plymouth. In systemd v262.2,
 calling `send_passwords()`, so the requesting `systemd-ask-password` remains pending.
 Hardware exposed this on 2026-11-11: Enter dismissed and recreated the prompt instead of
 returning to the disk passphrase. The explicit `-` sentinel crosses the agent protocol and
-cannot collide with a valid FIDO2 PIN, whose minimum length is four characters.
+cannot collide with a valid FIDO2 PIN, whose minimum length is four characters. The
+corrected hardware run logged `Passphrase fallback selected` and started the generated
+passphrase unit in the same second; the disk then unlocked normally.
 
 What makes that message a safe trigger:
 
