@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#MISE description="Fail if `mise run build --pull` would compile more than --max-builds elements bow lacks"
+#USAGE flag "--max-builds <n>" default="100" help="Ceiling on elements to compile before the cache counts as cold. Default 100."
+#USAGE arg "[target]" default="oci/krytis/image.bst" help="Element whose build plan is checked"
+
+# publish.yml's cold-cache gate, run after toolchain-cache-check: that task
+# only asks whether the compilers can be pulled, this one asks how much of the
+# whole tree would be compiled. Run 36552776326 started an hour after a
+# junction bump (#993) merged behind that day's cache-warm, found 37 of 916
+# elements in bow, compiled the other 878 for ~4h55m on Blacksmith and then
+# died on local CAS quota at oci/krytis/image.bst — publishing nothing. This
+# answers "would this build be cheap?" before any of that is spent: seconds
+# on a warm tree, ~3 min on a cold one.
+#
+# Default 100 sits between what publish has actually compiled on every
+# successful run since 2026-09-06 (0-13 elements) and a cold tree (hundreds).
+# A change to krytis's own elements can invalidate at most krytis's own ~115;
+# hundreds means a junction bump nobody warmed.
+# See docs/skills/ci-runner.md § Publish refuses a cold bow cache.
+#
+# Pull-only by construction: the question is what bow holds, so this needs
+# BUILDBARN_PULL_TOKEN (env, or fnox locally) exactly like `build --pull`.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+MAX_BUILDS="${usage_max_builds:-100}"
+TARGET="${usage_target:-oci/krytis/image.bst}"
+
+# Cache keys depend on include/image-version.yml, so it must be the file the
+# build will generate — same raw call load-image makes (docs/skills/mise.md
+# § Calling other tasks).
+./mise/tasks/generate-image-version
+
+uv run --quiet python3 scripts/bow-cache-check.py "$TARGET" "$MAX_BUILDS"
