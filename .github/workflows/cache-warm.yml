@@ -82,7 +82,7 @@ jobs:
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.5
+          version: 2026.11.6
           experimental: true
           # Off (#1127): the VPS's tools already live in /root/.local/share/mise,
           # so the actions/cache round trip installs nothing. A miss tarred and
