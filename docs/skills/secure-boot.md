@@ -556,6 +556,73 @@ Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
 element change touching systemd invalidates an existing `:sealed` image — rerun
 `mise run seal-uki` rather than booting the stale one.
 
+## Never point `objcopy` at a UKI without an output file — it strips the signature in place
+
+`objcopy` with only an input file rewrites that file in place. That's true even for
+`--dump-section`, which looks like a read. On a signed UKI the rewrite re-lays out the
+PE and drops the Authenticode certificate table, but leaves the Security Directory
+entry (`objdump -p` → `Entry 4`) pointing at it, past the new end of file. Run against
+the live UKI on the ESP, it silently breaks that deployment. That happened on adora
+(2026-11-10): `sudo objcopy --dump-section .initrd=/var/tmp/x.img
+/boot/EFI/Linux/bootc/bootc_composefs-<id>.efi`, run while debugging #1574, and the
+next boot of that entry failed.
+
+**Symptom.** systemd-boot reports the firmware's `LoadImage` status, and it's
+**`Unsupported`, not `Access denied`**. It reads the same with Secure Boot on and off,
+because the firmware's PE loader rejects the malformed header before any signature
+check runs:
+
+```
+../src/boot/boot.c:3024@call_image_start: Error loading EFI binary \EFI\Linux\bootc\bootc_composefs-<id>.efi: Unsupported
+```
+
+(`boot.c:3024` is systemd v261.4. Contrast § A negative test must assert the
+*rejection*, where a bad signature on an intact file gives `Access denied`.)
+
+**Diagnose.** The file is shorter than the header claims. Checking that the sections
+fit isn't enough; check the certificate table:
+
+```bash
+f=/boot/EFI/Linux/bootc/bootc_composefs-<id>.efi
+stat -c %s "$f"                       # actual size
+objdump -p "$f" | grep '^Entry 4'     # offset + size of the cert table; must be <= actual size
+sbverify --list "$f"                  # broken: "checksum areas are greater than image size" / "No signature table present"
+```
+
+Reproduced on a copy of a sealed `krytis.efi`: before, `254073928` bytes, signed; after
+`objcopy --dump-section .initrd=dump.img`, `254066688` bytes with the same `Entry 4`
+and the `sbverify` output above. bootc's own UKI write is atomic and fsynced
+(`cap-std-ext` `atomic_replace_with`), so a short UKI on the ESP points at something
+that touched the file afterwards. Check the journal for root commands that named it
+(`journalctl -g 'bootc_composefs'`) before suspecting bootc, fsck or the ESP size.
+
+**Recover.** The ESP copy is the image's `/boot/EFI/Linux/krytis.efi`, unchanged. First
+confirm the local image is the one that deployment came from: its `.Digest` must equal
+the digest `bootc status` lists for that deployment, because the UKI's frozen cmdline
+carries that image's composefs digest. Then copy it back:
+
+```bash
+sudo sh -c '
+  m=$(podman image mount localhost/krytis:sealed)
+  dst=/boot/EFI/Linux/bootc/bootc_composefs-<id>.efi
+  cp "$m/boot/EFI/Linux/krytis.efi" "$dst.tmp" && sync && mv "$dst.tmp" "$dst" && sync
+  podman image unmount localhost/krytis:sealed
+  sbverify --list "$dst" | head -2'
+```
+
+If the digest doesn't match, don't copy. Re-run `bootc switch` to that image so bootc
+writes a UKI and an entry that agree. Don't use `cmp` against the image's file to decide
+anything either: objcopy rewrites the headers, so the two differ from byte 3 even when
+they started out identical.
+
+**Safe form.** Always give an explicit output file, and preferably work on a copy taken
+out of the image rather than the ESP. That's what `docs/skills/fido2.md`'s initrd recipe
+does:
+
+```bash
+objcopy -O binary --only-section=.initrd "$UKI" /var/tmp/initrd.img   # $UKI untouched
+```
+
 ## A sealed ISO payload must be embedded byte-identically, and its ref must move too
 
 `mise run build-iso --sealed` embeds `localhost/krytis:sealed` as the live ISO's
