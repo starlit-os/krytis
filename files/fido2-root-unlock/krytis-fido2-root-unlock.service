@@ -65,10 +65,10 @@ Type=oneshot
 # (systemd-cryptenroll's default on a key that has one) could never unlock here. Since
 # #1058 the attach runs through /usr/libexec/krytis-fido2-root-unlock, which keeps
 # headless=yes but recognises systemd's "PIN querying disabled via 'headless' option"
-# failure, asks for the PIN itself with systemd-ask-password (bounded, and an empty
-# answer means "use the passphrase"), and retries with $PIN, which the plugin path reads
-# even when headless. The PIN prompt is the only prompt it can raise, so it still never
-# competes with the generated unit for a passphrase. The script header has the details.
+# failure, asks for the PIN itself with systemd-ask-password (bounded, with `-` selecting
+# the passphrase fallback), and retries with $PIN, which the plugin path reads even when
+# headless. The PIN prompt is the only prompt it can raise, so it still never competes
+# with the generated unit for a passphrase. The script header has the details.
 #
 # Bounded, unlike the generated unit's TimeoutSec=infinity. That one can block forever
 # because a human is typing a passphrase into it; this one runs BEFORE that prompt, so a

@@ -548,9 +548,17 @@ read from systemd v262.2's `src/cryptsetup/cryptsetup.c`:
    agent), and attach headless again with `PIN=` set. The plugin path
    (`crypt_activate_by_token_pin_ask_password()`) reads `$PIN` through
    `acquire_pins_from_env_variable()` *before* its headless check, so `headless=yes` and a
-   PIN work together. An empty answer or a timeout means "use the passphrase", and a wrong
-   PIN fails with the same message, so it re-prompts. That's two tries at most, because
-   authenticators block PIN entry after three wrong PINs until re-plugged.
+   PIN work together. Entering `-` or letting the prompt time out means "use the
+   passphrase"; a wrong PIN fails with the same message, so it re-prompts. That's two tries
+   at most, because authenticators block PIN entry after three wrong PINs until re-plugged.
+
+An empty answer cannot select the fallback through plymouth. In systemd v262.2,
+`ask_password_plymouth()` parses an empty reply into an empty string vector and returns
+`-ECANCELED`; `systemd-tty-ask-password-agent --plymouth` then logs that error without
+calling `send_passwords()`, so the requesting `systemd-ask-password` remains pending.
+Hardware exposed this on 2026-11-11: Enter dismissed and recreated the prompt instead of
+returning to the disk passphrase. The explicit `-` sentinel crosses the agent protocol and
+cannot collide with a valid FIDO2 PIN, whose minimum length is four characters.
 
 What makes that message a safe trigger:
 

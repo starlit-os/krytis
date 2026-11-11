@@ -817,7 +817,7 @@ mise fido2:enroll-luks     # then reboot
 
 - [ ] Reboot unlocks with **no passphrase**: a key touch for a touch-only key, or a PIN
       prompt and then a touch for a key with a PIN set (#1058)
-- [ ] With a PIN-set key, an empty PIN at the prompt falls through to the passphrase
+- [ ] With a PIN-set key, entering `-` at the PIN prompt falls through to the passphrase
       prompt, and so do two wrong PINs
 
 `mise fido2:enroll-luks` keeps the PIN on a key that has one (`--fido2-with-client-pin`

@@ -25,7 +25,7 @@
 #      and retries headless with $PIN set.
 #
 # The PIN prompt is the only prompt this script can raise, so it never competes with
-# the generated unit for the password agent. An empty answer or a timeout means "use
+# the generated unit for the password agent. An answer of `-` or a timeout means "use
 # the passphrase": the script fails, and the generated unit asks for it as before.
 #
 # Two PIN tries, not more: an authenticator blocks PIN entry after three consecutive
@@ -62,21 +62,21 @@ case "$out" in
     *) exit 1 ;;
 esac
 
-prompt='Security key PIN to unlock the disk (leave empty to use the passphrase):'
+prompt='Security key PIN to unlock the disk (enter - to use the passphrase):'
 for _ in 1 2; do  # two PIN tries, see above
     PIN=$("$ASK_PASSWORD" --timeout="$PIN_TIMEOUT" --icon=drive-harddisk \
         --id=krytis-fido2-root-unlock:root --no-tty "$prompt") || PIN=''
-    if [ -z "$PIN" ]; then
-        echo "No security key PIN entered; leaving the unlock to the passphrase prompt." >&2
-        exit 1
-    fi
+    case "$PIN" in
+        '') echo "No security key PIN received; leaving the unlock to the passphrase prompt." >&2; exit 1 ;;
+        -) echo "Passphrase fallback selected; leaving the unlock to the passphrase prompt." >&2; exit 1 ;;
+    esac
     out=$(PIN="$PIN" attach)
     rc=$?
     unset PIN
     [ -n "$out" ] && printf '%s\n' "$out" >&2
     [ "$rc" -eq 0 ] && exit 0
     case "$out" in
-        *"$NEEDS_PIN"*) prompt='Wrong PIN. Security key PIN (leave empty to use the passphrase):' ;;
+        *"$NEEDS_PIN"*) prompt='Wrong PIN. Security key PIN (enter - to use the passphrase):' ;;
         *) exit 1 ;;
     esac
 done

@@ -206,7 +206,8 @@ actually running it, with expected values and failure signatures, is
       unlock itself has **not** been re-run on hardware since. Since #1058 a credential
       enrolled with a PIN works too: the unit's wrapper asks for the PIN (`docs/skills/fido2.md`
       § A PIN-requiring credential: the wrapper asks for the PIN itself). Re-run with a
-      PIN-set key: expect a PIN prompt, then a touch, then no passphrase prompt.
+      PIN-set key: expect a PIN prompt, then a touch, then no passphrase prompt; entering
+      `-` at that prompt and two wrong PINs must each fall through to the passphrase.
 - [x] `bootc upgrade` to a newer sealed image, then reboot, still enforcing. #535.
 - [x] `bootc rollback` under enforcement. #535.
 
