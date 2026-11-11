@@ -77,9 +77,9 @@ check uki-exit-0 $'  Measured UKI: yes\n' 0 registry.example/krytis:sealed "$SEA
 check uki-partial-exit-1 $'  Measured UKI: yes\nCould not read ESP file\n' 1 registry.example/krytis:sealed "$SEALED_SWITCH"
 check non-uki $'  Measured UKI: no\n' 0 registry.example/krytis:sealed \
     $'load --image localhost/krytis:latest\nsudo bootc switch --transport containers-storage localhost/krytis:latest'
-check same-ref-upgrade $'  Measured UKI: yes\n' 1 containers-storage:localhost/krytis:sealed \
+check same-ref-upgrade $'  Measured UKI: yes\n' 1 localhost/krytis:sealed \
     $'seal\nload --image localhost/krytis:sealed\nsudo bootc upgrade'
-check same-ref-reuse $'  Measured UKI: yes\n' 1 containers-storage:localhost/krytis:sealed \
+check same-ref-reuse $'  Measured UKI: yes\n' 1 localhost/krytis:sealed \
     $'load --image localhost/krytis:sealed\nsudo bootc upgrade' true
 
 [ "$FAIL" -eq 0 ] && echo "==> switch-local-test passed" || exit 1

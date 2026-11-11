@@ -96,7 +96,7 @@ BOOTED_IMAGE=$(sudo bootc status --format=json | python3 -c 'import json,sys
 d = json.load(sys.stdin)
 b = (d.get("status") or d).get("booted") or {}
 print(((b.get("image") or {}).get("image") or {}).get("image", "unknown"))')
-if [ "${BOOTED_IMAGE}" = "containers-storage:${IMAGE}" ]; then
+if [ "${BOOTED_IMAGE}" = "${IMAGE}" ]; then
     echo "==> ${IMAGE} is already the tracked image; staging its updated digest..."
     sudo bootc upgrade
 else

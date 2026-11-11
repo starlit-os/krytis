@@ -1011,9 +1011,11 @@ Two details are load-bearing (#1585):
   without root. Under `set -o pipefail`, the direct `bootctl status | grep` pipeline
   therefore selected `:latest` despite the matching line and hit `Found NonEFI config`.
 - After copying the image into the root store, inspect bootc's tracked image reference.
-  If it already equals `containers-storage:localhost/krytis:sealed`, `bootc switch`
-  only says `Image specification is unchanged` and stages nothing; use `bootc upgrade`
-  to resolve the updated local tag. Use `bootc switch` only when changing the reference.
+  Its JSON stores `image: localhost/krytis:sealed` and `transport: containers-storage`
+  separately; compare the image field to the task's `IMAGE`. If it already matches,
+  `bootc switch` only says `Image specification is unchanged` and stages nothing, so use
+  `bootc upgrade` to resolve the updated local tag. Use `bootc switch` only when changing
+  the reference.
 
 `--reuse-sealed` is an explicit recovery/resume control, not the normal build path. Use it
 only after `mise run seal-uki` already completed its composefs verification for the current
