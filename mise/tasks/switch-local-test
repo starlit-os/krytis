@@ -44,6 +44,7 @@ done
 FAIL=0
 check() {
     local name=$1 status_output=$2 status_rc=$3 booted_image=$4 expected=$5
+    local reuse_sealed=${6:-}
     local calls="$WORK/$name.calls" output="$WORK/$name.output"
     : >"$calls"
     if ! (cd "$WORK/root" && env \
@@ -52,6 +53,7 @@ check() {
         STUB_BOOTCTL_OUTPUT="$status_output" \
         STUB_BOOTCTL_RC="$status_rc" \
         STUB_BOOTED_IMAGE="$booted_image" \
+        usage_reuse_sealed="$reuse_sealed" \
         "$WORK/tasks/switch-local") >"$output" 2>&1; then
         echo "FAIL  $name: task exited nonzero"
         sed 's/^/      | /' "$output"
@@ -77,5 +79,7 @@ check non-uki $'  Measured UKI: no\n' 0 registry.example/krytis:sealed \
     $'load --image localhost/krytis:latest\nsudo bootc switch --transport containers-storage localhost/krytis:latest'
 check same-ref-upgrade $'  Measured UKI: yes\n' 1 containers-storage:localhost/krytis:sealed \
     $'seal\nload --image localhost/krytis:sealed\nsudo bootc upgrade'
+check same-ref-reuse $'  Measured UKI: yes\n' 1 containers-storage:localhost/krytis:sealed \
+    $'load --image localhost/krytis:sealed\nsudo bootc upgrade' true
 
 [ "$FAIL" -eq 0 ] && echo "==> switch-local-test passed" || exit 1

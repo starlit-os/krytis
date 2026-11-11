@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Switch this machine's bootc deployment to a local build (auto-seals first if currently UKI-booted)"
 #USAGE flag "--force" help="Re-copy the image into the root store even if it already matches (see load-image-root)"
+#USAGE flag "--reuse-sealed" help="Use an already-verified localhost/krytis:sealed instead of sealing latest again"
 
 set -euo pipefail
 
@@ -38,36 +39,39 @@ fi
 
 if [ "${IS_UKI_BOOT}" = "yes" ]; then
     echo "==> UKI-booted (sealed) -- localhost/krytis:latest has no UKI and would hit"
-    echo "    bootc's \"Found NonEFI config\" on switch. Sealing first."
+    echo "    bootc's \"Found NonEFI config\" on switch. A sealed image is required."
 
-    # Fail fast and explicitly here, before touching podman/bootc at all, if
-    # the signing keys/certs aren't present. seal-uki itself will attempt to
-    # auto-pull a *missing* db.key via `mise run pull-keys` -- deliberately
-    # not relied on here: that can block on interactive Proton Pass auth mid
-    # switch, and it only checks db.key, not the other five files. This task
-    # wants a single, immediate, unambiguous failure naming every missing
-    # file, not a partial auto-pull attempt or a deep podman --secret error.
-    MISSING_KEYS=()
-    for f in PK.key PK.crt KEK.key KEK.crt db.key db.crt; do
-        [ -s "files/boot-keys/${f}" ] || MISSING_KEYS+=("${f}")
-    done
-    if [ "${#MISSING_KEYS[@]}" -gt 0 ]; then
-        echo "ERROR: sealing needs signing keys/certs that aren't loaded:" >&2
-        printf '  files/boot-keys/%s\n' "${MISSING_KEYS[@]}" >&2
-        echo "       Run 'mise run pull-keys' first." >&2
-        exit 1
+    if [ "${usage_reuse_sealed:-}" = "true" ]; then
+        echo "==> [1/2] Reusing existing localhost/krytis:sealed as explicitly requested."
+    else
+        # Fail fast and explicitly here, before touching podman/bootc at all, if
+        # the signing keys/certs aren't present. seal-uki itself will attempt to
+        # auto-pull a *missing* db.key via `mise run pull-keys` -- deliberately
+        # not relied on here: that can block on interactive Proton Pass auth mid
+        # switch, and it only checks db.key, not the other five files. This task
+        # wants a single, immediate, unambiguous failure naming every missing
+        # file, not a partial auto-pull attempt or a deep podman --secret error.
+        MISSING_KEYS=()
+        for f in PK.key PK.crt KEK.key KEK.crt db.key db.crt; do
+            [ -s "files/boot-keys/${f}" ] || MISSING_KEYS+=("${f}")
+        done
+        if [ "${#MISSING_KEYS[@]}" -gt 0 ]; then
+            echo "ERROR: sealing needs signing keys/certs that aren't loaded:" >&2
+            printf '  files/boot-keys/%s\n' "${MISSING_KEYS[@]}" >&2
+            echo "       Run 'mise run pull-keys' first." >&2
+            exit 1
+        fi
+
+        echo "==> [1/2] Sealing localhost/krytis:sealed..."
+        "$(dirname "$0")/seal-uki"
     fi
 
-    echo "==> [1/2] Sealing localhost/krytis:sealed..."
-    "$(dirname "$0")/seal-uki"
-
     # seal-uki has its own internal checks (assert_esl, verify-composefs-digest)
-    # and runs under set -euo pipefail, so a failure there already aborts this
-    # script with its own exit code -- this is a final belt-and-braces check
-    # that the tag it's supposed to have produced actually exists, so a
-    # switch never proceeds against a stale or partially-built image.
+    # and runs under set -euo pipefail. This check also makes --reuse-sealed fail
+    # closed: the opt-in skips work, never the requirement for a real image tag.
     if ! podman image inspect localhost/krytis:sealed >/dev/null 2>&1; then
-        echo "ERROR: seal-uki did not produce localhost/krytis:sealed." >&2
+        echo "ERROR: localhost/krytis:sealed does not exist." >&2
+        echo "       Re-run without --reuse-sealed to build and verify it." >&2
         exit 1
     fi
 

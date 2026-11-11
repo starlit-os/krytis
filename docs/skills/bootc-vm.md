@@ -1015,6 +1015,12 @@ Two details are load-bearing (#1585):
   only says `Image specification is unchanged` and stages nothing; use `bootc upgrade`
   to resolve the updated local tag. Use `bootc switch` only when changing the reference.
 
+`--reuse-sealed` is an explicit recovery/resume control, not the normal build path. Use it
+only after `mise run seal-uki` already completed its composefs verification for the current
+`localhost/krytis:latest` (for example, when a later root-store copy or staging step failed).
+It still requires the `localhost/krytis:sealed` tag to exist, but deliberately does not
+claim that an arbitrary old tag matches the current input; the operator owns that assertion.
+
 ## A second staged update breaks bootc until the orphan is removed
 
 **Hit on real hardware, 2026-10-13, bootc 1.17.1, composefs backend, sealed UKI.**
