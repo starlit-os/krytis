@@ -999,12 +999,21 @@ a UKI, so this does not block `bootc switch`/`upgrade`. It did stop
 
 **Fix: switch to an image with the same boot-entry shape as what's currently running.**
 `mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s
-`Measured UKI: yes` line (needs no root, no mounted ESP — derived from EFI variables set
-by systemd-stub at boot, unlike checking for `/boot/EFI/Linux/*.efi` on a *candidate
-image*, which is what `generate-disk`'s own UKI check does, via `podman run` against the
-image rather than the live system) and seals first (`mise run seal-uki` →
-`localhost/krytis:sealed`, itself UKI-only) before switching, instead of switching to
-`:latest` directly. A non-UKI-booted system switches to `:latest` unchanged.
+`Measured UKI: yes` line (derived from EFI variables set by systemd-stub at boot, unlike
+checking for `/boot/EFI/Linux/*.efi` on a *candidate image*, which is what `generate-disk`
+does via `podman run`) and seals first (`mise run seal-uki` →
+`localhost/krytis:sealed`, itself UKI-only). A non-UKI-booted system uses `:latest`.
+
+Two details are load-bearing (#1585):
+
+- Capture `bootctl status` before grepping it, with its exit status tolerated. On the
+  ThinkPad it prints `Measured UKI: yes` but exits 1 because some ESP files are unreadable
+  without root. Under `set -o pipefail`, the direct `bootctl status | grep` pipeline
+  therefore selected `:latest` despite the matching line and hit `Found NonEFI config`.
+- After copying the image into the root store, inspect bootc's tracked image reference.
+  If it already equals `containers-storage:localhost/krytis:sealed`, `bootc switch`
+  only says `Image specification is unchanged` and stages nothing; use `bootc upgrade`
+  to resolve the updated local tag. Use `bootc switch` only when changing the reference.
 
 ## A second staged update breaks bootc until the orphan is removed
 

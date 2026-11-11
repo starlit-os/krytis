@@ -28,7 +28,11 @@ set -euo pipefail
 # EFI vendor GUID) being present only on a UKI boot.
 echo "==> Checking whether this machine is currently UKI-booted..."
 IS_UKI_BOOT=no
-if bootctl status 2>/dev/null | grep -q '^ *Measured UKI: yes$'; then
+# bootctl can print a complete enough status, including this line, and still exit 1
+# when unprivileged access to an ESP file fails. Capture that useful partial output
+# before inspecting it; pipefail would otherwise turn a successful grep into failure.
+BOOTCTL_STATUS=$(bootctl status 2>/dev/null || :)
+if grep -q '^ *Measured UKI: yes$' <<<"${BOOTCTL_STATUS}"; then
     IS_UKI_BOOT=yes
 fi
 
@@ -84,7 +88,16 @@ FORCE_ARGS=()
 [ "${usage_force:-}" = "true" ] && FORCE_ARGS=(--force)
 "$(dirname "$0")/load-image-root" --image "${IMAGE}" "${FORCE_ARGS[@]}"
 
-echo "==> Switching to ${IMAGE}..."
-sudo bootc switch --transport containers-storage "${IMAGE}"
+BOOTED_IMAGE=$(sudo bootc status --format=json | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+b = (d.get("status") or d).get("booted") or {}
+print(((b.get("image") or {}).get("image") or {}).get("image", "unknown"))')
+if [ "${BOOTED_IMAGE}" = "containers-storage:${IMAGE}" ]; then
+    echo "==> ${IMAGE} is already the tracked image; staging its updated digest..."
+    sudo bootc upgrade
+else
+    echo "==> Switching to ${IMAGE}..."
+    sudo bootc switch --transport containers-storage "${IMAGE}"
+fi
 
 echo "==> Done. Reboot to apply: sudo systemctl reboot"
