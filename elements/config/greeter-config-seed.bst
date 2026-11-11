@@ -1,7 +1,15 @@
 # greeter-config-seed: seeds /var/lib/noctalia-greeter/greeter.toml with
 # hide_logo = true on first boot, replacing the old no-brand-logo.patch
 # dropped in the git_repo switch to upstream v1.0.0 (which added the
-# appearance.hide_logo option natively).
+# appearance.hide_logo option natively). Since #1566 it also seeds sync.toml
+# with `[session] last = "Umbriel"`, so a fresh install preselects Umbriel,
+# but only where the greeter has no saved session anywhere (see
+# greeter-config-seed.sh for the legacy files that count as saved). Test:
+# mise run greeter-config-seed-test.
+#
+# Upstream v1.7.0 installs assets/ and its greetd setup scripts into
+# /usr/share/noctalia-greeter/, but no greeter.toml or sync.toml, so these two
+# templates don't overlap with it (meson.build install_subdir/install_data).
 #
 # /var is writable runtime state in the bootc composefs layout — bootc flags
 # non-dir files baked into the OCI layer's /var, so the config cannot be
@@ -29,6 +37,9 @@ config:
   - |
     install -Dm644 greeter.toml \
       "%{install-root}%{datadir}/noctalia-greeter/greeter.toml"
+
+    install -Dm644 sync.toml \
+      "%{install-root}%{datadir}/noctalia-greeter/sync.toml"
 
     install -Dm755 greeter-config-seed.sh \
       "%{install-root}/usr/libexec/krytis/greeter-config-seed.sh"

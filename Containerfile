@@ -60,6 +60,16 @@ COPY files/microsoft-uefi-certs/ /tmp/microsoft-uefi-certs/
 # repeats it for db so a hand-run `podman build --secret …` fails here too,
 # instead of signing binaries that only fail at boot under enforcement.
 #
+# Signed with systemd-sbsign, not sbsign, so the build is reproducible (#1329).
+# An Authenticode signature carries a signing time. sbsign always stamps the
+# current time; systemd-sbsign takes it from SOURCE_DATE_EPOCH. We set that to
+# db_crt's notBefore, so sealing the same commit with the same keys gives a
+# byte-identical systemd-bootx64.efi. Not BuildStream's 2011 epoch: the kernel's
+# PKCS#7 verifier rejects a signing time outside the certificate's validity, so
+# a time inside it is the safe choice. Python's ssl.cert_time_to_seconds parses
+# openssl's date format; the image's date is uutils, whose -d parsing of that
+# format is not something to rely on. sbverify then checks the result.
+#
 # No `#` comments inside the RUN below — the Dockerfile parser joins
 # `\`-continued lines, so a comment would swallow the command after it.
 RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
@@ -70,9 +80,14 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
         [ "$(openssl pkey -in /run/secrets/db_key -pubout)" = "$(openssl x509 -in /run/secrets/db_crt -pubkey -noout)" ] || \
             { echo "FATAL: db_key does not match db_crt" >&2; exit 1; } && \
         mkdir -p /var/tmp /usr/lib/bootc/install/secureboot-keys/auto && \
-        sbsign --key /run/secrets/db_key --cert /run/secrets/db_crt \
+        SOURCE_DATE_EPOCH=$(python3 -c 'import ssl, sys; print(int(ssl.cert_time_to_seconds(sys.argv[1])))' \
+            "$(openssl x509 -in /run/secrets/db_crt -noout -startdate | cut -d= -f2)") && \
+        export SOURCE_DATE_EPOCH && \
+        /usr/lib/systemd/systemd-sbsign sign \
+            --private-key /run/secrets/db_key --certificate /run/secrets/db_crt \
             --output /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed \
             /usr/lib/systemd/boot/efi/systemd-bootx64.efi && \
+        sbverify --cert /run/secrets/db_crt /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed && \
         mv /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed \
             /usr/lib/systemd/boot/efi/systemd-bootx64.efi && \
         GUID=$(cat /proc/sys/kernel/random/uuid) && \

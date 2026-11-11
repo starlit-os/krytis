@@ -1337,11 +1337,12 @@ things were only true after checking, and both changed the argument:
   mirror could keep the feature *and* drop the dep.
 - What actually makes it unreachable is its autostart entry:
   `/etc/xdg/autostart/org.gnome.SettingsDaemon.DiskUtilityNotify.desktop` is
-  `OnlyShowIn=GNOME;`. **krytis does process XDG autostart** — niri's `niri.service` carries
-  `Wants=xdg-desktop-autostart.target`, so `systemd-xdg-autostart-generator` runs over
-  `/etc/xdg/autostart` on every session — but every krytis session sets
-  `XDG_CURRENT_DESKTOP=niri` (`config/greetd-config.bst`, `files/niri/config.kdl`) and the
-  generator honours `OnlyShowIn`, so the generated unit's condition never passes.
+  `OnlyShowIn=GNOME;`. **krytis does process XDG autostart** — niri's `niri.service` and
+  Umbriel's `umbriel-session.target` carry `Wants=xdg-desktop-autostart.target`, so
+  `systemd-xdg-autostart-generator` runs over `/etc/xdg/autostart` on every session — but
+  every krytis session sets `XDG_CURRENT_DESKTOP` to `umbriel` or `niri` (each compositor
+  sets its own since #1566) and the generator honours `OnlyShowIn`, so the generated unit's
+  condition never passes.
 
 Do not reach for "it's GNOME-only, so it can't run here" as a *reason* — reach for the
 mechanism. "krytis never starts `gnome-session`, so `PartOf=gnome-session.target` units stay
@@ -4247,8 +4248,10 @@ Without `XDG_SESSION_TYPE=wayland` visible to `pam_systemd.so`:
 ```
 # /etc/environment
 XDG_SESSION_TYPE=wayland
-XDG_CURRENT_DESKTOP=niri
 ```
+
+Only the session *type* belongs here. `XDG_CURRENT_DESKTOP` used to be set here too, to
+`niri`, and leaked into Umbriel sessions; each compositor sets its own since #1566.
 
 ```
 # /etc/pam.d/greetd (session phase, order matters)
@@ -4257,7 +4260,7 @@ session    required     pam_unix.so
 -session   optional     pam_systemd.so         ← now sees XDG_SESSION_TYPE
 ```
 
-Also ship `/usr/lib/environment.d/90-krytis-session.conf` with the same vars so `systemd --user` (and any process started via it) inherits them once the user session is running.
+Also ship `/usr/lib/environment.d/90-krytis-session.conf` with `XDG_SESSION_TYPE` so `systemd --user` (and any process started via it) inherits it once the user session is running.
 
 ## Flatpak: Transitive Presence and Flathub Config
 

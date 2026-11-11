@@ -1,18 +1,21 @@
 [Unit]
 Description=Seed default noctalia-greeter configuration
 Documentation=https://github.com/starlit-os/krytis/issues/296
-# greeter.toml is mutable greeter state (last session, color scheme) — seed
-# only when absent, then leave it alone. Never re-seed: the user's saved
-# preferences must survive reboot and the greeter read-modify-writes the file.
-ConditionPathExists=!/var/lib/noctalia-greeter/greeter.toml
+Documentation=https://github.com/starlit-os/krytis/issues/1566
+# Seeds greeter.toml (config) and sync.toml (the greeter's saved session,
+# preselecting Umbriel, #1566) when either is absent, then leaves both alone.
+# Never re-seed: the user's saved choices must survive reboot. The `|` makes
+# the two conditions an OR; the script skips whichever file already exists.
+ConditionPathExists=|!/var/lib/noctalia-greeter/greeter.toml
+ConditionPathExists=|!/var/lib/noctalia-greeter/sync.toml
 # systemd-tmpfiles-setup.service creates /var/lib/noctalia-greeter (tmpfiles.d
 # entry shipped by upstream noctalia-greeter itself since v1.1.0, at
 # /usr/lib/tmpfiles.d/noctalia-greeter.conf); the seed writes into it.
 After=systemd-tmpfiles-setup.service
 # The greeter user is created by sysusers.d (greetd-config.bst).
 After=systemd-sysusers.service
-# Must complete before greetd launches noctalia-greeter, which reads
-# greeter.toml at startup.
+# Must complete before greetd launches noctalia-greeter, which reads both
+# files at startup.
 Before=greetd.service
 
 [Service]

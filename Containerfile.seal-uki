@@ -30,6 +30,14 @@
 #
 # Verified end-to-end: baked digest and a `podman mount`-based post-commit
 # recompute matched exactly, and the resulting image has exactly 1 layer.
+#
+# Signed with systemd-sbsign and SOURCE_DATE_EPOCH = db_crt's notBefore, for the
+# same reproducibility reason as systemd-boot in Containerfile (#1329). ukify
+# passes its environment through to systemd-sbsign (bootc doesn't clear it).
+# --sign-kernel is required with this signtool: ukify decides whether to sign
+# the embedded kernel by asking the signtool, and systemd-sbsign can't answer
+# (SystemdSbSign.verify raises NotImplementedError in systemd v262 ukify.py).
+# sbsign's answer was "sign it" for our unsigned vmlinuz, so this keeps that.
 FROM localhost/krytis:sealed-base AS uki-builder
 ARG SEAL_SECURE_BOOT=false
 
@@ -37,11 +45,16 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
     --mount=type=bind,from=localhost/krytis:sealed-base,target=/target \
     if [ "$SEAL_SECURE_BOOT" = "true" ]; then \
         mkdir -p /out && \
+        SOURCE_DATE_EPOCH=$(python3 -c 'import ssl, sys; print(int(ssl.cert_time_to_seconds(sys.argv[1])))' \
+            "$(openssl x509 -in /run/secrets/db_crt -noout -startdate | cut -d= -f2)") && \
+        export SOURCE_DATE_EPOCH && \
         bootc container ukify --rootfs /target -- \
             --secureboot-private-key /run/secrets/db_key \
             --secureboot-certificate /run/secrets/db_crt \
-            --signtool sbsign \
-            --output /out/krytis.efi \
+            --signtool systemd-sbsign \
+            --sign-kernel \
+            --output /out/krytis.efi && \
+        sbverify --cert /run/secrets/db_crt /out/krytis.efi \
     ; fi
 
 FROM localhost/krytis:sealed-base

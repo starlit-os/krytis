@@ -104,9 +104,9 @@ element does, its row's text is a review question.
 | Element | What it adds |
 |---|---|
 | `config/greetd-config.bst` | greetd PAM config, `greetd.toml`, sysusers and tmpfiles for the noctalia-greeter login stack. |
-| `config/greeter-config-seed.bst` | First-boot seed of `/var/lib/noctalia-greeter/greeter.toml`. |
-| `desktop/niri.bst` | niri, the default Wayland compositor. |
-| `desktop/umbriel.bst` | Umbriel, the opt-in second Wayland compositor (#774). |
+| `config/greeter-config-seed.bst` | First-boot seed of `/var/lib/noctalia-greeter/greeter.toml`, and of `sync.toml` to preselect Umbriel where no session is saved (#1566). |
+| `desktop/niri.bst` | niri, the second Wayland compositor, kept for one release after #1566 (removal: #1567). |
+| `desktop/umbriel.bst` | Umbriel, the default Wayland compositor since #1566 (added opt-in in #774). |
 | `desktop/noctalia.bst` | noctalia shell, upstream releases with one krytis patch. |
 | `config/noctalia-service.bst` | Runs noctalia as a user service in `session.slice`, out of systemd-oomd's reach (#1253). |
 | `config/battery-power-profile-hook.bst` | Battery/AC power-profile switch script for noctalia's hooks. Opt-in. |

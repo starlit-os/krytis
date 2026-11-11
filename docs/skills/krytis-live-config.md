@@ -1,6 +1,6 @@
 ---
 name: krytis-live-config
-description: "Live-only overrides for krytis's niri/noctalia desktop session (hotkey overlay, first-run popups). Use when editing live/src/configure-live-krytis.sh to suppress a desktop-session UI element for liveuser without changing the installed system's config."
+description: "Live-only overrides for krytis's Umbriel/noctalia desktop session (hotkey overlay, first-run popups). Use when editing live/src/configure-live-krytis.sh to suppress a desktop-session UI element for liveuser without changing the installed system's config."
 metadata:
   type: reference
 ---
@@ -8,10 +8,27 @@ metadata:
 # krytis live session config overrides
 
 `live/src/configure-live-krytis.sh` layers live-only tweaks on top of the
-baked-in krytis image (niri + greetd + noctalia-greeter). The pattern for
+baked-in krytis image (Umbriel + greetd + noctalia-greeter). The pattern for
 suppressing a first-run/onboarding UI element: write to `liveuser`'s home
 (`/home/liveuser/...`), never touch the shipped system config — installed
 systems must keep default behavior.
+
+### The live session autologins into Umbriel, not niri (#1566, 2026-11-10)
+
+greetd's `[initial_session]` runs `start-umbriel`, the same launcher upstream's
+`data/umbriel.desktop` names (`Exec=start-umbriel`), so the live session and the
+installed greeter's default "Umbriel" entry start the same thing. niri stays in
+the image until #1567 but the live ISO no longer uses it. The claims in the live
+script's comments were re-checked for Umbriel rather than renamed, and two were
+wrong even for niri:
+
+- **"niri ships no polkit agent" was the wrong reason for the passwordless rule.**
+  No compositor here ships one, but noctalia registers as the session's polkit
+  agent. The rule is still needed because liveuser has no password
+  (`passwd --delete`), so noctalia's prompt has nothing to accept.
+- **"niri does not run XDG autostart" was false.** `niri.service` and
+  `umbriel-session.target` both `Wants=xdg-desktop-autostart.target`. The installer
+  entry is a launcher entry by choice, so it opens when the user asks.
 
 ### niri hotkey-overlay popup (2026-07-02 — settled image-wide 2026-07-06, no live override left)
 
