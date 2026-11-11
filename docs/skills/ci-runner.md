@@ -1226,6 +1226,70 @@ OutOfSpaceException: Insufficient storage quota
 
 This is a server-side error on their infrastructure — their CAS is full. BST logs it as `WARNING`/`FAILURE` for the cache pull but falls back to fetching sources from upstream and building locally. The build continues; it's just slower. No action needed on our side.
 
+### Publish refuses a cold bow cache
+
+`publish.yml` builds on Blacksmith with `mise run build --pull` and is only cheap
+because `cache-warm.yml` (VPS, `push: true`) already compiled the same tree into
+bow. When that assumption breaks it does not "build slower" — run
+[36552776326](https://github.com/starlit-os/krytis/actions/runs/36552776326) started
+after a junction bump (#993) had merged behind that day's cache-warm, found 37 of
+916 elements in bow (`Pull Queue: processed 37, skipped 879`), compiled 878 for
+4h55m and then died at `oci/krytis/image.bst` on `Insufficient storage quota` in the
+local CAS. Nothing published, five Blacksmith hours spent.
+
+The `Gate on warm bow cache` step runs `mise run bow-cache-check` before the build
+and fails above 100 elements to compile. `allow_cold_cache=true` on a dispatch skips
+it; on `schedule` the input is null, so the gate always enforces there. The remedy
+the failure prints is to dispatch `cache-warm.yml` on the commit, then re-run.
+
+**It runs after the toolchain gate and covers what that gate can't.**
+`toolchain-cache-check` only asks whether `bootstrap/*`, `llvm` and `rust` can be
+pulled. Since #1077, cache-warm pushes the toolchain, so a gnome-build-meta bump,
+or a freedesktop-sdk bump whose toolchain is already in bow, passes it and can
+still leave hundreds of elements to compile. The two gates also check bow
+differently. `bst artifact show` asks only bow's **index**, which outlived
+evicted llvm and rust data in #1094, so this count can come out too low when
+storage has been evicted under the index. The toolchain gate checks storage too,
+which is why it stays the gate for the expensive part.
+
+**What it counts is bst's build plan, not the missing part of the closure.** `bst
+build`'s default `--deps run` requires the target plus its runtime closure; a
+required element that is cached or `available` remotely is only pulled, and only an
+element that has to be *built* drags its build-deps (with their runtime closures)
+into the plan (`Element._set_required`, `__schedule_assembly_when_necessary` in
+BuildStream 2.7). `scripts/bow-cache-check.py` replays exactly that walk over
+`bst show --format '%{build-deps}'/'%{runtime-deps}'` and `bst artifact show`
+states. Counting every `not cached` line of `bst artifact show --deps all` instead
+would call a warm tree cold whenever bow has evicted deps underneath a still-cached
+stack — those are never pulled, so nothing refreshes them.
+
+**`bst show`'s `%{state}` cannot answer this.** It reflects the local cache only
+(the local-vs-remote caveat on "zero cache hits" further down this file), which is always empty
+on an ephemeral runner. `bst artifact show` is the command that queries remotes, and
+it does so serially, one round trip per element: ~3 min for the full closure. So the
+task queries `--deps run` first and only falls back to `--deps all` when the target
+is not already available — a publish after cache-warm on the same commit costs one
+query.
+
+Why 100: measured on the checkout it guards (2026-09-29, empty local cache):
+
+| Tree | Would build | Wall |
+|---|---|---|
+| `0c0735a` — the commit that day's cache-warm built | 0 of 915 | 24s |
+| `7fbaf3b` — five element bumps merged behind it, no junction change | 18 (all krytis) | 1m39s |
+| `2539677` — after the #993 junction bump, never warmed | 579 of 918 (388 freedesktop-sdk, 119 gnome-build-meta, 72 krytis) — **fails** | 3m02s |
+
+On `2539677` the whole closure shows 734 `not cached` lines in `bst artifact show
+--deps all`; the plan is 579. That gap is the evicted-underneath case above.
+
+Publish's own history agrees: every successful run since 2026-09-06 compiled 0–13
+elements (`Build Queue: processed N`). A change to krytis's own elements can
+invalidate at most krytis's 115 (junction elements never depend on krytis's), so
+hundreds means a junction bump nobody warmed. Keys depend on
+`include/image-version.yml`, so the task regenerates it first exactly as
+`load-image` does — skip that and the check answers for a different key than the
+build uses.
+
 ---
 
 ## uv sync in CI
