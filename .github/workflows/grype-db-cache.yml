@@ -49,7 +49,7 @@ jobs:
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.4
+          version: 2026.11.6
           experimental: true
           # Grype only, at mise.lock's version. And no mise cache: an entry
           # saved here would hold grype alone under the key the other

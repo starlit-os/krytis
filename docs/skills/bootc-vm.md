@@ -332,6 +332,76 @@ lsinitrd <initrd-path> -f usr/lib/dracut/modules.txt
 lsinitrd <initrd-path> | grep -E 'erofs|overlay'
 ```
 
+**`lsinitrd --unpack` drops mtimes.** Every extracted file gets the current time. To read
+the mtime that actually shipped, which is the whole value of `/usr/lib/clock-epoch` (see
+§ systemd's clock epoch must be on the initrd and the real root), extract with `cpio -m`:
+
+```bash
+/usr/lib/dracut/skipcpio <initrd> | zstd -dc | cpio -idm --quiet usr/lib/clock-epoch
+stat -c %Y usr/lib/clock-epoch
+```
+
+## systemd's clock epoch must be on the initrd and the real root (#1595)
+
+From **2026-11-11 05:11:11 UTC**, every krytis boot reset the clock to 2011:
+
+```
+rtc_cmos PNP0B00:00: setting system clock to 2026-11-11T06:23:21 UTC
+systemd[1]: System time was further ahead than 15y after built-in epoch, clock reset to Fri 2011-11-11 11:11:11 UTC
+```
+
+**Mechanism** (systemd v262 `src/core/clock-warp.c`, `clock_apply_epoch()`). The epoch is
+the newest of three values: the compiled-in `TIME_EPOCH`, the mtime of
+`/usr/lib/clock-epoch`, and the mtime of `/var/lib/systemd/timesync/clock`. If the RTC is
+more than `clock-valid-range-usec-max` (15 years) past the epoch, PID 1 sets the clock
+**back** to the epoch.
+- The BuildStream-built systemd has `TIME_EPOCH` = 2011-11-11 11:11:11, BuildStream's
+  normalised timestamp. 2011 + 15 × 365.25 days lands on 2026-11-11 05:11:11 UTC.
+- **PID 1 runs the check twice, and both runs can move the clock back.** It runs once in the
+  initrd, then again on the real root after switch-root. `allow_backwards = !skip_setup`, and
+  `early_skip_setup_check()` (`src/core/main.c`) returns false for `--switched-root`, so the
+  second run counts as a fresh boot, not a re-exec. Each root needs its own
+  `/usr/lib/clock-epoch`. The first fix shipped only the initrd copy, on the wrong belief
+  that the second run could only move the clock forward. boot-test still logged the reset
+  with source "built-in epoch".
+- Real hardware is affected the same way. timesyncd's `clock` file is no help in the initrd,
+  where `/var` isn't mounted. It does help on the real root once timesyncd has synced, but
+  a fresh install has no such file.
+
+**Symptom, far from the cause.** The clock stays in 2011 until timesyncd reaches NTP. On a
+fresh install, `flatpak-cursor-path`, `bazaar-host-etc` and `flatpak-preinstall` all failed
+with `error: GPG: Unable to export keys: GPGME: No data`, because the Flathub key looked
+created in the future. The same units passed when run by hand in `podman run`, which uses
+the host's clock. `boot-test` now fails on the reset line itself.
+- Match the text, not `_PID=1` or `DIRECTION=`. PID 1 logs this before journald is up, so
+  it arrives via kmsg (`_TRANSPORT=kernel`, `SYSLOG_IDENTIFIER=systemd`) with its
+  structured fields gone.
+- Match only the source-independent part. The message names its source, and when the
+  epoch expires that source will be "timestamp on /usr/lib/clock-epoch", not "built-in
+  epoch".
+
+**Fix, in two places.** `%{clock-epoch}` in `core/initramfs.bst` is the single value.
+- **Initrd:** the element touches the sandbox's `/usr/lib/clock-epoch` to `%{clock-epoch}`,
+  `dracut --install`s it, and runs dracut with `SOURCE_DATE_EPOCH=%{clock-epoch}`. Both
+  halves are needed. With `reproducible=yes`, dracut `clamp_mtimes` pulls every mtime newer
+  than `SOURCE_DATE_EPOCH` down to it, and the sandbox's value is 2011, so a file touched to
+  2026 would be clamped straight back. One side effect: files dracut writes during the run
+  (`usr/lib/initrd-release`, for example) now clamp to this epoch instead of 2011, while
+  files staged from BuildStream artifacts keep 2011. The element checks the shipped mtime
+  at build time.
+- **Real root:** BuildStream stages every artifact file at 2011, so no element can ship the
+  mtime. The element installs `/usr/lib/clock-epoch` with the epoch as its **contents**
+  (systemd reads only the mtime), and the `Containerfile`'s `base` stage runs
+  `touch -d @$(cat …)` on it. That stage feeds `localhost/krytis:latest` (what `push`
+  uploads and boot-test installs) and `seal-uki`. The constant keeps sealed builds
+  reproducible.
+- composefs keeps per-file mtimes through `bootc install`. In the deployed EROFS image,
+  `dump.erofs --path=/usr/lib/os-release <image>` shows 2011-11-11 11:11:11 UTC, the
+  BuildStream value, not 0.
+
+**Raise `clock-epoch` before 2041-11-11**, and never above the build date. An epoch in the
+future pushes every boot's clock forward to it.
+
 ## Btrfs disk layout (bootc composefs)
 
 ```
@@ -356,7 +426,7 @@ If composefs doesn't mount, `/sysroot` has no init and switch-root fails.
 `/var` is per-*stateroot* and mounts from `state/os/default/var` (the findmnt
 topology in § `/etc` and `/var` need the `rw` karg shows both). Reading a guest's
 journal out of a mounted disk image is where this bites — see
-§ `journalctl -D <dir> -b` is broken for offline journals.
+§ `journalctl -D <dir> -b`: depends on the host's journalctl.
 
 **Modifying /etc from the host:** the overlay at
 `/run/media/lily/root/state/deploy/<hash>/etc/` is writable btrfs (root-owned).
@@ -485,6 +555,13 @@ the two runs can't be compared. The cause is still unknown. Treat it as
 intermittent: on a recurrence, collect the host `journalctl -k` before rerunning,
 and don't record a default-filesystem pass on the strength of an ext4 pass.
 
+**It recurred on 2026-11-11** (host kernel `7.3.3-1-cachyos`, image `9c871573a4b3`).
+This time the five `FILE CORRUPTED` lines were in the *guest* serial log (`vda3`), and the
+host `journalctl -k` for the install had none. The boot reached SSH. The run failed for an
+unrelated reason, #1595, which also failed the ext4 run on the same image. So don't assume
+these errors are what failed a `boot-test`: an ext4 run with zero `FILE CORRUPTED` lines
+that still fails points to something else.
+
 ### Reading a stalled guest without root
 
 **Use this first.** It works under secure boot, needs no `sudo`, no
@@ -580,10 +657,24 @@ journalctl --directory="$JDIR" -u <unit> --no-pager -o short-precise --all
 journalctl --directory="$JDIR" --no-pager -o short-precise > /tmp/guest-journal.txt
 ```
 
-No `-b`: it filters on the *host's* boot ID and matches nothing in an external
-journal — see § `journalctl -D <dir> -b` is broken for offline journals.
+Whether `-b` works here depends on the host's journalctl — see § `journalctl -D <dir> -b`:
+depends on the host's journalctl.
 
 Cleanup: `sudo umount /mnt/krytis-probe && sudo losetup -d /dev/loopN`.
+
+**An ext4 disk (`boot-test --filesystem ext4`) needs no root at all.** `debugfs` reads an
+ext4 image file directly, so copy the root partition out by its sfdisk offset and `rdump`
+the journal. This is how #1595 was diagnosed without a PIN prompt:
+
+```bash
+sfdisk -J test.raw            # note the "root" partition's start and size, in sectors
+dd if=test.raw of=root.img bs=512 skip=<start> count=<size> conv=sparse status=none
+mkdir j && debugfs -R "rdump /state/os/default/var/log/journal j" root.img
+journalctl -D j/journal --no-pager -u <unit>
+```
+
+Btrfs has no equivalent read-only userspace reader in the image tools, so use the
+`losetup` route above for a default (Btrfs) run.
 
 **Two mistakes that waste a round trip, both hit in practice:**
 
@@ -665,12 +756,14 @@ then `magick screen.ppm screen.png`. This is how the `systemd-firstboot` root
 password prompt was found. Note `socat` is not installed on the dev box — drive
 the HMP monitor socket from a few lines of Python `AF_UNIX` instead.
 
-### `journalctl -D <dir> -b` is broken for offline journals
+### `journalctl -D <dir> -b`: depends on the host's journalctl
 
-`-b` filters by *this host's* current boot ID, which never matches anything in an
-external journal directory, so you get "No journal boot entry found for the
-specified boot (+0)" even when the journal is full of data. Drop `-b`, or run
-`--list-boots` first and pass an explicit ID:
+On older journalctl, `-b` filtered by *this host's* current boot ID. That never matches
+anything in an external journal directory, so you got "No journal boot entry found for the
+specified boot (+0)" even when the journal was full of data. **On systemd 262.1 (checked
+2026-11-11) it works:** `journalctl -D <dir> -b` selected the newest boot in the guest's
+journal (`182dd3a4…`), not the host's (`6ed64f41…`). If your host's journalctl gives the
+error, drop `-b`, or run `--list-boots` first and pass an explicit ID:
 
 ```bash
 JDIR=/mnt/guestroot/state/os/default/var/log/journal   # NOT state/deploy/<hash>/var
@@ -999,12 +1092,29 @@ a UKI, so this does not block `bootc switch`/`upgrade`. It did stop
 
 **Fix: switch to an image with the same boot-entry shape as what's currently running.**
 `mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s
-`Measured UKI: yes` line (needs no root, no mounted ESP — derived from EFI variables set
-by systemd-stub at boot, unlike checking for `/boot/EFI/Linux/*.efi` on a *candidate
-image*, which is what `generate-disk`'s own UKI check does, via `podman run` against the
-image rather than the live system) and seals first (`mise run seal-uki` →
-`localhost/krytis:sealed`, itself UKI-only) before switching, instead of switching to
-`:latest` directly. A non-UKI-booted system switches to `:latest` unchanged.
+`Measured UKI: yes` line (derived from EFI variables set by systemd-stub at boot, unlike
+checking for `/boot/EFI/Linux/*.efi` on a *candidate image*, which is what `generate-disk`
+does via `podman run`) and seals first (`mise run seal-uki` →
+`localhost/krytis:sealed`, itself UKI-only). A non-UKI-booted system uses `:latest`.
+
+Two details are load-bearing (#1585):
+
+- Capture `bootctl status` before grepping it, with its exit status tolerated. On the
+  ThinkPad it prints `Measured UKI: yes` but exits 1 because some ESP files are unreadable
+  without root. Under `set -o pipefail`, the direct `bootctl status | grep` pipeline
+  therefore selected `:latest` despite the matching line and hit `Found NonEFI config`.
+- After copying the image into the root store, inspect bootc's tracked image reference.
+  Its JSON stores `image: localhost/krytis:sealed` and `transport: containers-storage`
+  separately; compare the image field to the task's `IMAGE`. If it already matches,
+  `bootc switch` only says `Image specification is unchanged` and stages nothing, so use
+  `bootc upgrade` to resolve the updated local tag. Use `bootc switch` only when changing
+  the reference.
+
+`--reuse-sealed` is an explicit recovery/resume control, not the normal build path. Use it
+only after `mise run seal-uki` already completed its composefs verification for the current
+`localhost/krytis:latest` (for example, when a later root-store copy or staging step failed).
+It still requires the `localhost/krytis:sealed` tag to exist, but deliberately does not
+claim that an arbitrary old tag matches the current input; the operator owns that assertion.
 
 ## A second staged update breaks bootc until the orphan is removed
 

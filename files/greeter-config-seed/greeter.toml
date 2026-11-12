@@ -1,6 +1,7 @@
-# noctalia-greeter default configuration, seeded to
+# noctalia-greeter default configuration, seeded once to
 # /var/lib/noctalia-greeter/greeter.toml by greeter-config-seed.service.
-# Mutable runtime state: the greeter read-modify-writes this file to persist
-# the user's last session and color scheme. Do not overwrite it once seeded.
+# Declarative config: since v1.7.0 the greeter never writes this file (its
+# last session and scheme live in sync.toml). Changing this template does not
+# reach machines that already have the file.
 [appearance]
 hide_logo = true

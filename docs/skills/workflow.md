@@ -791,6 +791,20 @@ gh api 'repos/<owner>/<repo>/events?per_page=100' --paginate \
 The events API lists only recent events, so record the date while the event is still
 listed.
 
+## `SECURITY.md` Links Need Private Vulnerability Reporting Switched On
+
+`SECURITY.md` and `CONTRIBUTING.md` landed for #1183, modelled on
+kitten-lily/presence-bridge's. The report link in `SECURITY.md`
+(`/security/advisories/new`) only works once **private vulnerability reporting** is
+enabled in the repo settings; until then it leads nowhere and the "report privately"
+instruction has no channel. Turning it on is a settings change (`PUT
+repos/<owner>/<repo>/private-vulnerability-reporting`, admin only), so it can't ride in
+the PR. Check it when the file changes:
+
+```shell
+gh api repos/starlit-os/krytis/private-vulnerability-reporting   # {"enabled": true}
+```
+
 ## Where Plan and Design Docs Go
 
 `docs/design/<topic>.md` for living reference (architecture, rationale, deferred work — undated, edited in place). `docs/plans/YYYY-MM-DD-<slug>.md` for dated execution plans, `git mv`'d to `docs/plans/done/` in the PR that lands the work. Full rule and decision test in `AGENTS.md` § Plan & Design Docs.

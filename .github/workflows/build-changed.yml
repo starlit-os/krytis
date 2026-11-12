@@ -5,8 +5,9 @@ name: Build changed elements
 # every Checks job green, and the first failure was publish, ~2h after merge.
 # `mise run build-changed` decides what to build and why; see its header and
 # docs/skills/ci-runner.md § PR build gate: `build-changed.yml` (#743) for the
-# blind spots. Not a required check: it skips fork PRs, and green does not mean
-# the image builds.
+# blind spots. Not a required check on its own: it skips fork PRs, and green
+# does not mean the image builds. ci-passed.yml's rollup does count it (#1562),
+# and accepts the skipped run a fork PR gets.
 #
 # Its own workflow, not a job in checks.yml: that workflow also runs on
 # `edited`, and its run-level concurrency would cancel a build here whenever
@@ -57,7 +58,7 @@ jobs:
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.4
+          version: 2026.11.6
           experimental: true
           # The tools already live in /root/.local/share/mise on this box. The
           # actions/cache restore downloaded 621 MB for 1m44s, then `mise
@@ -74,9 +75,10 @@ jobs:
         env:
           # Pull-only: a PR build must never write to bow.
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
-          # Match cache-warm's casd quota on this box (200G since #1155).
-          # mise/tasks/bst defaults to 50G, and a lower quota than the cache
-          # already holds makes casd evict the warm artifacts every later job
-          # here relies on.
+          # Match cache-warm's casd quota on this box (200G since #1155). Since
+          # #1507 mise/tasks/bst layers its --pull config over the box's
+          # ~/.config/buildstream.conf, so this is belt and braces: a lower
+          # quota than the cache already holds makes casd evict the warm
+          # artifacts every later job here relies on.
           BST_CACHE_QUOTA: 200G
         run: mise run build-changed --base HEAD^1

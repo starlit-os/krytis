@@ -23,10 +23,10 @@ kind: meson
 # gnome-settings-daemon at all) started by an autostart entry,
 # /etc/xdg/autostart/org.gnome.SettingsDaemon.DiskUtilityNotify.desktop, whose
 # body is `OnlyShowIn=GNOME;`. krytis does process XDG autostart — niri.service
-# carries `Wants=xdg-desktop-autostart.target` — but every session it starts
-# sets XDG_CURRENT_DESKTOP=niri (config/greetd-config.bst, files/niri/
-# config.kdl), and systemd-xdg-autostart-generator honours OnlyShowIn. So the
-# generated unit's condition can never pass: the binary and the .desktop are
+# and umbriel-session.target both carry `Wants=xdg-desktop-autostart.target` —
+# but every session sets XDG_CURRENT_DESKTOP to its compositor's name, umbriel
+# or niri (each sets its own since #1566), and systemd-xdg-autostart-generator
+# honours OnlyShowIn. So the generated unit's condition can never pass: the binary and the .desktop are
 # unreachable weight, and g-s-d's whole closure would be dead image content and
 # live rows in the SBOM/Grype report.
 #

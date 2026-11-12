@@ -19,6 +19,12 @@ build-depends:
 
 variables:
   uuidnamespace: 042dab3d-c024-448b-a70e-927daef22a59
+  # systemd's clock epoch, 2026-11-11T00:00:00Z, for the initrd and the real
+  # root. Without it, systemd sets the clock back to 2011 on every boot from
+  # 2026-11-11 05:11:11 UTC. See the dracut step below, the Containerfile and
+  # #1595. This value lasts until 2041-11-11 (15 years). Raise it well before
+  # then, never above the build date.
+  clock-epoch: '1794355200'
 
 environment:
   LD_PRELOAD: /usr/libexec/fakecap/fakecap.so
@@ -93,17 +99,53 @@ config:
       # LUKS today; whichever lands first (#368 for TPM) must add its own plugin and
       # an assertion below, or it will fail exactly this way.
       #
-      # The last TWO entries are not libraries: they are the unit and drop-in from
-      # config/fido2-root-unlock.bst that make the root volume attempt FIDO2 unlock.
+      # The last FOUR entries are not libraries. The unit, drop-in and libexec wrapper
+      # come from config/fido2-root-unlock.bst and make the root volume attempt FIDO2
+      # unlock; systemd-ask-password is what that wrapper calls to ask for a security-key
+      # PIN (#1058). dracut's systemd module normally carries it already, but the wrapper
+      # is invisible to dracut's dependency scan, so it is named rather than assumed.
       # systemd-cryptsetup@root.service is created by systemd-gpt-auto-generator at boot,
       # and dracut copies neither extra units nor drop-ins for generator-created units,
       # so naming them here is the only way they reach the initrd — where they have to
       # be, since root is unlocked before switch-root. See #250.
-      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 %{libdir}/cryptsetup/libcryptsetup-token-systemd-fido2.so %{indep-libdir}/systemd/system/krytis-fido2-root-unlock.service %{indep-libdir}/systemd/system/systemd-cryptsetup@root.service.d/50-krytis-fido2-root.conf "\n' \
+      printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" ostree bootc plymouth tpm2-tss "\ninstall_items+=" %{libdir}/libtss2-tcti-device.so.0 %{libdir}/libfido2.so.1 %{libdir}/cryptsetup/libcryptsetup-token-systemd-fido2.so %{indep-libdir}/systemd/system/krytis-fido2-root-unlock.service %{indep-libdir}/systemd/system/systemd-cryptsetup@root.service.d/50-krytis-fido2-root.conf %{libexecdir}/krytis-fido2-root-unlock %{bindir}/systemd-ask-password "\n' \
         | tee "%{install-root}/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf" \
              "/usr/lib/dracut/dracut.conf.d/30-bootcrew-bootc-container-build.conf"
 
-      dracut --force "%{install-root}/usr/lib/modules/${KVER}/initramfs.img"
+      # Clock epoch (#1595). clock_apply_epoch() (systemd src/core/clock-warp.c)
+      # takes the newest of three values as the epoch: the compiled-in
+      # TIME_EPOCH, the mtime of /usr/lib/clock-epoch, and the mtime of
+      # /var/lib/systemd/timesync/clock. If the RTC is more than 15 years past
+      # that epoch, PID 1 sets the clock BACK to the epoch. TIME_EPOCH is
+      # BuildStream's 2011-11-11 11:11:11, so from 2026-11-11 05:11:11 UTC every
+      # boot came up in 2011. Flathub's GPG key then looked created in the
+      # future, and the first-boot flatpak units failed with "GPGME: No data".
+      #
+      # PID 1 runs this check TWICE: in the initrd, and again on the real root
+      # after switch-root. early_skip_setup_check() (src/core/main.c) treats
+      # --switched-root as a fresh boot, so both runs may move the clock back.
+      # Each run needs its own /usr/lib/clock-epoch:
+      #   - the initrd's copy is added to the dracut image here;
+      #   - the real root's copy is installed below, holding the epoch as text.
+      #     BuildStream stages every artifact file at 2011, so its mtime can't
+      #     be set here. The Containerfile `touch`es it to the value it holds.
+      #     Shipping only the initrd copy was tried first, and the clock was
+      #     still reset after switch-root.
+      #
+      # Both halves are needed. reproducible=yes makes dracut clamp every mtime
+      # newer than SOURCE_DATE_EPOCH down to SOURCE_DATE_EPOCH, which is 2011 in
+      # this sandbox. A 2026 clock-epoch would be pulled straight back to 2011.
+      # Passing the same value as SOURCE_DATE_EPOCH keeps the file at the epoch.
+      # Files staged from BuildStream artifacts keep their 2011 mtime. Files dracut
+      # writes during the run, such as usr/lib/initrd-release, now clamp to this
+      # epoch instead of to 2011. Nothing reads those mtimes. The image stays
+      # reproducible because the value is a constant.
+      echo %{clock-epoch} > /usr/lib/clock-epoch
+      touch -m -d "@%{clock-epoch}" /usr/lib/clock-epoch
+      cp /usr/lib/clock-epoch "%{install-root}/usr/lib/clock-epoch"
+      SOURCE_DATE_EPOCH=%{clock-epoch} dracut --force \
+        --install /usr/lib/clock-epoch \
+        "%{install-root}/usr/lib/modules/${KVER}/initramfs.img"
 
     - |
       # Assert each dlopen'ed library actually landed. Both bugs this guards shipped
@@ -151,5 +193,31 @@ config:
        has attached the volume. Without it the FIDO2 unit never runs, and if it somehow
        did, the generated unit would attach a second time onto a name already in use and
        fail the boot into emergency. See #250 and config/fido2-root-unlock.bst.'
+      assert_lib 'usr/libexec/krytis-fido2-root-unlock' '/usr/libexec/krytis-fido2-root-unlock' \
+        'the wrapper krytis-fido2-root-unlock.service runs. Absent, the unit ExecStart
+       fails (its `-` prefix swallows that), so FIDO2 root unlock never happens and every
+       boot asks for the passphrase. See #1058.'
+      assert_lib 'usr/bin/systemd-ask-password' 'systemd-ask-password' \
+        'the wrapper above asks for a security-key PIN with it. Absent, a PIN-requiring
+       token can never unlock the root: the prompt fails, and the boot falls back to the
+       passphrase. See #1058.'
       [ "${MISSING}" -eq 0 ] || exit 1
       echo "==> initramfs carries every dlopen'ed library and unlock unit the boot path needs"
+
+    - |
+      # The clock epoch's value is its mtime, so being present isn't enough:
+      # check the mtime that actually landed (#1595). lsinitrd --unpack drops
+      # mtimes, so extract with cpio -m instead.
+      KVER=$(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d | head -1 | xargs basename)
+      IMG="%{install-root}/usr/lib/modules/${KVER}/initramfs.img"
+      U=$(mktemp -d)
+      (cd "${U}" && /usr/lib/dracut/skipcpio "${IMG}" | zstd -dc | cpio -idm --quiet usr/lib/clock-epoch)
+      GOT=$(stat -c %Y "${U}/usr/lib/clock-epoch" 2>/dev/null || echo missing)
+      rm -rf "${U}"
+      if [ "${GOT}" != "%{clock-epoch}" ]; then
+        echo "ERROR: the initramfs /usr/lib/clock-epoch mtime is ${GOT}, want %{clock-epoch}." >&2
+        echo "       systemd in the initrd would fall back to its 2011 TIME_EPOCH and reset" >&2
+        echo "       every boot's clock to 2011-11-11. See #1595." >&2
+        exit 1
+      fi
+      echo "==> initramfs clock epoch is %{clock-epoch} ($(date -u -d @%{clock-epoch} +%F))"

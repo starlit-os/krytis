@@ -223,12 +223,23 @@ config:
     d /var/lib/greetd 0750 greeter greeter -
     EOF
 
+  # No XDG_CURRENT_DESKTOP or XDG_SESSION_DESKTOP, here or in environment.d
+  # below (#1566). Each compositor sets its own: umbriel setenv()s
+  # XDG_CURRENT_DESKTOP/XDG_SESSION_DESKTOP=umbriel and imports them into the
+  # user manager and the D-Bus activation environment (server.cpp), and refuses
+  # an override in its [environment]. niri sets XDG_CURRENT_DESKTOP=niri when
+  # run as a session and imports it the same way (main.rs import_environment()),
+  # and files/niri/config.kdl's environment {} adds XDG_SESSION_DESKTOP for its
+  # children. An image-wide `niri` used to reach an Umbriel session anyway:
+  # pam_env puts /etc/environment into the login environment, start-umbriel
+  # imports that whole environment into the user manager before umbriel.service
+  # starts, and environment.d seeds the user manager at its own start. So
+  # anything activated in between saw XDG_CURRENT_DESKTOP=niri.
   - |
     install -Dm644 /dev/null \
       "%{install-root}%{sysconfdir}/environment"
     cat > "%{install-root}%{sysconfdir}/environment" <<'EOF'
     XDG_SESSION_TYPE=wayland
-    XDG_CURRENT_DESKTOP=niri
     LIBSEAT_LOGLEVEL=debug
     EOF
 
@@ -243,13 +254,24 @@ config:
   # XCURSOR_PATH is deliberately absent — the default search path is right on
   # the host, and flatpak strips that variable from the inherited environment
   # anyway (see config/flatpak-preinstall.bst's cursor-path override, #949).
+  # WLR_RENDERER_ALLOW_SOFTWARE=1 (#1566): wlroots refuses a GLES2 renderer
+  # that lands on a software rasteriser (llvmpipe) unless this is set
+  # ("Software rendering detected, please use the WLR_RENDERER_ALLOW_SOFTWARE
+  # environment variable to proceed", render/egl.c), so umbriel exits with
+  # "failed to create fx_renderer" on any machine without a GPU driver: every
+  # VM without virgl, including the live ISO under iso-boot-live. greetd then
+  # falls back to the greeter and the session never starts. niri (smithay) has
+  # no such check, which is why this never came up while niri was the
+  # default. It changes nothing where a real GPU driver loads: the variable
+  # only lets wlroots *accept* llvmpipe, it never selects it. It lives here,
+  # in the user manager, because umbriel.service takes its environment from
+  # there; the greeter's cage pins WLR_RENDERER=pixman on its own command
+  # line and is unaffected.
   - |
     install -Dm644 /dev/null \
       "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf"
     cat > "%{install-root}%{indep-libdir}/environment.d/90-krytis-session.conf" <<'EOF'
     XDG_SESSION_TYPE=wayland
-    XDG_CURRENT_DESKTOP=niri
-    XDG_SESSION_DESKTOP=niri
     GSK_RENDERER=vulkan
     GDK_BACKEND=wayland
     EGL_PLATFORM=wayland
@@ -263,6 +285,7 @@ config:
     _JAVA_AWT_WM_NONREPARENTING=1
     XCURSOR_THEME=Adwaita
     XCURSOR_SIZE=24
+    WLR_RENDERER_ALLOW_SOFTWARE=1
     EOF
 
   # Filename matters more than the directory here. journald.conf.d drop-ins are

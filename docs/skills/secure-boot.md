@@ -40,6 +40,45 @@ travier's `fedora-atomic-desktops-sealed` `uki.sh` uses `ukify --measure` and ma
 
 Freedesktop SDK has no public `elements/components/sbsigntools.bst`. The real name is `sbsigntools-maybe.bst` — a `kind: stack` that conditionally depends on `components/_private/sbsigntools.bst` only when `target_arch` is in `["x86_64", "i686", "aarch64", "riscv64"]`. The `-maybe` suffix is a recurring freedesktop-sdk naming convention for arch-gated stacks over a `_private/` implementation element — grep `elements/components/*-maybe.bst` upstream before assuming a bare package name is the dependable path. krytis targets x86_64, so `sbsigntools-maybe.bst` resolves correctly.
 
+## Sign with `systemd-sbsign` and a pinned `SOURCE_DATE_EPOCH`, not `sbsign` (#1329)
+
+An Authenticode signature carries a signing time. sbsigntools' `sbsign` always stamps the
+current time and has no option to change it, so sealing the same commit twice with the same
+keys gave two different `systemd-bootx64.efi` files and two different UKIs. Nobody could
+rebuild a published `:sealed` image and get the same signed binaries back. systemd's
+`/usr/lib/systemd/systemd-sbsign` (in the image via `core-deps/systemd-base.bst`) takes the
+time from `SOURCE_DATE_EPOCH` instead (`asn1_timestamp()` in systemd v262
+`src/sbsign/sbsign.c`). Both signing steps now use it: the systemd-boot `RUN` in
+`Containerfile` and `bootc container ukify … --signtool systemd-sbsign` in
+`Containerfile.seal-uki`.
+
+- **The epoch is `db_crt`'s notBefore, not BuildStream's 2011 epoch.** The kernel's PKCS#7
+  verifier rejects a signing time outside the certificate's validity window. That limit is
+  on the kernel side (modules, kexec), not the firmware, but a time inside the window is
+  safe in both places. Dakota made the same choice (projectbluefin/dakota@e59afbe).
+- **The date is parsed with Python's `ssl.cert_time_to_seconds`, not `date -d`.** The
+  image's `/usr/bin/date` comes from `core/uutils-coreutils.bst`, and its `-d` parsing of
+  openssl's `Nov 10 10:00:00 2026 GMT` format is not GNU's. `python3` is in the image
+  because ukify needs it.
+- **ukify needs `--sign-kernel` with this signtool.** With no `--sign-kernel` or
+  `--no-sign-kernel`, ukify asks the signtool whether the embedded kernel is already signed,
+  and `SystemdSbSign.verify()` raises `NotImplementedError` (systemd v262
+  `src/ukify/ukify.py`). sbsign's answer for krytis's unsigned vmlinuz was "sign it", so
+  `--sign-kernel` keeps the old behaviour.
+- **The variable has to reach systemd-sbsign through two layers.** `bootc container ukify`
+  runs `ukify` with an inherited environment (bootc v1.17.4 `crates/lib/src/ukify.rs`, no
+  `env_clear`), and ukify runs systemd-sbsign with its own. So an `export` in the `RUN` is
+  enough.
+- **`systemd-sbsign` can't verify, so `sbverify --cert` follows each signing.** sbsigntools
+  stays in the image for `sbverify` and `sbsiglist` anyway.
+- **Krytis gains reproducibility, not smaller updates.** Dakota's motivation was layer
+  churn: a re-signed kernel forced a new kernel-modules layer on every update. A sealed
+  krytis image is one squashed layer (§ `--composefs-backend` requires a single layer), so
+  that doesn't apply here. The check is to seal the same commit twice and compare the
+  `sha256sum` of `/usr/lib/systemd/boot/efi/systemd-bootx64.efi` and
+  `/boot/EFI/Linux/krytis.efi` in the two images. The UKI only matches when its unsigned
+  inputs match too.
+
 ## `files/boot-keys/` filenames are case-sensitive: `PK`/`KEK` upper, `db` lower
 
 `mise/tasks/generate-keys` and `mise/tasks/pull-keys` both write `PK.key`/`PK.crt`, `KEK.key`/`KEK.crt`, `db.key`/`db.crt` — mixed case, not a uniform convention. Any task or Containerfile step that reads these files (e.g. `mise/tasks/seal-uki`'s `--secret src=` paths) must match this exact casing or silently miss the file on case-sensitive filesystems.
@@ -91,7 +130,7 @@ RUN --mount=type=bind,from=base,target=/target \
 Two more issues surface only after the rootfs fix, both worth checking on any future bootc/ukify version bump:
 
 - **`bootc container ukify` needs `/var/tmp` to exist.** bootc images intentionally ship `/var` empty (populated by `systemd-tmpfiles` at boot, not baked into the image), so ukify's temp composefs repo creation fails with `Creating new temp composefs repo: No such file or directory` unless the `RUN` step does `mkdir -p /var/tmp` first.
-- **The systemd-boot binary to sign is at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`, not `/boot/EFI/systemd/systemd-bootx64.efi`.** The latter path only exists on a target system after `bootctl install`/`bootc install` has populated the ESP — it's never present inside the container image itself. Sign the source path (`sbsign` needs a distinct output file, so sign to `.signed` and `mv` over the original) so the pre-signed binary is what gets installed later.
+- **The systemd-boot binary to sign is at `/usr/lib/systemd/boot/efi/systemd-bootx64.efi`, not `/boot/EFI/systemd/systemd-bootx64.efi`.** The latter path only exists on a target system after `bootctl install`/`bootc install` has populated the ESP — it's never present inside the container image itself. Sign the source path (the signer writes a distinct `--output` file, so sign to `.signed` and `mv` over the original) so the pre-signed binary is what gets installed later.
 
 Verified end-to-end on real keys: `objcopy -O binary --only-section=.cmdline` on the resulting UKI showed `quiet splash rd.luks.options=fido2-device=auto composefs=<64-char digest>`, and `sbverify --cert db.crt` passed for both the UKI and the signed systemd-boot binary.
 
@@ -199,7 +238,7 @@ error: Installing to disk: Setting up composefs boot: Setting up UKI boot:
 
 ```dockerfile
 FROM base AS sealed                  # stage 2: prepare the FINAL rootfs contents
-RUN ... sbsign ... mv ...            # sign systemd-boot, write any rootfs files
+RUN ... systemd-sbsign ... mv ...    # sign systemd-boot, write any rootfs files
 
 FROM sealed AS uki-builder           # stage 3: THROWAWAY — never becomes final
 ARG SEAL_SECURE_BOOT=false
@@ -516,6 +555,73 @@ one and fail the other — that is exactly what #438 was.
 Note that a systemd rebuild changes systemd-boot and systemd-stub, so any
 element change touching systemd invalidates an existing `:sealed` image — rerun
 `mise run seal-uki` rather than booting the stale one.
+
+## Never point `objcopy` at a UKI without an output file — it strips the signature in place
+
+`objcopy` with only an input file rewrites that file in place. That's true even for
+`--dump-section`, which looks like a read. On a signed UKI the rewrite re-lays out the
+PE and drops the Authenticode certificate table, but leaves the Security Directory
+entry (`objdump -p` → `Entry 4`) pointing at it, past the new end of file. Run against
+the live UKI on the ESP, it silently breaks that deployment. That happened on adora
+(2026-11-10): `sudo objcopy --dump-section .initrd=/var/tmp/x.img
+/boot/EFI/Linux/bootc/bootc_composefs-<id>.efi`, run while debugging #1574, and the
+next boot of that entry failed.
+
+**Symptom.** systemd-boot reports the firmware's `LoadImage` status, and it's
+**`Unsupported`, not `Access denied`**. It reads the same with Secure Boot on and off,
+because the firmware's PE loader rejects the malformed header before any signature
+check runs:
+
+```
+../src/boot/boot.c:3024@call_image_start: Error loading EFI binary \EFI\Linux\bootc\bootc_composefs-<id>.efi: Unsupported
+```
+
+(`boot.c:3024` is systemd v261.4. Contrast § A negative test must assert the
+*rejection*, where a bad signature on an intact file gives `Access denied`.)
+
+**Diagnose.** The file is shorter than the header claims. Checking that the sections
+fit isn't enough; check the certificate table:
+
+```bash
+f=/boot/EFI/Linux/bootc/bootc_composefs-<id>.efi
+stat -c %s "$f"                       # actual size
+objdump -p "$f" | grep '^Entry 4'     # offset + size of the cert table; must be <= actual size
+sbverify --list "$f"                  # broken: "checksum areas are greater than image size" / "No signature table present"
+```
+
+Reproduced on a copy of a sealed `krytis.efi`: before, `254073928` bytes, signed; after
+`objcopy --dump-section .initrd=dump.img`, `254066688` bytes with the same `Entry 4`
+and the `sbverify` output above. bootc's own UKI write is atomic and fsynced
+(`cap-std-ext` `atomic_replace_with`), so a short UKI on the ESP points at something
+that touched the file afterwards. Check the journal for root commands that named it
+(`journalctl -g 'bootc_composefs'`) before suspecting bootc, fsck or the ESP size.
+
+**Recover.** The ESP copy is the image's `/boot/EFI/Linux/krytis.efi`, unchanged. First
+confirm the local image is the one that deployment came from: its `.Digest` must equal
+the digest `bootc status` lists for that deployment, because the UKI's frozen cmdline
+carries that image's composefs digest. Then copy it back:
+
+```bash
+sudo sh -c '
+  m=$(podman image mount localhost/krytis:sealed)
+  dst=/boot/EFI/Linux/bootc/bootc_composefs-<id>.efi
+  cp "$m/boot/EFI/Linux/krytis.efi" "$dst.tmp" && sync && mv "$dst.tmp" "$dst" && sync
+  podman image unmount localhost/krytis:sealed
+  sbverify --list "$dst" | head -2'
+```
+
+If the digest doesn't match, don't copy. Re-run `bootc switch` to that image so bootc
+writes a UKI and an entry that agree. Don't use `cmp` against the image's file to decide
+anything either: objcopy rewrites the headers, so the two differ from byte 3 even when
+they started out identical.
+
+**Safe form.** Always give an explicit output file, and preferably work on a copy taken
+out of the image rather than the ESP. That's what `docs/skills/fido2.md`'s initrd recipe
+does:
+
+```bash
+objcopy -O binary --only-section=.initrd "$UKI" /var/tmp/initrd.img   # $UKI untouched
+```
 
 ## A sealed ISO payload must be embedded byte-identically, and its ref must move too
 
@@ -916,10 +1022,22 @@ Two other directions were weighed and rejected. A systemd compile-time default f
 `secure-boot-enroll` was the cleanest candidate if it existed, but it would still
 be a build-time workaround for the same "value not on the ESP at handoff" gap, not
 a real fix, and was never confirmed to exist in the shipped systemd version.
-Writing `loader.conf` at install time needs a bootc install-time hook, which does
-not exist today. Either would require nontrivial new plumbing to change a state
-that already matches the design intent on the only surface that ships to users —
-real hardware. Not planned.
+Writing `loader.conf` at install time needed a bootc install-time hook, which did
+not exist when #444 was decided. Either would have required nontrivial new plumbing to
+change a state that already matches the design intent on the only surface that ships
+to users — real hardware.
+
+**The hook exists now (bootc v1.17.4, pinned on `main` since `f6e1e19`, 2026-11-04).**
+bootc-dev/bootc `cbd34248` ("sd-boot: Pick `loader.conf` from the image", bootc#2558)
+copies `/usr/lib/bootc/install/systemd-boot/loader.conf` from the image onto the ESP as
+`loader/loader.conf` right after `bootctl install`, overwriting bootctl's commented
+template (`install_systemd_boot()` in `crates/lib/src/bootloader.rs`). An image that
+ships `secure-boot-enroll manual` there has the setting in force on the very first
+boot, which would close the first-boot gap above and make the oneshot redundant for new
+installs. It does nothing for machines already installed, and it changes what a VM's
+first boot does (`if-safe` auto-enrolment, which `mise run selfenroll-test` relies on),
+so adopting it is a Breakage Gate decision, not a doc edit. Tracked in #1570; read from
+source 2026-11-10, not yet tested in a VM.
 
 **Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
 the source disk, so an install disk stays a first-boot disk no matter how many times

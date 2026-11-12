@@ -77,8 +77,8 @@ re-run `mise run build --pull --force` — every BST artifact is already cached,
 actually re-run.
 
 **Check the right filesystem.** On a Fedora-derived host `$HOME` is typically its own
-btrfs subvolume: both `~/.local/share/containers/storage` and `~/.cache/buildstream` (50 GB
-default CAS quota, `BST_CACHE_QUOTA`) live there, and `df -h /var` can report hundreds of
+btrfs subvolume: both `~/.local/share/containers/storage` and `~/.cache/buildstream` (no CAS
+quota unless your BuildStream config or `BST_CACHE_QUOTA` sets one) live there, and `df -h /var` can report hundreds of
 GB free while the one that matters is at 100%. Use the paths, not the mountpoint you
 assume:
 
@@ -808,8 +808,8 @@ one of the flags, the task resolves a bow JWT (`BUILDBARN_PUSH_TOKEN`/`BUILDBARN
 env var first, else `fnox get` — see `fnox.toml`'s `BUILDBARN_PUSH_TOKEN`/`BUILDBARN_PULL_TOKEN`
 entries, sourced from the Krytis vault's "Buildbarn" item), writes a temp
 `buildstream.conf` wiring `https://bst-cache.werewolf-stonecat.ts.net:7981`/`:7982` (index/storage,
-`quadlet/buildbarn/certs/bow-server.crt` for TLS), and passes it via `bst --config` —
-never touching `~/.config/buildstream.conf`/`~/.config/buildstream/user.conf` on the
+`quadlet/buildbarn/certs/bow-server.crt` for TLS), and passes it via `bst --config`,
+layered over `~/.config/buildstream.conf` (read, never written; § BST CAS quota) on the
 host, and never mounting a persistent secret into the ephemeral `--container` build.
 `--push` also serves reads (a push-capable connection satisfies pulls too), so prefer
 it when you have push access; `--pull` is the read-only fallback.
@@ -1144,7 +1144,7 @@ fi
 groups them by purpose, because a hand-maintained copy of the tree rots: the list
 that lived here named 16 tasks while `mise/tasks/` held 53.
 
-**25 of the 119 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
+**25 of the 135 tasks are hidden and do not appear in `mise tasks`** — see § Hidden
 tasks below for the list and `mise tasks --hidden` to see them. Count from the
 **tree**, not the CLI: `find mise/tasks -type f | wc -l` and
 `grep -rl 'hide=true' mise/tasks | wc -l`. `mise tasks --hidden | wc -l` over-reports
@@ -1154,7 +1154,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 
 | Group | Tasks |
 |---|---|
-| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `bst-cache-repair [--fix] [--since <time>]` — find and quarantine local-cache entries a filesystem crash left corrupt (hash-mismatched or zero-length CAS objects, empty refs), for builds that die in `Query cache` with a casd `FetchTree`/`FindMissingBlobs` error (see [`bst.md`](bst.md) § Repairing the local cache after the filesystem under it crashed); `warm-cache [--pull\|--push] [element]` — `bst build --deps all --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. `--deps all` warms the whole build closure, toolchain included, not just what the target needs to assemble (#1077). Use it to refill an evicted cache or pre-build before several worktrees build at once; `toolchain-cache-check [--pull\|--push]` — fail, listing them, if any freedesktop-sdk toolchain artifact (`bootstrap/*`, `llvm`, `rust`) is neither in the local cache nor fully pullable from bow (index **and** storage, via `scripts/bow-artifact-check.py`); `publish.yml` runs it before building (#1077, #1094, see § Standard build workflow); `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
+| Build pipeline | `bst` `validate` `build` `load-image` `lint` `push` `clean-cache` (`generate-image-version`, hidden); `bst-cache-repair [--fix] [--since <time>]` — find and quarantine local-cache entries a filesystem crash left corrupt (hash-mismatched or zero-length CAS objects, empty refs), for builds that die in `Query cache` with a casd `FetchTree`/`FindMissingBlobs` error (see [`bst.md`](bst.md) § Repairing the local cache after the filesystem under it crashed); `warm-cache [--pull\|--push] [element]` — `bst build --deps all --retry-failed` of `oci/krytis/image.bst` (or one element) into the cache only: no podman load, so `localhost/krytis:latest` is left alone. `--deps all` warms the whole build closure, toolchain included, not just what the target needs to assemble (#1077). Use it to refill an evicted cache or pre-build before several worktrees build at once; `toolchain-cache-check [--pull\|--push]` — fail, listing them, if any freedesktop-sdk toolchain artifact (`bootstrap/*`, `llvm`, `rust`) is neither in the local cache nor fully pullable from bow (index **and** storage, via `scripts/bow-artifact-check.py`); `publish.yml` runs it before building (#1077, #1094, see § Standard build workflow); `bow-cache-check [--max-builds <n>] [target]` — count the elements `build --pull` would compile because neither the local cache nor bow holds them, and fail above `--max-builds` (default 100); `publish.yml` runs it after the toolchain gate (see [`ci-runner.md`](ci-runner.md) § Publish refuses a cold bow cache); `cracklib-dict-check` — assert `pwscore` rejects a dictionary word in the built image, run by `build`, because fdsdk's cracklib integration command exits 0 with no dictionary when gzip is not staged (#1001, see [`bst.md`](bst.md) § An integration command's tools are not implied by the element that ships it) |
 | PR build gate | `build-changed [--base <ref>] [--dry-run] [--container]`: build only the elements changed since the merge base with `--base` (default `origin/main`), with `files/`/`patches/` edits mapped to the elements that source them. It pulls everything else from bow, refuses to start if the toolchain can't be pulled, and skips the build when `project.conf`, `include/` or a junction changed. `build-changed.yml` runs it on every same-repo PR on `krytis-vps` (see [`ci-runner.md`](ci-runner.md) § PR build gate: `build-changed.yml` (#743)) |
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `portal-routing-check [--tag]` — resolve xdg-desktop-portal routing headlessly under `niri` and `Umbriel` and compare every interface's backend against the table in the task, run by `build`; it also fails on an unparsable `.portal` file, on a krytis `/etc/xdg` routing key whose removal changes nothing, and on an Umbriel `none` pin for an interface `umbriel.portal` now declares (#1027, #1028, #1029, see [`desktop.md`](desktop.md) § xdg-desktop-portal routing); `umbriel-portal-smoke [--image]` — run umbriel headlessly with xdg-desktop-portal and assert that Settings (color-scheme) reaches apps through xdp-gnome without gnome-shell, both the value and the `SettingChanged` signal (#1029); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon; `oo7-portal-test [--artifact] [--keep]` — drive oo7-portal's `RetrieveSecret` on a private bus across two daemon restarts and fail if an app's token ever changes or a locked Login gets a new one; run it on every oo7 re-pin (#1028, see `docs/design/secrets-service.md` § Secret portal (oo7-portal) — shipping since #1028); `krytis-prompter-test [--artifact] [--keep]` — check `desktop/krytis-prompter.bst`'s install layout, then start the built binary through its own D-Bus activation file on a private bus and drive it with gcr's real client, asserting reply-before-`PromptReady`, `sx-aes-1`, `PromptDone` and idle exit; needs a graphical session, run it on every krytis-prompter re-pin (#1502, see `docs/design/secrets-service.md` § A standalone prompter: krytis-prompter) |
@@ -1408,9 +1408,11 @@ Run the root step once, then iterate unprivileged: `generate-disk --disk /var/tm
 followed by `--reuse-disk /var/tmp/<name>.raw` on each test. Each test copies the disk or
 boots it without installing, so one install serves `boot-test` and `oomd-test` alike.
 
-The same applies to commit signing: `env -u SSH_AUTH_SOCK git commit` in a pty, with the
-human touching the key when asked (see [`workflow.md`](workflow.md) § `agent refused
-operation` is a missed touch window, not a broken setup).
+Commit signing does **not** need any of this. `env -u SSH_AUTH_SOCK git commit` asks for a
+key touch only, never a PIN, so it runs from the agent's ordinary shell with no pty and no
+Rex tab. The human only has to be at the key when it blinks (see [`workflow.md`](workflow.md)
+§ `agent refused operation` is a missed touch window, not a broken setup). Opening a visible
+tab just to commit is wasted ceremony; the maintainer confirmed this 2026-11-10.
 
 ## `boot-test` provisions the guest with systemd credentials, not disk edits
 
@@ -1880,15 +1882,74 @@ BST's local CAS has an internal storage quota separate from OS disk space. Hitti
 OutOfSpaceException: Insufficient storage quota
 ```
 
-The `mise bst` task (both container and native paths) sets a default quota of 50G via `BST_CACHE_QUOTA`. This matches CI. Override per-run with:
+`mise bst` sets **no quota of its own** since #1507. A run is capped by the user's own
+BuildStream config, or not at all (BuildStream's default: no quota, 5% of the disk kept
+free). Cap one run explicitly with:
 
 ```bash
 BST_CACHE_QUOTA=60G mise load-image --container
 ```
 
-For the container path, the quota is written to `/root/.config/buildstream/user.conf` inside the container on each run. For the native path, it is appended to `~/.config/buildstream/user.conf` once (idempotent — skipped if `quota:` already present).
+What used to happen, and why it changed (#1507, observed 2026-11-03 on a 477 GB dedicated
+cache):
 
-A full fdsdk bootstrap from a cold cache needs ~50G. If the disk itself is low (check `df -h ~/.cache/buildstream`), run `podman system prune --all --force` first — old krytis build images accumulate quickly and can consume hundreds of GB.
+- **`bst --config FILE` replaces the default user config; it does not merge.** BuildStream
+  2.7 (`_context.py`, `Context.load()`) looks for `$XDG_CONFIG_HOME/buildstream2.conf`, then
+  `buildstream.conf`, *only* when no `--config` is given. The task's `--pull`/`--push`
+  config carried `quota: 50G`, so one pull-only command passed `--quota-high=50G` to casd,
+  which evicted down to the 80% low watermark: the CAS went from 96 GB to 64 GB and the
+  next build started compiling the toolchain.
+- **`~/.config/buildstream/user.conf` is never read.** The native path used to append its
+  quota there, so flagless runs had no cap at all, and the same machine got different
+  caps depending on the flag. The container path wrote the same unread file inside the
+  container.
+
+Now the task writes a `--config` only when the run needs settings of its own (bow, or an
+explicit `BST_CACHE_QUOTA`). On the native path `scripts/bst-merge-user-config.py` layers
+that file over the user's default config, so `--pull` keeps the user's quota,
+`scheduler:` and `cachedir`; the bow config's `build: max-jobs: 4` is only a fallback.
+The container path doesn't see the host's `~/.config` at all, so its only settings are
+the generated ones. CI sets the quota explicitly where it matters: `publish.yml` keeps
+the old 50G on the hosted runner, and `build-changed.yml` sets 200G on the VPS.
+
+A full fdsdk bootstrap from a cold cache needs ~50G. When the disk itself is low, check
+`df -h /var` first. The error comes from that 5% reserve, not from the size of the
+cache: on a 930G `/var`, casd refuses to commit once less than ~46.5G is free. That is
+`bst.md` § Reclaiming disk when a build hits "Insufficient storage quota". Free space
+with `mise run clean-cache` (`--dry-run` first), **not** `podman system prune --all`.
+`--all` removes every image no container is using, tagged ones included, so it would
+also delete `localhost/krytis:latest` and `:sealed`.
+
+### Run `clean-cache` between full verification rounds
+
+A full verification round leaves about 40G behind. A round here means `build`,
+`boot-test`, `seal-uki`, `build-iso --debug`, `iso-boot-live` and `iso-install-test`.
+What it leaves:
+
+- the superseded `krytis:latest`, `:sealed` and `:sealed-base` images, now untagged, at
+  ~7G each
+- the `build-iso` intermediates
+- `output/krytis-live.iso`, ~7G
+- `/var/tmp/krytis-install.img`, up to its 64G sparse size
+
+The 46.5G reserve sits on top of all that. On a 930G `/var` that was 92% full at the
+start, one round was all that fit. The **second** round's `build` then failed in
+`oci/krytis/image.bst` with `Insufficient storage quota`, after the gates had passed
+on the first (2026-11-10, stack 1581). Before starting another round:
+
+```bash
+mise run clean-cache --min-age 0   # dangling images, build scratch, VM scratch no running qemu holds
+rm -f output/krytis-live.iso       # clean-cache doesn't touch output/; build-iso writes a new one
+df -h /var                         # want well over 46.5G + ~40G free
+```
+
+`--min-age 0` is needed because the default `24` skips VM scratch that is only minutes
+old, which is exactly what the previous round left. The open-in-a-running-process guard
+still protects a VM that is still up. Stop any `iso-boot-live` VM first: `e2e_monitor
+<sock> quit` from `scripts/e2e-lib.sh`. clean-cache also refuses to run while a
+`buildah` or `bst` process is live. A verify script that was interrupted mid-`build-iso`
+can leave its `buildah from oci-archive:…` running. Check with `pgrep -af buildah` and
+end that process first.
 
 ## Fish vendor_conf.d load order
 

@@ -24,13 +24,13 @@ url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/66006942
 provenance = "cosign"
 
 [[tools.fnox]]
-version = "1.47.0"
+version = "1.48.0"
 backend = "packslip:github.com/jdx/fnox"
-specifiers = ["v1.47.0"]
+specifiers = ["v1.48.0"]
 
 [tools.fnox."platforms.linux-x64"]
-checksum = "sha256:6d48c4b088a713fa976e5fdbe869c7e0620f77a1e9e6ad1d71c6f4523d7aafb4"
-url = "https://github.com/jdx/fnox/releases/download/v1.47.0/fnox-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:4c8ef00618e4ae659b4c9e1d4efd93961c97ebc7723df149234fe38a9dac62fb"
+url = "https://github.com/jdx/fnox/releases/download/v1.48.0/fnox-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/fnox/.github/workflows/release.yml"
 repository_ids = { repository = "1078762196" }
 
@@ -46,15 +46,15 @@ url = "https://github.com/protonpass/pass-cli/releases/download/2.7.0/pass-cli-l
 url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/705312254"
 
 [[tools.grype]]
-version = "0.121.2"
+version = "0.121.3"
 backend = "aqua:anchore/grype"
-specifiers = ["0.121.2"]
+specifiers = ["0.121.3"]
 
 [tools.grype."platforms.linux-x64"]
-checksum = "sha256:9c8965ced9df657e5e851c14021bae838802f711edd7a48f9bc3c923a8d28f12"
+checksum = "sha256:e9da18cc1429e786722e32161288103600efffd8e483c90761f90485bd1bec85"
 checksum_source = "mise-versions"
-url = "https://github.com/anchore/grype/releases/download/v0.121.2/grype_0.121.2_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/anchore/grype/releases/assets/714864298"
+url = "https://github.com/anchore/grype/releases/download/v0.121.3/grype_0.121.3_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/727934779"
 
 [[tools.gum]]
 version = "2.0.2"

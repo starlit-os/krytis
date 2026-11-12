@@ -804,10 +804,10 @@ silently fell back to a passphrase on every machine. Confirm the image you insta
 actually carries it, or this step tests nothing:
 
 ```bash
-# On the installed system — all four must be present:
+# On the installed system — all must be present (the libexec wrapper since #1058):
 lsinitrd /boot/EFI/Linux/*.efi 2>/dev/null |
   grep -e libfido2 -e libcryptsetup-token-systemd-fido2 \
-       -e krytis-fido2-root-unlock -e 50-krytis-fido2-root ||
+       -e krytis-fido2-root-unlock -e 50-krytis-fido2-root -e systemd-ask-password ||
   echo "MISSING — image predates #476/#250, re-test with a newer sealed build"
 ```
 
@@ -815,19 +815,21 @@ lsinitrd /boot/EFI/Linux/*.efi 2>/dev/null |
 mise fido2:enroll-luks     # then reboot
 ```
 
-- [ ] Reboot prompts for a key touch and unlocks with **no passphrase**
+- [ ] Reboot unlocks with **no passphrase**: a key touch for a touch-only key, or a PIN
+      prompt and then a touch for a key with a PIN set (#1058)
+- [ ] With a PIN-set key, entering `-` at the PIN prompt falls through to the passphrase
+      prompt, and so do two wrong PINs
 
-*Before concluding the unlock path is broken:* `mise fido2:enroll-luks` runs a bare
-`systemd-cryptenroll --fido2-device=auto`, and `--fido2-with-client-pin` defaults to
-`yes`. On a key with a PIN set that enrolls a credential `krytis-fido2-root-unlock.service`
-cannot use (it runs `headless=yes`, so it cannot ask for the PIN), and boot falls back to
-the passphrase with no error. Enroll touch-only for this step:
+`mise fido2:enroll-luks` keeps the PIN on a key that has one (`--fido2-with-client-pin`
+defaults to `yes`). Images built before #1058 can't ask for it: their unit runs
+`headless=yes` with no wrapper, so a PIN credential silently falls back to the passphrase.
+On those images, test with a touch-only enrollment instead:
 
 ```bash
 sudo systemd-cryptenroll --fido2-device=auto --fido2-with-client-pin=no /dev/<luks-partition>
 ```
 
-See `docs/skills/fido2.md` § *`mise fido2:enroll-luks` does not pass that flag*.
+See `docs/skills/fido2.md` § A PIN-requiring credential: the wrapper asks for the PIN itself.
 
 *Failure signature:* a passphrase prompt has **two** possible causes, and they need
 different fixes:

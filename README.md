@@ -8,7 +8,7 @@ StarlitOS Krytis is a bootc-based OCI image built on the [Freedesktop SDK](https
 |-----------|---------|
 | Build system | [BuildStream](https://buildstream.build/) 2.5+ |
 | Base SDK | [Freedesktop SDK](https://gitlab.com/freedesktop-sdk/freedesktop-sdk) 25 |
-| Compositor | [niri](https://github.com/YaLTeR/niri) (scrollable-tiling Wayland compositor) |
+| Compositor | [Umbriel](https://github.com/noctalia-dev/umbriel) (wlroots Wayland compositor from the noctalia team); [niri](https://github.com/niri-wm/niri) still ships as a second session until #1567 |
 | Display manager | [greetd](https://git.sr.ht/~kennylevinsen/greetd) |
 | Shell | [noctalia](https://github.com/noctalia-dev/noctalia) |
 | Greeter | [noctalia-greeter](https://github.com/noctalia-dev/noctalia-greeter) |

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#MISE description="Test switch-local UKI detection and same-reference update selection (#1585)"
+
+set -euo pipefail
+
+TASK=mise/tasks/switch-local
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/tasks" "$WORK/bin" "$WORK/root/files/boot-keys"
+cp "$TASK" "$WORK/tasks/switch-local"
+chmod +x "$WORK/tasks/switch-local"
+
+cat >"$WORK/tasks/seal-uki" <<'EOF'
+#!/usr/bin/env bash
+echo seal >>"$STUB_CALLS"
+EOF
+cat >"$WORK/tasks/load-image-root" <<'EOF'
+#!/usr/bin/env bash
+echo "load $*" >>"$STUB_CALLS"
+EOF
+cat >"$WORK/bin/bootctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%b' "$STUB_BOOTCTL_OUTPUT"
+exit "$STUB_BOOTCTL_RC"
+EOF
+cat >"$WORK/bin/podman" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$WORK/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+if [ "$*" = "bootc status --format=json" ]; then
+    printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}}}}\n' "$STUB_BOOTED_IMAGE"
+    exit 0
+fi
+echo "sudo $*" >>"$STUB_CALLS"
+EOF
+chmod +x "$WORK/tasks/seal-uki" "$WORK/tasks/load-image-root" "$WORK/bin/"*
+
+for f in PK.key PK.crt KEK.key KEK.crt db.key db.crt; do
+    echo stub >"$WORK/root/files/boot-keys/$f"
+done
+
+FAIL=0
+check() {
+    local name=$1 status_output=$2 status_rc=$3 booted_image=$4 expected=$5
+    local reuse_sealed=${6:-}
+    local calls="$WORK/$name.calls" output="$WORK/$name.output"
+    : >"$calls"
+    if ! (cd "$WORK/root" && env \
+        PATH="$WORK/bin:$PATH" \
+        STUB_CALLS="$calls" \
+        STUB_BOOTCTL_OUTPUT="$status_output" \
+        STUB_BOOTCTL_RC="$status_rc" \
+        STUB_BOOTED_IMAGE="$booted_image" \
+        usage_reuse_sealed="$reuse_sealed" \
+        "$WORK/tasks/switch-local") >"$output" 2>&1; then
+        echo "FAIL  $name: task exited nonzero"
+        sed 's/^/      | /' "$output"
+        FAIL=1
+        return
+    fi
+
+    local actual
+    actual=$(cat "$calls")
+    if [ "$actual" = "$expected" ]; then
+        echo "PASS  $name"
+    else
+        echo "FAIL  $name: calls differ"
+        printf '      want: %q\n       got: %q\n' "$expected" "$actual"
+        FAIL=1
+    fi
+}
+
+SEALED_SWITCH=$'seal\nload --image localhost/krytis:sealed\nsudo bootc switch --transport containers-storage localhost/krytis:sealed'
+check uki-exit-0 $'  Measured UKI: yes\n' 0 registry.example/krytis:sealed "$SEALED_SWITCH"
+check uki-partial-exit-1 $'  Measured UKI: yes\nCould not read ESP file\n' 1 registry.example/krytis:sealed "$SEALED_SWITCH"
+check non-uki $'  Measured UKI: no\n' 0 registry.example/krytis:sealed \
+    $'load --image localhost/krytis:latest\nsudo bootc switch --transport containers-storage localhost/krytis:latest'
+check same-ref-upgrade $'  Measured UKI: yes\n' 1 localhost/krytis:sealed \
+    $'seal\nload --image localhost/krytis:sealed\nsudo bootc upgrade'
+check same-ref-reuse $'  Measured UKI: yes\n' 1 localhost/krytis:sealed \
+    $'load --image localhost/krytis:sealed\nsudo bootc upgrade' true
+
+[ "$FAIL" -eq 0 ] && echo "==> switch-local-test passed" || exit 1

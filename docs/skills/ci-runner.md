@@ -331,10 +331,12 @@ peak RAM, the run that clears it has to actually compile.
 ### …but that sizing only reaches callers that use the *default* user config
 
 `cache-warm.yml` writes `~/.config/buildstream.conf` and then runs `uv run bst`
-directly. Anything that builds through `mise/tasks/bst --pull`/`--push` does
-**not** inherit it: that script writes a temporary config (`mise/tasks/bst:92`)
-and passes it as `bst --config`, and `--config` *replaces* the default user
-configuration rather than merging with it.
+directly. Until #1507, anything that built through `mise/tasks/bst --pull`/`--push`
+did **not** inherit it: that script writes a temporary config and passes it as
+`bst --config`, and `--config` *replaces* the default user configuration rather than
+merging with it. Since #1507 the native path layers the temporary config over the
+default one (`scripts/bst-merge-user-config.py`), so the box's `scheduler:` sizing now
+reaches `--pull` builds too. The history below is why that matters.
 
 Verified empirically against the pinned BuildStream 2.7.0, not inferred from the
 `--config FILE  Configuration file to use` help text: with
@@ -818,7 +820,9 @@ its local cache and would otherwise re-report a flaky failure instantly.
    can change every cache key, so building the changed elements could compile most of the
    graph. `mise run validate` still resolves it.
 3. **Fork PRs are skipped.** They get no secrets, so no bow token. That is why the gate is
-   not a required check.
+   not a required check on its own. It is in the floor of the `CI passed` rollup (#1562),
+   which accepts the skipped run a fork PR produces; see § One required check:
+   `ci-passed.yml` (#1562).
 4. **The image gates never run.** `mise run build` ends with `lint`,
    `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check`, and all of
    them need the assembled image, so only `publish` runs them. A bump that breaks shipped
@@ -845,10 +849,12 @@ Also not covered: retargeting a PR to a new base. Only `opened`, `synchronize` a
   CAS already holds the closure and most dependencies are local hits. There is only one
   such runner, so a PR build queues behind a running cache-warm, which can take hours after
   a junction bump. `timeout-minutes: 45` stops a runaway build from holding the box.
-- **`BST_CACHE_QUOTA: 100G`.** `mise/tasks/bst --pull` writes its own config with
-  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaces cache-warm's 100G. BuildStream passes the
+- **`BST_CACHE_QUOTA: 200G`.** Until #1507, `mise/tasks/bst --pull` wrote its own config with
+  `quota: ${BST_CACHE_QUOTA:-50G}`, which replaced cache-warm's quota. BuildStream passes the
   quota to casd as `--quota-high`, so a 50G quota on a CAS that holds more would expire the
-  warm artifacts every later job relies on.
+  warm artifacts every later job relies on. The task now layers its config over the box's
+  `~/.config/buildstream.conf` and sets no quota itself (`docs/skills/mise.md` § BST CAS
+  quota); the explicit value stays as a guard.
 - **`--builders`/`--max-jobs` on the command line.** The same `--config` replacement drops
   cache-warm's concurrency sizing (§ …but that sizing only reaches callers that use the
   *default* user config). The task computes the same formula (2 GiB per compiler, at most
@@ -894,6 +900,46 @@ Verified 2026-10-07 against current `main`, re-applying #735's `-Dm440` to
 On the VPS all 67 toolchain artifacts were local hits, and checkout plus setup took under
 10 s once `cache: false` was in. A PR touching no BuildStream input finishes in seconds
 (run 37588594526). The first two VPS runs queued for 1h45m behind a dispatched cache-warm.
+
+## One required check: `ci-passed.yml` (#1562)
+
+`CI passed` waits for every other `pull_request` workflow run on the PR's head SHA and
+passes only when each one concluded `success`, `skipped` or `neutral`. The logic is
+`scripts/ci-rollup.sh`, which runs locally too: `GH_TOKEN=… scripts/ci-rollup.sh <head-sha>`
+gives the same verdict. The point is that ruleset "Main" can require this one check
+instead of a hand-kept list. Swapping the ruleset to it is a repo-settings change for a
+maintainer, not part of a PR.
+
+- **Poll workflow runs, not check runs.** A job behind `needs:` has no check run until
+  the jobs it waits on finish. Between vuln-diff's two `scan` jobs ending and its `diff`
+  job being queued, every check run that exists is complete, so a check-run poll can pass
+  a PR whose required gate hasn't started. A workflow run stays `in_progress` until its
+  last job ends. (`actions/runs?head_sha=<sha>&event=pull_request` gives them.)
+- **Keep a floor of required names anyway.** The rollup can poll before GitHub has
+  created a sibling run for the same event. The workflow passes `Checks`,
+  `Vulnerability Diff` and `Build changed elements` as names that must appear, and fails
+  if one hasn't within `CI_ROLLUP_GRACE` (600 s). Any other PR workflow is included with
+  no edit, so a new gate is covered as soon as it exists.
+- **Only the newest run per workflow counts.** `checks.yml` also runs on `edited` and
+  cancels its older run, so an older `cancelled` run is superseded, not a failure. The
+  rollup follows the same event types for the same reason.
+- **Why a polling workflow, not dakota's gate job.** dakota `1713308` makes a sometimes-skipped
+  check requirable with an `always()` gate job that `needs:` the conditional jobs (deferred in
+  #479 until krytis had such a check). That only works inside one workflow, because `needs:`
+  can't cross workflow files, and krytis's gates are three separate workflows on purpose
+  (`build-changed.yml` stays out of `checks.yml` so an `edited` event can't cancel a VPS build).
+  So the rollup reads the runs instead. Inside a single workflow, prefer dakota's pattern; the
+  `diff` job in `vuln-diff.yml` is already one (`if: always()`).
+- **A job re-run does not re-run the rollup.** Re-run `CI passed` after the fixed job
+  goes green, or push again.
+- **It can sit for hours.** `Build changed elements` has one VPS runner and queues behind
+  cache-warm (1h45m observed, above), so the rollup runs with GitHub-hosted's 360-minute
+  maximum. It polls every 30 s with the workflow's own token (`actions: read`), which
+  is far under the API limit.
+
+Verified 2026-11-10 against existing PR heads: #1569 and #1564 (all green → exit 0), a
+head whose `Checks` failed (exit 1, names it), a head with a cancelled `Vulnerability Diff`
+(exit 1), and a required name that never appears (exit 1 after the grace period).
 
 ## Cold-build benchmark: `bench-cold-build.yml` (#1126)
 
@@ -1179,6 +1225,70 @@ OutOfSpaceException: Insufficient storage quota
 ```
 
 This is a server-side error on their infrastructure — their CAS is full. BST logs it as `WARNING`/`FAILURE` for the cache pull but falls back to fetching sources from upstream and building locally. The build continues; it's just slower. No action needed on our side.
+
+### Publish refuses a cold bow cache
+
+`publish.yml` builds on Blacksmith with `mise run build --pull` and is only cheap
+because `cache-warm.yml` (VPS, `push: true`) already compiled the same tree into
+bow. When that assumption breaks it does not "build slower" — run
+[36552776326](https://github.com/starlit-os/krytis/actions/runs/36552776326) started
+after a junction bump (#993) had merged behind that day's cache-warm, found 37 of
+916 elements in bow (`Pull Queue: processed 37, skipped 879`), compiled 878 for
+4h55m and then died at `oci/krytis/image.bst` on `Insufficient storage quota` in the
+local CAS. Nothing published, five Blacksmith hours spent.
+
+The `Gate on warm bow cache` step runs `mise run bow-cache-check` before the build
+and fails above 100 elements to compile. `allow_cold_cache=true` on a dispatch skips
+it; on `schedule` the input is null, so the gate always enforces there. The remedy
+the failure prints is to dispatch `cache-warm.yml` on the commit, then re-run.
+
+**It runs after the toolchain gate and covers what that gate can't.**
+`toolchain-cache-check` only asks whether `bootstrap/*`, `llvm` and `rust` can be
+pulled. Since #1077, cache-warm pushes the toolchain, so a gnome-build-meta bump,
+or a freedesktop-sdk bump whose toolchain is already in bow, passes it and can
+still leave hundreds of elements to compile. The two gates also check bow
+differently. `bst artifact show` asks only bow's **index**, which outlived
+evicted llvm and rust data in #1094, so this count can come out too low when
+storage has been evicted under the index. The toolchain gate checks storage too,
+which is why it stays the gate for the expensive part.
+
+**What it counts is bst's build plan, not the missing part of the closure.** `bst
+build`'s default `--deps run` requires the target plus its runtime closure; a
+required element that is cached or `available` remotely is only pulled, and only an
+element that has to be *built* drags its build-deps (with their runtime closures)
+into the plan (`Element._set_required`, `__schedule_assembly_when_necessary` in
+BuildStream 2.7). `scripts/bow-cache-check.py` replays exactly that walk over
+`bst show --format '%{build-deps}'/'%{runtime-deps}'` and `bst artifact show`
+states. Counting every `not cached` line of `bst artifact show --deps all` instead
+would call a warm tree cold whenever bow has evicted deps underneath a still-cached
+stack — those are never pulled, so nothing refreshes them.
+
+**`bst show`'s `%{state}` cannot answer this.** It reflects the local cache only
+(the local-vs-remote caveat on "zero cache hits" further down this file), which is always empty
+on an ephemeral runner. `bst artifact show` is the command that queries remotes, and
+it does so serially, one round trip per element: ~3 min for the full closure. So the
+task queries `--deps run` first and only falls back to `--deps all` when the target
+is not already available — a publish after cache-warm on the same commit costs one
+query.
+
+Why 100: measured on the checkout it guards (2026-09-29, empty local cache):
+
+| Tree | Would build | Wall |
+|---|---|---|
+| `0c0735a` — the commit that day's cache-warm built | 0 of 915 | 24s |
+| `7fbaf3b` — five element bumps merged behind it, no junction change | 18 (all krytis) | 1m39s |
+| `2539677` — after the #993 junction bump, never warmed | 579 of 918 (388 freedesktop-sdk, 119 gnome-build-meta, 72 krytis) — **fails** | 3m02s |
+
+On `2539677` the whole closure shows 734 `not cached` lines in `bst artifact show
+--deps all`; the plan is 579. That gap is the evicted-underneath case above.
+
+Publish's own history agrees: every successful run since 2026-09-06 compiled 0–13
+elements (`Build Queue: processed N`). A change to krytis's own elements can
+invalidate at most krytis's 115 (junction elements never depend on krytis's), so
+hundreds means a junction bump nobody warmed. Keys depend on
+`include/image-version.yml`, so the task regenerates it first exactly as
+`load-image` does — skip that and the check answers for a different key than the
+build uses.
 
 ---
 

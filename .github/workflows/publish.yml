@@ -9,10 +9,9 @@ on:
     #   00:13 track -> 01:41 cache-warm -> 03:30 publish (here)
     # `mise run build --pull` reads the same bow cache cache-warm pushes to,
     # so the spacing is what makes a scheduled publish cheap rather than a
-    # cold build. cache-warm can run long on a cache-miss day, so a publish
-    # that starts before it finishes gets a partially-warmed cache, not a
-    # broken one — it still builds, just slower. Revisit the offset if that
-    # turns out to be the common case.
+    # cold build. A publish that lands on a tree cache-warm has not covered —
+    # it is still running, or something heavy merged behind it — is refused
+    # by the "Gate on warm bow cache" step below rather than compiled here.
     #
     # `1-5` matches cache-warm.yml deliberately. A weekend publish would run
     # against a cache no cache-warm had refreshed that day, which is the one
@@ -46,6 +45,10 @@ on:
         description: 'Publish even if this version is already pushed and promoted (re-sign, refresh the SBOM and vulnerability report)'
         type: boolean
         default: false
+      allow_cold_cache:
+        description: 'Build even when bow lacks most of the tree (a multi-hour from-scratch compile on this runner). Default: refuse and point at cache-warm.yml.'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -68,7 +71,8 @@ env:
   # The other inputs are safe when null and deliberately left alone:
   # report_only falsy means the severity gate blocks (the strict default),
   # force_self_hosted falsy means Blacksmith, force_publish falsy means the
-  # check below decides, and allow_branch_publish falsy is fine because a
+  # check below decides, allow_cold_cache falsy means the cold-cache gate
+  # enforces, and allow_branch_publish falsy is fine because a
   # scheduled run always carries the default branch, which the ref gate
   # accepts.
   PUBLISH_SEALED: ${{ github.event_name == 'schedule' || inputs.publish_sealed }}
@@ -205,7 +209,7 @@ jobs:
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.4
+          version: 2026.11.6
           experimental: true
 
       - name: Install system dependencies
@@ -283,6 +287,9 @@ jobs:
         # outlived evicted llvm/rust data once, and an index-only check passed.
         env:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+          # mise/tasks/bst sets no quota of its own since #1507. Keep the 50G
+          # cap it used to apply, so the hosted runner's disk can't fill.
+          BST_CACHE_QUOTA: 50G
         run: mise run toolchain-cache-check --pull
 
       - name: Scan for vulnerabilities (pre-build gate)
@@ -301,9 +308,34 @@ jobs:
             mise run vuln-scan --fail-on critical
           fi
 
+      - name: Gate on warm bow cache
+        # The toolchain gate above stops the worst case, a compiler rebuild.
+        # This one stops the rest of a cold tree: a gnome-build-meta bump, or
+        # a freedesktop-sdk bump whose toolchain cache-warm already pushed,
+        # can still leave hundreds of elements to compile here. Run
+        # 36552776326 compiled 878 for ~4h55m before the local CAS quota
+        # killed oci/krytis/image.bst, and published nothing.
+        #
+        # `mise run bow-cache-check` counts the elements the build below would
+        # actually compile (bst's own plan, not the closure) and fails above
+        # 100. Warm days cost one remote query. See docs/skills/ci-runner.md
+        # § Publish refuses a cold bow cache.
+        #
+        # allow_cold_cache is null on schedule -> falsy -> the gate enforces,
+        # which is the safe answer for the unattended run.
+        id: cache-gate
+        if: ${{ !inputs.allow_cold_cache }}
+        env:
+          BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+          # Same cap as the toolchain check above (#1507).
+          BST_CACHE_QUOTA: 50G
+        run: mise run bow-cache-check
+
       - name: Build oci/krytis/image.bst
         env:
           BUILDBARN_PULL_TOKEN: ${{ secrets.BUILDBARN_PULL_TOKEN }}
+          # Same cap as the toolchain check above (#1507).
+          BST_CACHE_QUOTA: 50G
         run: mise run build --pull
 
       - name: Push version tag, attach SBOM + vulnerability report
@@ -512,6 +544,9 @@ jobs:
             echo "::notice::Push passed the severity gate ($([[ '${{ inputs.report_only }}' == 'true' ]] && echo 'report-only' || echo 'blocking at Critical')); signing and promotion are reported by their own steps"
           elif [[ "${{ steps.vuln-scan.outcome }}" == "failure" ]]; then
             echo "::error::Vulnerability scan blocked this run before the build started — see the 'Scan for vulnerabilities (pre-build gate)' step above"
+            exit 1
+          elif [[ "${{ steps.cache-gate.outcome }}" == "failure" ]]; then
+            echo "::error::bow is cold for this commit — nothing was built. Dispatch cache-warm.yml on it, then re-run publish (or re-dispatch with allow_cold_cache=true to compile here)"
             exit 1
           else
             echo "::error::Publish step failed — see logs above (push's own scan-before-push re-check, or a build/push failure)"

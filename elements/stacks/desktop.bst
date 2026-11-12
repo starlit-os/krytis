@@ -13,17 +13,20 @@ depends:
   # greetd + cage + wlr-randr + noctalia-greeter + PAM/config files.
   - config/greetd-config.bst
 
-  # Seeds /var/lib/noctalia-greeter/greeter.toml (hide_logo = true) once via
+  # Seeds /var/lib/noctalia-greeter/greeter.toml (hide_logo = true) and
+  # sync.toml (preselect Umbriel where no session is saved, #1566) once via
   # a ConditionPathExists-gated oneshot unit. /var is runtime state in the
   # bootc composefs layout, so the config cannot be baked into the image.
   # Closes #296.
   - config/greeter-config-seed.bst
 
   # ── Compositor ─────────────────────────────────────────────────────────
+  # Umbriel is the default session since #1566: the greeter preselects it
+  # where nothing is saved (config/greeter-config-seed.bst) and the live ISO
+  # autologins into it. niri stays for one release as the rollback, still
+  # offered by the greeter's session picker; removing it is #1567. See
+  # docs/skills/desktop.md's Umbriel section.
   - desktop/niri.bst
-  # Umbriel: second, opt-in Wayland session alongside niri (design: #774,
-  # additive/opt-in). niri stays the default; the greeter's session picker
-  # offers both. See docs/skills/desktop.md's Umbriel section.
   - desktop/umbriel.bst
 
   # ── Shell ───────────────────────────────────────────────────────────────
@@ -119,6 +122,8 @@ depends:
   # xwayland.bst: Xwayland server binary.
   # xwayland-satellite: rootless XWayland manager for Niri — starts XWayland
   # on demand when an X11 client connects and sets DISPLAY in the session.
+  # Its unit only runs under niri (config/xwayland-satellite.bst); Umbriel
+  # starts wlroots' own Xwayland.
   # Vendored as a first-party element (desktop/xwayland-satellite.bst)
   # instead of consumed from gnome-build-meta.bst:sdk/xwayland-satellite.bst
   # — that pin carries a vulnerable `time` and gnome-build-meta has no

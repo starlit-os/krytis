@@ -1,5 +1,19 @@
 FROM localhost/krytis-input:latest AS base
 
+# systemd's clock epoch on the real root (#1595). After switch-root, PID 1
+# resets the clock to the newest of its 2011 built-in TIME_EPOCH and the mtime
+# of /usr/lib/clock-epoch whenever the RTC is more than 15 years past it. Only
+# the mtime counts. BuildStream stages every file at 2011, so
+# elements/core/initramfs.bst ships the file holding its epoch as text, and the
+# mtime is set here. The initrd has its own copy, set in that element. boot-test
+# fails if the clock is still reset. composefs keeps per-file mtimes, so this
+# survives `bootc install`.
+RUN e=$(cat /usr/lib/clock-epoch) && \
+    case "$e" in ''|*[!0-9]*) echo "FATAL: /usr/lib/clock-epoch holds '$e', want epoch seconds (#1595)" >&2; exit 1 ;; esac && \
+    touch -m -d "@$e" /usr/lib/clock-epoch && \
+    [ "$(stat -c %Y /usr/lib/clock-epoch)" = "$e" ] && \
+    echo "==> real-root clock epoch is $e"
+
 RUN bootc container lint
 
 # Uncomment to set a temporary root password for VM login during debugging.
@@ -60,6 +74,16 @@ COPY files/microsoft-uefi-certs/ /tmp/microsoft-uefi-certs/
 # repeats it for db so a hand-run `podman build --secret …` fails here too,
 # instead of signing binaries that only fail at boot under enforcement.
 #
+# Signed with systemd-sbsign, not sbsign, so the build is reproducible (#1329).
+# An Authenticode signature carries a signing time. sbsign always stamps the
+# current time; systemd-sbsign takes it from SOURCE_DATE_EPOCH. We set that to
+# db_crt's notBefore, so sealing the same commit with the same keys gives a
+# byte-identical systemd-bootx64.efi. Not BuildStream's 2011 epoch: the kernel's
+# PKCS#7 verifier rejects a signing time outside the certificate's validity, so
+# a time inside it is the safe choice. Python's ssl.cert_time_to_seconds parses
+# openssl's date format; the image's date is uutils, whose -d parsing of that
+# format is not something to rely on. sbverify then checks the result.
+#
 # No `#` comments inside the RUN below — the Dockerfile parser joins
 # `\`-continued lines, so a comment would swallow the command after it.
 RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
@@ -70,9 +94,14 @@ RUN --mount=type=secret,id=db_key --mount=type=secret,id=db_crt \
         [ "$(openssl pkey -in /run/secrets/db_key -pubout)" = "$(openssl x509 -in /run/secrets/db_crt -pubkey -noout)" ] || \
             { echo "FATAL: db_key does not match db_crt" >&2; exit 1; } && \
         mkdir -p /var/tmp /usr/lib/bootc/install/secureboot-keys/auto && \
-        sbsign --key /run/secrets/db_key --cert /run/secrets/db_crt \
+        SOURCE_DATE_EPOCH=$(python3 -c 'import ssl, sys; print(int(ssl.cert_time_to_seconds(sys.argv[1])))' \
+            "$(openssl x509 -in /run/secrets/db_crt -noout -startdate | cut -d= -f2)") && \
+        export SOURCE_DATE_EPOCH && \
+        /usr/lib/systemd/systemd-sbsign sign \
+            --private-key /run/secrets/db_key --certificate /run/secrets/db_crt \
             --output /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed \
             /usr/lib/systemd/boot/efi/systemd-bootx64.efi && \
+        sbverify --cert /run/secrets/db_crt /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed && \
         mv /usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed \
             /usr/lib/systemd/boot/efi/systemd-bootx64.efi && \
         GUID=$(cat /proc/sys/kernel/random/uuid) && \

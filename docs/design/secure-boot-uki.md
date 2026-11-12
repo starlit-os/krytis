@@ -166,7 +166,7 @@ If users need runtime karg changes, signed UKI addons (`.addon.efi` in `loader/a
 
 ### 2. Bootloader signing: install-time, no shim (#33)
 
-**Decision:** Sign `systemd-boot` with `sbsign` during the `seal-uki` Containerfile step. No shim initially.
+**Decision:** Sign `systemd-boot` with `sbsign` during the `seal-uki` Containerfile step. No shim initially. (Since #1329 the signer is `systemd-sbsign` with `SOURCE_DATE_EPOCH` pinned, for reproducible signatures; see `docs/skills/secure-boot.md` § Sign with `systemd-sbsign` and a pinned `SOURCE_DATE_EPOCH`, not `sbsign` (#1329).)
 
 krytis's boot flow uses `bootc install --bootloader systemd`, which installs `systemd-boot` to the ESP at install time. Signing happens in the expanded `Containerfile` alongside the UKI build — `sbsign --key db.key --cert db.crt` on the `systemd-boot` binary, using the db key passed via a `--secret` mount. `bootc install` then installs the pre-signed copy.
 
@@ -190,7 +190,7 @@ bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section)
 
 **No `mokutil` or `sbctl` needed** in the image — build-time signing uses `sbsign`/`ukify` directly, and enrollment is handled by systemd-boot natively. Neither `mokutil` nor `sbctl` exists in the fdsdk junction.
 
-**`secure-boot-enroll manual` cannot be baked into `/usr`.** `loader.conf` lives on the ESP, which `bootc install` writes. `elements/config/secureboot-loader-conf.bst` ships a first-boot oneshot (`secure-boot-enroll.service`) that appends the line to `/boot/loader/loader.conf` instead — which is why the enrollment policy a guest reads back can post-date the firmware's own decision (trap T-4 in `docs/design/secure-boot-testing.md`).
+**`secure-boot-enroll manual` cannot be baked into `/usr`.** `loader.conf` lives on the ESP, which `bootc install` writes. `elements/config/secureboot-loader-conf.bst` ships a first-boot oneshot (`secure-boot-enroll.service`) that appends the line to `/boot/loader/loader.conf` instead — which is why the enrollment policy a guest reads back can post-date the firmware's own decision (trap T-4 in `docs/design/secure-boot-testing.md`). Since bootc v1.17.4 an image *can* ship an install-time `loader.conf` at `/usr/lib/bootc/install/systemd-boot/loader.conf`; whether krytis should is open (`docs/skills/secure-boot.md` § `secure-boot-enroll manual` works — but not on the first boot after install).
 
 **QEMU testing:** Use `virt-fw-vars --secure-boot --set-pk … --add-kek … --add-db …` to bake keys directly into an OVMF vars file (reference: travier `generate-ovmf-vars` recipe). This is the test path; `loader/keys/` is the real-hardware path.
 
@@ -262,7 +262,7 @@ Guard: skip generation if `.key` + `.crt` already exist (reuse developer's exist
 
 ### 3. UKI assembly + bootloader signing (`mise run seal-uki`) — #32, #33
 
-Shipped as **two** Containerfiles, not one expanded `Containerfile`: the `sealed` stage in `Containerfile` does `sbsign` on systemd-boot plus `.auth` generation and the `assert_esl` gate, and `Containerfile.seal-uki` runs `bootc container ukify` in a throwaway stage. Running ukify in the final image makes install fail with "The UKI has the wrong composefs= parameter" (#443). Keys are passed via `--secret` mounts in both.
+Shipped as **two** Containerfiles, not one expanded `Containerfile`: the `sealed` stage in `Containerfile` does `systemd-sbsign` on systemd-boot (sbsign until #1329, which pinned the signing time so the signed binaries are reproducible) plus `.auth` generation and the `assert_esl` gate, and `Containerfile.seal-uki` runs `bootc container ukify` in a throwaway stage. Running ukify in the final image makes install fail with "The UKI has the wrong composefs= parameter" (#443). Keys are passed via `--secret` mounts in both.
 
 **Runtime deps added:** `components/systemd-ukify.bst`, `components/sbsigntools-maybe.bst` (both from the junction, in `stacks/bootc.bst`) and the vendored `core/efitools.bst`. EFI stub (`linuxx64.efi.stub`) confirmed present.
 
