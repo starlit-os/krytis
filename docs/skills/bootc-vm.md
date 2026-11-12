@@ -1092,12 +1092,29 @@ a UKI, so this does not block `bootc switch`/`upgrade`. It did stop
 
 **Fix: switch to an image with the same boot-entry shape as what's currently running.**
 `mise run switch-local` automates this — detects UKI-booted via `bootctl status`'s
-`Measured UKI: yes` line (needs no root, no mounted ESP — derived from EFI variables set
-by systemd-stub at boot, unlike checking for `/boot/EFI/Linux/*.efi` on a *candidate
-image*, which is what `generate-disk`'s own UKI check does, via `podman run` against the
-image rather than the live system) and seals first (`mise run seal-uki` →
-`localhost/krytis:sealed`, itself UKI-only) before switching, instead of switching to
-`:latest` directly. A non-UKI-booted system switches to `:latest` unchanged.
+`Measured UKI: yes` line (derived from EFI variables set by systemd-stub at boot, unlike
+checking for `/boot/EFI/Linux/*.efi` on a *candidate image*, which is what `generate-disk`
+does via `podman run`) and seals first (`mise run seal-uki` →
+`localhost/krytis:sealed`, itself UKI-only). A non-UKI-booted system uses `:latest`.
+
+Two details are load-bearing (#1585):
+
+- Capture `bootctl status` before grepping it, with its exit status tolerated. On the
+  ThinkPad it prints `Measured UKI: yes` but exits 1 because some ESP files are unreadable
+  without root. Under `set -o pipefail`, the direct `bootctl status | grep` pipeline
+  therefore selected `:latest` despite the matching line and hit `Found NonEFI config`.
+- After copying the image into the root store, inspect bootc's tracked image reference.
+  Its JSON stores `image: localhost/krytis:sealed` and `transport: containers-storage`
+  separately; compare the image field to the task's `IMAGE`. If it already matches,
+  `bootc switch` only says `Image specification is unchanged` and stages nothing, so use
+  `bootc upgrade` to resolve the updated local tag. Use `bootc switch` only when changing
+  the reference.
+
+`--reuse-sealed` is an explicit recovery/resume control, not the normal build path. Use it
+only after `mise run seal-uki` already completed its composefs verification for the current
+`localhost/krytis:latest` (for example, when a later root-store copy or staging step failed).
+It still requires the `localhost/krytis:sealed` tag to exist, but deliberately does not
+claim that an arbitrary old tag matches the current input; the operator owns that assertion.
 
 ## A second staged update breaks bootc until the orphan is removed
 

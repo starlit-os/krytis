@@ -483,10 +483,12 @@ enrolled key, so shipping it in the root's options breaks the default case.
 `elements/config/fido2-root-unlock.bst` ships two files instead:
 
 - `krytis-fido2-root-unlock.service` — attempts FIDO2 *before* the generated unit, with
-  an `ExecStart=-` prefix so failure is ignored. Three nested bounds hold it
-  (`token-timeout=10s`, `timeout=20s`, `TimeoutSec=30` — see the `timeout=` section
-  below, which is what set them), because anything stalling here delays the passphrase
-  prompt that follows.
+  an `ExecStart=-` prefix so failure is ignored. Since #1058 its `ExecStart` is the
+  wrapper `/usr/libexec/krytis-fido2-root-unlock`, which can also ask for a security-key
+  PIN (see § A PIN-requiring credential: the wrapper asks for the PIN itself). Nested
+  bounds hold it (`token-timeout=10s`, `timeout=20s` per attach, `TimeoutSec=210` — see
+  the `timeout=` section below, which is what set them), because anything stalling here
+  delays the passphrase prompt that follows.
 - `50-krytis-fido2-root.conf` — a drop-in carrying only `Wants=` and
   `ConditionPathExists=!/dev/mapper/root`.
 
@@ -530,18 +532,65 @@ The gate still passed — the real prompt appeared after the unit was killed —
 `luks-boot-test` does not prove the attempt behaved**. Read the timings.
 
 `headless=yes` makes password and PIN querying return `-ENOPKG` immediately, so the unit
-can only ever succeed via the token and never competes for the password agent. The
-consequence is that a credential enrolled **with** a client PIN cannot unlock at boot
-here: enroll touch-only (`--fido2-with-client-pin=no`).
+can only ever succeed via the token and never competes for the password agent. On its own
+that means a credential enrolled **with** a client PIN can't unlock at boot. That was the
+state until #1058; the next section is how the PIN gets in without dropping `headless=yes`.
 
-**`mise fido2:enroll-luks` does not pass that flag.** `files/fido2-tasks/fido2/enroll-luks`
-runs a bare `systemd-cryptenroll --fido2-device=auto "$DEVICE"`, and `--fido2-with-client-pin`
-defaults to `yes`, so a key that advertises `clientPin` in `fido2-token -I <dev>`'s
-`options:` line (which is what `files/fido2-tasks/fido2/enroll` greps for to decide
-`pamu2fcfg -N`) gets a PIN-requiring credential — exactly the one this unit cannot use.
-The enrollment still succeeds and `mise fido2:status` still lists the token slot; the only
-symptom is that boot keeps asking for the passphrase. Pass `--fido2-with-client-pin=no`
-by hand before concluding the unlock path is broken.
+### A PIN-requiring credential: the wrapper asks for the PIN itself (#1058)
+
+`mise fido2:enroll-luks` runs a bare `systemd-cryptenroll --fido2-device=auto`, and
+`--fido2-with-client-pin` defaults to `yes`, so a key that advertises `clientPin` gets a
+credential that needs the PIN. Decided 2026-11-10 (#1058, Security Gate): **keep the PIN**,
+rather than enrolling touch-only, which would make the key alone enough to unlock the disk.
+
+`/usr/libexec/krytis-fido2-root-unlock` (`files/fido2-root-unlock/`) does it in two steps,
+read from systemd v262.2's `src/cryptsetup/cryptsetup.c`:
+
+1. **Attach headless with no `$PIN`,** exactly as before. A touch-only token unlocks, and a
+   volume with no FIDO2 token fails fast. `mise run luks-boot-test`'s passphrase-only root
+   is unchanged.
+2. **Only if that fails with `PIN querying disabled via 'headless' option. Use the '$PIN'
+   environment variable.`,** ask for the PIN with `systemd-ask-password` (60 s, plymouth
+   agent), and attach headless again with `PIN=` set. The plugin path
+   (`crypt_activate_by_token_pin_ask_password()`) reads `$PIN` through
+   `acquire_pins_from_env_variable()` *before* its headless check, so `headless=yes` and a
+   PIN work together. Entering `-` or letting the prompt time out means "use the
+   passphrase"; a wrong PIN fails with the same message, so it re-prompts. That's two tries
+   at most, because authenticators block PIN entry after three wrong PINs until re-plugged.
+
+An empty answer cannot select the fallback through plymouth. In systemd v262.2,
+`ask_password_plymouth()` parses an empty reply into an empty string vector and returns
+`-ECANCELED`; `systemd-tty-ask-password-agent --plymouth` then logs that error without
+calling `send_passwords()`, so the requesting `systemd-ask-password` remains pending.
+Hardware exposed this on 2026-11-11: Enter dismissed and recreated the prompt instead of
+returning to the disk passphrase. The explicit `-` sentinel crosses the agent protocol and
+cannot collide with a valid FIDO2 PIN, whose minimum length is four characters. The
+corrected hardware run logged `Passphrase fallback selected` and started the generated
+passphrase unit in the same second; the disk then unlocked normally.
+
+What makes that message a safe trigger:
+
+- It only appears once the token plugin has reached the device and been told a PIN is
+  needed. A volume with no token fails with `No valid FIDO2 token data found` instead, and
+  an absent key runs out `token-timeout=` and fails on the *password* query (`Password
+  querying disabled via 'headless' option.`). Neither raises a PIN prompt. That's
+  systemd#43342's "PIN token masks `-EAGAIN`" case too: if a future systemd reports PIN
+  first with the key absent, the user sees the PIN prompt early, and the attach then waits
+  `token-timeout=` for the key.
+- The wrapper runs systemd-cryptsetup with `SYSTEMD_LOG_TARGET=console`, so the message
+  reaches its pipe, and it echoes everything to the journal.
+- **The other code path is a trap.** `acquire_fido2_key()` in `src/shared/cryptsetup-fido2.c`,
+  used when token plugins are off (any `tpm2-measure-*` option, or a manual `fido2-cid=`),
+  refuses *before* reading `$PIN` when headless and the token requires PIN, UP **or** UV:
+  `Local verification is required to unlock this volume, but the 'headless' parameter was
+  set.` That would break touch-only unlock as well. The wrapper relies on the plugin path,
+  which is why it must never gain a measure option (`use_token_plugins()` in
+  `cryptsetup.c`).
+
+`mise run fido2-root-unlock-script-test` checks the wrapper's decisions against stubbed
+binaries: when it prompts, how often, and when it gives up. That systemd prints the
+message and that plymouth shows the prompt can only be shown by a VM or hardware run (T4
+step 7 with a PIN-set key).
 
 ### `timeout=` must be shorter than `TimeoutSec=`, or the prompt is orphaned (#547)
 
@@ -551,7 +600,7 @@ The pre-attempt carries **three** nested bounds, and their order matters:
 |---|---|
 | `token-timeout=10s` | systemd's wait-for-token udev monitor — enrolled token, key not plugged in |
 | `timeout=20s` | systemd-cryptsetup's **own** deadline for the presence wait |
-| `TimeoutSec=30` | systemd's backstop for a stall anywhere else |
+| `TimeoutSec=210` | systemd's backstop for a stall anywhere else; 30 before #1058, raised to cover the wrapper's PIN tries (30 + 2 × (60 + 20) = 190 s) |
 
 Without `timeout=`, `arg_timeout` is `USEC_INFINITY`, so systemd-cryptsetup waits for the
 touch forever and `TimeoutSec` **SIGTERMs** it. Reported from hardware: the plymouth

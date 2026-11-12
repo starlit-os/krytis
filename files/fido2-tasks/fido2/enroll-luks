@@ -53,11 +53,21 @@ if [[ ! "$CONFIRM" =~ ^[yY]$ ]]; then
   exit 0
 fi
 
-echo "Touch your security key when it blinks..."
+echo "Enter the disk passphrase, then the key's PIN if it has one, then touch the key when it blinks..."
+# --fido2-with-client-pin defaults to yes, so a key with a PIN set gets a credential that
+# needs the PIN. Boot can ask for it since #1058: krytis-fido2-root-unlock (in the initrd)
+# prompts for the PIN after a touch-only attempt fails with systemd's headless-PIN error.
 systemd-cryptenroll --fido2-device=auto "$DEVICE"
 
-# rd.luks.options=fido2-device=auto is baked into every image build via
-# /usr/lib/bootc/kargs.d/30-fido2-luks.toml (files/bootc-config/), so no
-# runtime karg step is needed here. It's a no-op for LUKS volumes without a
-# systemd-fido2 token enrolled.
-echo "Enrolled. Verify with: mise fido2:status"
+# Boot unlock of the ROOT volume does not come from a karg: systemd-gpt-auto-generator
+# builds the root's unit and ignores rd.luks.options= (#250). It comes from
+# krytis-fido2-root-unlock.service (config/fido2-root-unlock.bst) in the initrd.
+# See docs/skills/fido2.md § gpt-auto-generator owns the root's crypt options.
+if cryptsetup luksDump --dump-json-metadata "$DEVICE" 2>/dev/null \
+    | grep -Eq '"fido2-clientPin-required"[[:space:]]*:[[:space:]]*true'; then
+  echo "Enrolled with a PIN. At boot, the disk asks for the key's PIN, then for a touch."
+  echo "Leave the PIN empty at that prompt to type the disk passphrase instead."
+else
+  echo "Enrolled touch-only: the key alone, with a touch, unlocks the disk at boot."
+fi
+echo "Verify with: mise fido2:status"

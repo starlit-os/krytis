@@ -197,15 +197,16 @@ actually running it, with expected values and failure signatures, is
       binary could be sourced. A verified candidate now exists (CentOS 7.2's shim,
       confirmed with `mise run dbx-check`); only the hardware boot remains. Tracked in
       #534 (see also G-5).
-- [ ] FIDO2 LUKS unlock under a sealed UKI: `mise fido2:enroll-luks`, reboot, expect a
-      key-touch unlock with no passphrase prompt. **Failed** in #535 and root-caused:
+- [x] FIDO2 LUKS unlock under a sealed UKI. The original #535 run failed because
       `systemd-gpt-auto-generator` builds the root volume's options itself and ignores
-      `rd.luks.options=`, so FIDO2 was never attempted. Fixed by #543/#544
-      (`elements/config/fido2-root-unlock.bst`'s `krytis-fido2-root-unlock.service`), whose
-      presence in the initrd `elements/core/initramfs.bst` asserts at build time. The
-      unlock itself has **not** been re-run on hardware since. That unit runs
-      `headless=yes`, so the credential must be enrolled touch-only — see
-      `docs/skills/fido2.md` § *`mise fido2:enroll-luks` does not pass that flag*.
+      `rd.luks.options=`; #543/#544 added `krytis-fido2-root-unlock.service`, and
+      `elements/core/initramfs.bst` asserts its runtime pieces. Completed on the ThinkPad
+      with a PIN-set key on 2026-11-11 for #1574: correct PIN + touch unlocked before the
+      generated passphrase unit, a rejected PIN path reached the disk passphrase, and the
+      explicit `-` fallback logged `Passphrase fallback selected` at 12:11:26 before
+      `systemd-cryptsetup@root.service` started at the same timestamp and unlocked normally.
+      See `docs/skills/fido2.md` § A PIN-requiring credential: the wrapper asks for the PIN
+      itself.
 - [x] `bootc upgrade` to a newer sealed image, then reboot, still enforcing. #535.
 - [x] `bootc rollback` under enforcement. #535.
 
