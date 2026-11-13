@@ -58,7 +58,7 @@ jobs:
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.6
+          version: 2026.11.7
           experimental: true
           # The tools already live in /root/.local/share/mise on this box. The
           # actions/cache restore downloaded 621 MB for 1m44s, then `mise
