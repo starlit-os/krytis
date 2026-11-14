@@ -120,7 +120,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -215,7 +215,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -310,7 +310,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current revocation count
@@ -408,7 +408,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -499,7 +499,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -590,7 +590,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -681,7 +681,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -774,7 +774,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -867,7 +867,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -1109,7 +1109,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Install system dependencies
@@ -1262,7 +1262,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Install system dependencies
@@ -1318,7 +1318,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -1409,7 +1409,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       # Version from the url: lines only, never a whole-file grep
@@ -1503,7 +1503,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -1592,7 +1592,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -1681,7 +1681,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -1775,7 +1775,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -1869,7 +1869,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current commit
@@ -1964,7 +1964,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Install system dependencies
@@ -2060,7 +2060,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -2151,7 +2151,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Install skopeo
@@ -2227,7 +2227,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Read current version
@@ -2322,7 +2322,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Install skopeo
@@ -2417,7 +2417,7 @@ jobs:
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.7
+          version: 2026.11.8
           experimental: true
 
       - name: Resolve element path
