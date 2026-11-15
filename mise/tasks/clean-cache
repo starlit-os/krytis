@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Reclaim disk from stale build scratch, orphaned VM scratch, and dangling images (see #416, #913)"
+#MISE description="Reclaim disk from stale build scratch, orphaned VM scratch, checkout disk images, and dangling images (see #416, #913)"
 #USAGE flag "--dry-run" help="Report what would be freed and delete nothing"
 #USAGE flag "--yes" help="Skip the safety pause and delete immediately"
-#USAGE flag "--min-age <hours>" default="24" help="Only reap VM scratch whose mtime is older than this many hours"
+#USAGE flag "--min-age <hours>" default="24" help="Only reap VM scratch and checkout disk images whose mtime is older than this many hours"
 #USAGE flag "--install-scratch" help="Also remove /sysroot/.fisherman-scratch, the ISO installer's leftover container store (needs sudo)"
 
 # Why this exists: BuildStream derives its CAS quota from the *filesystem*
@@ -122,13 +122,38 @@ VM_SCRATCH=()
 VM_IN_USE=()
 # /proc cmdlines are world-readable, so this sees other users' VMs too.
 CMDLINES=$(ps -eo args= 2>/dev/null || true)
+# Every file our own processes hold open, plus every loop device's backing file.
+OPEN_FILES=$( { find /proc/[0-9]*/fd -maxdepth 1 -type l -printf '%l\n' 2>/dev/null;
+                losetup -nO BACK-FILE 2>/dev/null; } | sed 's/ (deleted)$//' | sort -u || true)
+
+# An open path is not stale however old its mtime: qemu creates the disk up
+# front and then writes only through its own fd, so mtime stops advancing
+# while the VM runs. boot-test line 374 records what deleting one costs —
+# qemu survives on its open fds, orphaned, with no pidfile left to kill it
+# by. The age gate alone would not catch a long-running VM; this does.
+#
+# The cmdline match alone missed two cases, both found on checkout disks: boot-vm
+# hands qemu a *relative* path (`file=bootable.raw`), and generate-disk spends
+# minutes copying the image into root's store before `bootc install` attaches
+# the loop device, with nothing holding the file open yet. So also check the
+# open fds and loop devices, and treat a disk as live while a process whose cwd
+# is the disk's directory runs generate-disk/boot-vm/qemu or names the file.
+in_use() {
+    local p="$1" dir base pid args
+    printf '%s\n' "${CMDLINES}" | grep -Fq -- "$p" && return 0
+    printf '%s\n' "${OPEN_FILES}" | grep -Fxq -- "$p" && return 0
+    dir=$(dirname "$p"); base=$(basename "$p")
+    for pid in $(pgrep -f "generate-disk|boot-vm|qemu-system|${base}" 2>/dev/null); do
+        [ "$(readlink "/proc/${pid}/cwd" 2>/dev/null)" = "${dir}" ] || continue
+        args=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null) || continue
+        case "${args}" in *clean-cache*) continue ;; esac
+        return 0
+    done
+    return 1
+}
+
 while IFS= read -r -d '' p; do
-    # An open path is not stale however old its mtime: qemu creates the disk up
-    # front and then writes only through its own fd, so mtime stops advancing
-    # while the VM runs. boot-test line 374 records what deleting one costs —
-    # qemu survives on its open fds, orphaned, with no pidfile left to kill it
-    # by. The age gate alone would not catch a long-running VM; this does.
-    if printf '%s\n' "${CMDLINES}" | grep -Fq -- "$p"; then
+    if in_use "$p"; then
         VM_IN_USE+=("$p")
     else
         VM_SCRATCH+=("$p")
@@ -152,6 +177,47 @@ fi
 if [ ${#VM_IN_USE[@]} -gt 0 ]; then
     echo "==> VM scratch skipped — open in a running process:"
     printf '    %s\n' "${VM_IN_USE[@]}"
+fi
+
+# ── 2b. Disk images in checkout and worktree roots ───────────────────────────
+# generate-disk writes `bootable.raw` into the current directory by default and
+# boot-vm boots it from there; older tasks also left `bootable.qcow2`. They are
+# gitignored, so `git status` never shows them, and section 2 only looks in
+# /var/tmp. On 2026-11-15 the main checkout held a three-month-old 8.9G
+# bootable.raw and an 8.1G bootable.qcow2 while /var was at 98% and this task
+# reported 67MB to reclaim. Only the root of each worktree is searched, only
+# .raw/.qcow2 files, never a tracked file, with the same age gate and in-use
+# guard as section 2.
+REPO_ROOT=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||' || true)
+CHECKOUT_DISKS=()
+CHECKOUT_IN_USE=()
+if [ -n "${REPO_ROOT}" ]; then
+    while IFS= read -r wt; do
+        [ -d "${wt}" ] || continue
+        while IFS= read -r -d '' p; do
+            git -C "${wt}" ls-files --error-unmatch -- "$(basename "$p")" >/dev/null 2>&1 && continue
+            if in_use "$p"; then
+                CHECKOUT_IN_USE+=("$p")
+            else
+                CHECKOUT_DISKS+=("$p")
+            fi
+        done < <(find "${wt}" -maxdepth 1 -type f \( -name '*.raw' -o -name '*.qcow2' \) \
+                     -mmin "+$((MIN_AGE_HOURS * 60))" -print0 2>/dev/null)
+    done < <(git -C "${REPO_ROOT}" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+fi
+
+if [ ${#CHECKOUT_DISKS[@]} -gt 0 ]; then
+    CD_BYTES=$(disk_bytes "${CHECKOUT_DISKS[@]}" || true)
+    echo "==> Disk images in checkouts older than ${MIN_AGE_HOURS}h ($(human "${CD_BYTES:-0}") across ${#CHECKOUT_DISKS[@]} files):"
+    for p in "${CHECKOUT_DISKS[@]}"; do
+        printf '    %-44s %s  %s\n' "$p" "$(stat -c %y "$p" | cut -d. -f1)" "$(human "$(disk_bytes "$p")")"
+    done
+else
+    echo "==> Disk images in checkouts older than ${MIN_AGE_HOURS}h: none"
+fi
+if [ ${#CHECKOUT_IN_USE[@]} -gt 0 ]; then
+    echo "==> Checkout disk images skipped — in use:"
+    printf '    %s\n' "${CHECKOUT_IN_USE[@]}"
 fi
 
 # ── 3. Dangling images ───────────────────────────────────────────────────────
@@ -235,6 +301,11 @@ fi
 if [ ${#VM_SCRATCH[@]} -gt 0 ]; then
     echo "==> Removing orphaned VM scratch..."
     rm -rf "${VM_SCRATCH[@]}"
+fi
+
+if [ ${#CHECKOUT_DISKS[@]} -gt 0 ]; then
+    echo "==> Removing disk images from checkouts..."
+    rm -f "${CHECKOUT_DISKS[@]}"
 fi
 
 echo "==> Pruning dangling images..."

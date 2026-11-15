@@ -1943,15 +1943,23 @@ rm -f output/krytis-live.iso       # clean-cache doesn't touch output/; build-is
 df -h /var                         # want well over 46.5G + ~40G free
 ```
 
-clean-cache also doesn't look for the `bootable.raw` (and old `bootable.qcow2`) that
-`generate-disk` and `boot-vm` leave in each checkout and worktree root; they are
-gitignored, so `git status` doesn't show them either. Find them with
-`find <repo> <repo>.worktrees -maxdepth 6 -name '*.raw' -o -name '*.qcow2'` and size
-them with `du -h`, not `ls -l`. They are sparse, so `ls` shows the 30G apparent size
-and not what the disk really holds. On 2026-11-15 the main checkout still held a
-three-month-old 8.9G `bootable.raw` and an 8.1G `bootable.qcow2`. Until that day
-`generate-disk` used `fallocate`, which reserves every block up front, so a fresh
-30G disk needed 30G free before the install started. It uses `truncate -s` now.
+clean-cache also removes `.raw`/`.qcow2` files at the root of the main checkout and of
+every `git worktree`. `generate-disk` and `boot-vm` leave `bootable.raw` there, and older
+tasks left `bootable.qcow2`. They are gitignored, so `git status` never shows them. On
+2026-11-15 the main checkout held a three-month-old 8.9G `bootable.raw` and an 8.1G
+`bootable.qcow2` while `/var` was at 98%, and clean-cache, which only searched `/var/tmp`
+then, reported 67MB to reclaim. Tracked files are never touched. The same age gate
+applies, and a disk counts as in use, and is skipped, when any of these holds:
+- its absolute path is in a process's cmdline;
+- a process holds it open, or it backs a loop device;
+- a process whose cwd is the disk's directory runs `generate-disk`, `boot-vm` or qemu, or
+  names the file.
+
+The last check exists because `boot-vm` passes qemu a relative `file=bootable.raw`, and
+`generate-disk` copies the image for minutes before `bootc install` attaches the loop
+device. Size these files with `du`, not `ls`. They are sparse, so `ls` shows the 30G
+apparent size. `generate-disk` now creates them with `truncate -s`. It used `fallocate`
+until 2026-11-15, which reserved all 30G before the install started.
 
 `--min-age 0` is needed because the default `24` skips VM scratch that is only minutes
 old, which is exactly what the previous round left. The open-in-a-running-process guard
