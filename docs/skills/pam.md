@@ -221,8 +221,24 @@ here.** `-password sufficient pam_systemd_home.so` also short-circuits past
 `[success=done new_authtok_reqd=done default=ignore]`) — so a homed user who changes their
 password via `homectl`/`passwd` would have their login keyring silently left encrypted under
 the *old* password, re-locking it on every subsequent login. Same mechanism, different
-trigger (password change, not login), not verified live, and not part of #782's fix. Worth its
-own issue if anyone hits it.
+trigger (password change, not login), not verified live, and not part of #782's fix.
+
+**The `passwd` route is worse than that: it never reaches pam_oo7 at all, homed or not**
+(dakota `05cc23e`, mined 2026-11-15; tracked as #1620). That `-password optional
+pam_oo7.so` line lives only in greetd's own stack (`elements/config/greetd-config.bst`).
+`/usr/bin/passwd` uses `/etc/pam.d/passwd`, which krytis doesn't override: fdsdk's
+`components/shadow.bst` ships shadow-utils' stock file (see `files/fakecap-manifest.tsv`),
+and it reaches PAM only through `password include system-auth`. Appending a pam_oo7 line
+after that include doesn't work. Under `include`, system-auth's
+`password sufficient pam_unix.so` (`elements/config/u2f-config.bst`) ends the **whole**
+stack on success, so the appended line never runs. `password substack system-auth` keeps
+that early return inside the substack, so a following `-password optional pam_oo7.so` does
+run. It also contains a homed user's `pam_systemd_home` success, which covers the `passwd`
+half of the paragraph above. `homectl passwd` doesn't go through PAM, so that half stays
+open. Dakota passes `use_authtok` to pam_oo7 there. Don't copy that: krytis's greetd stack
+omits it on purpose (see the comment beside its password line). The stock passwd content is
+dakota's reading of shadow-utils; check it with `cat /etc/pam.d/passwd` on a live system
+before writing the override.
 
 ## #784 — pam_u2f was unreachable for sudo/polkit too, via the same `success=done` short-circuit
 

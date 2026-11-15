@@ -2183,3 +2183,25 @@ gawk 'BEGINFILE { if (ERRNO != "") nextfile } … END { … }' /proc/[0-9]*/stat
 
 `BEGINFILE` is gawk-only, so call `gawk` by name. Appending `|| true` is not a fix,
 because the missing `END` output is lost either way.
+
+## `echo "$big" | grep -q` under pipefail can report a real match as no match
+
+`grep -q` exits as soon as it finds a match. If `echo` is still writing, its next write
+gets SIGPIPE, so the pipeline's status is 141 under `set -o pipefail`, and `if` takes the
+"no match" branch. It only happens when the text is bigger than the pipe buffer and the
+match comes early, so a test passes on short logs and then times out on a long one.
+dakota-iso's installed-system test (`febc6e5d`, mined 2026-11-15) reported a boot timeout on
+a system that had booted.
+
+`mise/tasks/iso-verify-boot` has the pattern on its serial log (#1622), and
+`scripts/iso-install-fisherman.sh`'s `rd.info systemd.journald.forward_to_console=yes`
+makes that log large. Use a here-string, or grep the file directly:
+
+```bash
+if grep -qE 'login:' <<<"$LOG"; then …      # no writer process to kill
+if grep -qE 'login:' "$SERIAL"; then …      # better, when the text is in a file
+```
+
+The same goes for `cmd | grep -q` whenever `cmd` can produce more than a pipe buffer
+(64 KiB on Linux) of output.
+

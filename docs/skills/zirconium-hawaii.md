@@ -442,3 +442,15 @@ Each body lives in `docs/skills/bst.md`. This list is the record of where they c
   (moved paths, `components/krb5.bst` override mirror, `config/zram-generator.bst`), so
   nothing new was written here.
 
+## 2026-11-15 pass (`b784cbe..060610d`): where the lessons went
+
+- **`kind: go_mod_vendor` makes Go elements trackable from source** (`5893c29`, needs bpc
+  2.5.0 from `221cb38`, which krytis already pins). → `docs/skills/bst.md` § `kind:
+  go_mod_vendor` builds a Go program from source.
+- **Deferred to #479:** the pydantic hold until fdsdk 26.08.5's maturin (`060610d`), and
+  cardwire's `cargo2` + `build-std` + `bpf-linker` workaround (`c004d5b`). Krytis has no
+  element that either applies to.
+- Tailscale disabled by default (`f97a418`) matches krytis's `80-tailscale.preset`. The
+  chezmoi completion-dir swap (`e5a5abb`) is the one already recorded above. Nothing new
+  was written for either.
+

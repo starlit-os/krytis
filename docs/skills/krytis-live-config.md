@@ -661,3 +661,39 @@ the zeroing before the discard", described the carry's mechanism. Read literally
 condition would have kept the carry after upstream fixed the bug. **State a carry's exit
 condition as the effect upstream must have (the zeroes reach the disk), not as our fix's
 shape.** Verify it with `mise run mkfs-reformat-test` before you drop the carry.
+
+### The post-install BLS patch needs a `sync` before its ESP unmount (2026-11-15, upstream dakota-iso `8c9dbe75`)
+
+`scripts/iso-install-fisherman.sh` mounts the installed ESP after fisherman, runs `sed` on
+the BLS entries, and unmounts only in its EXIT trap, with no `sync` anywhere. Upstream lost
+exactly such an edit: its files booted empty. fisherman unmounts its own mounts lazily
+(`umount -Rl`), so a second mount of the same partition shares the superblock that's still
+alive, and that mount's `umount` doesn't force writeback. Upstream's case was the installed
+root, which krytis no longer reopens. Krytis's ESP edit is the same shape, with nothing
+after it to flush: the harness ends with `system_powerdown`, `sleep 5`, `quit`, and `quit`
+doesn't wait for the guest (see § Live media want `dracut --omit shutdown`). No failure
+has been seen; the symptom would be an installed boot with no serial console. Rule: any
+write the live session makes to the installed disk ends with `sync` before the unmount.
+Fix tracked in #1622.
+
+### Keep empty `/run` and `/tmp` in the live squashfs, or check why krytis doesn't need them (2026-11-15, upstream dakota-iso `130cceda`)
+
+Debian dracut's `99base/init.sh` moves `/run` across switch-root only when the new root has
+a `/run` directory. Otherwise it parks it at `/dev/.initramfs`, and `/run/initramfs/live`
+disappears, along with the payload fisherman reads from `/run/initramfs/live/OCI`.
+Upstream hit this on both variants on 2026-11-07 and changed its `mksquashfs` excludes from
+`-e run -e tmp` to `-e "run/*" -e "tmp/*"`, keeping the empty directories.
+`scripts/iso-sd-boot.sh` still has the old excludes and creates only `proc`, `sys` and
+`dev`, and krytis uses the same Debian cross-built initramfs. But the 2026-11-02 install
+in § fisherman requires a media-input.json receipt passed with fisherman logging that very
+path, so either something krytis-specific puts `/run` back or that run was lucky. Check a
+built ISO before changing anything (#1623).
+
+### A readiness wait should keep its last error and report the time it really took (2026-11-15, upstream dakota-iso `b1903fd6`)
+
+`mise/tasks/iso-boot-live` runs `$SSH_PROBE true 2>/dev/null` in its wait loops, so a
+failed wait says only "SSH not ready". The reason (refused, reset, auth rejected, timeout)
+is gone. The message's "after 90 s" also counts only the `sleep 3` per try. With
+`ConnectTimeout=5` on each probe, the real worst case is about 240 s. Upstream keeps the
+last attempt's stderr and prints the measured elapsed time. Fix tracked in #1622.
+

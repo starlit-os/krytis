@@ -202,7 +202,8 @@ incomparable. Compare one element against itself, or read the resolved command w
 | `remote` | Single file download (not extracted). Use `directory:` to place it. |
 | `local` | Files from the repo's `files/` directory |
 | `cargo2` | Rust crate vendoring — always generated, never hand-written |
-| `go_module` | Go module deps |
+| `go_module` | Go module deps, one source per module, each with its own ref |
+| `go_mod_vendor` | Go deps for a `git_repo` checkout, regenerated from its `go.sum` by `bst source track`. Since buildstream-plugins-community 2.5.0 (krytis pins it, but `project.conf` doesn't register it yet). See § `kind: go_mod_vendor` builds a Go program from source |
 | `patch_queue` | Apply a patches directory. **Only add to an element when patches exist** — omit it when the directory would be empty. `git apply` is run on every file in the directory so any non-patch file (e.g. `.gitkeep`) causes a fatal error. |
 
 ## Command Hooks
@@ -1558,6 +1559,38 @@ Two side effects:
 - **Keep the scripts for the rest.** "Newest release that carries the asset" and series
   holds are exactly what `tarball-update` can express and anitya can't.
 
+### `kind: go_mod_vendor` builds a Go program from source
+
+*Source: zirconium-hawaii `5893c29` (on top of `221cb38`, bpc 2.5.0), mined 2026-11-15.*
+
+buildstream-plugins-community 2.5.0 (`elements/plugins/buildstream-plugins-community.bst`
+pins it) adds a `go_mod_vendor` source. Put it after a `git_repo` source. On
+`bst source track` it reads the checkout's `go.sum` and regenerates its own
+`module`/`version`/`sha256sum` ref list. When staged, it writes `vendor/` and
+`vendor/modules.txt`. So a Go program becomes `git_repo` + `track:` + a `track` matrix entry
+(update-path option (a)), with no `<name>-update` task to maintain. zirconium moved gum and
+fzf to it, and dropped the update scripts for three of its own Go tools.
+
+Three things to know before using it:
+
+- **The config key is `proxy-url`, not the `url:` the plugin's docstring shows.**
+  `configure()` only accepts `proxy-url` (default `https://proxy.golang.org`). zirconium
+  sets it once for every element in `project.conf`'s `sources: go_mod_vendor: config:
+  proxy-url: "golang-proxy:"`, with that alias in `include/aliases.yml`. Krytis has
+  neither yet, and `go_mod_vendor` is missing from `project.conf`'s plugin `sources:`
+  list.
+- Build-depend on `components/go.bst` and `components/git.bst`.
+- **It doesn't work for every module.** zirconium had it fail at fetch for chezmoi and
+  write a malformed `vendor/modules.txt` for dux-shell, and kept those on their old
+  sources.
+
+Krytis's Go programs are prebuilt release tarballs with bespoke updaters:
+`elements/core/gum.bst` (`gum-update`) and `elements/core/tailscale.bst`
+(`tailscale-update`). gum is the clean candidate to switch. Keep tailscale prebuilt:
+`tailscale-update` checks the release against tailscale's distsign signatures with pinned
+roots (`mise/lib/tailscale-distsign-roots.pem`), and a source build would lose that check
+(`docs/skills/dakota.md` § Tailscale: what krytis took from dakota and where it diverges (#1384)).
+
 ### `git_repo` (dulwich) fetches can be blocked by Anubis, and abort the whole build
 
 `buildstream-plugins-community`'s `git_repo` fetches over dulwich, not the `git` binary, and
@@ -1815,7 +1848,24 @@ done
 On 2026-11-04 it listed eight elements. Five are junction mirrors that have their own check
 task (`btrfs-progs-check`, `python3-pil-check`, `gtk3-mirror-check`, `libdisplay-info-check`).
 `desktop/mesa-all-codecs.bst` says in its header that it follows the junction bump by hand.
-`core/openssh.bst` and `dev/virt-firmware.bst` had no update path.
+`core/openssh.bst` and `dev/virt-firmware.bst` had no update path, and on 2026-11-15
+they still had none.
+
+**That is why the audit should fail CI rather than live in a doc** (dakota `9efab9b`,
+mined 2026-11-15; tracked as #1621). dakota's `scripts/test_update_sources.py` fails on
+any element with a network source that isn't in one of three lists:
+
+- **tracked**, by `bst source track`, a kernel updater or a release updater;
+- **`DERIVED`**, meaning its pin must equal another component's and that owner's updater
+  moves it (vte follows the gbm junction; zig follows ghostty);
+- **`PINNED`**, with a written decision that blocks the move. Its rule: "A missing updater
+  is not a pin reason."
+
+Krytis's equivalents of `DERIVED` are already written down as element headers: the
+junction-tied libportal, gnome-desktop, libdecor and `mesa-all-codecs`, plus the
+mirror-check tasks above. A `mise run update-path-check` in the mould of
+`patch-inventory-check` would turn those headers into an allowlist and close the two gaps
+for good.
 
 ### Removing an element touches more than the element (#1194)
 
@@ -2216,21 +2266,23 @@ The cooldown script compares the newest candidate C (the working tree after the 
 `3cb22d8` reverted it. Mined 2026-10-14.*
 
 `bst source track` only re-resolves each source's ref. It never runs the `kind: patch`
-sources that follow a `git_repo`; those apply when the element's sources are fetched and
-staged. So the track job goes green and opens a PR for a ref the patches may no longer apply
-to.
+sources that follow a `git_repo`. Neither does `bst source fetch`: patches apply only when
+the element's sources are **staged**. So the track job goes green and opens a PR for a ref
+the patches may no longer apply to.
 
 dakota merged exactly that for its OGC kernel (`196e0ab`) and reverted it about 25 minutes
-later (`3cb22d8`), because the downstream patches failed to apply. It re-landed with
-`bst source fetch --deps none <element>` right after tracking, and rolls the element file
-back if the fetch or a patch fails (dakota's `scripts/update_sources.py`). The PR says the
-fetch reproduced and caught the failure. The mechanism is dakota's account and hasn't been
-re-checked on krytis: BuildStream 2 writes the element's combined, patched sources to its
-source cache during fetch.
+later (`3cb22d8`), because the downstream patches failed to apply. It first re-landed with
+`bst source fetch --deps none <element>` after tracking, as the check. That turned out to
+prove nothing. dakota `9efab9b` and `10a190c` (mined 2026-11-15) replaced it with
+`bst source checkout --deps none --directory <scratch> <element>` inside the same rollback
+guard, and the comment says why: "Tracking a git ref does not apply subsequent patch
+sources, and neither does fetching: only staging runs them." This section used to repeat
+the fetch claim. Use `source checkout`, which stages, as the check.
 
-**Krytis exposure** (2026-10-21; `grep -rlE 'kind: (patch|patch_queue)$' elements` against
-the `track` matrix in `.github/workflows/track-bst-sources.yml`). Seven tracked elements
-carry `kind: patch` sources:
+**Krytis exposure** (re-run 2026-11-15; `grep -rlE 'kind: (patch|patch_queue)$' elements`
+against the `track` matrix in `.github/workflows/track-bst-sources.yml`). Seven tracked
+elements carry `kind: patch` sources. Since the 2026-10-21 run, `desktop/oo7.bst` dropped
+its patches and `desktop/seance.bst` joined the list:
 
 - `core/efitools.bst`: two patches and `track: master`, so every upstream commit is a
   candidate.
@@ -2238,7 +2290,7 @@ carry `kind: patch` sources:
   community-plugins, where every catalog-bot commit moves the ref. The most exposed.
 - `desktop/ananicy-cpp.bst`
 - `desktop/noctalia.bst`
-- `desktop/oo7.bst`
+- `desktop/seance.bst`
 - `desktop/xwayland-satellite.bst`
 - `overrides/vim.bst`
 
@@ -2251,7 +2303,7 @@ tracking PR, so a patch that no longer applies turns that check red. It is not a
 check (its header says so), though, and nothing on the PR says the red check is a patch
 failure rather than a build break.
 
-**Read the `patch` output in the failed fetch before rebasing anything.** `Reversed (or
+**Read the `patch` output in the failed build or checkout before rebasing anything.** `Reversed (or
 previously applied) patch detected!  Assume -R? [n]` followed by `Skipping patch` means
 upstream already has those hunks: the carry was upstreamed, and the fix is to delete the
 patch, not refresh it. Confirm by diffing the upstream commit against the patch, then
@@ -2282,8 +2334,9 @@ once the fix merges. The fix PR skips the cooldown, so don't merge it before the
 `Ready-At`. #1360 was fixed this way.
 
 **Optional cheap pre-check (not implemented in krytis).** After the track step, run
-`bst source fetch --deps none <element>` for elements that carry `kind: patch`. If it fails,
-fail the job or skip the PR.
+`bst source checkout --deps none --directory <scratch> <element>` for elements that carry
+`kind: patch`. If it fails, fail the job or skip the PR. Don't use `bst source fetch` for
+this: it never applies the patches.
 
 ### GitHub App token for opening tracking PRs
 

@@ -68,6 +68,7 @@ elements/gamerslop/linux-ogc.bst          # zirconium-hawaii's gaming-tree kerne
 elements/core/linux.bst                   # zirconium-hawaii's OGC kernel element (since 20c1ff2); cited by zirconium-hawaii.md
 files/systemd-presets/system-preset/01-zirconium.preset  # zirconium-hawaii's (since 1ecc16d); cited by zirconium-hawaii.md
 scripts/update_sources.py                 # dakota's tracking script; cited by bst.md § A green track job does not prove patches apply
+scripts/test_update_sources.py            # dakota's update-path test; cited by bst.md § Auditing the whole tree for elements with no update path (#640)
 elements/make.yaml                        # buildstream-plugins' make element defaults; cited by bst.md § Rootfs symlinks
 elements/vm/config/networkd.bst          # freedesktop-sdk's; cited by bst.md § NetworkManager Is Present and Running
 elements/vm/config/resolved.bst          # freedesktop-sdk's; cited by bst.md § resolv.conf and /etc/hosts Are Already Covered
@@ -89,3 +90,4 @@ task:cosign-verify                        # never built; verification is inline 
 task:cosign-generate-keys                 # never built; unnecessary without a static key; docs/design/cosign-keyless-signing.md
 task:check-deps                           # suggested in docs/design/native-bst-local-dev.md, never built
 task:fido2:enroll-local                   # a user-config test copy under ~/.config/mise/tasks, never a repo task; docs/skills/workflow.md § Testing Scripts Shipped in the Image
+task:update-path-check                    # proposed in bst.md § Auditing the whole tree for elements with no update path (#640), tracked as #1621
