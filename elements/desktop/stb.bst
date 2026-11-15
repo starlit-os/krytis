@@ -28,7 +28,7 @@ sources:
 - kind: git_repo
   url: github:nothings/stb.git
   track: refs/heads/master
-  ref: 4e9b368bfc071e97206ea5c6adba68dd0cbf8897
+  ref: 9600522de53973336fa033a289858a4354cbb04c
 - kind: git_repo
   url: github:nothings/stb_image_resize.git
   track: refs/heads/main
