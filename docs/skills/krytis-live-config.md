@@ -647,8 +647,8 @@ GUI starts fisherman with `flatpak-spawn --host pkexec` (bootc-installer's
 boots the live ISO and runs `luksFormat` followed by fisherman's own `mkfs.btrfs -f -L root`
 on the VM disk. It fails while the LUKS signature survives. Upstream tracking: #1302,
 reported as kdave/btrfs-progs#1198. The carried patch went up as kdave/btrfs-progs#1199,
-which the maintainer closed unmerged on 2026-11-02 in favour of his own fix,
-kdave/btrfs-progs#1200 (open, not on `devel`, as of 2026-11-04). On hardware, whether the
+which the maintainer closed unmerged on 2026-11-02 in favour of their own fix,
+kdave/btrfs-progs#1200 (open, not on `devel`, as of 2026-11-15). On hardware, whether the
 bug shows depends on what the drive returns after TRIM [INFERENCE, not tested].
 
 **Remove when:** the junction's btrfs-progs no longer loses the zeroing to the discard.
