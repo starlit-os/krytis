@@ -474,7 +474,8 @@ A password change through `/usr/bin/passwd` updates `/etc/shadow` and leaves the
 keyring encrypted with the old password, because fdsdk's stock `/etc/pam.d/passwd` reaches
 PAM only through `password include system-auth`, and system-auth's `sufficient pam_unix`
 ends the whole stack. dakota switched to `password substack system-auth` with a pam_oo7 line
-after it. Krytis has the same exposure and no override yet (#1620). Full mechanism, and why
+after it. Krytis had the same exposure and took the same fix in #1620, proven by `mise run
+passwd-keyring-test`. Full mechanism, and why
 krytis shouldn't copy dakota's `use_authtok`, in `docs/skills/pam.md` § #782 — pam_oo7's auth phase was still unreachable on homed success, even password-only
 (its closing "Scope note").
 

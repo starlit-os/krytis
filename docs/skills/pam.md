@@ -223,22 +223,53 @@ password via `homectl`/`passwd` would have their login keyring silently left enc
 the *old* password, re-locking it on every subsequent login. Same mechanism, different
 trigger (password change, not login), not verified live, and not part of #782's fix.
 
-**The `passwd` route is worse than that: it never reaches pam_oo7 at all, homed or not**
-(dakota `05cc23e`, mined 2026-11-15; tracked as #1620). That `-password optional
-pam_oo7.so` line lives only in greetd's own stack (`elements/config/greetd-config.bst`).
-`/usr/bin/passwd` uses `/etc/pam.d/passwd`, which krytis doesn't override: fdsdk's
-`components/shadow.bst` ships shadow-utils' stock file (see `files/fakecap-manifest.tsv`),
-and it reaches PAM only through `password include system-auth`. Appending a pam_oo7 line
-after that include doesn't work. Under `include`, system-auth's
-`password sufficient pam_unix.so` (`elements/config/u2f-config.bst`) ends the **whole**
-stack on success, so the appended line never runs. `password substack system-auth` keeps
-that early return inside the substack, so a following `-password optional pam_oo7.so` does
-run. It also contains a homed user's `pam_systemd_home` success, which covers the `passwd`
-half of the paragraph above. `homectl passwd` doesn't go through PAM, so that half stays
-open. Dakota passes `use_authtok` to pam_oo7 there. Don't copy that: krytis's greetd stack
-omits it on purpose (see the comment beside its password line). The stock passwd content is
-dakota's reading of shadow-utils; check it with `cat /etc/pam.d/passwd` on a live system
-before writing the override.
+**The `passwd` route was worse than that: it never reached pam_oo7 at all, homed or not**
+(dakota `05cc23e`, mined 2026-11-15; fixed in #1620). That `-password optional pam_oo7.so`
+line lived only in greetd's own stack (`elements/config/greetd-config.bst`). `/usr/bin/passwd`
+uses `/etc/pam.d/passwd`, and fdsdk's `components/shadow.bst` ships shadow-utils' stock
+file: three `include system-auth` lines (checked with `cat /etc/pam.d/passwd` on a live
+krytis, 2026-11-15). Appending a pam_oo7 line after that include doesn't work. Under
+`include`, system-auth's `password sufficient pam_unix.so` (`elements/config/u2f-config.bst`)
+ends the **whole** stack on success, so the appended line never runs. A password change then
+leaves the login keyring sealed with the old password, and it stays locked at every later
+login.
+
+`elements/config/u2f-config.bst` now ships `/etc/pam.d/passwd` with
+`password substack system-auth` and then `-password optional pam_oo7.so`. `substack` keeps
+that early return inside system-auth, so the pam_oo7 line runs and sends PAM_OLDAUTHTOK and
+PAM_AUTHTOK (both set by pam_unix) to the user's running oo7-daemon. It also contains a
+homed user's `pam_systemd_home` success, which covers the `passwd` half of the paragraph
+above. `homectl passwd` doesn't go through PAM, so that half stays open. Dakota passes
+`use_authtok` to pam_oo7 there. Krytis doesn't, matching greetd's password line (see the
+comment beside it). auth and account stay `include`, because nothing follows them.
+
+**`mise run passwd-keyring-test` proves it end to end** (passed 2026-11-15):
+
+1. A lingering user's manager runs `oo7-daemon --login` with the old password on stdin, and
+   `secret-tool store` writes one item.
+2. `/usr/bin/passwd` runs on a pty.
+3. The test requires pam_oo7's own `PAM_UPDATE_AUTHTOK phase` journal line, the daemon's
+   `Successfully changed password for 1 collection(s)`, and the item to read back through a
+   fresh daemon given the new password but not the old one.
+4. A negative control restores the include-only stack and requires that pam_oo7 never ran
+   and the keyring stayed on the previous password.
+
+Three things cost runs, and they apply to any oo7 test:
+
+- **The daemon writes the keyring only once it holds an item, and under `keyrings/v1/`.**
+  `oo7-daemon --login` on a fresh account creates the login collection in memory ("Creating
+  new keyring", "Dispatching 0 items"). `~/.local/share/keyrings/v1/login.keyring` appears
+  only after something is stored. It isn't gnome-keyring's `keyrings/login.keyring`.
+- **A lingering user manager starts the real `oo7-daemon.service`, and a second daemon breaks
+  the PAM socket.** While the test's daemon held `org.freedesktop.secrets`, the unit failed
+  with `NameTaken` and restarted on failure. Each attempt binds `/run/user/<uid>/oo7-pam.sock`
+  *before* it claims the bus name, so it replaced the live daemon's socket with one nobody
+  listened on. pam_oo7 then logged `Failed to connect to daemon socket: Connection refused`,
+  and `passwd` still succeeded. Stop the unit and `systemctl --user mask --runtime` it
+  first. On a real system only one daemon runs, so this is a test hazard, not a shipped bug.
+- **A daemon given the wrong password stays up with the collection locked.** "The unit is
+  still active" passed for both the new and the old password. Only reading an item back
+  tells them apart.
 
 ## #784 — pam_u2f was unreachable for sudo/polkit too, via the same `success=done` short-circuit
 
