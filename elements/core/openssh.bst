@@ -128,6 +128,6 @@ sources:
   - '*BETA*'
   - '*TEST*'
   - '*RC*'
-  ref: V_10_3_P1-0-g2d98db98331803cbb820211b2fb0d31a6e71e58e
+  ref: V_10_6_P2-0-gd449e662b6b8b8cb20e852d8084c269af1c5e8f1
   # We ignore the patch version because this is set in a different component in CPE
   version-guess-pattern: '(\d+)_(\d+)'
