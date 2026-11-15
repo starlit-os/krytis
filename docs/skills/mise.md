@@ -2193,9 +2193,14 @@ match comes early, so a test passes on short logs and then times out on a long o
 dakota-iso's installed-system test (`febc6e5d`, mined 2026-11-15) reported a boot timeout on
 a system that had booted.
 
-`mise/tasks/iso-verify-boot` has the pattern on its serial log (#1622), and
+`mise/tasks/iso-verify-boot` had the pattern four times on its serial log, which
 `scripts/iso-install-fisherman.sh`'s `rd.info systemd.journald.forward_to_console=yes`
-makes that log large. Use a here-string, or grep the file directly:
+makes large; #1622 switched it to here-strings. Reproduced locally with a 2 MB log and the
+match on line 1: `echo "$LOG" | grep -q` missed 20 times out of 20 under pipefail, and
+`grep -q … <<<"$LOG"` missed none. `mise/tasks/docs-links` was next in line. Its § check piped
+each target's anchor list through `grep -qF`, and `bst.md`'s list was ~63 KB against a
+64 KiB pipe buffer, so it now uses a bash `[[ … == *"$key"* ]]` test. Use a here-string,
+or grep the file directly:
 
 ```bash
 if grep -qE 'login:' <<<"$LOG"; then …      # no writer process to kill

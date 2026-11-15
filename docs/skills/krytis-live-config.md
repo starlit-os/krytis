@@ -674,7 +674,7 @@ after it to flush: the harness ends with `system_powerdown`, `sleep 5`, `quit`, 
 doesn't wait for the guest (see § Live media want `dracut --omit shutdown`). No failure
 has been seen; the symptom would be an installed boot with no serial console. Rule: any
 write the live session makes to the installed disk ends with `sync` before the unmount.
-Fix tracked in #1622.
+#1622 added that `sync` at the end of the remote BLS-patch script.
 
 ### Keep empty `/run` and `/tmp` in the live squashfs, or check why krytis doesn't need them (2026-11-15, upstream dakota-iso `130cceda`)
 
@@ -695,5 +695,8 @@ built ISO before changing anything (#1623).
 failed wait says only "SSH not ready". The reason (refused, reset, auth rejected, timeout)
 is gone. The message's "after 90 s" also counts only the `sleep 3` per try. With
 `ConnectTimeout=5` on each probe, the real worst case is about 240 s. Upstream keeps the
-last attempt's stderr and prints the measured elapsed time. Fix tracked in #1622.
+last attempt's stderr and prints the measured elapsed time. Since #1622, `iso-boot-live`
+writes every probe's stderr to a temp file (registered with `e2e_cleanup_add`), and both
+failure paths go through `ssh_wait_failed`. That prints the measured elapsed seconds, the
+last probe's error and the serial log.
 

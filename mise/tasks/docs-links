@@ -228,7 +228,11 @@ while IFS=: read -r file line ref; do
         ANCHORS["$target"]="$(sed -nE 's/^#{2,}[[:space:]]+//p; s/^\*\*([^*]+)\*\*.*/\1/p' "$target" |
             while IFS= read -r a; do normalize "$a"; done)"
     fi
-    printf '%s\n' "${ANCHORS[$target]}" | grep -qF -- "$key" && continue
+    # A bash substring test, not `printf … | grep -qF`: under pipefail, grep -q
+    # exiting on an early match SIGPIPEs printf and the pipeline reads as "no
+    # match" once the anchor list outgrows the 64 KiB pipe buffer (bst.md's is
+    # ~63 KB, #1622).
+    [[ "${ANCHORS[$target]}" == *"$key"* ]] && continue
     report "$file" "$line" "no such section in $target: § $frag"
 done < <(git grep --untracked -I -noP '[A-Za-z0-9._/-]+\.md`?\)?[[:space:]]*§+[[:space:]]*[^|;)]+' \
     -- ':(exclude)docs/plans' ':(exclude)docs/plans/done')
