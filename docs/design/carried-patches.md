@@ -73,7 +73,8 @@ These look like carries but are out of scope for this file and its check:
   with a krytis copy but carry no patch. Each one is a deliberate build-config
   divergence, and its own task, not this file, checks it against upstream (verified
   2026-10-11):
-  - `overrides/gnome-desktop.bst`, `overrides/libdecor.bst`, `overrides/libportal.bst`:
+  - `overrides/gnome-desktop.bst`, `overrides/libdecor.bst`, `overrides/libportal.bst`,
+    `overrides/plymouth.bst` (with its copy of `files/plymouth/plymouthd.defaults`):
     GTK3-free mirrors. `mise run gtk3-mirror-check` checks their drift from upstream and
     fails once upstream lets the mirror go.
   - `overrides/libdisplay-info.bst`: holds the 0.3.0 version. `mise run libdisplay-info-check`
