@@ -90,4 +90,3 @@ task:cosign-verify                        # never built; verification is inline 
 task:cosign-generate-keys                 # never built; unnecessary without a static key; docs/design/cosign-keyless-signing.md
 task:check-deps                           # suggested in docs/design/native-bst-local-dev.md, never built
 task:fido2:enroll-local                   # a user-config test copy under ~/.config/mise/tasks, never a repo task; docs/skills/workflow.md § Testing Scripts Shipped in the Image
-task:update-path-check                    # proposed in bst.md § Auditing the whole tree for elements with no update path (#640), tracked as #1621

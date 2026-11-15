@@ -1812,8 +1812,12 @@ symptom is not an error, it is the absence of update PRs, which nobody notices.
 `desktop/libqalculate.bst` sat two releases stale that way and was only spotted because it
 failed to build for an unrelated reason during the fdsdk 26.08 bump (#305).
 
-Audit the whole tree instead of trusting the gate. The check is: an element is covered iff
-some `mise/tasks/*` file references its path **and** the workflow runs that task.
+**`mise run update-path-check` audits the whole tree, and `checks.yml` runs it on every PR**
+(#1621). It is the bash below, made a failing check. An element with any non-local source is
+covered when its path appears in `.github/workflows/track-bst-sources.yml`, or when a
+`mise/tasks/*` file names its path **and** the workflow runs that task. Otherwise it needs a
+`DERIVED` or `PINNED` entry in the task itself, with a reason. The bash is kept because it
+shows the two halves the task checks.
 
 ```bash
 # untrackable elements: a tar/remote source and no `track:` anywhere in the file
@@ -1849,7 +1853,9 @@ On 2026-11-04 it listed eight elements. Five are junction mirrors that have thei
 task (`btrfs-progs-check`, `python3-pil-check`, `gtk3-mirror-check`, `libdisplay-info-check`).
 `desktop/mesa-all-codecs.bst` says in its header that it follows the junction bump by hand.
 `core/openssh.bst` and `dev/virt-firmware.bst` had no update path, and on 2026-11-15
-they still had none.
+they still had none. #1621 added both to the `manual-merge` track group. Their first
+`bst source track` showed the cost of the gap: openssh was three releases behind
+(`V_10_3_P1` against `V_10_6_P2`), and virt-firmware was on 26.7.4 against 26.10.
 
 **That is why the audit should fail CI rather than live in a doc** (dakota `9efab9b`,
 mined 2026-11-15; tracked as #1621). dakota's `scripts/test_update_sources.py` fails on
@@ -1861,11 +1867,15 @@ any element with a network source that isn't in one of three lists:
 - **`PINNED`**, with a written decision that blocks the move. Its rule: "A missing updater
   is not a pin reason."
 
-Krytis's equivalents of `DERIVED` are already written down as element headers: the
-junction-tied libportal, gnome-desktop, libdecor and `mesa-all-codecs`, plus the
-mirror-check tasks above. A `mise run update-path-check` in the mould of
-`patch-inventory-check` would turn those headers into an allowlist and close the two gaps
-for good.
+Krytis's version is `mise/tasks/update-path-check`. Its `DERIVED` table holds the eight
+junction mirrors and overrides. Each entry names what the element follows and, where one
+exists, the check task that catches drift (`btrfs-progs-check`, `gtk3-mirror-check`,
+`libdisplay-info-check`, `python3-pil-check`, `gnome-disk-utility-check`). `PINNED` is
+empty. The task also fails on a stale entry: an element that's gone, has no network source
+any more, or is now in the workflow anyway, and on a DERIVED entry whose check task doesn't
+exist. **None of those check tasks runs in any workflow** (`grep -rn <task> .github/` finds
+nothing): they're run by hand at a junction bump. So a DERIVED entry means "the junction
+bump moves this, and someone runs its check then", not "CI watches it".
 
 ### Removing an element touches more than the element (#1194)
 
