@@ -791,19 +791,32 @@ gh api 'repos/<owner>/<repo>/events?per_page=100' --paginate \
 The events API lists only recent events, so record the date while the event is still
 listed.
 
-## `SECURITY.md` Links Need Private Vulnerability Reporting Switched On
+## Public-Repo Settings Live Outside the Tree (#1183)
 
-`SECURITY.md` and `CONTRIBUTING.md` landed for #1183, modelled on
-kitten-lily/presence-bridge's. The report link in `SECURITY.md`
-(`/security/advisories/new`) only works once **private vulnerability reporting** is
-enabled in the repo settings; until then it leads nowhere and the "report privately"
-instruction has no channel. Turning it on is a settings change (`PUT
-repos/<owner>/<repo>/private-vulnerability-reporting`, admin only), so it can't ride in
-the PR. Check it when the file changes:
+krytis went public on 2026-10-11. #1183 compared its settings with
+kitten-lily/presence-bridge's. The files went in through PRs: `LICENSE` (MIT, covering
+only krytis's own files; built components keep their own licenses), `SECURITY.md` and
+`CONTRIBUTING.md`. The rest are repo settings, enabled on 2026-11-15. They are
+admin-only and Security Gate changes, so no PR can carry them, and nothing in CI
+notices if one is switched off. Read them back when a file depends on one:
 
 ```shell
-gh api repos/starlit-os/krytis/private-vulnerability-reporting   # {"enabled": true}
+R=repos/starlit-os/krytis
+gh api $R/private-vulnerability-reporting            # {"enabled":true}
+gh api $R --jq .security_and_analysis                 # secret_scanning + _push_protection: enabled
+gh api $R/actions/permissions/workflow                # can_approve_pull_request_reviews: false
+gh api $R/code-scanning/default-setup --jq '{state,languages}'   # configured, [actions, python]
 ```
+
+- **Private vulnerability reporting** is what `SECURITY.md`'s
+  `/security/advisories/new` link opens. With it off, the link leads nowhere and the
+  "report privately" instruction has no channel.
+- **CodeQL default setup covers only `actions` and `python`.** GitHub also detects
+  c-cpp and javascript-typescript, but that code is vendored or patched upstream source,
+  not code krytis writes. Its runs come from GitHub's dynamic workflow, which still has
+  to get past the Actions allow-list. See `docs/skills/ci-runner.md` § Org allowlist.
+- **Workflows can't approve PRs.** Nothing in `.github/`, `scripts/` or `mise/` used
+  that permission. A workflow that needs it has to turn the setting back on first.
 
 ## Where Plan and Design Docs Go
 
