@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+#MISE description="Fail if an element with a network source has no updater, no derived pin and no written pin reason"
+"""Whole-tree check that every network-sourced element has an update path (#1621).
+
+AGENTS.md's update path gate only sees an element when a PR adds it. Nothing
+re-checks the existing tree, and an element that drops out of the update loop
+fails silently: the symptom is the absence of update PRs, which nobody notices.
+docs/skills/bst.md § Auditing the whole tree for elements with no update path
+(#640) was a copy-paste audit, and the two gaps its 2026-11-04 run found were
+still open on 2026-11-15. dakota made the same audit a failing test
+(projectbluefin/dakota 9efab9b, scripts/test_update_sources.py); this is the
+krytis version.
+
+An element "has a network source" when any source under its `sources:` (walked
+whole, so `(?)` conditionals count) has a kind other than local, patch or
+patch_queue. It is covered when one of these holds:
+
+  tracked   its path (`core/foo.bst`) appears in
+            .github/workflows/track-bst-sources.yml, as a `track` matrix entry
+            or in a job of its own;
+  updater   a mise task whose file names its path is run by that workflow
+            (`mise run <task>`). This is how tarball-update's TARGETS rows,
+            kernel-update and ghostty-update (which also bumps zig) count;
+  DERIVED   listed below: its pin must equal what a junction (or another
+            element) carries, so whoever bumps that owner moves it too;
+  PINNED    listed below, with the decision that blocks the move.
+
+"A missing updater is not a pin reason" (dakota's rule). PINNED is for a pin a
+person decided on, with a reason a reviewer can check, not for an element
+nobody got round to wiring up.
+
+The check also fails on a stale allowlist entry: one whose element is gone, has
+no network source any more, or is now covered by the workflow anyway (so the
+entry would hide a later regression), and on a DERIVED entry whose named check
+task doesn't exist.
+
+Reads the checkout and PyYAML only; no network, no bst.
+"""
+
+import pathlib
+import re
+import subprocess
+import sys
+
+import yaml
+
+WORKFLOW = ".github/workflows/track-bst-sources.yml"
+NON_NETWORK = {"local", "patch", "patch_queue"}
+
+# element -> (what it follows, the task that checks it or None). A DERIVED
+# element is a mirror or override of something a junction ships; it moves when
+# the junction bump moves it, and its check task (where there is one) is the
+# signal that the copy has drifted. Header comments in each element say why.
+DERIVED = {
+    "desktop/gnome-disk-utility.bst": (
+        "gnome-build-meta's core/gnome-disk-utility.bst (mirror minus the g-s-d plug-in)",
+        "gnome-disk-utility-check",
+    ),
+    "desktop/mesa-all-codecs.bst": (
+        "freedesktop-sdk's mesa-extra.bst (same sources, so the cached artifact is reused)",
+        None,
+    ),
+    "overrides/btrfs-progs.bst": (
+        "freedesktop-sdk's components/btrfs-progs.bst plus one patch (#1294)",
+        "btrfs-progs-check",
+    ),
+    "overrides/gnome-desktop.bst": (
+        "gnome-build-meta's core/gnome-desktop.bst minus GTK3 (#1074)",
+        "gtk3-mirror-check",
+    ),
+    "overrides/libdecor.bst": (
+        "freedesktop-sdk's components/libdecor.bst minus GTK3 (#1075)",
+        "gtk3-mirror-check",
+    ),
+    "overrides/libdisplay-info.bst": (
+        "freedesktop-sdk's components/libdisplay-info.bst, held at 0.3.0 for niri (#305)",
+        "libdisplay-info-check",
+    ),
+    "overrides/libportal.bst": (
+        "gnome-build-meta's sdk/libportal.bst minus GTK3 (#1074)",
+        "gtk3-mirror-check",
+    ),
+    "overrides/python3-pil.bst": (
+        "freedesktop-sdk's components/python3-pil.bst, taken ahead of the junction for a CVE",
+        "python3-pil-check",
+    ),
+}
+
+# element -> the decision that blocks moving it. Empty is the healthy state.
+PINNED = {}
+
+Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _AnyTag(Loader):
+    """BuildStream files are plain YAML, but tolerate a stray tag rather than crash."""
+
+
+_AnyTag.add_multi_constructor("", lambda loader, suffix, node: None)
+
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from walk(value)
+
+
+def network_kinds(data):
+    kinds = set()
+    for node in walk((data or {}).get("sources", [])):
+        kind = node.get("kind")
+        if isinstance(kind, str) and kind not in NON_NETWORK:
+            kinds.add(kind)
+    return kinds
+
+
+def task_files():
+    """{task name: file text} for every repo task (mise/tasks/<group>/<name> -> group:name)."""
+    tasks = {}
+    for path in pathlib.Path("mise/tasks").rglob("*"):
+        if path.is_file():
+            name = ":".join(path.relative_to("mise/tasks").parts)
+            tasks[name] = path.read_text(errors="replace")
+    return tasks
+
+
+def mentions(text, element):
+    # Bounded so core/foo.bst doesn't match core/foo.bst.orig or xcore/foo.bst.
+    return re.search(r"(?<![\w/.-])(?:elements/)?" + re.escape(element) + r"(?![\w.-])", text) is not None
+
+
+def main():
+    workflow = pathlib.Path(WORKFLOW).read_text()
+    tasks = task_files()
+    run_by_workflow = set(re.findall(r"mise run ([A-Za-z0-9:_-]+)", workflow))
+    files = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard",
+         "--deduplicate", "--", "elements/*.bst"],
+        check=True, capture_output=True, text=True,
+    ).stdout.split()
+
+    problems, networked, covered = [], {}, set()
+    for name in sorted(files):
+        path = pathlib.Path(name)
+        if not path.is_file():  # deleted in the worktree, still in the index
+            continue
+        element = name.removeprefix("elements/")
+        try:
+            data = yaml.load(path.read_text(), Loader=_AnyTag)
+        except yaml.YAMLError as e:
+            problems.append(f"  UNPARSED  {element}: {e}")
+            continue
+        kinds = network_kinds(data)
+        if not kinds:
+            continue
+        networked[element] = kinds
+        if mentions(workflow, element) or any(
+            task in run_by_workflow and mentions(text, element) for task, text in tasks.items()
+        ):
+            covered.add(element)
+
+    for element in sorted(networked):
+        if element in covered or element in DERIVED or element in PINNED:
+            continue
+        problems.append(
+            f"  NO PATH   {element} ({', '.join(sorted(networked[element]))}): add it to the "
+            f"`track` matrix in {WORKFLOW}, give it an updater task that workflow runs, or "
+            "list it in DERIVED/PINNED here with a reason"
+        )
+
+    for label, table in (("DERIVED", DERIVED), ("PINNED", PINNED)):
+        for element in sorted(table):
+            if not pathlib.Path("elements", element).is_file():
+                problems.append(f"  STALE     {label} {element}: no such element")
+            elif element not in networked:
+                problems.append(f"  STALE     {label} {element}: has no network source any more")
+            elif element in covered:
+                problems.append(
+                    f"  STALE     {label} {element}: {WORKFLOW} now updates it; drop the entry"
+                )
+    for element, (_, check) in sorted(DERIVED.items()):
+        if check and check not in tasks:
+            problems.append(f"  STALE     DERIVED {element}: check task `{check}` doesn't exist")
+
+    if problems:
+        print(f"update-path-check: {len(problems)} problem(s)", file=sys.stderr)
+        print("\n".join(problems), file=sys.stderr)
+        print("See docs/skills/bst.md § Auditing the whole tree for elements with no update path.",
+              file=sys.stderr)
+        return 1
+    print(
+        f"update-path-check: {len(networked)} network-sourced elements; "
+        f"{len(covered)} updated by {WORKFLOW}, {len(DERIVED)} derived, {len(PINNED)} pinned"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

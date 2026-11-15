@@ -6,6 +6,21 @@ kind: manual
 #   sudo  → system-auth  (fdsdk sudo.bst: "auth include system-auth")
 #   sshd  → password-auth
 #   greetd login → /etc/pam.d/greetd (managed by config/greetd-config.bst)
+#   passwd → /etc/pam.d/passwd (overridden here, see below)
+#
+# /etc/pam.d/passwd replaces shadow-utils' stock file (fdsdk shadow.bst:
+# three `include system-auth` lines) so a password change re-encrypts the oo7
+# login keyring (#1620). Under `include`, system-auth's
+# `password sufficient pam_unix.so` (or a homed user's
+# `-password sufficient pam_systemd_home.so`) ends the WHOLE password stack on
+# success, so a pam_oo7 line after the include never runs, and the keyring
+# stays sealed with the old password, locked at every later login.
+# `substack` keeps that early return inside system-auth; the
+# `-password optional pam_oo7.so` after it then runs and sends the old and new
+# password (PAM_OLDAUTHTOK/PAM_AUTHTOK, set by pam_unix) to the user's running
+# oo7-daemon. No use_authtok, same as greetd's password line (see the comment
+# there). auth/account stay `include`: nothing follows them. Source:
+# projectbluefin/dakota 05cc23e; docs/skills/pam.md.
 #
 # password-auth's *auth* block is dormant for sshd as shipped: since #410,
 # config/ssh-auth-policy.bst sets KbdInteractiveAuthentication no (alongside
@@ -66,6 +81,7 @@ public:
     overlap-whitelist:
     - /etc/pam.d/system-auth
     - /etc/pam.d/password-auth
+    - /etc/pam.d/passwd
 
 variables:
   strip-binaries: ''
@@ -125,6 +141,17 @@ config:
     -session     optional      pam_systemd.so
     session     [success=1 default=ignore] pam_succeed_if.so service in crond quiet use_uid
     session     required      pam_unix.so
+    EOF
+
+  - |
+    install -Dm644 /dev/null \
+      "%{install-root}%{sysconfdir}/pam.d/passwd"
+    cat > "%{install-root}%{sysconfdir}/pam.d/passwd" <<'EOF'
+    #%PAM-1.0
+    auth        include       system-auth
+    account     include       system-auth
+    password    substack      system-auth
+    -password   optional      pam_oo7.so
     EOF
 
   - "%{install-extra}"

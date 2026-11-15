@@ -84,7 +84,7 @@
   "packageRules": [
     {
       // The dockerfile manager keeps the live ISO's third-party bases
-      // (live/Containerfile's debian:bookworm initramfs-builder,
+      // (live/Containerfile's debian:trixie initramfs-builder,
       // live/iso-tools/Containerfile's fedora-minimal) digest-pinned and
       // current, as dakota-iso 16e6135 does. Their contents end up inside the
       // ISO, so a retag upstream must arrive as a reviewable PR. Every other

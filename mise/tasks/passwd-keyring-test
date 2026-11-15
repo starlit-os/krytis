@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+#MISE description="Boot the image and assert passwd re-encrypts the oo7 login keyring, and that the stock passwd stack would not (#1620)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install and boot"
+#USAGE flag "--reuse-disk <path>" help="Boot a copy of this already-installed raw disk instead of running generate-disk (skips the only step that needs root)"
+#USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys) and print its path"
+#
+# Guards #1620: shadow-utils' stock /etc/pam.d/passwd reaches PAM only through
+# `password include system-auth`, and system-auth's `sufficient pam_unix.so`
+# ends the whole stack there, so a pam_oo7 line after it never runs. A password
+# change then leaves the oo7 login keyring sealed with the OLD password, locked
+# at every later login. config/u2f-config.bst ships a passwd stack with
+# `password substack system-auth` + `-password optional pam_oo7.so`.
+#
+# The test runs the real path, with no greeter needed:
+#   1. a lingering user's manager runs `oo7-daemon --login` with the old
+#      password on stdin, and `secret-tool store` puts one item in the login
+#      collection (the daemon only writes login.keyring once it holds an item);
+#   2. that user runs /usr/bin/passwd on a pty (old → new);
+#   3. PASS needs passwd to succeed, pam_oo7's own PAM_UPDATE_AUTHTOK journal
+#      line during it, the daemon to log the re-encryption, and the stored item
+#      to read back through a fresh daemon given the NEW password but not the
+#      old one. "pam_oo7 said it sent something" is not a pass, and neither is
+#      "the daemon stayed up": given a wrong password it stays up, locked.
+#   4. Negative control: put the stock include-only passwd stack back, change
+#      the password again, and require that pam_oo7 never ran and the keyring
+#      did NOT follow. That proves step 3 measured the substack.
+#
+# The real oo7-daemon.service is stopped and runtime-masked first: the
+# lingering user manager starts it, and while the test's daemon holds the bus
+# name it restart-loops, re-binding oo7-pam.sock each time and leaving a dead
+# socket behind ("Connection refused" in pam_oo7).
+#
+# sshd runs for this boot only (root key from a credential), greetd is stubbed
+# out, as in oomd-test. See docs/skills/pam.md § #782.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+CLI_IMAGE=""; CLI_REUSE_DISK=""; CLI_KEEP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)      CLI_IMAGE="$2"; shift 2 ;;
+        --reuse-disk) CLI_REUSE_DISK="$2"; shift 2 ;;
+        --keep)       CLI_KEEP=true; shift ;;
+        *) break ;;
+    esac
+done
+IMAGE="${CLI_IMAGE:-${usage_image:-localhost/krytis:latest}}"
+REUSE_DISK="${CLI_REUSE_DISK:-${usage_reuse_disk:-}}"
+KEEP="${CLI_KEEP:-${usage_keep:-}}"
+
+if [ -n "${REUSE_DISK}" ] && [ ! -f "${REUSE_DISK}" ]; then
+    echo "ERROR: --reuse-disk file not found: ${REUSE_DISK}" >&2
+    exit 1
+fi
+command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found." >&2; exit 1; }
+
+TEST_USER="kspass"
+PW_OLD="Oldpass-Keyring-4821"
+PW_NEW="Newpass-Keyring-9377"
+PW_THIRD="Thirdpass-Keyring-5160"
+WORKDIR=$(mktemp -d /var/tmp/krytis-passwd-keyring-test.XXXXXX)
+DISK="${WORKDIR}/test.raw"
+
+QEMU_PID=""
+cleanup() {
+    [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
+    if [ -n "${KEEP}" ]; then
+        echo "==> WORKDIR kept at ${WORKDIR}"
+    else
+        rm -rf "${WORKDIR}"
+    fi
+}
+trap cleanup EXIT
+trap 'echo "==> ABORTED at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+ssh-keygen -t ed25519 -N '' -C 'krytis passwd-keyring-test root' -f "${WORKDIR}/id_root" -q
+
+if [ -n "${REUSE_DISK}" ]; then
+    echo "==> [1/6] Copying ${REUSE_DISK} (no install, no root)..."
+    cp --reflink=auto "${REUSE_DISK}" "${DISK}"
+else
+    echo "==> [1/6] Installing ${IMAGE} → ${DISK}..."
+    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size 15G
+fi
+
+echo "==> [2/6] Booting headless with sshd enabled for this boot only..."
+printf '[Unit]\nWants=sshd.service\n' > "${WORKDIR}/mu-dropin.conf"
+cat > "${WORKDIR}/sshd-dropin.conf" <<'DROPIN'
+[Service]
+ImportCredential=krytis.pwtest_root_keys
+ExecStart=
+ExecStart=/usr/bin/sshd -D -o "AuthorizedKeysFile .ssh/authorized_keys ${CREDENTIALS_DIRECTORY}/krytis.pwtest_root_keys"
+DROPIN
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/true\nRestart=no\n' > "${WORKDIR}/greetd-dropin.conf"
+
+cred_b64() { base64 -w0 < "$1"; }
+. scripts/ovmf-paths.sh   # #458
+OVMF_CODE=$(ovmf_code_plain)
+cp "$(ovmf_vars_plain)" "${WORKDIR}/vars.fd"
+
+launch_qemu() {
+    qemu-system-x86_64 \
+        -enable-kvm -m "${VM_RAM:-4096}" -cpu host -smp "${VM_CPUS:-4}" \
+        -machine q35 \
+        -drive "file=${DISK},format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
+        -device virtio-net-pci,netdev=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.sshd.service=$(cred_b64 "${WORKDIR}/sshd-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.greetd.service=$(cred_b64 "${WORKDIR}/greetd-dropin.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:krytis.pwtest_root_keys=$(cred_b64 "${WORKDIR}/id_root.pub")" \
+        -display none \
+        -serial "file:${WORKDIR}/serial.log" \
+        -daemonize -pidfile "${WORKDIR}/qemu.pid"
+}
+. scripts/qemu-hostfwd.sh
+qemu_launch_hostfwd 2352 launch_qemu
+QEMU_PID=$(cat "${WORKDIR}/qemu.pid")
+
+SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5)
+ROOT() { timeout 120 ssh "${SSH_OPTS[@]}" -o LogLevel=ERROR -i "${WORKDIR}/id_root" root@localhost "$@"; }
+
+UP=false
+DEADLINE=$((SECONDS + 300))
+while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    if timeout 10 ssh "${SSH_OPTS[@]}" -i "${WORKDIR}/id_root" root@localhost true 2>/dev/null; then
+        UP=true; break
+    fi
+    sleep 3
+done
+if [ "${UP}" != true ]; then
+    echo "==> FAIL: root SSH never came up within 300s — nothing about passwd was tested." >&2
+    tail -40 "${WORKDIR}/serial.log" >&2 || true
+    exit 1
+fi
+
+FAILED=0
+pass() { echo "    PASS  $1"; }
+fail() { echo "    FAIL  $1" >&2; FAILED=1; }
+
+echo "==> [3/6] The image's passwd stack..."
+STACK=$(ROOT 'cat /etc/pam.d/passwd')
+printf '%s\n' "${STACK}" | sed 's/^/    | /'
+grep -qE '^password[[:space:]]+substack[[:space:]]+system-auth' <<<"${STACK}" \
+    && pass "password phase uses substack system-auth" || fail "password phase is not a substack"
+grep -qE '^-password[[:space:]]+optional[[:space:]]+pam_oo7\.so' <<<"${STACK}" \
+    && pass "pam_oo7 follows it" || fail "no -password optional pam_oo7.so line"
+
+echo "==> [4/6] ${TEST_USER}: login keyring created with the old password..."
+ROOT "useradd --create-home ${TEST_USER} && printf '%s:%s\n' ${TEST_USER} '${PW_OLD}' | chpasswd && loginctl enable-linger ${TEST_USER}" \
+    || { echo "==> FAIL: could not create ${TEST_USER}" >&2; exit 1; }
+TEST_UID=$(ROOT "id -u ${TEST_USER}")
+for _ in $(seq 60); do
+    [ "$(ROOT "systemctl is-active user@${TEST_UID}.service" || true)" = active ] && break
+    sleep 1
+done
+U() { ROOT "setpriv --reuid=${TEST_UID} --regid=${TEST_UID} --init-groups env HOME=/home/${TEST_USER} XDG_RUNTIME_DIR=/run/user/${TEST_UID} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${TEST_UID}/bus $*"; }
+# oo7 writes its own v1 format under keyrings/v1/, not gnome-keyring's keyrings/.
+KEYRING="/home/${TEST_USER}/.local/share/keyrings/v1/login.keyring"
+
+# The lingering user manager starts the real oo7-daemon.service, and it keeps
+# restarting while our instance holds org.freedesktop.secrets. Each attempt
+# binds oo7-pam.sock before it fails with NameTaken, so it replaces our
+# daemon's PAM socket with a dead one, and pam_oo7 gets "Connection refused".
+# Stop and mask the unit (runtime only) so only the test's daemon exists.
+U systemctl --user stop oo7-daemon.service 2>/dev/null || true
+U systemctl --user mask --runtime oo7-daemon.service >/dev/null
+
+# Start oo7-daemon in the user's manager with a password on stdin. It creates
+# the login keyring if there is none, or tries to unlock it with this password.
+start_daemon() {  # $1 unit name, $2 password
+    U systemd-run --user --quiet --unit="$1" --collect \
+        sh -c "\"printf %s '$2' | exec /usr/libexec/oo7-daemon --verbose --login --replace\""
+    sleep 3
+}
+daemon_log() { ROOT "journalctl -q -o cat _SYSTEMD_USER_UNIT=$1.service" || true; }
+stop_daemon() { U systemctl --user stop "$1" 2>/dev/null || true; }
+# The item reads back only when the daemon's password unlocks the keyring. A
+# daemon given the wrong password stays up with the collection locked, so its
+# being active proves nothing; this is the check that does.
+reads_back() {  # $1 unit, $2 password
+    local got
+    start_daemon "$1" "$2"
+    got=$(U timeout 15 secret-tool lookup krytis test1620 2>/dev/null || true)
+    stop_daemon "$1"
+    [ "${got}" = "${SECRET}" ]
+}
+# pam_oo7's own journal line for the update phase, logged under passwd.
+pam_oo7_ran_since() {  # $1 epoch seconds
+    ROOT "journalctl -q -o cat --since @$1 _COMM=passwd" | grep -q 'PAM_UPDATE_AUTHTOK phase'
+}
+
+SECRET="krytis-1620-canary"
+start_daemon kt-oo7-a "${PW_OLD}"
+# The daemon creates the login collection in memory and writes login.keyring
+# only once it holds an item, so store one. It is also what step 5 reads back.
+U "sh -c 'printf %s ${SECRET} | secret-tool store --label=krytis-1620 krytis test1620'" \
+    || { fail "secret-tool store failed"; daemon_log kt-oo7-a | tail -20 >&2; exit 1; }
+for _ in $(seq 30); do ROOT "test -s ${KEYRING}" && break; sleep 1; done
+ROOT "test -s ${KEYRING}" && pass "login keyring written with the old password, holding one item" \
+    || { fail "no login keyring after storing an item"; daemon_log kt-oo7-a | tail -20 >&2; exit 1; }
+GOT=$(U timeout 15 secret-tool lookup krytis test1620 2>/dev/null || true)
+[ "${GOT}" = "${SECRET}" ] && pass "the item reads back before the change (lookup works)" \
+    || { fail "the item does not read back even before the change (got '${GOT}')"; exit 1; }
+
+# Drive /usr/bin/passwd on a pty, as the user. Prints passwd's output; exit
+# status is passwd's.
+run_passwd() {  # $1 current, $2 new
+    U python3 - "$1" "$2" <<'PY'
+import os, pty, select, signal, sys, time
+old, new = sys.argv[1], sys.argv[2]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv("/usr/bin/passwd", ["passwd"])
+# Answer each prompt once. A re-prompt (pwquality rejecting the new password)
+# finds no answer left and times out instead of hanging the test.
+buf, answers = b"", [old, new, new]
+deadline = time.time() + 60
+while True:
+    left = deadline - time.time()
+    if left <= 0:
+        os.kill(pid, signal.SIGKILL)
+        buf += b"\n<timed out waiting for passwd>\n"
+        break
+    ready, _, _ = select.select([fd], [], [], left)
+    if not ready:
+        continue
+    try:
+        chunk = os.read(fd, 1024)
+    except OSError:
+        break
+    if not chunk:
+        break
+    buf += chunk
+    if answers and buf.rstrip().endswith(b":"):
+        time.sleep(0.2)
+        os.write(fd, answers.pop(0).encode() + b"\n")
+        buf += b"<answered>\n"
+_, status = os.waitpid(pid, 0)
+sys.stdout.write(buf.decode(errors="replace"))
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
+}
+
+echo "==> [5/6] passwd old → new with the image's stack..."
+T0=$(ROOT 'date +%s'); sleep 1
+if OUT=$(run_passwd "${PW_OLD}" "${PW_NEW}" 2>&1); then
+    pass "passwd succeeded"
+else
+    fail "passwd failed"
+fi
+printf '%s\n' "${OUT}" | sed 's/^/    | /'
+sleep 2
+pam_oo7_ran_since "${T0}" && pass "pam_oo7 ran its update phase during passwd" \
+    || fail "pam_oo7 did not run its update phase"
+LOG_A=$(daemon_log kt-oo7-a)
+grep -qE 'Successfully changed password for [1-9][0-9]* collection' <<<"${LOG_A}" \
+    && pass "oo7-daemon re-encrypted the login keyring" \
+    || { fail "oo7-daemon did not report re-encrypting a collection"
+         ROOT "journalctl -q -o cat --since @${T0} _COMM=passwd" | sed 's/^/    | /' >&2
+         printf '%s\n' "${LOG_A}" | grep -v DEBUG | tail -15 | sed 's/^/    | /' >&2; }
+stop_daemon kt-oo7-a
+reads_back kt-oo7-b "${PW_NEW}" && pass "a fresh daemon with the NEW password reads the item back" \
+    || fail "a fresh daemon with the new password cannot read the item"
+reads_back kt-oo7-c "${PW_OLD}" && fail "the OLD password still unlocks the keyring" \
+    || pass "the old password no longer unlocks the keyring"
+
+echo "==> [6/6] Negative control: stock include-only passwd stack..."
+ROOT "cp /etc/pam.d/passwd /root/passwd.krytis && printf '#%%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\npassword\tinclude\t\tsystem-auth\n-password\toptional\tpam_oo7.so\n' > /etc/pam.d/passwd"
+start_daemon kt-oo7-d "${PW_NEW}"
+T1=$(ROOT 'date +%s'); sleep 1
+if OUT=$(run_passwd "${PW_NEW}" "${PW_THIRD}" 2>&1); then
+    pass "passwd succeeded (stock stack)"
+else
+    fail "passwd failed under the stock stack: ${OUT}"
+fi
+sleep 2
+pam_oo7_ran_since "${T1}" \
+    && fail "pam_oo7 ran under 'password include', so the control does not reproduce #1620" \
+    || pass "pam_oo7 never ran under 'password include' (#1620 reproduced)"
+stop_daemon kt-oo7-d
+reads_back kt-oo7-e "${PW_NEW}" && pass "the keyring stayed on the previous password, out of step with the account" \
+    || fail "the keyring moved even though pam_oo7 did not run"
+ROOT "cp /root/passwd.krytis /etc/pam.d/passwd"
+
+if [ "${FAILED}" -ne 0 ]; then
+    echo "==> FAIL: passwd-keyring-test"
+    exit 1
+fi
+echo "==> PASS: passwd re-encrypts the oo7 login keyring"

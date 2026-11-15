@@ -543,6 +543,7 @@
 /./etc/pam.d/other	components/linux-pam.bst	monthly
 /./etc/pam.d/other.license	components/linux-pam.bst	monthly
 /./etc/pam.d/passwd	components/shadow.bst	monthly
+/./etc/pam.d/passwd	config/u2f-config.bst	monthly
 /./etc/pam.d/password-auth	components/linux-pam.bst	monthly
 /./etc/pam.d/password-auth	config/u2f-config.bst	monthly
 /./etc/pam.d/password-auth.license	components/linux-pam.bst	monthly

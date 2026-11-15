@@ -983,6 +983,19 @@ jobs:
             element: desktop/oo7.bst
             branch: auto/track-oo7
             title: "chore(deps): update oo7"
+          # Overrides freedesktop-sdk's components/openssh.bst (prepended
+          # Include lines, #410), so a junction bump no longer moves it.
+          # Tracked on its own V_* tags instead; sshd + PAM, so human review.
+          # It had `track:` and no matrix entry until #1621.
+          - group: manual-merge
+            element: core/openssh.bst
+            branch: auto/track-openssh
+            title: "chore(deps): update openssh"
+          # Secure Boot test tooling (generate-ovmf-vars); no entry until #1621.
+          - group: manual-merge
+            element: dev/virt-firmware.bst
+            branch: auto/track-virt-firmware
+            title: "chore(deps): update virt-firmware"
           # Unlock path: every release needs `mise run krytis-prompter-test`
           # and a human merge (docs/design/secrets-service.md).
           - group: manual-merge
