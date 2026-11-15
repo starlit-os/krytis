@@ -256,13 +256,20 @@ PY
     [[ "${WORKDIR}" != "${OUTPUT_DIR}" ]] && df -h "${WORKDIR}"
     du -sh "${SQUASHFS_ROOT}" 2>/dev/null || true
 
-    mkdir -p "${SQUASHFS_ROOT}/proc" "${SQUASHFS_ROOT}/sys" "${SQUASHFS_ROOT}/dev"
+    # Keep /run and /tmp as empty directories (dakota-iso 130cceda, #1623).
+    # Debian dracut's shell init (99base/init.sh) moves /run across
+    # switch-root only when the new root has a /run directory; without one it
+    # parks it at /dev/.initramfs and /run/initramfs/live, the payload path,
+    # disappears. Today's initrd runs systemd, whose switch-root creates /run
+    # itself, so krytis hasn't been hit; this removes the dependency on that.
+    mkdir -p "${SQUASHFS_ROOT}/proc" "${SQUASHFS_ROOT}/sys" "${SQUASHFS_ROOT}/dev" \
+        "${SQUASHFS_ROOT}/run" "${SQUASHFS_ROOT}/tmp"
     SFS_LEVEL=3; SFS_BLOCK=131072
     [[ "${COMPRESSION}" == "release" ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
     mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS}" \
         -noappend -comp zstd -Xcompression-level "${SFS_LEVEL}" -b "${SFS_BLOCK}" \
         -processors 4 \
-        -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+        -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 
     tar -C "${MOUNT}" \
         -cf "${BOOT_TAR}" \

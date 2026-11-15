@@ -676,18 +676,31 @@ has been seen; the symptom would be an installed boot with no serial console. Ru
 write the live session makes to the installed disk ends with `sync` before the unmount.
 #1622 added that `sync` at the end of the remote BLS-patch script.
 
-### Keep empty `/run` and `/tmp` in the live squashfs, or check why krytis doesn't need them (2026-11-15, upstream dakota-iso `130cceda`)
+### Keep empty `/run` and `/tmp` in the live squashfs (2026-11-15, upstream dakota-iso `130cceda`)
 
-Debian dracut's `99base/init.sh` moves `/run` across switch-root only when the new root has
-a `/run` directory. Otherwise it parks it at `/dev/.initramfs`, and `/run/initramfs/live`
-disappears, along with the payload fisherman reads from `/run/initramfs/live/OCI`.
-Upstream hit this on both variants on 2026-11-07 and changed its `mksquashfs` excludes from
-`-e run -e tmp` to `-e "run/*" -e "tmp/*"`, keeping the empty directories.
-`scripts/iso-sd-boot.sh` still has the old excludes and creates only `proc`, `sys` and
-`dev`, and krytis uses the same Debian cross-built initramfs. But the 2026-11-02 install
-in § fisherman requires a media-input.json receipt passed with fisherman logging that very
-path, so either something krytis-specific puts `/run` back or that run was lucky. Check a
-built ISO before changing anything (#1623).
+Debian dracut's shell init (`99base/init.sh`) moves `/run` across switch-root only when the
+new root has a `/run` directory. Otherwise it parks it at `/dev/.initramfs`, and
+`/run/initramfs/live` disappears, along with the payload fisherman reads from
+`/run/initramfs/live/OCI`. Upstream hit this on both variants on 2026-11-07 and changed its
+`mksquashfs` excludes from `-e run -e tmp` to `-e "run/*" -e "tmp/*"`, keeping the empty
+directories.
+
+**Krytis had the old excludes but wasn't hit, because its live initrd runs systemd, not
+that shell init** (#1623, checked 2026-11-15 on a fresh `mise run build-iso --debug`).
+`unsquashfs -lls` on that ISO showed no `/run` or `/tmp` at the top of the live root. Yet
+in the booted live session, `findmnt /run/initramfs/live` showed `/dev/sr0` there, with
+`OCI` inside. The boot journal shows why: `dracut-pre-pivot.service` and
+`initrd-switch-root.service`, so the initrd is systemd's, and systemd's switch-root
+creates `/run` in the new root itself. The overlay's upper layer (`/run/overlayfs/run`)
+had a `run` directory stamped during the initrd phase. `live/Containerfile`'s
+`initramfs-builder` stage installs Debian `dracut` and never asks for `systemd`, so this
+is incidental: if that package set stopped pulling systemd in, krytis would fall to the
+shell init and lose the payload path with no other symptom.
+
+So #1623 ported the fix anyway. `scripts/iso-sd-boot.sh` creates `run` and `tmp` in the
+squashfs root and excludes only their contents. `mise/tasks/verify-iso-payload`, which
+every `build-iso` runs, now fails when the ISO's squashfs lacks either directory; it
+rejected the pre-fix ISO with `the ISO's squashfs has no /run directory`.
 
 ### A readiness wait should keep its last error and report the time it really took (2026-11-15, upstream dakota-iso `b1903fd6`)
 
