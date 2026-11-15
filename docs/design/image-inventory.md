@@ -218,6 +218,7 @@ element does, its row's text is a review question.
 | `core/sudo-rs.bst` | `freedesktop-sdk.bst:components/sudo.bst` | sudo-rs, a memory-safe sudo, in place of sudo. |
 | `overrides/btrfs-progs.bst` | `freedesktop-sdk.bst:components/btrfs-progs.bst` | Patched so `mkfs.btrfs` erases old signatures, such as LUKS headers, on a disk that ignores TRIM (#1294). |
 | `overrides/libdecor.bst` | `freedesktop-sdk.bst:components/libdecor.bst` | Built without its GTK3 plugin (#1075). |
+| `overrides/plymouth.bst` | `freedesktop-sdk.bst:components/plymouth.bst` | Built without its GTK3 X11 renderer (#1035). |
 | `overrides/python3-pil.bst` | `freedesktop-sdk.bst:components/python3-pil.bst` | Pillow 13.0.0, one release ahead of the junction, for a Critical JPEG decoder overflow (GHSA-8g5g-8vmr-9782). |
 | `overrides/libdisplay-info.bst` | `freedesktop-sdk.bst:components/libdisplay-info.bst` | Held at 0.3.0 for niri's bindings. |
 | `core/openssh.bst` | `freedesktop-sdk.bst:components/openssh.bst` | Config under `/etc/ssh/` with an `Include` for drop-ins (#408). |

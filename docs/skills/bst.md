@@ -1099,6 +1099,11 @@ because the missing elements still show up as somebody's build-dep. Declare the
 missing ones in the mirror's `depends:` and list them in the row's added-depends column
 in `gtk3-mirror-check`, so the drift check doesn't flag them.
 
+Wiring a mirror into `overrides:` also needs a row in `docs/design/image-inventory.md`
+(`mise run image-inventory --write`, then describe it). #1630 went red in CI's Static gates
+because that step was skipped. Running the `checks.yml` Static-gates steps locally before
+pushing catches it.
+
 ### "What pulls library X into the image" needs the graph *and* an ELF scan
 
 *Source: `mise/tasks/gtk3-audit` (#1030, step 0 of
