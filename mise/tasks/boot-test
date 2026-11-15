@@ -110,8 +110,9 @@ fi
 
 # Use /var/tmp, not /tmp: the disk image (default 15G sparse) is too large
 # for /tmp, which is a per-user-quota-limited tmpfs here (systemd's tmp.mount
-# with usrquota, ~12.8G effective limit). fallocate of a 15G file there fails
-# with "Disk quota exceeded" once prior usage is accounted for. /var/tmp is
+# with usrquota, ~12.8G effective limit). A 15G disk there failed with "Disk
+# quota exceeded" back when generate-disk fallocated it; it is sparse now, but
+# an installed image still writes ~7G, which the quota doesn't fit either. /var/tmp is
 # backed by the real disk and has no such per-user quota. Everything else in
 # WORKDIR (vars.fd copies, monitor socket, serial log, pidfile) is small, so
 # keeping them together under the same WORKDIR is fine.

@@ -5,7 +5,7 @@
 #USAGE flag "--accept <ref>" default="ghcr.io/starlit-os/krytis:latest" help="Published ref that must carry the static-key signature; bootc must accept it"
 #USAGE flag "--refuse <ref>" default="ghcr.io/starlit-os/krytis@sha256:b817c759281c289cde159c3d95d86da50f95bd20ff89757e6939578a6aae84e9" help="Published ref with only the keyless signature; bootc must refuse it. Default: 26.08.202611011748, the last :latest before #418"
 #USAGE flag "--upgrade-from <ref>" help="First install this published pre-policy image, then bootc switch to --image through a local registry and reboot, as every existing host will"
-#USAGE flag "--size <size>" default="30G" help="Disk size passed to generate-disk, which fallocates it on the host: room for the installed image plus every image the VM pulls"
+#USAGE flag "--size <size>" default="30G" help="Disk size passed to generate-disk (sparse on the host): room for the installed image plus every image the VM pulls"
 #USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys) and print its path"
 
 # What this proves on a booted krytis VM (#418):
