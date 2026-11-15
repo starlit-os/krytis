@@ -55,7 +55,7 @@ sources:
   - '*rc*'
   - '*alpha*'
   - '*beta*'
-  ref: v5.4.1-0-g815aebe1cfd79c9a18197441eea92f0b275035fc
+  ref: v5.5.0-0-gc2573248a89470383e41b8e1ac432424691cbc1f
 # launch_apps_as_systemd_services defaults to true (upstream: false). With
 # false, every app started from the launcher, dock or taskbar is a child of
 # noctalia and lives in its cgroup. config/noctalia-service.bst runs noctalia
