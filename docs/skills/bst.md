@@ -2296,7 +2296,7 @@ its patches and `desktop/seance.bst` joined the list:
 
 - `core/efitools.bst`: two patches and `track: master`, so every upstream commit is a
   candidate.
-- `desktop/noctalia-plugin-mx-control.bst`: four patches and `track: refs/heads/main` on
+- `desktop/noctalia-plugin-mx-control.bst`: three patches and `track: refs/heads/main` on
   community-plugins, where every catalog-bot commit moves the ref. The most exposed.
 - `desktop/ananicy-cpp.bst`
 - `desktop/noctalia.bst`

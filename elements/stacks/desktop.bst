@@ -237,9 +237,9 @@ depends:
   # hidraw nodes `uaccess`. Needed by the noctalia MX Control plugin (#1220).
   - desktop/solaar.bst
   # noctalia-plugin-mx-control: the MX Control plugin itself, carried with
-  # patches so PRO-series mice show up and the tooltip lists every device
-  # (#1220). Served by the `krytis` path source in noctalia-skel; not enabled
-  # by default.
+  # backend patches so PRO-series mice show up (#1220) and settings recover
+  # after a receiver replug (#1292). Served by the `krytis` path source in
+  # noctalia-skel; not enabled by default.
   - desktop/noctalia-plugin-mx-control.bst
 
   # ── System performance tuning ──────────────────────────────────────────
