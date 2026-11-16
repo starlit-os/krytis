@@ -12,12 +12,10 @@ kind: manual
 # still not enabled by default: it only does anything with Logitech HID++
 # hardware attached.
 #
-# Four patches, all under patches/noctalia-plugin-mx-control/, applied in order:
+# Three patches, all under patches/noctalia-plugin-mx-control/, applied in order:
 # - accept-pro-device-names: the backend's device-name filter accepts
 #   Logitech's PRO-series mice ("PRO X Wireless"). Without it the panel never
 #   lists them, and DPI never shows.
-# - tooltip-all-devices: the bar tooltip lists every device's battery, not
-#   only the first online one.
 # - retry-empty-settings: backport of zachwilke/omarchy-mxcontrol#16. A
 #   device that links after serve's replug re-read no longer stays at
 #   `settings: []` (#1292).
@@ -49,11 +47,9 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/community-plugins.git
   track: refs/heads/main
-  ref: b0364afc5e9e4c43975790b10c180d0338505134
+  ref: 5413d9c1a390c9c5900c836f482d45d108840b80
 - kind: patch
   path: patches/noctalia-plugin-mx-control/accept-pro-device-names.patch
-- kind: patch
-  path: patches/noctalia-plugin-mx-control/tooltip-all-devices.patch
 - kind: patch
   path: patches/noctalia-plugin-mx-control/retry-empty-settings.patch
 - kind: patch
