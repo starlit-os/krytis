@@ -35,15 +35,15 @@ signer = "sigstore-oidc:https://github.com/jdx/fnox/.github/workflows/release.ym
 repository_ids = { repository = "1078762196" }
 
 [[tools."github:protonpass/pass-cli"]]
-version = "2.7.0"
+version = "2.7.1"
 backend = "github:protonpass/pass-cli"
-specifiers = ["2.7.0"]
+specifiers = ["2.7.1"]
 
 [tools."github:protonpass/pass-cli"."platforms.linux-x64"]
-checksum = "sha256:fd933e76179a5a33b295853e9c6696e49e584fe2141b1aafc63a3d78c0791cdb"
+checksum = "sha256:3e9520fe79ab4698e03905c8bf0fff4889b3028975e832a5f801a9c82008b612"
 checksum_source = "mise-versions"
-url = "https://github.com/protonpass/pass-cli/releases/download/2.7.0/pass-cli-linux-x86_64"
-url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/705312254"
+url = "https://github.com/protonpass/pass-cli/releases/download/2.7.1/pass-cli-linux-x86_64"
+url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/754345234"
 
 [[tools.grype]]
 version = "0.121.3"
