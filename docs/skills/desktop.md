@@ -1901,8 +1901,8 @@ the `.portal` file's basename (`oo7-portal`), not its `DBusName`.
 - **`umbriel-portals.conf` is a full routing file**: `default=umbriel;gnome;gtk;` (#1029)
   shadows upstream's `default=umbriel;gtk` for everything umbriel, gnome or gtk implements.
   Pins: `Access=gtk` and `Notification=gtk` (same as niri upstream), `none` for Background,
-  GlobalShortcuts, RemoteDesktop, Clipboard and Wallpaper, and `Secret=oo7-portal` (#1028).
-  InputCapture falls through `default=` to Umbriel's own backend. Why each pin:
+  RemoteDesktop, Clipboard and Wallpaper, and `Secret=oo7-portal` (#1028). InputCapture and
+  GlobalShortcuts fall through `default=` to Umbriel's own backend. Why each pin:
   *xdp-gnome outside GNOME* below.
 
 Measured on a probe image: with the delta files removed, Secret resolves to none in both
@@ -1921,7 +1921,7 @@ can serve it without gnome-shell. Read from xdp-gnome `a4f6ed6` (2026-09-19) wit
 | Access | own GTK4 dialog only with a resolvable parent, else `AccessDialog` on `org.gnome.Shell` (`src/access.c`) | pinned to gtk upstream | pinned to gtk |
 | Notification | `org.gtk.Notifications` (`src/notification.c:158`), gnome-shell only | pinned to gtk upstream | pinned to gtk; xdp-gtk uses `org.freedesktop.Notifications`, which noctalia owns |
 | Background | `org.gnome.Shell.Introspect` (`src/background.c:372`) | works (niri implements it) | `none` |
-| GlobalShortcuts | `org.gnome.Shell` shortcuts provider (`src/globalshortcuts.c:1201`) | `none` (#1054) | `none` |
+| GlobalShortcuts | `org.gnome.Shell` shortcuts provider (`src/globalshortcuts.c:1201`) | `none` (#1054) | works through Umbriel's own portal backend and the private `umbriel-global-shortcuts-v1` protocol (#1055); no `org.gnome.Shell` involved |
 | RemoteDesktop, Clipboard | `org.gnome.Mutter.RemoteDesktop`; Clipboard rides RemoteDesktop sessions | `none` (#1054) | `none` |
 | InputCapture | `org.gnome.Mutter.InputCapture` | `none` (#1054) | works through Umbriel's own portal backend and `umbriel-input-capture-v1`; no Mutter service involved |
 
@@ -1930,10 +1930,22 @@ a session that fails at call time, and can't detect that up front. `none` makes 
 unsupported. Supporting facts:
 
 - **Umbriel provides no `org.gnome.Shell`/`org.gnome.Mutter` names**: none appear at the
-  `679f4fb` pin (tarball grep, 2026-11-01). Its own portal backend now declares
-  InputCapture and implements it through `umbriel-input-capture-v1` plus libei, so that
-  interface routes directly to `umbriel` instead of needing a Mutter name. Recheck the
-  remaining shell-dependent gaps on Umbriel bumps that touch D-Bus or portal interfaces.
+  `679f4fb` pin (tarball grep, 2026-11-01). Its own portal backend instead declares
+  InputCapture (`umbriel-input-capture-v1` plus libei) and GlobalShortcuts (private
+  `umbriel-global-shortcuts-v1`, xdg-desktop-portal-umbriel `baa83d0` / umbriel `d132933`,
+  both 2026-11-17), so those route directly to `umbriel`. Recheck the remaining
+  shell-dependent gaps on Umbriel bumps that touch D-Bus or portal interfaces.
+- **An `umbriel.portal` interface can need the compositor too, and routing can't show
+  it.** GlobalShortcuts in xdg-desktop-portal-umbriel is only a bridge: it binds
+  `umbriel_global_shortcuts_manager_v1` (version 1), which umbriel itself serves. On an
+  umbriel pin older than `759695f6d6` ("add private Wayland bridge", 2026-11-16) the
+  portal still declares GlobalShortcuts, `portal-routing-check` still passes, and every
+  request fails at call time (xdg-desktop-portal-umbriel `README.md` § Global shortcuts).
+  So bump `desktop/umbriel.bst` and `desktop/xdg-desktop-portal-umbriel.bst` together when
+  the portal gains a compositor-backed interface, and confirm on the booted image that
+  `umbriel global-shortcuts --json` answers (the subcommand arrived with the bridge).
+  Approval is a physical-keyboard panel inside umbriel; per-app overrides live in
+  umbriel's TOML under `[global_shortcuts."<app-id>"]`.
 - **xdp-gnome starts without Mutter.** libgxdp `gxdp_wayland_init` (`df896e34`, the revision
   xdp-gnome's wrap pins) falls back to plain GTK Wayland with the warning "Compositor
   service channel missing, portal dialogs may misbehave" when
@@ -1942,9 +1954,11 @@ unsupported. Supporting facts:
 - **Umbriel parents portal dialogs itself**: umbriel#214 (`936fb9c562`, centring over the
   parent, xdg-foreign) and umbriel#215 (`b24a1b4`, modal attach: shade the parent and follow
   it) are both in the `2339fc3` pin and later.
-- **Nobody upstream tracks the Umbriel `none` interfaces** (as of 2026-10-01): umbriel ships
-  no libei/EIS, xdg-desktop-portal-umbriel covers only ScreenCast/Screenshot, and its
-  `SCOPE.md` leaves wallpaper to the shell. #1055 tracks real backends.
+- **Nobody upstream tracks the remaining Umbriel `none` interfaces** (RemoteDesktop,
+  Clipboard, Background, Wallpaper; issue/PR search of both noctalia-dev repos as of
+  2026-11-17). umbriel's `SCOPE.md` leaves wallpaper to the shell. The owner accepted
+  Background and Wallpaper as gaps (§ Umbriel is the default session (#1566)); #1055
+  tracks the rest.
 - **`mise run umbriel-portal-smoke` proves Settings works under Umbriel** (#1029). It runs
   umbriel with `WLR_BACKENDS=headless` and `--device /dev/dri` (as
   `mise run compositor-smoke` does), then xdp under `XDG_CURRENT_DESKTOP=Umbriel`, all in
