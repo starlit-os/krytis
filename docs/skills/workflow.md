@@ -358,6 +358,18 @@ a minute. A rebase interrupted that way leaves the pick **applied and staged but
 committed**, so `git rebase --continue` refuses with "you have staged changes". Recover
 with `git commit -C <original-sha>` and then `--continue`, or `git rebase --abort`.
 
+**Don't stack on `auto/track-*` branches.** `track-bst-sources.yml` owns them. Each run
+rebuilds the commit on the current `main` and force-moves the branch
+(`scripts/commit-tracking-update.sh`, `PATCH … force=true`). It skips only when the
+published commit already carries the same files *and* the same message, and the message
+includes `Tracking-Next-*` trailers that change whenever upstream gains a commit during the
+cooldown. For a busy upstream that means a rewrite on most runs. #1055 tried a stack of
+#1648 (umbriel bump) → #1647 (portal bump) → the routing change (2026-11-17). Both bot
+branches were rewritten onto the new `main` about three hours later, before the re-chained
+#1647 could be pushed (`! [rejected] … (stale info)` from `--force-with-lease`). When a
+change depends on a bot bump, carry the bump commits in your own branch, open one PR, and
+close the bot PRs with a pointer to it.
+
 ### Merging a stack
 
 - **Merging a PR also merges every unmerged PR below it**, in one operation. Merging the top PR lands the whole stack, so approving the top PR approves every layer under it.
