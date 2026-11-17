@@ -22,7 +22,11 @@ accel_profile = "flat"
 # niri: `focus-follows-mouse max-scroll-amount="0%"` -- pointer focus follows
 # the cursor, but crossing a window edge never scrolls the strip to reach it.
 # umbriel expresses the same cap as a fraction rather than a percentage.
-follows_mouse = true
+# "sloppy" is what the old boolean `true` did: real pointer motion onto a
+# window focuses it, a still pointer never does. Upstream fabf40018f
+# (2026-11-12) replaced the boolean with "off"/"sloppy"/"always" and ignores
+# `true` with a warning, which fails umbriel-config-validate.
+follows_mouse = "sloppy"
 follows_mouse_max_scroll = 0.0
 
 [input.cursor]

@@ -1284,6 +1284,16 @@ none, and the config fails validation. It broke the 2026-11-02 scheduled publish
 and `[events]` command lines (`output-disable eDP-1`); `docs/user/actions.md` upstream lists
 every action's argument shape.
 
+**`[input.focus] follows_mouse` became an enum.** Upstream `fabf40018f` (2026-11-12,
+`feat(input)!: add sloppy and always follows_mouse modes`) replaced the boolean with `"off"`,
+`"sloppy"` or `"always"`. The old `true` (focus the window the pointer enters through real
+motion) is `"sloppy"`. `true` is not mapped: the loader logs `ignoring input.focus.follows_mouse
+(expected "off", "sloppy", or "always")` and runs with the default `"off"`, and
+`umbriel config validate` reports `configuration invalid` with that warning as its only
+diagnostic. It reached `main` through #1628's ref bump to `70b3724`, which passed PR checks
+because they never run this gate; `mise run build` caught it. A `!` in an upstream commit
+subject between the old and new `ref:` is the cheap signal to read before merging an umbriel bump.
+
 **The diagnostic locations point at the wrong file.** That run reported all 29 bad binds,
 but the twelve on keys upstream's packaged default *also* binds (`Mod+Return`, bare `Mod`,
 `Mod+Space`, `Mod+Tab`, the eight `XF86*` keys) came out as
