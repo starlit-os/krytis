@@ -2020,6 +2020,12 @@ not by changing the routing: niri#1966 (RemoteDesktop, open as of 2026-10-12), d
 (GlobalShortcuts), niri#823 (InputCapture). On a niri bump, drop a pin once its service
 appears in `src/dbus/`.
 
+### krytis's `default=` hides upstream's per-interface keys (Luciole's FileChooser)
+
+Step 3 above stops the walk at the first file whose `default=` names a backend that implements the interface. Krytis's `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf` sets `default=umbriel;gnome;gtk`, so upstream's `/usr/share` file is never consulted for any interface gnome or gtk implements, **including keys upstream adds later**. Upstream xdg-desktop-portal-umbriel ships `org.freedesktop.impl.portal.FileChooser=luciole;gtk` ("Luciole's chooser when it is installed", in its `data/umbriel-portals.conf` at `116e948`). With `desktop/luciole.bst` installed (#1649), Open/Save under Umbriel still resolves to `gnome`, and `portal-routing-check`'s `FileChooser: gnome` row keeps passing. To hand FileChooser to Luciole, add an explicit `FileChooser=luciole;gnome;` key to the krytis file and change the check's expected row in the same PR. Installing the backend alone does nothing.
+
+**On a xdp-umbriel bump, diff upstream's `umbriel-portals.conf`.** A new per-interface key there is silently overridden here, which `portal-routing-check` can't flag, because the resolved routing doesn't change.
+
 ### A `.portal` file without `[portal]` is silently skipped
 
 xdp only parses `portals/*.portal` as descriptors. One without a `[portal]` group is
