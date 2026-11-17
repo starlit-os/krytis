@@ -57,6 +57,7 @@ on:
           - noctalia-greeter
           - umbriel
           - xdg-desktop-portal-umbriel
+          - luciole
           - md4c
           - stb
           - libsodium
@@ -943,6 +944,7 @@ jobs:
       github.event.inputs.group == 'noctalia-greeter' ||
       github.event.inputs.group == 'umbriel' ||
       github.event.inputs.group == 'xdg-desktop-portal-umbriel' ||
+      github.event.inputs.group == 'luciole' ||
       github.event.inputs.group == 'md4c' ||
       github.event.inputs.group == 'stb' ||
       github.event.inputs.group == 'kmscon' ||
@@ -1070,6 +1072,10 @@ jobs:
             element: desktop/xdg-desktop-portal-umbriel.bst
             branch: auto/track-xdg-desktop-portal-umbriel
             title: "chore(deps): update xdg-desktop-portal-umbriel"
+          - group: luciole
+            element: desktop/luciole.bst
+            branch: auto/track-luciole
+            title: "chore(deps): update luciole"
           - group: md4c
             element: desktop/md4c.bst
             branch: auto/track-md4c

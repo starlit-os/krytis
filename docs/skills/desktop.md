@@ -1284,6 +1284,16 @@ none, and the config fails validation. It broke the 2026-11-02 scheduled publish
 and `[events]` command lines (`output-disable eDP-1`); `docs/user/actions.md` upstream lists
 every action's argument shape.
 
+**`[input.focus] follows_mouse` became an enum.** Upstream `fabf40018f` (2026-11-12,
+`feat(input)!: add sloppy and always follows_mouse modes`) replaced the boolean with `"off"`,
+`"sloppy"` or `"always"`. The old `true` (focus the window the pointer enters through real
+motion) is `"sloppy"`. `true` is not mapped: the loader logs `ignoring input.focus.follows_mouse
+(expected "off", "sloppy", or "always")` and runs with the default `"off"`, and
+`umbriel config validate` reports `configuration invalid` with that warning as its only
+diagnostic. It reached `main` through #1628's ref bump to `70b3724`, which passed PR checks
+because they never run this gate; `mise run build` caught it. A `!` in an upstream commit
+subject between the old and new `ref:` is the cheap signal to read before merging an umbriel bump.
+
 **The diagnostic locations point at the wrong file.** That run reported all 29 bad binds,
 but the twelve on keys upstream's packaged default *also* binds (`Mod+Return`, bare `Mod`,
 `Mod+Space`, `Mod+Tab`, the eight `XF86*` keys) came out as
@@ -2009,6 +2019,12 @@ so krytis pins those four to `none` (#1054). Upstream plans to close the gaps in
 not by changing the routing: niri#1966 (RemoteDesktop, open as of 2026-10-12), draft niri#3587
 (GlobalShortcuts), niri#823 (InputCapture). On a niri bump, drop a pin once its service
 appears in `src/dbus/`.
+
+### krytis's `default=` hides upstream's per-interface keys (Luciole's FileChooser)
+
+Step 3 above stops the walk at the first file whose `default=` names a backend that implements the interface. Krytis's `/etc/xdg/xdg-desktop-portal/umbriel-portals.conf` sets `default=umbriel;gnome;gtk`, so upstream's `/usr/share` file is never consulted for any interface gnome or gtk implements, **including keys upstream adds later**. Upstream xdg-desktop-portal-umbriel ships `org.freedesktop.impl.portal.FileChooser=luciole;gtk` ("Luciole's chooser when it is installed", in its `data/umbriel-portals.conf` at `116e948`). With `desktop/luciole.bst` installed (#1649), Open/Save under Umbriel still resolves to `gnome`, and `portal-routing-check`'s `FileChooser: gnome` row keeps passing. To hand FileChooser to Luciole, add an explicit `FileChooser=luciole;gnome;` key to the krytis file and change the check's expected row in the same PR. Installing the backend alone does nothing.
+
+**On a xdp-umbriel bump, diff upstream's `umbriel-portals.conf`.** A new per-interface key there is silently overridden here, which `portal-routing-check` can't flag, because the resolved routing doesn't change.
 
 ### A `.portal` file without `[portal]` is silently skipped
 

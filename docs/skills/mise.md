@@ -195,6 +195,15 @@ process whose parent is `systemd --user` is an orphan.
   check and assert the tag still has that ID after it.
   `boot-test` copies whichever object the tag names when `generate-disk` starts; its
   pass does not prove the tag still names that image afterward.
+  **The race also fits inside one `mise run build`.** `load-image` tags
+  `krytis-input:latest`, and the Containerfile step that follows reads it back by name. On
+  2026-11-17 (#1649), another worktree's `load-image` landed between those two steps. The
+  branch's input image (`1f4c1835`, with `/usr/bin/luciole`) was left untagged, the branch
+  build produced `localhost/krytis:latest` from the other input (`4bb5252e`, no Luciole),
+  and lint plus all four image gates passed against it. A clean `mise run build` exit
+  doesn't prove its gates saw your elements. Assert one changed file is in the image
+  (`podman run --rm --entrypoint /usr/bin/test localhost/krytis:latest -e <path>`) before
+  trusting the gates or starting `boot-test`.
 - **`mise lint` is a real multi-stage `podman build`, not a fast static check — its
   name undersells it.** `Containerfile` has two stages: `base` (`FROM
   localhost/krytis-input:latest` + `RUN bootc container lint` — this part really is
