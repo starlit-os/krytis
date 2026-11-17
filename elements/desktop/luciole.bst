@@ -25,6 +25,10 @@
 # -Dbuiltin_loaders='glycin') and the glycin loaders on the image. So
 # libjxl/libwebp aren't dependencies here.
 #
+# DNS-SD discovery (optional upstream, since a8282120) needs GVfs's dnssd
+# backend and a running Avahi; neither is required for WS-Discovery or SMB
+# access, and krytis doesn't add them for Luciole.
+#
 # Runtime helpers aren't declared here because they already ship via
 # stacks/desktop.bst and stacks/codecs.bst: GVfs (gvfsd-trash/-sftp/-smb/
 # -dav), glib-networking, ffmpeg/ffprobe, poppler's pdftoppm/pdfinfo,
@@ -78,6 +82,14 @@ depends:
 - freedesktop-sdk.bst:components/libarchive.bst
 - freedesktop-sdk.bst:components/xz.bst
 - freedesktop-sdk.bst:bootstrap/acl.bst
+# libsoup-3.0 (>=3.0) and libxml-2.0 (>=2.9): hard dependency() calls since
+# upstream a8282120 ("discover SMB servers without external helpers"), the
+# native WS-Discovery client in src/fs/ws_discovery*.cpp. Added ahead of the
+# ref bump (#1655) so the tracker's build goes green without a hand commit
+# on auto/track-luciole. components/libsoup.bst resolves to gnome-build-meta's
+# sdk/libsoup.bst through the junction override in elements/freedesktop-sdk.bst.
+- freedesktop-sdk.bst:components/libsoup.bst
+- freedesktop-sdk.bst:components/libxml2.bst
 # Shared library (libtomlplusplus.so.3), so `depends` (desktop/noctalia.bst).
 - freedesktop-sdk.bst:components/tomlplusplus.bst
 
