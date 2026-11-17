@@ -1997,6 +1997,14 @@ goes on a non-`auto/` branch: cherry-pick the tracker's commit plus the fixes th
 a PR from it (#1452). Once that merges, main already carries the update, so the tracker has
 nothing to push.
 
+**When the new deps don't depend on the new ref, land them on `main` first instead.** Cherry-picking
+the tracker's commit onto your own branch also bypasses its 24 h cooldown (§ Tracking cooldown),
+because your PR merges the new `ref:` early. Adding `dependency()` packages before the code that
+uses them is harmless (meson doesn't care about unused deps), so a PR that only adds them can merge
+on its own. The next hourly run then rebuilds `auto/track-*` from that `main`, and the tracking PR's
+build goes green when its cooldown ends. Used for `desktop/luciole.bst`'s `libsoup-3.0`/`libxml-2.0`
+(tracker #1655, 2026-11-17).
+
 The `track` job in `track-bst-sources.yml` runs `bst source track` and opens a PR with the new
 `ref:`; it does not build anything itself. When an upstream release adds a new
 `dependency()` to its `meson.build`/`CMakeLists.txt`, the bump alone fails to build. Before
