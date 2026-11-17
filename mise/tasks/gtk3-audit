@@ -58,7 +58,6 @@ ELEMENTS = {
     "desktop/gnome-disk-utility.bst": ("#1033", "46.1 is GTK3; 51 is GTK4"),
     "gnome-build-meta.bst:core-deps/libhandy.bst": ("#1033", "only consumer is gnome-disks 46.1"),
     "gnome-build-meta.bst:core-deps/libcanberra.bst": ("#1034", "gtk3 support; only gnome-disks 46.1 uses it"),
-    "freedesktop-sdk.bst:components/plymouth.bst": ("#1035", "x11 renderer auto-enabled"),
     "freedesktop-sdk.bst:components/gstreamer-plugins-good.bst": ("#1036", "gtksink auto-enabled"),
     "freedesktop-sdk.bst:components/gstreamer-plugins-base.bst": ("#1036", "dead dependency edge, links nothing"),
 }
@@ -85,7 +84,6 @@ FILES = {
     f"{LIB}/libcanberra-gtk3.so.*": ("#1034", "libcanberra"),
     f"{LIB}/gtk-3.0/modules/libcanberra-gtk3-module.so": ("#1034", "libcanberra"),
     "/usr/bin/canberra-gtk-play": ("#1034", "libcanberra"),
-    f"{LIB}/plymouth/renderers/x11.so": ("#1035", "plymouth"),
     f"{LIB}/gstreamer-1.0/libgstgtk.so": ("#1036", "gstreamer-plugins-good"),
     f"{LIB}/gstreamer-1.0/libgstgtkwayland.so": ("#1036", "gstreamer-plugins-bad, undeclared edge"),
 }

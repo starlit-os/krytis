@@ -16,6 +16,15 @@ build-depends:
   # so this sandbox needs Theme=spinner present before dracut runs below,
   # matching what stacks/desktop.bst sets on the final rootfs.
   - config/plymouth-theme.bst
+  # The font for every piece of plymouth text in the initrd, including the
+  # security-key PIN prompt. The spinner theme sets Font=Cantarell 12 and
+  # TitleFont=Cantarell Light 30, and plymouth-populate-initrd copies in whatever
+  # `fc-match` returns for those names in THIS sandbox. With no font file staged,
+  # fc-match returns nothing, the initrd gets label-freetype.so but no font, and
+  # the prompt renders blank (#1643). Cantarell used to arrive only through
+  # plymouth's components/gtk3.bst dependency, which #1035 removed. The assertion
+  # below fails the build if it goes missing again.
+  - gnome-build-meta.bst:sdk/cantarell-fonts.bst
 
 variables:
   uuidnamespace: 042dab3d-c024-448b-a70e-927daef22a59
@@ -201,6 +210,10 @@ config:
         'the wrapper above asks for a security-key PIN with it. Absent, a PIN-requiring
        token can never unlock the root: the prompt fails, and the boot falls back to the
        passphrase. See #1058.'
+      assert_lib '[Cc]antarell[^/]*\.\(otf\|ttf\)$' 'the Cantarell font' \
+        'the spinner theme draws all its text with it, through label-freetype.so.
+       Absent, plymouth still starts but every label is blank, so the security-key
+       PIN prompt shows no text and the user sees only the keymap indicator. See #1643.'
       [ "${MISSING}" -eq 0 ] || exit 1
       echo "==> initramfs carries every dlopen'ed library and unlock unit the boot path needs"
 

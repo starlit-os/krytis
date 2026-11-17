@@ -119,6 +119,7 @@ element does, its row's text is a review question.
 | `desktop/krytis-prompter.bst` | Standalone D-Bus-activated `org.gnome.keyring.SystemPrompter` for oo7's unlock prompts (#1502). |
 | `config/ssh-agent-env.bst` | fish drop-in pointing `SSH_AUTH_SOCK` at gcr-ssh-agent. |
 | `config/proton-pass-keyring.bst` | Keeps pass-cli's local key in the Secret Service instead of the kernel keyring. |
+| `desktop/luciole.bst` | Luciole, noctalia-dev's native Wayland file manager, shipped next to Nautilus for evaluation (#1649). |
 | `desktop/xwayland-satellite.bst` | Rootless XWayland manager for niri. Carried here instead of gnome-build-meta's (#499). |
 | `config/xwayland-satellite.bst` | xwayland-satellite user service and preset. |
 | `desktop/symbols-nerd-font.bst` | Symbols Nerd Font plus fontconfig fallback rules. |
@@ -205,8 +206,8 @@ element does, its row's text is a review question.
 
 | Element | Needed by | What it is |
 |---|---|---|
-| `desktop/nlohmann-json.bst` | `desktop/ananicy-cpp.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst`, `desktop/umbriel.bst`, `desktop/xdg-desktop-portal-umbriel.bst` | nlohmann/json headers. fdsdk dropped its element. |
-| `desktop/stb.bst` | `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst` | stb single-file headers. |
+| `desktop/nlohmann-json.bst` | `desktop/ananicy-cpp.bst`, `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst`, `desktop/umbriel.bst`, `desktop/xdg-desktop-portal-umbriel.bst` | nlohmann/json headers. fdsdk dropped its element. |
+| `desktop/stb.bst` | `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst` | stb single-file headers. |
 | `desktop/zig-0.16.bst` | `desktop/falcond.bst`, `desktop/seance.bst` | Zig 0.16 toolchain. Prebuilt. |
 | `desktop/zig.bst` | `desktop/ghostty.bst` | Zig 0.17 toolchain. Prebuilt. |
 
@@ -218,6 +219,7 @@ element does, its row's text is a review question.
 | `core/sudo-rs.bst` | `freedesktop-sdk.bst:components/sudo.bst` | sudo-rs, a memory-safe sudo, in place of sudo. |
 | `overrides/btrfs-progs.bst` | `freedesktop-sdk.bst:components/btrfs-progs.bst` | Patched so `mkfs.btrfs` erases old signatures, such as LUKS headers, on a disk that ignores TRIM (#1294). |
 | `overrides/libdecor.bst` | `freedesktop-sdk.bst:components/libdecor.bst` | Built without its GTK3 plugin (#1075). |
+| `overrides/plymouth.bst` | `freedesktop-sdk.bst:components/plymouth.bst` | Built without its GTK3 X11 renderer (#1035). |
 | `overrides/python3-pil.bst` | `freedesktop-sdk.bst:components/python3-pil.bst` | Pillow 13.0.0, one release ahead of the junction, for a Critical JPEG decoder overflow (GHSA-8g5g-8vmr-9782). |
 | `overrides/libdisplay-info.bst` | `freedesktop-sdk.bst:components/libdisplay-info.bst` | Held at 0.3.0 for niri's bindings. |
 | `core/openssh.bst` | `freedesktop-sdk.bst:components/openssh.bst` | Config under `/etc/ssh/` with an `Include` for drop-ins (#408). |

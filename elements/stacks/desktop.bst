@@ -106,6 +106,9 @@ depends:
 
   # ── Files ───────────────────────────────────────────────────────────────
   - gnome-build-meta.bst:core/nautilus.bst
+  # Luciole: second file manager, here for evaluation (#1649). Nautilus stays
+  # the default.
+  - desktop/luciole.bst
   # gvfs-daemon: GIO volume monitor runtime plugins via D-Bus. Without it Nautilus
   # has no volume monitor (gvfs-udisks2-volume-monitor) so non-boot disks do not
   # appear in the sidebar, and trash:// and network mounts (SMB/NFS/SFTP) are broken.

@@ -4,7 +4,10 @@
 
 docs/plans/2026-09-30-gtk3-realistic-floor.md steps 4-5 replace a few junction
 elements with local copies that differ in exactly two ways: one GTK3 dependency
-line removed, and one meson option added to turn the GTK3 variant off. A copy
+line removed, and one meson option added to turn the GTK3 variant off. A third
+difference is allowed where the GTK3 dependency was carrying something upstream
+needs but never declares: those `depends` lines are listed per row, so the
+mirror can declare them (plymouth, #1035). A copy
 like that rots silently: a junction bump moves upstream's source, deps or
 config while the mirror keeps building the old recipe. One table-driven check
 covers all of them, instead of one near-identical task per mirror.
@@ -12,10 +15,14 @@ covers all of them, instead of one near-identical task per mirror.
 For each row, the upstream element is fetched at the junction ref pinned in
 elements/<junction>.bst and compared against the mirror:
 
-  1. sources   every source's url/ref/directory, in order;
+  1. sources   every source's url/ref/directory/path, in order, and the
+               contents of each `kind: local` file, which the mirror must
+               carry a copy of (a local source resolves in the project that
+               owns the element, so the mirror cannot reach upstream's);
   2. deps      build-depends / depends / runtime-depends, each as a set, after
                re-namespacing the mirror's entries, dropping each junction's
-               build plumbing, and removing the row's GTK3 dependency;
+               build plumbing, removing the row's GTK3 dependency, and
+               removing the row's added depends from the mirror's side;
   3. options   upstream meson-local/conf-local tokens + the row's added tokens
                == the mirror's tokens;
   4. the rest  kind, config and public must be identical.
@@ -48,14 +55,19 @@ import urllib.request
 
 import yaml
 
-# mirror | junction | upstream path | removed dep lines | added option tokens
+# mirror | junction | upstream path | removed dep lines | added option tokens |
+# added `depends` lines (what the removed GTK3 dep was carrying in undeclared)
 MIRRORS = [
     ("elements/overrides/libportal.bst", "gnome-build-meta",
-     "elements/sdk/libportal.bst", ["sdk/gtk+-3.bst"], ["-Dbackend-gtk3=disabled"]),
+     "elements/sdk/libportal.bst", ["sdk/gtk+-3.bst"], ["-Dbackend-gtk3=disabled"], []),
     ("elements/overrides/gnome-desktop.bst", "gnome-build-meta",
-     "elements/core/gnome-desktop.bst", ["sdk/gtk+-3.bst"], ["-Dlegacy_library=false"]),
+     "elements/core/gnome-desktop.bst", ["sdk/gtk+-3.bst"], ["-Dlegacy_library=false"], []),
     ("elements/overrides/libdecor.bst", "freedesktop-sdk",
-     "elements/components/libdecor.bst", ["components/gtk3.bst"], ["-Dgtk=disabled"]),
+     "elements/components/libdecor.bst", ["components/gtk3.bst"], ["-Dgtk=disabled"], []),
+    ("elements/overrides/plymouth.bst", "freedesktop-sdk",
+     "elements/components/plymouth.bst", ["components/gtk3.bst"], ["-Dgtk=disabled"],
+     ["components/libxkbcommon.bst", "components/xorg-data-xkeyboard-config.bst",
+      "components/systemd-libs.bst"]),
 ]
 
 JUNCTIONS = {
@@ -79,7 +91,7 @@ JUNCTIONS = {
 
 DEP_KEYS = ("build-depends", "depends", "runtime-depends")
 OPTION_VARS = ("meson-local", "conf-local")
-SOURCE_KEYS = ("kind", "url", "ref", "directory")
+SOURCE_KEYS = ("kind", "url", "ref", "directory", "path")
 SAME_KEYS = ("kind", "config", "public")
 
 ROOT = pathlib.Path(
@@ -145,7 +157,7 @@ def sources(element):
     return [{k: s.get(k) for k in SOURCE_KEYS if k in s} for s in element.get("sources") or []]
 
 
-def check(mirror_path, junction, upstream_path, removed, added, sha):
+def check(mirror_path, junction, upstream_path, removed, added, added_deps, sha):
     j = JUNCTIONS[junction]
     url = j["raw"].format(sha=sha, path=upstream_path)
     upstream = yaml.safe_load(fetch(url))
@@ -164,9 +176,24 @@ def check(mirror_path, junction, upstream_path, removed, added, sha):
         problems.append(f"source drift:\n      upstream {sources(upstream)}\n"
                         f"      mirror   {sources(mirror)}")
 
+    # A local file's path is relative to each project's root, so upstream's copy
+    # is fetched at the same path in the junction's repo. Files only: a local
+    # directory source would need a tree diff, and no mirror has one.
+    for src in mirror.get("sources") or []:
+        if src.get("kind") != "local":
+            continue
+        path = src["path"]
+        if (ROOT / path).read_text() != fetch(j["raw"].format(sha=sha, path=path)):
+            problems.append(f"local file drift: {path} differs from {junction}'s copy")
+
     for key in DEP_KEYS:
         want = deps(upstream, key, drop=set(removed) | j["upstream_plumbing"])
         have = deps(mirror, key, prefix=j["prefix"], drop=j["mirror_plumbing"])
+        if key == "depends":
+            missing = [d for d in added_deps if d not in have]
+            if missing:
+                problems.append(f"depends lacks {', '.join(missing)}, which the row says the mirror adds")
+            have -= set(added_deps)
         if want != have:
             problems.append(
                 f"{key} drift: upstream-only {sorted(want - have) or '-'}, "
@@ -190,12 +217,13 @@ def check(mirror_path, junction, upstream_path, removed, added, sha):
 def main():
     shas = {j: junction_sha(j) for j in JUNCTIONS}
     failed = False
-    for mirror_path, junction, upstream_path, removed, added in MIRRORS:
+    for mirror_path, junction, upstream_path, removed, added, added_deps in MIRRORS:
         if not (ROOT / mirror_path).exists():
             print(f"==> {mirror_path}: missing from the tree but still in MIRRORS")
             failed = True
             continue
-        problems, retire = check(mirror_path, junction, upstream_path, removed, added, shas[junction])
+        problems, retire = check(mirror_path, junction, upstream_path, removed, added, added_deps,
+                                  shas[junction])
         label = f"{mirror_path} vs {junction}@{shas[junction][:12]}:{upstream_path}"
         if not problems:
             print(f"==> ok    {label}")
