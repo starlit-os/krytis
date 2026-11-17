@@ -119,6 +119,7 @@ element does, its row's text is a review question.
 | `desktop/krytis-prompter.bst` | Standalone D-Bus-activated `org.gnome.keyring.SystemPrompter` for oo7's unlock prompts (#1502). |
 | `config/ssh-agent-env.bst` | fish drop-in pointing `SSH_AUTH_SOCK` at gcr-ssh-agent. |
 | `config/proton-pass-keyring.bst` | Keeps pass-cli's local key in the Secret Service instead of the kernel keyring. |
+| `desktop/luciole.bst` | Luciole, noctalia-dev's native Wayland file manager, shipped next to Nautilus for evaluation (#1649). |
 | `desktop/xwayland-satellite.bst` | Rootless XWayland manager for niri. Carried here instead of gnome-build-meta's (#499). |
 | `config/xwayland-satellite.bst` | xwayland-satellite user service and preset. |
 | `desktop/symbols-nerd-font.bst` | Symbols Nerd Font plus fontconfig fallback rules. |
@@ -205,8 +206,8 @@ element does, its row's text is a review question.
 
 | Element | Needed by | What it is |
 |---|---|---|
-| `desktop/nlohmann-json.bst` | `desktop/ananicy-cpp.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst`, `desktop/umbriel.bst`, `desktop/xdg-desktop-portal-umbriel.bst` | nlohmann/json headers. fdsdk dropped its element. |
-| `desktop/stb.bst` | `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst` | stb single-file headers. |
+| `desktop/nlohmann-json.bst` | `desktop/ananicy-cpp.bst`, `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst`, `desktop/umbriel.bst`, `desktop/xdg-desktop-portal-umbriel.bst` | nlohmann/json headers. fdsdk dropped its element. |
+| `desktop/stb.bst` | `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst` | stb single-file headers. |
 | `desktop/zig-0.16.bst` | `desktop/falcond.bst`, `desktop/seance.bst` | Zig 0.16 toolchain. Prebuilt. |
 | `desktop/zig.bst` | `desktop/ghostty.bst` | Zig 0.17 toolchain. Prebuilt. |
 
