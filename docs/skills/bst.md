@@ -1077,6 +1077,58 @@ After that, the only `%{vars}` difference should be your own `meson-local` flag.
 `mise run gtk3-mirror-check` covers the element-file half of this on every junction bump;
 the project-scope half has to be re-diffed by hand (its header says how).
 
+**A mirror's `kind: local` source needs a krytis copy of the file** (#1035,
+`overrides/plymouth.bst`). A local `path:` resolves against the root of the project that
+owns the element, so fdsdk's `path: files/plymouth/plymouthd.defaults` in a krytis mirror
+reads krytis's `files/plymouth/plymouthd.defaults`, not fdsdk's. Copy the file to the same
+relative path; then the `sources:` block stays byte-identical to upstream's. That copy is a
+second thing a junction bump can silently leave behind, so `gtk3-mirror-check` fetches
+upstream's file at the junction ref and fails with `local file drift` when the two differ.
+A mirror of a different kind with a local file needs the same check in its own task.
+`components/_private/…` build-deps are *not* a problem: `bst show` resolves
+`freedesktop-sdk.bst:components/_private/git-minimal.bst` across the junction.
+
+**Removing a dependency can remove things upstream never declared** (#1035). fdsdk's
+`plymouth.bst` lists `components/gtk3.bst` but not `libxkbcommon`, `xkeyboard-config` or
+`systemd-libs`, though its `meson.build` needs all three; gtk3's runtime closure had
+been supplying them. The first mirror build failed `Dependency "xkbcommon" not found`.
+Before building a dep-dropping mirror, diff the runtime closures: `bst show --deps run
+--format '%{name}'` on the upstream name (override line temporarily commented out) and
+on the mirror, then check every `dependency()` in the project's `meson.build` that is
+not behind a disabled option against what fell out. `--deps all` hides the gap,
+because the missing elements still show up as somebody's build-dep. Declare the
+missing ones in the mirror's `depends:` and list them in the row's added-depends column
+in `gtk3-mirror-check`, so the drift check doesn't flag them.
+
+**The mirror's own closure is not the whole blast radius: diff every element that stages
+it too** (#1643). The plymouth mirror built, its ELF deps resolved and the image booted
+with a splash, yet the initrd's PIN prompt rendered blank. `core/initramfs.bst` stages
+plymouth as a build-dep and runs dracut, and plymouth's `plymouth-populate-initrd` copies
+in `fc-match "Cantarell"`. `gnome-build-meta.bst:sdk/cantarell-fonts.bst` was in that
+sandbox only through gtk3's closure. That is data, not a library, so no `dependency()` or
+`readelf` check could see it. `lsinitrd` showed `label-freetype.so` and no font at all.
+For each element that lists the mirrored one under `build-depends:` (`git grep -l
+'<element>.bst' elements/`), compare `bst show --deps build --format '%{name}' <consumer>`
+on the branch and on `origin/main`. Read every element that drops out (44 for
+`core/initramfs.bst`) and ask whether the consumer's script reads anything it installs. A
+dropped font, theme, keymap or config file has no link-time signal. Only a build-time
+assertion on the output catches it, which is why `core/initramfs.bst` now asserts the
+font is in the initramfs. Run the same diff for the remaining #641 mirrors (#1033, #1034,
+#1036).
+
+Wiring a mirror into `overrides:` also needs a row in `docs/design/image-inventory.md`
+(`mise run image-inventory --write`, then describe it). #1630 went red in CI's Static gates
+because that step was skipped. Running the `checks.yml` Static-gates steps locally before
+pushing catches it.
+
+A mirror also needs a `DERIVED` entry in `mise/tasks/update-path-check`, naming the upstream
+element it follows and its drift-check task (`gtk3-mirror-check` for the #641 mirrors).
+Without it the gate fails with `NO PATH   overrides/<name>.bst (git_repo)`. #1630 hit this
+twice over: the gate landed on `main` (`0d1b820`) after the branch was cut, so it passed
+locally and on the branch's first CI runs, then failed once CI tested the PR merged onto a
+newer `main`. A branch that has fallen far behind can pass every local check and still go
+red. Merge `origin/main` and rerun `mise run update-path-check` before asking for review.
+
 ### "What pulls library X into the image" needs the graph *and* an ELF scan
 
 *Source: `mise/tasks/gtk3-audit` (#1030, step 0 of
@@ -1731,7 +1783,7 @@ If the exception is dropped, add the standard patterns. oo7 has used `.alpha`, `
 `-beta.3` (`0.1.0-beta.3`).
 
 **Junction mirrors are the exception: leave their `track:` exactly as upstream wrote it,
-with no added `exclude:`.** `elements/overrides/{btrfs-progs,libdisplay-info,libdecor,libportal,python3-pil}.bst`
+with no added `exclude:`.** `elements/overrides/{btrfs-progs,libdisplay-info,libdecor,libportal,plymouth,python3-pil}.bst`
 copy an fdsdk or gnome-build-meta element verbatim. They are deliberately kept out of the
 track matrix and are pinned to the junction's ref (python3-pil runs one release ahead of it);
 their `track:` exists only so the copy matches upstream's element. An added `exclude:`

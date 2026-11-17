@@ -71,6 +71,10 @@ config:
     # libdecor-gtk.so plugin; libdecor-cairo.so stays as the fallback. Drift and exit
     # condition: `mise run gtk3-mirror-check`.
     components/libdecor.bst: overrides/libdecor.bst
+    # GTK3-free plymouth (#1035, #641 step 5a): drops components/gtk3.bst and the
+    # renderers/x11.so it builds; drm.so and frame-buffer.so are unchanged. On the
+    # boot path (initramfs). Drift and exit condition: `mise run gtk3-mirror-check`.
+    components/plymouth.bst: overrides/plymouth.bst
     # Pillow 13.0.0 ahead of the junction for GHSA-8g5g-8vmr-9782 (Critical,
     # JPEG decoder heap overflow). Drift and exit condition: `mise run python3-pil-check`.
     components/python3-pil.bst: overrides/python3-pil.bst

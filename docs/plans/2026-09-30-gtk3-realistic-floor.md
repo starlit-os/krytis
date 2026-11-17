@@ -1,10 +1,11 @@
 # Shrink GTK3 to its realistic floor
 
-**Issue:** #641 · **Status (2026-10-15): in progress.** Done:
+**Issue:** #641 · **Status (2026-11-15): in progress.** Done:
 - step 0 (#1030), step 1 (#1031) and step 2 (#1032), all on 2026-10-01;
-- step 4's libportal and gnome-desktop half (#1074) and step 5a's libdecor half (#1075), both on 2026-10-06 in #1115.
+- step 4's libportal and gnome-desktop half (#1074) and step 5a's libdecor half (#1075), both on 2026-10-06 in #1115;
+- step 5a's plymouth half (#1035), `elements/overrides/plymouth.bst`, once its PR clears the Breakage Gate.
 
-Step 3 (#1033) is deferred (decision 2026-10-15): no beta and no `main` snapshot. It waits for the first non-beta GTK4 release of Disks, or for gnome-build-meta to ship the GTK4 version, whichever comes first (§ Step 3). That keeps step 4's libcanberra half (#1034) blocked. Steps 5a plymouth (#1035, Breakage Gate), 5b (#1036) and 6 (#181) are open.
+Step 3 (#1033) is deferred (decision 2026-10-15): no beta and no `main` snapshot. It waits for the first non-beta GTK4 release of Disks, or for gnome-build-meta to ship the GTK4 version, whichever comes first (§ Step 3). That keeps step 4's libcanberra half (#1034) blocked. Steps 5b (#1036) and 6 (#181) are open.
 
 GTK3 ships in the image for 15 different reasons (#641 has the full map). Three of them krytis
 cannot change today: zen-browser, Proton Pass and `xdg-desktop-portal-gtk`. Native Equibop

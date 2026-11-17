@@ -2375,7 +2375,16 @@ Notes:
 
 ## Plymouth Boot Splash
 
-Plymouth is sourced from `freedesktop-sdk.bst:components/plymouth.bst` (also exists in `gnome-build-meta.bst:core-deps/plymouth.bst` — fdsdk was chosen to stay within the existing dep graph).
+Plymouth is sourced from `freedesktop-sdk.bst:components/plymouth.bst` (also exists in `gnome-build-meta.bst:core-deps/plymouth.bst` — fdsdk was chosen to stay within the existing dep graph). That name resolves to `elements/overrides/plymouth.bst`, a krytis mirror built with `-Dgtk=disabled` and without `components/gtk3.bst` (#1035). Only `renderers/x11.so` is lost; boot uses `drm.so` or `frame-buffer.so`. `mise run gtk3-mirror-check` keeps it in step with fdsdk.
+
+**`boot-vm` on a `generate-disk` disk is not a splash test.** That disk's BLS entry
+carries `console=ttyS0 console=tty1` (from `generate-disk`'s `KARGS`) before `quiet
+splash`. Screendumps every second through a `boot-vm` boot (HMP `screendump`, then
+`ffmpeg -i x.ppm x.png`) show the text console, then the greeter, and never the spinner.
+That was measured on 2026-11-15 on the published `main` image as well as on the #1035
+mirror, so it is the disk, not plymouth. The serial `console=` is the likely cause, but
+nobody has tested that. To check the splash itself, boot the sealed UKI (`rw quiet splash`,
+no `console=`) or use hardware.
 
 ### Three integration points
 
