@@ -137,6 +137,11 @@ $SSH "sudo bash -c \"
         cat \\\"\\\$entry\\\"
     done
     echo \\\"BLS patch: \\\$COUNT entries updated\\\"
+    # fisherman lazily unmounts its own mounts (umount -Rl), so this second
+    # mount can share a still-live superblock whose umount forces no
+    # writeback, and the harness then quits QEMU without waiting for the
+    # guest. Flush explicitly (dakota-iso 8c9dbe75, #1622).
+    sync
 \""
 
 echo "Install complete. Shutting down live QEMU..."

@@ -387,10 +387,12 @@ tmpfiles.d line, `d %{localstatedir}/lib/libvirt/secrets 0700 root root -`. kryt
 updater together with the bumps it produced. The OGC kernel bump among them tracked
 cleanly, but its downstream patches no longer applied, so the whole PR was reverted
 (projectbluefin/dakota#1740 body: "failed to apply outdated downstream patches"). The
-re-land runs `bst source fetch --deps none <element>` inside a rollback guard right after
-tracking, so a patch failure restores the element and the bump is never recorded. As of
-2026-10-14 (dakota `45f097b`) its `update_sources.py` does that fetch only for its kernel
-elements. Full writeup and krytis's exposure in `docs/skills/bst.md` § A green track job does not prove patches apply.
+re-land ran `bst source fetch --deps none <element>` inside a rollback guard after tracking.
+That check was hollow, because fetching doesn't apply patches either. dakota `9efab9b` and
+`10a190c` (mined 2026-11-15) replaced it with `bst source checkout --deps none --directory
+<scratch> <element>`, which stages the sources and so does run the patches. It now runs
+for both its release updaters and its kernels (`check_patches()` in
+`scripts/update_sources.py`). Full writeup and krytis's exposure in `docs/skills/bst.md` § A green track job does not prove patches apply.
 
 ### One bundled tracking PR, re-pushed only when its tracked paths change
 
@@ -462,6 +464,32 @@ the same way (the Tailscale GUI, #1385, is the nearest). The element now skips
 **anything that resolves a symlink before exec (pkexec, some sandboxes, `readlink -f`
 wrappers) defeats a multicall binary**, so a tool reached that way must not be a multicall
 symlink.
+
+### `passwd` reaches PAM through `include`, which skips any pam_oo7 line after it
+
+*Source: dakota `05cc23e` — "fix(pam): re-encrypt oo7 keyring on password change
+(projectbluefin/dakota#1869)", mined 2026-11-15.*
+
+A password change through `/usr/bin/passwd` updates `/etc/shadow` and leaves the oo7 login
+keyring encrypted with the old password, because fdsdk's stock `/etc/pam.d/passwd` reaches
+PAM only through `password include system-auth`, and system-auth's `sufficient pam_unix`
+ends the whole stack. dakota switched to `password substack system-auth` with a pam_oo7 line
+after it. Krytis had the same exposure and took the same fix in #1620, proven by `mise run
+passwd-keyring-test`. Full mechanism, and why
+krytis shouldn't copy dakota's `use_authtok`, in `docs/skills/pam.md` § #782 — pam_oo7's auth phase was still unreachable on homed success, even password-only
+(its closing "Scope note").
+
+### Every network source needs an updater, a derived pin or a written pin reason
+
+*Source: dakota `9efab9b` — "fix(ci): put every network source under an updater or a pin
+reason (projectbluefin/dakota#1877)", mined 2026-11-15.*
+
+dakota turned "which elements have no update path?" from an occasional audit into a test
+that fails CI, with `DERIVED` and `PINNED` allowlists. Krytis still runs it as copy-paste
+bash, and the two gaps its last run found were still open 11 days later. →
+`docs/skills/bst.md` § Auditing the whole tree for elements with no update path (#640);
+tracked as #1621. The same commit also fixed dakota's patch check; see § A green track job
+does not prove the element's patches still apply, above.
 
 ## Referencing This Project
 

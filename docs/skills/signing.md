@@ -284,8 +284,9 @@ with a derived image and caught. It can't watch a refusal, which needs a registr
 asserts the policy in force, a refused `bootc switch` to `--refuse` (default: the
 `26.08.202611011748` digest) and an accepted one to `--accept` (default `:latest`). Before
 allocating the disk it rejects a stale `--image` tag that lacks the `/usr` policy layout,
-and checks both published refs with cosign on the host. `generate-disk` fallocates `--size`,
-so the host needs that much free, plus about 7 GB per image the test pulls or pushes.
+and checks both published refs with cosign on the host. `generate-disk` creates a sparse
+`--size` disk, so the host needs room for what the VM actually writes (the installed
+image plus every image it pulls, about 7 GB each), not the full `--size`.
 `generate-disk` can't install a digest reference (podman save/load rejects it), so
 `--upgrade-from` tags it locally first, as `localhost/krytis-sigpolicy-from:latest`.
 `generate-disk` copies that tag into **root's** podman store too, out of reach of the

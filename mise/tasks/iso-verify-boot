@@ -38,13 +38,13 @@ if [[ "${EXPECT_FAIL}" -eq 1 ]]; then
     DEADLINE=$((SECONDS + 300))
     while [[ $SECONDS -lt $DEADLINE ]]; do
         LOG=$(cat "$SERIAL" 2>/dev/null || true)
-        if echo "$LOG" | grep -qE '[Aa]ccess [Dd]enied|Security Violation'; then
+        if grep -qE '[Aa]ccess [Dd]enied|Security Violation' <<<"$LOG"; then
             echo "✅ Installed system was REJECTED by Secure Boot, as expected"
             echo "$LOG" | grep -E '[Aa]ccess [Dd]enied|Security Violation' | tail -5
             e2e_monitor "$MONITOR" quit
             exit 0
         fi
-        if echo "$LOG" | grep -qE 'Reached target.*Graphical|Reached target.*Multi-User|login:'; then
+        if grep -qE 'Reached target.*Graphical|Reached target.*Multi-User|login:' <<<"$LOG"; then
             echo "❌ EXPECT_FAIL=1 but the installed system booted — enforcement did not reject it" >&2
             e2e_monitor "$MONITOR" quit
             exit 1
@@ -62,14 +62,14 @@ echo "Waiting for installed system to reach Graphical Interface (up to 5 min)...
 DEADLINE=$((SECONDS + 300))
 while [[ $SECONDS -lt $DEADLINE ]]; do
     LOG=$(cat "$SERIAL" 2>/dev/null || true)
-    if echo "$LOG" | grep -qE 'Reached target.*Graphical|Reached target.*Multi-User|login:'; then
+    if grep -qE 'Reached target.*Graphical|Reached target.*Multi-User|login:' <<<"$LOG"; then
         echo "✅ Installed system boot verified — composefs install succeeded"
         e2e_monitor "$MONITOR" "screendump $SCREENSHOT"
         bash "${REPO_ROOT}/scripts/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
         e2e_monitor "$MONITOR" quit
         exit 0
     fi
-    if echo "$LOG" | grep -qE 'Emergency mode|You are in emergency mode|Kernel panic'; then
+    if grep -qE 'Emergency mode|You are in emergency mode|Kernel panic' <<<"$LOG"; then
         echo "❌ Emergency shell or kernel panic detected" >&2
         echo "--- last 30 lines of serial log ---" >&2
         echo "$LOG" | tail -30 >&2

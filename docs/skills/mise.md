@@ -26,8 +26,8 @@ remaining args as positionals, so flags like `--deps` and `--tar` pass through w
 ## Standard build workflow
 
 ```
-mise validate                 # confirm element graph resolves
-mise load-image               # BST build → podman local storage
+mise validate --pull          # confirm element graph resolves (--push with push access)
+mise load-image --pull        # BST build → podman local storage (or `mise build --pull` for the whole gate chain)
 mise lint                     # bootc container lint (squash-all)
 mise umbriel-config-validate  # umbriel validate on the shipped /etc/xdg config (#980)
 mise cracklib-dict-check      # pwscore must reject a dictionary word in the built image (#1001)
@@ -58,6 +58,16 @@ silently building uncached, so there is no downside to trying the flag first. Ob
 pulling freedesktop-sdk bootstrap artifacts alone before reaching the element. If the flag
 fails with fnox's `Proton Pass: … This operation requires an authenticated client`, the
 fix is `pass-cli login`, then retry with the flag — never drop it to get past the error.
+
+**`--pull` is the default, not an option to remember.** The flag lives in the commands above
+for that reason: a bare `mise run build` copied from AGENTS.md's Verification gate or from
+another skill's prose builds without bow. Seen 2026-11-16 (#1630): a flagless
+`mise run build` spent over 25 min compiling freedesktop-sdk and GNOME components
+(`components/_private/vala-bootstrap.bst`, `sdk/cairo.bst` among them) before anyone
+noticed that no `Pulling artifact … <- https://bst-cache.werewolf-stonecat.ts.net:7981`
+line had appeared. Restarted with `--pull`, the first 55 pulls in the log came from bow. When a
+build log shows pulls only from `cache.freedesktop-sdk.io` and never from bow, the flag
+is missing.
 
 **Check free disk on the podman/CAS filesystem before starting — `mise run build` can burn
 the whole BST build and then die in `lint`.** Each build leaves an ~8 GB untagged
@@ -1159,7 +1169,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Disk & VM | `load-image-root` `generate-disk` `boot-vm` `boot-test` `build-iso` `convert-to-qcow2` `boxes-vt` |
 | Desktop / session | `compositor-smoke` — run a shipped wlroots compositor headlessly out of the built image and assert it initialised; `boot-test` covers none of them (see [`desktop.md`](desktop.md) § Smoke-testing a wlroots compositor headlessly); `umbriel-config-validate` — run upstream's `umbriel config validate` on both shipped Umbriel config tiers (`/etc/xdg/umbriel/` and `/etc/skel/.config/umbriel/`) inside the image, the only gate tying those files to the daily-bumped `desktop/umbriel.bst` ref (#980, #982, see [`desktop.md`](desktop.md) § Validating the shipped Umbriel config); `portal-routing-check [--tag]` — resolve xdg-desktop-portal routing headlessly under `niri` and `Umbriel` and compare every interface's backend against the table in the task, run by `build`; it also fails on an unparsable `.portal` file, on a krytis `/etc/xdg` routing key whose removal changes nothing, and on an Umbriel `none` pin for an interface `umbriel.portal` now declares (#1027, #1028, #1029, see [`desktop.md`](desktop.md) § xdg-desktop-portal routing); `umbriel-portal-smoke [--image]` — run umbriel headlessly with xdg-desktop-portal and assert that Settings (color-scheme) reaches apps through xdp-gnome without gnome-shell, both the value and the `SettingChanged` signal (#1029); `vt-owners-test` `oo7-prompter-test` `oo7-login-race-test` — image/artifact assertions about VT ownership and the oo7 daemon; `oo7-portal-test [--artifact] [--keep]` — drive oo7-portal's `RetrieveSecret` on a private bus across two daemon restarts and fail if an app's token ever changes or a locked Login gets a new one; run it on every oo7 re-pin (#1028, see `docs/design/secrets-service.md` § Secret portal (oo7-portal) — shipping since #1028); `krytis-prompter-test [--artifact] [--keep]` — check `desktop/krytis-prompter.bst`'s install layout, then start the built binary through its own D-Bus activation file on a private bus and drive it with gcr's real client, asserting reply-before-`PromptReady`, `sx-aes-1`, `PromptDone` and idle exit; needs a graphical session, run it on every krytis-prompter re-pin (#1502, see `docs/design/secrets-service.md` § A standalone prompter: krytis-prompter) |
 | Secure boot | `generate-keys` `pull-keys` `generate-ovmf-vars` `seal-uki` (`fetch-microsoft-certs`, `fetch-microsoft-dbx`, `assert-vault-access`, all hidden); `dbx-check` — is an EFI binary revoked by a dbx (Authenticode hash or signer cert), for T4 step 6 (see [`secure-boot.md`](secure-boot.md) § Proving a revocation is enforced) |
-| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `tpm-install-test` `mkfs-reformat-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `esp-update-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts; `homed-ssh-fallback-test [--reuse-disk <raw>]` — boot the image, create a homed user, and assert a pubkey-only SSH login reaches a mounted home through `systemd-home-fallback-shell` (see [`pam.md`](pam.md) § Two consequences of key-only SSH, #422); `oomd-test [--reuse-disk <raw>]` — boot the image, start a lingering user's manager, and assert systemd-oomd monitors only users' `app.slice` cgroups, kills a `MemoryHigh=`-throttled hog there, leaves an idle `app.slice` sibling and a `session.slice` canary alive, and that `noctalia.service` is enabled in `session.slice` (#1216, #1253; see [`desktop.md`](desktop.md) § systemd-oomd) |
+| Boot & install gates | `iso-boot-live` `iso-boot-installed` `iso-verify-boot` `iso-e2e-test` `iso-install-test` `luks-install-test` `tpm-install-test` `mkfs-reformat-test` `enroll-test` `selfenroll-test` `tpm-boot-test` `luks-boot-test` `upgrade-test` `esp-update-test` `verify-iso-payload` `verify-composefs-digest` — see § Status for what each asserts; `homed-ssh-fallback-test [--reuse-disk <raw>]` — boot the image, create a homed user, and assert a pubkey-only SSH login reaches a mounted home through `systemd-home-fallback-shell` (see [`pam.md`](pam.md) § Two consequences of key-only SSH, #422); `oomd-test [--reuse-disk <raw>]` — boot the image, start a lingering user's manager, and assert systemd-oomd monitors only users' `app.slice` cgroups, kills a `MemoryHigh=`-throttled hog there, leaves an idle `app.slice` sibling and a `session.slice` canary alive, and that `noctalia.service` is enabled in `session.slice` (#1216, #1253; see [`desktop.md`](desktop.md) § systemd-oomd); `passwd-keyring-test [--reuse-disk <raw>]` — boot the image, give a lingering user an oo7 login keyring holding one item, run `/usr/bin/passwd` on a pty, and assert pam_oo7 ran and the item reads back with the new password and not the old one, with a negative control on the stock include-only stack (#1620, see [`pam.md`](pam.md) § #782) |
 | Supply chain | `sbom` `vuln-scan` `sign` `promote`; `publish-check [--sealed] [--version <v>]` — is there anything new to publish? `publish=false` only when `:<version>` is pushed and `:latest` (and with `--sealed`, `:sealed`) points at it; `publish.yml`'s `check` job (see [`ci-runner.md`](ci-runner.md) § *`max-jobs` does NOT affect cache keys*); `cosign-generate-keys` — one-time, human-run: create the static cosign key hosts enforce in Proton Pass and write `cosign.pub`, refusing if either exists (see [`signing.md`](signing.md) § Static-key signature (#418)); `sigpolicy-check` — build gate: the image's container signature policy is the one in force, loads in its own skopeo, and names a present key equal to `cosign.pub`; `sigpolicy-test [--upgrade-from <ref>] [--size <n>]` — boot the image (or upgrade into it from a pre-policy one) and assert `bootc switch` refuses a keyless-only krytis digest and accepts a static-signed one (see [`signing.md`](signing.md) § Host enforcement (#418)); `vuln-gate` — read/set the `NEW_VULN_FAIL_ON` repository variable that arms `vuln-diff.yml`'s blocking gate (see [`sbom.md`](sbom.md) § CI: standalone vulnerability-report/diff workflows) |
 | composefs / chunkah | `chunkify` `generate-fakecap-manifest` |
 | Infrastructure | `bootstrap` `runner/*` `buildbarn/*` `runner-vps/*` (the always-on Debian CI VPS runner, #794; `RUNNER_VPS_NO_DEFAULT_LABELS=true` registers a box without the default labels); `bench-window open\|close\|status` and `bench-compare <run>...` — the cold-build benchmark's window and comparison (see [`ci-runner.md`](ci-runner.md) § Cold-build benchmark: `bench-cold-build.yml` (#1126)) |
@@ -1943,6 +1953,24 @@ rm -f output/krytis-live.iso       # clean-cache doesn't touch output/; build-is
 df -h /var                         # want well over 46.5G + ~40G free
 ```
 
+clean-cache also removes `.raw`/`.qcow2` files at the root of the main checkout and of
+every `git worktree`. `generate-disk` and `boot-vm` leave `bootable.raw` there, and older
+tasks left `bootable.qcow2`. They are gitignored, so `git status` never shows them. On
+2026-11-15 the main checkout held a three-month-old 8.9G `bootable.raw` and an 8.1G
+`bootable.qcow2` while `/var` was at 98%, and clean-cache, which only searched `/var/tmp`
+then, reported 67MB to reclaim. Tracked files are never touched. The same age gate
+applies, and a disk counts as in use, and is skipped, when any of these holds:
+- its absolute path is in a process's cmdline;
+- a process holds it open, or it backs a loop device;
+- a process whose cwd is the disk's directory runs `generate-disk`, `boot-vm` or qemu, or
+  names the file.
+
+The last check exists because `boot-vm` passes qemu a relative `file=bootable.raw`, and
+`generate-disk` copies the image for minutes before `bootc install` attaches the loop
+device. Size these files with `du`, not `ls`. They are sparse, so `ls` shows the 30G
+apparent size. `generate-disk` now creates them with `truncate -s`. It used `fallocate`
+until 2026-11-15, which reserved all 30G before the install started.
+
 `--min-age 0` is needed because the default `24` skips VM scratch that is only minutes
 old, which is exactly what the previous round left. The open-in-a-running-process guard
 still protects a VM that is still up. Stop any `iso-boot-live` VM first: `e2e_monitor
@@ -2183,3 +2211,30 @@ gawk 'BEGINFILE { if (ERRNO != "") nextfile } … END { … }' /proc/[0-9]*/stat
 
 `BEGINFILE` is gawk-only, so call `gawk` by name. Appending `|| true` is not a fix,
 because the missing `END` output is lost either way.
+
+## `echo "$big" | grep -q` under pipefail can report a real match as no match
+
+`grep -q` exits as soon as it finds a match. If `echo` is still writing, its next write
+gets SIGPIPE, so the pipeline's status is 141 under `set -o pipefail`, and `if` takes the
+"no match" branch. It only happens when the text is bigger than the pipe buffer and the
+match comes early, so a test passes on short logs and then times out on a long one.
+dakota-iso's installed-system test (`febc6e5d`, mined 2026-11-15) reported a boot timeout on
+a system that had booted.
+
+`mise/tasks/iso-verify-boot` had the pattern four times on its serial log, which
+`scripts/iso-install-fisherman.sh`'s `rd.info systemd.journald.forward_to_console=yes`
+makes large; #1622 switched it to here-strings. Reproduced locally with a 2 MB log and the
+match on line 1: `echo "$LOG" | grep -q` missed 20 times out of 20 under pipefail, and
+`grep -q … <<<"$LOG"` missed none. `mise/tasks/docs-links` was next in line. Its § check piped
+each target's anchor list through `grep -qF`, and `bst.md`'s list was ~63 KB against a
+64 KiB pipe buffer, so it now uses a bash `[[ … == *"$key"* ]]` test. Use a here-string,
+or grep the file directly:
+
+```bash
+if grep -qE 'login:' <<<"$LOG"; then …      # no writer process to kill
+if grep -qE 'login:' "$SERIAL"; then …      # better, when the text is in a file
+```
+
+The same goes for `cmd | grep -q` whenever `cmd` can produce more than a pipe buffer
+(64 KiB on Linux) of output.
+

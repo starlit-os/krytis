@@ -92,6 +92,18 @@ if ! RECIPE_JSON="$(unsquashfs -offset "${SFS_OFFSET}" -cat "${ISO}" "${RECIPE_J
     echo "ERROR: ${RECIPE_JSON_PATH} not present in the ISO's squashfs — no installer recipe to check." >&2
     exit 1
 fi
+# The live root must carry empty /run and /tmp directories. Debian dracut's
+# shell init moves /run across switch-root only when the new root has one;
+# otherwise /run/initramfs/live, where fisherman reads the payload, is gone
+# (dakota-iso 130cceda, #1623). Today's systemd initrd masks a missing /run,
+# so nothing else would notice it going.
+for d in run tmp; do
+    if ! unsquashfs -offset "${SFS_OFFSET}" -lls -d '' "${ISO}" "/${d}" 2>/dev/null |
+        awk -v d="/${d}" '$NF == d && /^d/ { found = 1 } END { exit !found }'; then
+        echo "ERROR: the ISO's squashfs has no /${d} directory (scripts/iso-sd-boot.sh must keep it, empty)." >&2
+        exit 1
+    fi
+done
 LAYOUT_JSON="$(python3 scripts/iso-oci-layout.py "${ISO}")"
 
 MEDIA_JSON="${MEDIA_JSON}" RECIPE_JSON="${RECIPE_JSON}" LAYOUT_JSON="${LAYOUT_JSON}" \

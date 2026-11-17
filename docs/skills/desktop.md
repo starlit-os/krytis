@@ -3296,6 +3296,15 @@ somebody else's plugin is converted to draft until that plugin's author replies.
 `kitten-lily/community-plugins` fork. noctalia-dev/community-plugins#1073 is the worked
 example.
 
+For mx-control, three repos are involved. The plugin's home is gamaraan/noctalia-mxcontrol,
+which its author syncs with community-plugins' `mx-control/` both ways (its #5 took
+community-plugins#1073; its #6 took the catalog's 0.2.4 back). Its `backend/` is a
+hash-checked, unmodified copy of zachwilke/omarchy-mxcontrol (`UPSTREAM.md`). So a Luau
+fix goes to either plugin repo, but a backend fix has to merge in omarchy-mxcontrol first,
+then be re-copied into the plugin. A merged PR in gamaraan/noctalia-mxcontrol is not an
+omarchy-mxcontrol merge, and krytis only sees what reaches community-plugins, since that
+is what the element tracks.
+
 **Testing a plugin patch on real hardware before building an image.** Copy the plugin into
 the `local` dev source (`cp -a ~/.local/state/noctalia/plugins/materialized/community/<plugin>
 ~/.local/share/noctalia/plugins/`) and patch it there. `noctalia msg plugins list` should

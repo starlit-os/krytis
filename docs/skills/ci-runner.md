@@ -1337,6 +1337,13 @@ in that repo.** `actions/cache@*` was on the list, yet `actions/cache/restore@<s
 patterns (`actions/cache/restore@*`, `actions/cache/save@*`) had to be added. Match the
 **full path** of every `uses:` against the list.
 
+**CodeQL default setup needs only `github/codeql-action/*@*`.** krytis keeps
+`github_owned_allowed: false`, so default setup's dynamic workflow (#1183) would be blocked
+without that pattern. Its `actions/checkout` was already allowed. Default setup was
+enabled on 2026-11-15 with that one pattern added, and the first run (actions + python)
+passed. `github_owned_allowed` stayed off. It isn't needed, and turning it on would
+allow every `actions/*` and `github/*` action, not only CodeQL.
+
 **Easy to miss when adding a *new* action, not just re-pinning an existing one.**
 Hit for real in PR #689: two new workflows added `actions/checkout` and
 `jdx/mise-action` (both already used elsewhere in this repo, already

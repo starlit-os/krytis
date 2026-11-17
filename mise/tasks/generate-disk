@@ -2,7 +2,7 @@
 #MISE description="Install krytis:latest to a bootable raw disk image via bootc"
 #USAGE flag "--filesystem <fs>" default="btrfs" help="Root filesystem type (btrfs or ext4)"
 #USAGE flag "--disk <path>" default="bootable.raw" help="Output disk image path"
-#USAGE flag "--size <size>" default="30G" help="Sparse disk image size passed to fallocate"
+#USAGE flag "--size <size>" default="30G" help="Apparent size of the sparse disk image (truncate -s); blocks are only used as the install writes them"
 #USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Local image tag to install"
 #USAGE flag "--root-ssh-key <path>" help="Inject this public key as root's authorized_keys (test-only; uses bootc's --root-ssh-authorized-keys)"
 
@@ -41,7 +41,12 @@ ROOT_SSH_KEY="${CLI_ROOT_SSH_KEY:-${usage_root_ssh_key:-}}"
 
 if [ ! -e "${DISK}" ]; then
     echo "==> Creating ${SIZE} sparse disk image at ${DISK}..."
-    fallocate -l "${SIZE}" "${DISK}"
+    # truncate, not fallocate: fallocate reserves every block up front, so a
+    # 30G disk needed 30G free before the install wrote a byte. That pushed a
+    # 94%-full /var past its limit with ~7G of real data (2026-11-15). bootc's
+    # install trims the root at the end, which punches the unused space back
+    # out of a sparse file, so an installed disk costs only what it holds.
+    truncate -s "${SIZE}" "${DISK}"
 fi
 
 # rootless and rootful podman have separate image stores; copy so bootc can find

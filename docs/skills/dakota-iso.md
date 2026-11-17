@@ -227,8 +227,8 @@ with no update path trades a supply-chain hole for a rot hole. So each pin comes
 **The `FROM` lines were missed** (dakota-iso `16e6135`, projectbluefin/dakota-iso#293,
 mined 2026-10-31). This section used to be headed "RESOLVED in krytis", which was only true
 of the task-script images above. The live ISO's own Containerfiles still pulled by tag:
-`live/Containerfile`'s `FROM debian:bookworm AS initramfs-builder` — a stage krytis really
-uses, since its images have no dracut/dnf and take the Debian cross-build branch — and
+`live/Containerfile`'s `FROM debian:bookworm AS initramfs-builder` (a stage krytis really
+uses, since its images have no dracut/dnf and take the Debian cross-build branch) and
 `live/iso-tools/Containerfile`'s `FROM registry.fedoraproject.org/fedora-minimal:latest`.
 The first puts Debian's dracut, dracut-live and xfsprogs bits inside the ISO, so a retag
 upstream changed the ISO with no diff. Upstream pinned the tag+digest pair and added a test
@@ -237,9 +237,10 @@ that fails if any external `FROM` loses its digest.
 Unlike the task-script refs, a `FROM` line *is* a manifest Renovate can read, so these
 need no `<name>-update` task: `.github/renovate.json5` enables the `dockerfile` manager
 for exactly those two files (a packageRule switches it off everywhere else), and the
-repo-wide `pinDigests: true` makes Renovate's first PR pin both digests. Until that PR
-merges they are still by tag. Krytis has no test that a `FROM` keeps its digest — if one
-is added, `checks.yml` is where it goes.
+repo-wide `pinDigests: true` makes Renovate's first PR pin both digests. Both are pinned
+now: `live/Containerfile` is `FROM debian:trixie@sha256:…` and `live/iso-tools/Containerfile`
+is `fedora-minimal:latest@sha256:…` (`git grep -n '^FROM' -- live/`, 2026-11-15). Krytis has
+no test that a `FROM` keeps its digest. If one is added, `checks.yml` is where it goes.
 
 ### An emulator probe that fails to exec costs you the serial log, not just the binary
 
@@ -466,7 +467,10 @@ Two downloads in `live/src/install-flatpaks.sh` worked like an unpinned action:
 
 - **The installer bundle** came through `releases/latest/download/`, and it runs as root on
   every machine that boots the ISO. Upstream pins the release tag and both bundles'
-  SHA-256 in a lock file and fails the build on a mismatch. Krytis: #1454.
+  SHA-256 in a lock file and fails the build on a mismatch, and has bumped it twice since
+(`95bab1ac` for fisherman v0.5.3, `7974f6fa` for tuna-os/fisherman#399). Krytis still
+fetches `latest` / `latest-dev` (`live/src/install-flatpaks.sh`). #1454 tracks it. It was
+closed on 2026-11-01 by a docs-only PR's closing keyword and reopened 2026-11-15.
 - **Flathub's `.flatpakrepo`** was handed to `flatpak remote-add` by URL. Its `GPGKey=` is
   the trust root for every later Flatpak download, and `/var/lib/flatpak` is copied onto
   installed systems, so one bad response would become every installed machine's Flathub
@@ -480,3 +484,19 @@ Two downloads in `live/src/install-flatpaks.sh` worked like an unpinned action:
 The test to apply to any new fetch in `live/`: if what it downloads ends up in the ISO or
 on the target, pin it by digest or check it into the repo, with an update path that opens
 a reviewable PR.
+
+### 2026-11-15 pass (`16e6135..863586a`): where the lessons went
+
+- **`echo "$LOG" | grep -q` misses matches under pipefail** (`febc6e5d`). →
+  `docs/skills/mise.md` § `echo "$big" | grep -q` under pipefail can report a real match as no match.
+- **`sync` before unmounting a second mount of an installed partition** (`8c9dbe75`), **an
+  empty `/run` in the squashfs** (`130cceda`), and **keep a readiness wait's last error**
+  (`b1903fd6`). → `docs/skills/krytis-live-config.md`, three 2026-11-15 sections at the end.
+  Code fixes: #1622, #1623.
+- **Deferred to #479:** the single-copy embedded store via `podman save`/`load` (`7974f6fa`)
+  and the `containersStoragePath` receipt the release gate would then have to accept
+  (`c816b664`). Together they would recover the roughly 1.8 GB #1479 added to the ISO.
+- Not taken: the debug-SSH shadow-patch failures (krytis never reopens the installed root),
+  `gh api -G` (krytis has no such call), image-ref dispatch restrictions (krytis's
+  `build-iso.yml` has no free-form image input), Prow, OWNERS and merge-queue CI.
+
