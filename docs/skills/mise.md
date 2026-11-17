@@ -26,8 +26,8 @@ remaining args as positionals, so flags like `--deps` and `--tar` pass through w
 ## Standard build workflow
 
 ```
-mise validate                 # confirm element graph resolves
-mise load-image               # BST build → podman local storage
+mise validate --pull          # confirm element graph resolves (--push with push access)
+mise load-image --pull        # BST build → podman local storage (or `mise build --pull` for the whole gate chain)
 mise lint                     # bootc container lint (squash-all)
 mise umbriel-config-validate  # umbriel validate on the shipped /etc/xdg config (#980)
 mise cracklib-dict-check      # pwscore must reject a dictionary word in the built image (#1001)
@@ -58,6 +58,16 @@ silently building uncached, so there is no downside to trying the flag first. Ob
 pulling freedesktop-sdk bootstrap artifacts alone before reaching the element. If the flag
 fails with fnox's `Proton Pass: … This operation requires an authenticated client`, the
 fix is `pass-cli login`, then retry with the flag — never drop it to get past the error.
+
+**`--pull` is the default, not an option to remember.** The flag lives in the commands above
+for that reason: a bare `mise run build` copied from AGENTS.md's Verification gate or from
+another skill's prose builds without bow. Seen 2026-11-16 (#1630): a flagless
+`mise run build` spent over 25 min compiling freedesktop-sdk and GNOME components
+(`components/_private/vala-bootstrap.bst`, `sdk/cairo.bst` among them) before anyone
+noticed that no `Pulling artifact … <- https://bst-cache.werewolf-stonecat.ts.net:7981`
+line had appeared. Restarted with `--pull`, the first 55 pulls in the log came from bow. When a
+build log shows pulls only from `cache.freedesktop-sdk.io` and never from bow, the flag
+is missing.
 
 **Check free disk on the podman/CAS filesystem before starting — `mise run build` can burn
 the whole BST build and then die in `lint`.** Each build leaves an ~8 GB untagged
