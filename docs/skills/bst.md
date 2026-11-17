@@ -1099,6 +1099,22 @@ because the missing elements still show up as somebody's build-dep. Declare the
 missing ones in the mirror's `depends:` and list them in the row's added-depends column
 in `gtk3-mirror-check`, so the drift check doesn't flag them.
 
+**The mirror's own closure is not the whole blast radius: diff every element that stages
+it too** (#1643). The plymouth mirror built, its ELF deps resolved and the image booted
+with a splash, yet the initrd's PIN prompt rendered blank. `core/initramfs.bst` stages
+plymouth as a build-dep and runs dracut, and plymouth's `plymouth-populate-initrd` copies
+in `fc-match "Cantarell"`. `gnome-build-meta.bst:sdk/cantarell-fonts.bst` was in that
+sandbox only through gtk3's closure. That is data, not a library, so no `dependency()` or
+`readelf` check could see it. `lsinitrd` showed `label-freetype.so` and no font at all.
+For each element that lists the mirrored one under `build-depends:` (`git grep -l
+'<element>.bst' elements/`), compare `bst show --deps build --format '%{name}' <consumer>`
+on the branch and on `origin/main`. Read every element that drops out (44 for
+`core/initramfs.bst`) and ask whether the consumer's script reads anything it installs. A
+dropped font, theme, keymap or config file has no link-time signal. Only a build-time
+assertion on the output catches it, which is why `core/initramfs.bst` now asserts the
+font is in the initramfs. Run the same diff for the remaining #641 mirrors (#1033, #1034,
+#1036).
+
 Wiring a mirror into `overrides:` also needs a row in `docs/design/image-inventory.md`
 (`mise run image-inventory --write`, then describe it). #1630 went red in CI's Static gates
 because that step was skipped. Running the `checks.yml` Static-gates steps locally before
