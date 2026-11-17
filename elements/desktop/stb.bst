@@ -32,7 +32,7 @@ sources:
 - kind: git_repo
   url: github:nothings/stb_image_resize.git
   track: refs/heads/main
-  ref: 703100c5f8a0b75b4861e401db567f1d82d545b8
+  ref: a4f303e34a92d1410d510cbe85a1781ce4b8c9fd
   directory: stb_image_resize
 
 config:
