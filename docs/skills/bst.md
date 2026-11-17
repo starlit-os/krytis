@@ -1121,6 +1121,14 @@ Wiring a mirror into `overrides:` also needs a row in `docs/design/image-invento
 because that step was skipped. Running the `checks.yml` Static-gates steps locally before
 pushing catches it.
 
+A mirror also needs a `DERIVED` entry in `mise/tasks/update-path-check`, naming the upstream
+element it follows and its drift-check task (`gtk3-mirror-check` for the #641 mirrors).
+Without it the gate fails with `NO PATH   overrides/<name>.bst (git_repo)`. #1630 hit this
+twice over: the gate landed on `main` (`0d1b820`) after the branch was cut, so it passed
+locally and on the branch's first CI runs, then failed once CI tested the PR merged onto a
+newer `main`. A branch that has fallen far behind can pass every local check and still go
+red. Merge `origin/main` and rerun `mise run update-path-check` before asking for review.
+
 ### "What pulls library X into the image" needs the graph *and* an ELF scan
 
 *Source: `mise/tasks/gtk3-audit` (#1030, step 0 of

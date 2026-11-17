@@ -80,6 +80,10 @@ DERIVED = {
         "gnome-build-meta's sdk/libportal.bst minus GTK3 (#1074)",
         "gtk3-mirror-check",
     ),
+    "overrides/plymouth.bst": (
+        "freedesktop-sdk's components/plymouth.bst minus GTK3 (#1035)",
+        "gtk3-mirror-check",
+    ),
     "overrides/python3-pil.bst": (
         "freedesktop-sdk's components/python3-pil.bst, taken ahead of the junction for a CVE",
         "python3-pil-check",
