@@ -95,7 +95,7 @@ EXPECTED = {
         "DynamicLauncher": ("gnome", UMBRIEL_KRYTIS),
         "Email": ("gtk", "gnome.portal lacks it"),
         "FileChooser": ("gnome", "Nautilus (#1029)"),
-        "GlobalShortcuts": ("none", "krytis pin: needs org.gnome.Shell (#1029)"),
+        "GlobalShortcuts": ("umbriel", "xdg-desktop-portal-umbriel global shortcuts backend (#1055)"),
         "Inhibit": ("gtk", "gnome.portal lacks it"),
         "InputCapture": ("umbriel", "xdg-desktop-portal-umbriel input capture backend"),
         "Lockdown": ("gnome", UMBRIEL_KRYTIS),

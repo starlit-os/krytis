@@ -1,6 +1,10 @@
-# xdg-desktop-portal-umbriel -- Screencast/Screenshot portal backend for
-# desktop/umbriel.bst, from the same upstream team. Net-new packaging surface
-# (#774/#775): no existing element anywhere provided this.
+# xdg-desktop-portal-umbriel -- ScreenCast/Screenshot/InputCapture/
+# GlobalShortcuts portal backend for desktop/umbriel.bst, from the same
+# upstream team. GlobalShortcuts talks to the compositor over the private
+# umbriel-global-shortcuts-v1 protocol, so this pin and desktop/umbriel.bst's
+# must both include it (krytis#1055; docs/skills/desktop.md § xdg-desktop-portal
+# routing). Net-new packaging surface (#774/#775): no existing element
+# anywhere provided this.
 #
 # Ships two binaries (both meson `install_dir: libexecdir`):
 #   xdg-desktop-portal-umbriel -- the portal daemon itself (D-Bus service
@@ -71,4 +75,4 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/xdg-desktop-portal-umbriel.git
   track: refs/heads/main
-  ref: 116e9485b39552a39e4e6088ff7cbe50e7504829
+  ref: baa83d0d8ce77187712fa4bf6912b8df75b0c724
