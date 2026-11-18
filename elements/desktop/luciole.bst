@@ -103,4 +103,4 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/luciole.git
   track: refs/heads/main
-  ref: b40c96336d97a15a3874bc93cb7b61627aeb3563
+  ref: 406bbba4bb6ef543a95a15856e1598ea701c3a08
