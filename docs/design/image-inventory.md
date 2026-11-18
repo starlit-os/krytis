@@ -207,7 +207,7 @@ element does, its row's text is a review question.
 | Element | Needed by | What it is |
 |---|---|---|
 | `desktop/nlohmann-json.bst` | `desktop/ananicy-cpp.bst`, `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst`, `desktop/umbriel.bst`, `desktop/xdg-desktop-portal-umbriel.bst` | nlohmann/json headers. fdsdk dropped its element. |
-| `desktop/stb.bst` | `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst` | stb single-file headers. |
+| `desktop/stb.bst` | `desktop/luciole.bst`, `desktop/noctalia-greeter.bst`, `desktop/noctalia.bst`, `desktop/xdg-desktop-portal-umbriel.bst` | stb single-file headers. |
 | `desktop/zig-0.16.bst` | `desktop/falcond.bst`, `desktop/seance.bst` | Zig 0.16 toolchain. Prebuilt. |
 | `desktop/zig.bst` | `desktop/ghostty.bst` | Zig 0.17 toolchain. Prebuilt. |
 
