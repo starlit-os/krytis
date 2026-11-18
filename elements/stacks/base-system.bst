@@ -83,6 +83,16 @@ depends:
   - freedesktop-sdk.bst:components/sof-firmware.bst
   - freedesktop-sdk.bst:components/wireless-regdb-bin.bst
 
+  # ── Audio (ALSA) ───────────────────────────────────────────────────
+  # UCM profiles (/usr/share/alsa/ucm2). freedesktop-sdk ships none. Without them,
+  # WirePlumber puts Intel SOF cards (sof-hda-dsp) on the stereo-fallback
+  # profile, which opens only PCM 0 (headset jack). The internal DMIC PCM stays
+  # unused and `Dmic0 Capture Switch` stays off: silent mic, lit mute LED (#1664).
+  - gnome-build-meta.bst:gnomeos-deps/alsa-ucm-conf.bst
+  # amixer / alsactl / alsaucm, plus alsactl's udev + systemd restore hooks,
+  # so mixer state persists across reboots.
+  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/alsa-utils.bst
+
   # ── Hardware info ──────────────────────────────────────────────────
   - freedesktop-sdk.bst:components/pciutils.bst
   - freedesktop-sdk.bst:components/usbutils.bst

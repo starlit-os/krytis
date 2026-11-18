@@ -3170,6 +3170,28 @@ Not yet ported as a krytis element — this section records the fix and the trig
 condition; port it as a small `kind: manual` config element (same shape as
 `config/gtk-settings.bst`) if/when the glitch is actually observed on krytis hardware.
 
+## ALSA UCM: freedesktop-sdk ships none, so Intel SOF mics record silence
+
+*Found 2026-11-18 on a ThinkPad T14 Gen 4 (`sof-hda-dsp`), #1664.*
+
+freedesktop-sdk 26.08 has `alsa-lib`, `alsa-plugins` and `sof-firmware`, but no
+`alsa-ucm-conf`, so `/usr/share/alsa/ucm2` is missing. Without UCM, WirePlumber puts SOF cards
+on the generic `stereo-fallback` profile. Its source opens only PCM 0 (HDA Analog, the
+headset jack). The internal mic is on the DMIC PCMs (`hw:<card>,6` "DMIC" and `,7`
+"DMIC16kHz"), and nothing turns on `Dmic0 Capture Switch`, so it stays off. The symptoms are
+a silent default mic and a lit mic-mute LED, with no error anywhere. Turning the switch on
+alone doesn't help, because the fallback source still reads the wrong PCM.
+
+- **Diagnose:** `wpctl status` / `pactl list cards` shows the active profile as
+  `output:stereo-fallback+input:stereo-fallback`. `cat /proc/asound/pcm` lists the DMIC PCMs.
+- **Fix (image):** gnome-build-meta packages it as `gnomeos-deps/alsa-ucm-conf.bst`, and
+  `alsa-utils` lives in its `freedesktop-sdk-extra.bst` junction. Both are in
+  `stacks/base-system.bst` and follow the gnome-build-meta pin.
+- **Live workaround on an image without them:** switch `Dmic0 Capture Switch` on (with
+  `amixer`, or ctypes against libasound if `alsa-utils` is missing too). Then
+  `pactl load-module module-alsa-source device=hw:<card>,6` and make that the default source.
+  The workaround is lost at logout.
+
 ## noctalia config paths — no /etc fallback, unlike niri
 
 Unlike niri (`$XDG_CONFIG_HOME/niri/config.kdl` → `/etc/niri/config.kdl` fallback, see
