@@ -3351,9 +3351,14 @@ example.
 For mx-control, three repos are involved. The plugin's home is gamaraan/noctalia-mxcontrol,
 which its author syncs with community-plugins' `mx-control/` both ways (its #5 took
 community-plugins#1073; its #6 took the catalog's 0.2.4 back). Its `backend/` is a
-hash-checked, unmodified copy of zachwilke/omarchy-mxcontrol (`UPSTREAM.md`). So a Luau
+hash-checked copy of zachwilke/omarchy-mxcontrol (`UPSTREAM.md`). Since 0.2.5
+(community-plugins `da3056d`) `mxctl.py` is no longer byte-identical: the plugin carries
+one local change of its own, `reapply_saved()`, and `UPSTREAM.md` lists it. That change
+edits serve's idle-wait line, the same line `retry-empty-settings.patch` (the #16 backport)
+edits, so the bump to 0.2.5 failed to stage until the patch was rebased. Expect the same
+conflict each time either side touches serve's main loop. So a Luau
 fix goes to either plugin repo, but a backend fix has to merge in omarchy-mxcontrol first,
-then be re-copied into the plugin. A merged PR in gamaraan/noctalia-mxcontrol is not an
+then be re-copied into the plugin, where the local change is re-applied by hand. A merged PR in gamaraan/noctalia-mxcontrol is not an
 omarchy-mxcontrol merge, and krytis only sees what reaches community-plugins, since that
 is what the element tracks.
 

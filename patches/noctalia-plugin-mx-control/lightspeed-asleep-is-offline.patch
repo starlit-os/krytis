@@ -20,10 +20,10 @@
 # The PR took both verbatim on 2026-10-19 as 7432d3e. Remove when the
 # plugin's backend no longer trusts the cached flag on NoSuchDevice.
 diff --git a/mx-control/backend/mxctl.py b/mx-control/backend/mxctl.py
-index 1aaeafd..ef12b26 100755
+index b002e62..769498f 100755
 --- a/mx-control/backend/mxctl.py
 +++ b/mx-control/backend/mxctl.py
-@@ -801,7 +801,13 @@ def device_is_online(dev) -> bool:
+@@ -805,7 +805,13 @@ def device_is_online(dev) -> bool:
      # constructs children with online=True. Only a live ping matches Solaar.
      try:
          return bool(dev.ping())
