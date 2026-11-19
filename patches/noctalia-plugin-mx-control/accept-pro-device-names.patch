@@ -24,10 +24,10 @@
 # Remove when the plugin's backend accepts "PRO X Wireless". That PR merging is
 # not enough: community-plugins' mx-control has to re-copy the backend too.
 diff --git a/mx-control/backend/mxctl.py b/mx-control/backend/mxctl.py
-index 2afc3c8..b9f775b 100755
+index aebd1bb..d91675c 100755
 --- a/mx-control/backend/mxctl.py
 +++ b/mx-control/backend/mxctl.py
-@@ -148,7 +148,7 @@ FALLBACK_RECEIVER_PIDS = {
+@@ -152,7 +152,7 @@ FALLBACK_RECEIVER_PIDS = {
  }
  
  MX_NAME_RE = re.compile(

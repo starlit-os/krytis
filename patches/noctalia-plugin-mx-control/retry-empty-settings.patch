@@ -11,17 +11,22 @@
 #
 # Backport of zachwilke/omarchy-mxcontrol#16 (head f0ce469f, base 0968d77, the
 # backend copy community-plugins' mx-control carries). Only the mxctl.py hunk,
-# with the path moved under mx-control/backend/. Unchanged otherwise. It pings
-# for reachability instead of trusting the cached online flag, and retries
-# online devices with empty settings every 2 s (SETTINGS_RETRY_SEC).
+# with the path moved under mx-control/backend/. It pings for reachability
+# instead of trusting the cached online flag, and retries online devices with
+# empty settings every 2 s (SETTINGS_RETRY_SEC).
+#
+# One line differs from #16: serve's idle wait. mx-control 0.2.5
+# (community-plugins da3056d) added its own local change, reapply_saved(), and
+# capped that wait at RESET_CHECK_SEC. This patch keeps the cap:
+# min(SETTINGS_RETRY_SEC if pending_settings else idle_timeout, RESET_CHECK_SEC).
 # Verified on hardware: the G915 got 15 settings 2 s after its link came up,
 # with no refresh.
 #
 # Remove when community-plugins' mx-control re-copies a backend containing
-# zachwilke/omarchy-mxcontrol#16 (open as of 2026-10-17). With this patch the
+# zachwilke/omarchy-mxcontrol#16 (open as of 2026-11-18). With this patch the
 # sha256 list in UPSTREAM.md no longer matches backend/mxctl.py.
 diff --git a/mx-control/backend/mxctl.py b/mx-control/backend/mxctl.py
-index b9f775b..1aaeafd 100755
+index d91675c..b002e62 100755
 --- a/mx-control/backend/mxctl.py
 +++ b/mx-control/backend/mxctl.py
 @@ -50,8 +50,10 @@ SKIP_WRITE_KINDS = {"packed_range", "graphic_eq", "color"}
@@ -33,10 +38,10 @@ index b9f775b..1aaeafd 100755
 +# Bolt children often ping before FEATURE_SET answers.
  HEARTBEAT_SEC = 60.0
 +SETTINGS_RETRY_SEC = 2.0
- EXIT_PEER_SERVING = 3
- IN_CREATE = 0x00000100
- IN_MODIFY = 0x00000002
-@@ -795,14 +797,12 @@ def ordered_devices(opened) -> list:
+ # How often to look for devices that reset and lost their saved settings.
+ RESET_CHECK_SEC = 10.0
+ # Written to HID++ ConfigChange after applying; a device reset clears it.
+@@ -799,14 +801,12 @@ def ordered_devices(opened) -> list:
  
  
  def device_is_online(dev) -> bool:
@@ -53,8 +58,8 @@ index b9f775b..1aaeafd 100755
 +        return getattr(dev, "online", None) is True
  
  
- def load_settings(mods, dev, live: bool = False, on_setting=None) -> list[dict]:
-@@ -838,6 +838,73 @@ def load_settings(mods, dev, live: bool = False, on_setting=None) -> list[dict]:
+ def reapply_saved(devices, configured: set) -> bool:
+@@ -883,6 +883,73 @@ def load_settings(mods, dev, live: bool = False, on_setting=None) -> list[dict]:
      return settings
  
  
@@ -128,7 +133,7 @@ index b9f775b..1aaeafd 100755
  def runtime_path(xdg_runtime_dir: str | None, uid: int) -> str:
      if xdg_runtime_dir:
          return f"{xdg_runtime_dir}/omarchy-mx"
-@@ -1316,7 +1383,8 @@ def collect_status(mods, opened, hid_devices, adapters, permission_error, full:
+@@ -1361,7 +1428,8 @@ def collect_status(mods, opened, hid_devices, adapters, permission_error, full:
                  )
                  on_partial(snap)
      snap = status_from_described(described, hid_devices, adapters, permission_error, last_error)
@@ -138,19 +143,21 @@ index b9f775b..1aaeafd 100755
      return snap
  
  
-@@ -2035,9 +2103,10 @@ def serve_command() -> int:
+@@ -2083,9 +2151,12 @@ def serve_command() -> int:
              cmds = _read_cmds(paths)
              if not cmds:
                  event_fd = pointer.event_fd()
 +                pending_settings = bool(settings_incomplete(payload))
                  wait_for_event(
                      [runtime_fd, hid_fd, actions.wakeup.reader, event_fd],
--                    actions.wait_timeout(idle_timeout),
-+                    actions.wait_timeout(SETTINGS_RETRY_SEC if pending_settings else idle_timeout),
+-                    actions.wait_timeout(min(idle_timeout, RESET_CHECK_SEC)),
++                    actions.wait_timeout(
++                        min(SETTINGS_RETRY_SEC if pending_settings else idle_timeout, RESET_CHECK_SEC)
++                    ),
                      keep=(event_fd,) if event_fd is not None else (),
                  )
                  cmds = _read_cmds(paths)
-@@ -2053,13 +2122,21 @@ def serve_command() -> int:
+@@ -2106,13 +2177,21 @@ def serve_command() -> int:
                  # Only a compositor reload needs IPC here; sync_pointer skips
                  # the compositor entirely while its inputs are unchanged.
                  pointer_changed = sync_pointer(payload, force=reloaded)
