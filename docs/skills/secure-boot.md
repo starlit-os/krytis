@@ -73,8 +73,8 @@ time from `SOURCE_DATE_EPOCH` instead (`asn1_timestamp()` in systemd v262
   stays in the image for `sbverify` and `sbsiglist` anyway.
 - **Krytis gains reproducibility, not smaller updates.** Dakota's motivation was layer
   churn: a re-signed kernel forced a new kernel-modules layer on every update. A sealed
-  krytis image is one squashed layer (§ `--composefs-backend` requires a single layer), so
-  that doesn't apply here. The check is to seal the same commit twice and compare the
+  krytis image is still published as one squashed layer, so that doesn't apply here yet. It
+  will once publish chunks the sealed image (#1688, § Chunk after sealing, not before). The check is to seal the same commit twice and compare the
   `sha256sum` of `/usr/lib/systemd/boot/efi/systemd-bootx64.efi` and
   `/boot/EFI/Linux/krytis.efi` in the two images. The UKI only matches when its unsigned
   inputs match too.
@@ -316,10 +316,10 @@ than a workaround waiting to be dropped.
 
 Two independent, contradictory requirements collide in a sealed build:
 
-1. **`bootc install --composefs-backend` requires a single-layer image.** A multi-layer image fails during `bootc install to-disk` with `Pulling image into composefs repository: Unexpected EOF in splitstream` — this exactly matches a constraint dakota already hit and documented (`docs/design/composefs-chunkah.md`: "Multi-layer output breaks composefs xattr injection; see dakota#841"). Removing `--squash-all` (the fix from the previous section, on its own) produces a correct digest but an image that can never install via `--composefs-backend`.
+1. **`bootc install --composefs-backend` failed on the unsquashed multi-layer `podman build` output.** That image failed during `bootc install to-disk` with `Pulling image into composefs repository: Unexpected EOF in splitstream`, matching dakota#841 ("Multi-layer output breaks composefs xattr injection", `docs/design/composefs-chunkah.md`). Removing `--squash-all` (the fix from the previous section, on its own) gave a correct digest but an image that wouldn't install. **This is not a general single-layer rule.** chunkah's 120-layer output installs and boots with `--composefs-backend` on bootc 1.17.4, sealed or not (#1688, 2026-11-19; § Chunk after sealing, not before).
 2. **Squashing (`--squash-all`) breaks the digest** (previous section): it rewrites/normalizes file metadata — confirmed specifically to be `/tmp` and `/var/tmp` mtimes — across the whole image at commit time. If squashing happens *after* `ukify` bakes the digest, the pushed image's own metadata diverges from what's baked in its UKI, and install fails with "The UKI has the wrong composefs= parameter" — regardless of the throwaway-stage fix.
 
-Single-layer is non-negotiable (required for install to work at all) and squashing-after-baking is impossible (breaks the digest) — so the resolution is to **squash before baking**: produce a stable, already-squashed single-layer reference first, compute the UKI digest against *that* (not the pre-squash multi-layer build), then squash the final combined result too. Verified this reconciles both constraints simultaneously: the resulting image has exactly 1 layer *and* the baked digest matches a `podman mount`-based post-commit recompute.
+A raw multi-layer build won't install, and squashing after baking breaks the digest, so the resolution is to **squash before baking**: produce a stable, already-squashed single-layer reference first, compute the UKI digest against *that* (not the pre-squash multi-layer build), then squash the final combined result too. Verified this reconciles both constraints simultaneously: the resulting image has exactly 1 layer *and* the baked digest matches a `podman mount`-based post-commit recompute.
 
 This needs **two separate `podman build` invocations** — a single Containerfile can't squash one intermediate stage while leaving others alone; `--squash-all` always applies to the whole build's result:
 
@@ -341,6 +341,24 @@ podman build --squash-all -t localhost/krytis:sealed \
 `Containerfile.seal-uki` hardcodes the `localhost/krytis:sealed-base` reference in its `--mount=type=bind,from=...` (rather than parameterizing via `ARG`) because ARG-expansion inside `--mount=from=` wasn't verified against the pinned podman/buildah version — if the intermediate tag name ever needs to change, update both `FROM`/`--mount=from=` occurrences together.
 
 `mise/tasks/lint`'s unsigned build still uses a single `--squash-all` pass with no phase split — that's fine there because the unsigned image has no baked digest to invalidate in the first place.
+
+### Chunk after sealing, not before
+
+Both `seal-uki` phases end in `--squash-all`, so chunking before sealing gets flattened again.
+Chunk the finished `:sealed` image instead. `mise run chunkify` doesn't change the composefs
+digest, so the UKI's baked digest stays valid. Measured for #1688 on 2026-11-19 (bootc
+1.17.4, chunkah v0.7.1):
+
+- **Unsealed image:** `bootc container compute-composefs-digest --write-dumpfile-to` before
+  and after `chunkify` gave the same v1 and v2 digests. The two dumpfiles matched byte for
+  byte across 241,173 entries. None of the `user.component` xattrs that `fakecap-restore`
+  writes survive into chunkah's output, so they never reach the digest.
+- **Sealed image:** the published `ghcr.io/starlit-os/krytis:sealed` (1 layer) chunked into 120
+  layers. `mise run verify-composefs-digest` passed on both, with the same `b9aa9d9f…` v1 and
+  `11fdca6a…` v2 digests. `mise run boot-test --image <chunked sealed>` passed too: the
+  install re-checks the UKI digest, writes the UKI to the ESP and boots through it. Secure
+  Boot was off in that run, because `--secure` needs the keys from `pull-keys`. The digest
+  checks don't depend on it.
 
 ### Verifying the baked digest against an already-published image, no rebuild, no root
 
