@@ -324,13 +324,25 @@ Two shortcuts made this quicker than #500's hand-written BFS:
   fdsdk's `components/ruby.bst` with 4.0.10. That invalidated the cache of 96 fdsdk elements
   that build-depend on ruby, most of the image among them. A full build then showed no
   ruby at all: no binary, no libruby, no `.rb`/`.gem`, no `/usr/manifest.json` entry.
-  `opencl.bst` and `asciidoctor.bst` list ruby under `%{build-deps}`, and
-  `bst show --deps run freedesktop-sdk.bst:components/opencl.bst` doesn't include it. The
-  override was replaced by a version-pinned `.grype.yaml` rule. **Before carrying a newer
-  version of a junction element, check that it ships.** Run `bst show --deps run` on its
-  consumer, or grep `/usr/manifest.json` in any recent image. A `bitnami` match says
-  nothing about runtime reachability. "A runtime dependency of X" needs that command's
-  output behind it, not the fact that X depends on it somewhere.
+  `opencl.bst` only build-depends on ruby. `asciidoctor.bst` does runtime-depend on it, but
+  asciidoctor is itself only a build tool (man pages), and the image had no `.rb` file at
+  all. The override was replaced by a version-pinned `.grype.yaml` rule. **Before carrying
+  a newer version of a junction element, check that it ships, in the image itself:** grep
+  `/usr/manifest.json`, or look for the element's files in any recent image. A graph check
+  has to recurse until it reaches something that ships. One hop is not enough, because a
+  runtime dependency of a build tool is still build-only. And `bst show --deps run
+  oci/krytis/runtime.bst` lists nothing but the element itself, because that compose
+  element pulls the stack in as build dependencies. A `bitnami` match says nothing about
+  runtime reachability.
+
+  **The same package kept collecting advisories, one pin each.** Two days later
+  (2026-11-20) nine GHSA entries from ruby-lang's 2026-11-18 Regexp/String batch
+  (`github:language:binary`) reached the Grype DB and blocked publish run 44638046960 at
+  the pre-build gate. The judgment was the same, so they joined the existing ruby group in
+  `.grype.yaml` with the same `package.version` pin. Rules are per vulnerability ID, so
+  every new advisory against a pinned build-only package blocks once. Re-check that the
+  package still doesn't ship before adding to the group, rather than copying the reason
+  forward.
 
 
 ### A `cargo update -p X` "fix" is only real if it clears the advisory's actual range
