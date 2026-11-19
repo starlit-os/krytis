@@ -358,6 +358,56 @@ helper configured earlier in the chain — so keep both lines per host, in that 
 This isn't a krytis-specific bug, but the project's `mise`-managed `gh` makes it
 something any contributor pushing from this repo can hit after their next `mise` upgrade.
 
+## Building on melog: `mise run remote-build`
+
+On the laptop (`adora`), build on the desktop (`melog`) instead:
+
+```
+git push -u origin <branch>      # melog builds from origin, not from this checkout
+mise run remote-build            # build --pull + all gates on melog, then ship localhost/krytis:latest back
+mise run boot-test               # boot-test locally, with the laptop's FIDO2 key
+```
+
+`--build-only` leaves the image on melog. `--ship-only --image <tag>` copies an image that
+melog already has, for example to retry a failed transfer. `--push` builds with `--push`.
+`--ref <rev>` builds a commit other than `HEAD`. Set `KRYTIS_REMOTE_HOST` (a Rex label or
+address) to build somewhere other than melog's Rex server (`https://rex-melog.werewolf-stonecat.ts.net`).
+
+Each design choice exists for a reason:
+
+- **Rex, not ssh.** `melog` refuses port 22, even on its tailnet address. Its Rex server
+  sits behind its own tailnet node, `rex-melog`, on 443, so `rex -S <url>` reaches it with
+  tailnet identity and nothing else to set up. The image comes back through
+  `rex forward open <block>`. melog runs a one-shot `python3 -I` HTTP server on loopback
+  that streams `podman save | zstd`, and the laptop runs `curl | zstd -d | podman load`.
+  No host has `socat`, `nc` or `ncat` (checked 2026-11-19), so Python is the listener.
+  `forward open` prints `http://localhost:<port>`, not `127.0.0.1`.
+- **Boot-test stays local.** melog's `sudo` goes through `pam_u2f`
+  (`/etc/pam.d/system-auth`), so `generate-disk` there would need a key touch at the desktop.
+  Shipping the ~7 GB image back lets the laptop's key answer it, as in § Agents can run the
+  sudo steps: use a pty. The task compares the image ID on both ends after the load.
+  Measured 2026-11-19: the 7 GB image took 176 s to copy, and the IDs matched.
+- **A dedicated worktree on melog.** The build runs in
+  `~/Projects/StarlitOS/krytis.worktrees/remote-build`, checked out detached at the SHA. The
+  only command run against melog's own `krytis` checkout is `git fetch`, because that checkout
+  may hold the user's own work. `git clean -fd` (no `-x`) keeps ignored state such as
+  `.load-image-state` and `.venv`.
+- **One build at a time, on both ends.** melog serialises on `flock
+  ~/.cache/krytis-remote-build/lock` and also waits for builds that didn't take the lock
+  (`pgrep` for `podman build --squash-all`, `boot-test` or `qemu-system`). The laptop does
+  the same `pgrep` wait before `podman load` retags `localhost/krytis:latest`.
+- **Disk preflights fail before the build, not after it.** melog needs 25 GB free under
+  `$HOME`, and the laptop's rootless podman store needs `KRYTIS_REMOTE_LOCAL_FREE_GB`
+  (default 12). The laptop check runs first, so a 20-minute remote build never ends in
+  a load with nowhere to write. Reclaim space with `podman image prune -f`: each build
+  leaves the previous `krytis:latest` dangling.
+- **The build is visible and survives the laptop.** Each build gets a tab labelled
+  `build <sha>` in melog's `krytis-build` Rex session, and its log goes to
+  `~/.cache/krytis-remote-build/<sha>.log` there. A failed build's tab stays open. The
+  local task polls in `rex wait --for 10m` slices and reads the result from
+  `rex block call … process` (`.last_exit.exit_code`). `rex wait` exits with the child's
+  status, so its exit code alone can't tell a timeout from a build that exited 1.
+
 ## File tasks
 
 All tasks are **file tasks** — standalone executable scripts in `mise/tasks/`. Each file becomes a `mise <name>` command.

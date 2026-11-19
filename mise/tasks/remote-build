@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+#MISE description="Run `mise run build --pull` on another machine through Rex (default: melog), then stream the built image back into this machine's podman store"
+#USAGE flag "--ref <rev>" default="HEAD" help="Commit to build. It must already be on origin: the remote host fetches it from there"
+#USAGE flag "--push" help="Build with --push instead of --pull (the remote host needs push credentials)"
+#USAGE flag "--force" help="Forwarded to build: reload into podman even if the image key is unchanged"
+#USAGE flag "--build-only" help="Build and gate on the remote host, but leave the image there"
+#USAGE flag "--ship-only" help="Skip the build; just stream --image from the remote host (e.g. after a failed transfer)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image tag to ship back. build/lint leave the gated image at localhost/krytis:latest"
+
+# Why this exists, and why each step is shaped the way it is:
+# docs/skills/mise.md § Building on melog: `mise run remote-build`.
+#
+# Environment overrides:
+#   KRYTIS_REMOTE_HOST  Rex server to build on (label or address).
+#                       Default: melog's Rex server on the tailnet.
+#   KRYTIS_REMOTE_REPO  krytis checkout on that host. Default: ~/Projects/StarlitOS/krytis.
+#                       Only `git fetch` runs there; the build uses a separate worktree.
+#   KRYTIS_REMOTE_LOCAL_FREE_GB  Free GB the local podman store needs before a load. Default 12.
+
+set -euo pipefail
+
+HOST="${KRYTIS_REMOTE_HOST:-https://rex-melog.werewolf-stonecat.ts.net}"
+REMOTE_REPO="${KRYTIS_REMOTE_REPO:-\$HOME/Projects/StarlitOS/krytis}"
+REF="${usage_ref:-HEAD}"
+IMAGE="${usage_image:-localhost/krytis:latest}"
+CACHE_FLAG=--pull
+[ "${usage_push:-}" = "true" ] && CACHE_FLAG=--push
+FORCE=""
+[ "${usage_force:-}" = "true" ] && FORCE=--force
+BUILD_ONLY="${usage_build_only:-}"
+SHIP_ONLY="${usage_ship_only:-}"
+
+command -v rex >/dev/null || { echo "remote-build: rex is not installed" >&2; exit 1; }
+command -v zstd >/dev/null || { echo "remote-build: zstd is not installed" >&2; exit 1; }
+
+r() { rex -S "$HOST" "$@"; }
+
+r whoami --json >/dev/null 2>&1 || {
+    echo "remote-build: Rex server $HOST does not answer (is the host up and on the tailnet?)" >&2
+    exit 1
+}
+
+# Fail now, not after a 20-minute build: `podman load` needs the whole image
+# (~7 GB) plus headroom in this machine's rootless store.
+if [ -z "$BUILD_ONLY" ]; then
+    graphroot=$(podman info --format '{{.Store.GraphRoot}}')
+    local_free=$(df -BG --output=avail "$graphroot" | tail -n1 | tr -dc 0-9)
+    if [ "$local_free" -lt "${KRYTIS_REMOTE_LOCAL_FREE_GB:-12}" ]; then
+        echo "remote-build: only ${local_free} GB free under $graphroot; loading the image needs ~12 GB." >&2
+        echo "  Free space first (podman image prune -f drops dangling builds), or pass --build-only." >&2
+        exit 1
+    fi
+fi
+
+# --- Remote session ----------------------------------------------------------
+# One long-lived session on the host, one tab per build, so the user can open
+# the build from any Rex client and the tab survives this machine going away.
+SESSION=$(r ls --json | jq -r '.sessions[] | select(.label == "krytis-build") | .session_id' | head -n1)
+if [ -z "$SESSION" ]; then
+    SESSION=$(r new krytis-build --json | jq -er .session_id)
+fi
+
+SHORT=${IMAGE##*/}
+REMOTE_ID=""
+if [ -z "$SHIP_ONLY" ]; then
+# --- What to build -----------------------------------------------------------
+# The remote host builds from origin, never from this checkout's files, so the
+# commit has to be pushed. Uncommitted changes are not built: say so loudly.
+git fetch -q origin
+SHA=$(git rev-parse --verify "${REF}^{commit}")
+if [ -z "$(git branch -r --contains "$SHA" 2>/dev/null)" ]; then
+    echo "remote-build: $SHA is not on origin yet. Push the branch first:" >&2
+    echo "  git push -u origin $(git branch --show-current)" >&2
+    exit 1
+fi
+if [ "$REF" = "HEAD" ] && [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "remote-build: WARNING: uncommitted changes in this checkout are NOT part of the build" >&2
+fi
+SHORT=${SHA:0:12}
+echo "remote-build: building $SHORT on $HOST ($CACHE_FLAG${FORCE:+ $FORCE})"
+
+
+# Runs on the remote host. Positional args: repo, sha, cache flag, force flag.
+# shellcheck disable=SC2016 # expanded on the remote host, not here
+REMOTE_BUILD='
+set -euo pipefail
+repo=$(eval echo "$1"); sha=$2; cache=$3; force=$4
+state=$HOME/.cache/krytis-remote-build
+wt=$repo.worktrees/remote-build
+mkdir -p "$state"
+log=$state/$sha.log
+exec > >(tee "$log") 2>&1
+echo "remote-build: log $log"
+
+# One build at a time per host: every build writes localhost/krytis:latest.
+exec 9>"$state/lock"
+if ! flock -n 9; then echo "remote-build: another remote build holds the lock; waiting"; flock 9; fi
+# Builds started by hand (not through this task) do not take the lock.
+while pgrep -f "[p]odman build --squash-all|[m]ise/tasks/boot-test|[q]emu-system" >/dev/null; do
+    echo "remote-build: another build or boot-test is running here; waiting 60s"; sleep 60
+done
+
+free_gb=$(df -BG --output=avail "$HOME" | tail -n1 | tr -dc 0-9)
+echo "remote-build: ${free_gb} GB free on $HOME"
+if [ "$free_gb" -lt 25 ]; then
+    echo "remote-build: under 25 GB free; a build needs about 2x the image plus the CAS. Free space first (podman image prune -f)."
+    exit 1
+fi
+
+git -C "$repo" fetch -q origin
+git -C "$repo" cat-file -e "$sha^{commit}"
+if [ ! -e "$wt/.git" ]; then
+    git -C "$repo" worktree add -q --detach "$wt" "$sha"
+else
+    git -C "$wt" checkout -q --detach --force "$sha"
+    git -C "$wt" clean -fdq   # tracked tree only; keeps ignored state like .load-image-state
+fi
+cd "$wt"
+mise trust -q >/dev/null 2>&1 || true
+mise run build $cache $force
+echo "remote-build: image $(podman image inspect --format "{{.Id}}" localhost/krytis:latest)"
+'
+
+created=$(r run -s "$SESSION" --label "build $SHORT" --keep-open --focus=false --json -- \
+    bash -c "$REMOTE_BUILD" remote-build "$REMOTE_REPO" "$SHA" "$CACHE_FLAG" "$FORCE")
+BLOCK=$(jq -er '.block_ids[0]' <<<"$created")
+echo "remote-build: running in Rex session krytis-build on $HOST, block $BLOCK"
+echo "remote-build: watch it with: rex -S $HOST capture -s $SESSION -b $BLOCK --trim | tail"
+
+# rex wait's own exit status cannot tell "timed out" from "the build exited 1",
+# so wait in slices and read the result from the block's process state.
+while :; do
+    r wait -s "$SESSION" "$BLOCK" --for 10m >/dev/null 2>&1 || true
+    proc=$(r block call -s "$SESSION" -b "$BLOCK" process 2>/dev/null || echo '{}')
+    if [ "$(jq -r '.last_exit != null' <<<"$proc")" = "true" ]; then
+        RC=$(jq -r '.last_exit.exit_code // 1' <<<"$proc")
+        break
+    fi
+    if [ "$proc" = '{}' ]; then
+        echo "remote-build: lost the build block $BLOCK on $HOST" >&2
+        exit 1
+    fi
+    echo "remote-build: still building ($(date +%H:%M))"
+done
+
+r capture -s "$SESSION" -b "$BLOCK" --trim --unwrap | tail -n 25
+if [ "$RC" != "0" ]; then
+    echo "remote-build: build FAILED on $HOST (exit $RC). The tab stays open there; full log in ~/.cache/krytis-remote-build/$SHA.log on that host." >&2
+    exit "$RC"
+fi
+REMOTE_ID=$(r capture -s "$SESSION" -b "$BLOCK" --trim --unwrap 2>/dev/null | sed -n 's/^remote-build: image //p' | tail -n1 || true)
+r block close -s "$SESSION" "$BLOCK" >/dev/null 2>&1 || true
+
+fi # SHIP_ONLY
+
+if [ -n "$BUILD_ONLY" ]; then
+    echo "remote-build: build + gates passed on $HOST; image left there (--build-only)"
+    exit 0
+fi
+
+# --- Ship the image back -----------------------------------------------------
+# One-shot HTTP server on the host's loopback streams `podman save | zstd`;
+# `rex forward open` tunnels to it over the Rex connection, so nothing needs
+# ssh or a firewall hole on the host.
+# shellcheck disable=SC2016
+SERVE='
+import http.server, shutil, subprocess, sys
+image = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    done = False
+    def do_GET(self):
+        p = subprocess.Popen(["bash", "-o", "pipefail", "-c", "podman save \"$1\" | zstd -T0 -3 -c", "_", image],
+                             stdout=subprocess.PIPE)
+        self.send_response(200); self.send_header("Content-Type", "application/zstd"); self.end_headers()
+        shutil.copyfileobj(p.stdout, self.wfile, 1 << 20)
+        H.done = p.wait() == 0
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+print("serving", image, "on port", srv.server_port, flush=True)
+while not H.done:
+    srv.handle_request()
+'
+served=$(r run -s "$SESSION" --label "ship $SHORT" --focus=false --json -- python3 -I -c "$SERVE" "$IMAGE")
+SERVE_BLOCK=$(jq -er '.block_ids[0]' <<<"$served")
+
+fwd_log=$(mktemp)
+cleanup() {
+    [ -n "${FWD_PID:-}" ] && kill "$FWD_PID" 2>/dev/null || true
+    r block close -s "$SESSION" "$SERVE_BLOCK" >/dev/null 2>&1 || true
+    rm -f "$fwd_log"
+}
+trap cleanup EXIT
+trap "exit 130" INT TERM
+
+# The server needs a moment to bind before forward open can find its port.
+URL=""
+for _ in $(seq 1 30); do
+    rex -S "$HOST" forward open --no-open -s "$SESSION" "$SERVE_BLOCK" >"$fwd_log" 2>&1 &
+    FWD_PID=$!
+    for _ in $(seq 1 10); do
+        URL=$(grep -Eo 'http://(localhost|127\.0\.0\.1):[0-9]+[^ ]*' "$fwd_log" | head -n1 || true)
+        [ -n "$URL" ] && break 2
+        kill -0 "$FWD_PID" 2>/dev/null || break
+        sleep 0.5
+    done
+    kill "$FWD_PID" 2>/dev/null || true; FWD_PID=""
+    sleep 1
+done
+[ -n "$URL" ] || { echo "remote-build: could not forward to the image server on $HOST:" >&2; cat "$fwd_log" >&2; exit 1; }
+
+# Loading replaces this machine's $IMAGE tag, which another session's gates or
+# boot-test may be reading by name (docs/skills/mise.md § Standard build workflow).
+while pgrep -f "[p]odman build --squash-all|[m]ise/tasks/boot-test|[q]emu-system" >/dev/null; do
+    echo "remote-build: a build or boot-test is running on this machine; waiting 60s before loading"; sleep 60
+done
+
+echo "remote-build: streaming $IMAGE from $HOST"
+start=$(date +%s)
+curl -fsS "$URL" | zstd -dc | podman load
+echo "remote-build: transfer took $(( $(date +%s) - start ))s"
+
+LOCAL_ID=$(podman image inspect --format '{{.Id}}' "$IMAGE")
+if [ -n "$REMOTE_ID" ] && [ "$LOCAL_ID" != "$REMOTE_ID" ]; then
+    echo "remote-build: image ID mismatch: $HOST has $REMOTE_ID, loaded $LOCAL_ID" >&2
+    exit 1
+fi
+if [ -n "$SHIP_ONLY" ]; then
+    echo "remote-build: $IMAGE is $LOCAL_ID (copied from $HOST; no build ran)"
+else
+    echo "remote-build: $IMAGE is $LOCAL_ID (built from $SHORT on $HOST, gates passed there)"
+fi
+echo "remote-build: next: mise run boot-test"
