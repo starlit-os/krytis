@@ -1489,3 +1489,24 @@ qemu_launch_hostfwd 2299 launch_qemu   # sets SSH_PORT
   it on 2300, and `ss` showed QEMU holding 2300.
 - `tpm-install-test` uses only `hostfwd_port_free`: it already probes right before
   each launch, and a relaunch would also have to restart its swtpm.
+
+## Guest-side probes run uutils coreutils: write them for it, or use python3
+
+A command sent into a booted krytis guest over SSH runs the image's coreutils, which is
+uutils (`core/uutils-coreutils.bst`), not GNU. GNU-only flags fail there even though the same
+line works on a GNU dev host. #1646's `homed-discard-test` lost a run to
+`df -m --output=avail /var/home`: the guest's `df` printed
+`error: unexpected argument '-m' found`, the free-space value came back empty, and the check
+compared an empty string. `stat`, `sync`, `sha256sum`, `mktemp`, `seq` and `dd` are also
+uutils on the image.
+
+For numbers a test depends on, use the guest's `python3` (the image ships it) instead of
+parsing coreutils output:
+
+```sh
+ROOT "python3 -c 'import os; s = os.statvfs(\"/var/home\"); print(s.f_bavail * s.f_frsize >> 20)'"
+```
+
+A larger guest probe can be copied in as a whole script: `ROOT 'cat > /run/x && chmod +x /run/x' < local-script`.
+`homed-discard-test` does this with `mise/tasks/homed-image-check`, so the same extent-tree
+reader runs on the host and in the guest.

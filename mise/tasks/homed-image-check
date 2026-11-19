@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+#MISE description="Report btrfs space stranded inside systemd-homed LUKS images (on-disk usage vs referenced, like compsize) (#1646)"
+#USAGE flag "--max-overhead <percent>" default="10" help="Exit 1 if any image's on-disk usage exceeds its referenced size by more than this percentage"
+#USAGE flag "--json" help="Print one JSON object per image instead of a table"
+#USAGE arg "[image]" var=#true help="Image files to check (default: /var/home/*.home)"
+"""How much of the root btrfs does each homed image really occupy?
+
+A homed LUKS image on btrfs can occupy far more disk than its size (#1646). Each
+offline discard (on logout or shutdown) punches the inner filesystem's free
+ranges out of the backing file. Those holes are small and scattered, and btrfs
+frees an extent only when nothing in it is referenced, so almost nothing is
+freed. The next activation then fallocates the holes again, into new extents.
+On the laptop that left a 150 GB image occupying 359 GB, and `du`, `ls` and
+`stat` all reported 150 GB.
+
+Only the extent tree shows it. This reads the file's EXTENT_DATA items with
+BTRFS_IOC_TREE_SEARCH_V2, the same data compsize reads, and reports:
+
+  referenced  bytes of the file that point at data (holes excluded)
+  on disk     the full size of every distinct extent those bytes live in
+  stranded    on disk - referenced: dead space only a rewrite returns
+
+compsize isn't on the image. This needs only python3, which is. The ioctl needs
+CAP_SYS_ADMIN, so the script re-runs itself under sudo when it isn't root.
+
+Exit status: 0 when every image is within --max-overhead, 1 when one isn't,
+2 on error. An image that isn't on btrfs is an error.
+"""
+
+import argparse
+import fcntl
+import glob
+import json
+import os
+import struct
+import sys
+
+# include/uapi/linux/btrfs.h
+BTRFS_IOCTL_MAGIC = 0x94
+SEARCH_KEY = struct.Struct("=7Q4I4Q")          # struct btrfs_ioctl_search_key, 104 bytes
+SEARCH_HEADER = struct.Struct("=3Q2I")         # struct btrfs_ioctl_search_header, 32 bytes
+BUF_SIZE = 256 * 1024
+# _IOWR(0x94, 17, struct btrfs_ioctl_search_args_v2): key + u64 buf_size, without buf[]
+BTRFS_IOC_TREE_SEARCH_V2 = (3 << 30) | ((SEARCH_KEY.size + 8) << 16) | (BTRFS_IOCTL_MAGIC << 8) | 17
+BTRFS_EXTENT_DATA_KEY = 108
+# struct btrfs_file_extent_item: generation, ram_bytes, compression, encryption,
+# other_encoding, type; then for REG/PREALLOC: disk_bytenr, disk_num_bytes, offset, num_bytes
+FILE_EXTENT_HEAD = struct.Struct("<QQBBHB")    # 21 bytes
+FILE_EXTENT_BODY = struct.Struct("<QQQQ")
+FILE_EXTENT_INLINE = 0
+BTRFS_SUPER_MAGIC = 0x9123683E
+U64_MAX = (1 << 64) - 1
+
+
+def is_btrfs(path):
+    # os.statvfs has no f_type; read it from statfs(2) through ctypes
+    import ctypes
+    import ctypes.util
+
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    buf = ctypes.create_string_buffer(256)
+    if libc.statfs(os.fsencode(path), buf) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), path)
+    return struct.unpack_from("=q", buf.raw)[0] & 0xFFFFFFFF == BTRFS_SUPER_MAGIC
+
+
+def extents(fd, ino):
+    """Yield (disk_bytenr, disk_num_bytes, num_bytes) for every data extent item of ino."""
+    min_offset = 0
+    while True:
+        key = SEARCH_KEY.pack(
+            0,              # tree_id 0: the subvolume fd lives in
+            ino, ino,       # min/max objectid
+            min_offset, U64_MAX,
+            0, U64_MAX,     # transid range
+            BTRFS_EXTENT_DATA_KEY, BTRFS_EXTENT_DATA_KEY,
+            4096,           # nr_items wanted
+            0, 0, 0, 0, 0,
+        )
+        args = bytearray(key + struct.pack("=Q", BUF_SIZE) + bytes(BUF_SIZE))
+        fcntl.ioctl(fd, BTRFS_IOC_TREE_SEARCH_V2, args)
+        nr_items = SEARCH_KEY.unpack_from(args)[9]
+        if nr_items == 0:
+            return
+        pos = SEARCH_KEY.size + 8
+        last_offset = None
+        for _ in range(nr_items):
+            _transid, objectid, offset, typ, length = SEARCH_HEADER.unpack_from(args, pos)
+            pos += SEARCH_HEADER.size
+            item = bytes(args[pos:pos + length])
+            pos += length
+            if objectid != ino or typ != BTRFS_EXTENT_DATA_KEY:
+                continue
+            last_offset = offset
+            if FILE_EXTENT_HEAD.unpack_from(item)[5] == FILE_EXTENT_INLINE:
+                continue
+            disk_bytenr, disk_num_bytes, _off, num_bytes = FILE_EXTENT_BODY.unpack_from(item, FILE_EXTENT_HEAD.size)
+            if disk_bytenr == 0:    # hole
+                continue
+            yield disk_bytenr, disk_num_bytes, num_bytes
+        if last_offset is None or last_offset == U64_MAX:
+            return
+        min_offset = last_offset + 1
+
+
+def measure(path):
+    if not is_btrfs(path):
+        raise OSError(f"{path} is not on btrfs")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        seen = {}
+        referenced = 0
+        items = 0
+        for bytenr, disk_bytes, num_bytes in extents(fd, st.st_ino):
+            seen[bytenr] = disk_bytes
+            referenced += num_bytes
+            items += 1
+    finally:
+        os.close(fd)
+    on_disk = sum(seen.values())
+    return {
+        "path": path,
+        "size": st.st_size,
+        "referenced": referenced,
+        "on_disk": on_disk,
+        "stranded": max(on_disk - referenced, 0),
+        "extents": len(seen),
+        "refs": items,
+    }
+
+
+def gib(n):
+    return f"{n / 1024**3:.1f}G"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--max-overhead", type=float, default=float(os.environ.get("usage_max_overhead", 10)))
+    ap.add_argument("--json", action="store_true", default=os.environ.get("usage_json") == "true")
+    ap.add_argument("image", nargs="*")
+    args = ap.parse_args()
+
+    if os.geteuid() != 0:
+        # BTRFS_IOC_TREE_SEARCH_V2 is CAP_SYS_ADMIN-only. Keep argv as given.
+        os.execvp("sudo", ["sudo", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+
+    images = args.image or sorted(glob.glob("/var/home/*.home"))
+    if not images:
+        print("no homed images found under /var/home", file=sys.stderr)
+        return 2
+
+    worst = 0
+    if not args.json:
+        print(f"{'image':<28} {'size':>8} {'referenced':>11} {'on disk':>9} {'stranded':>9} {'overhead':>9} {'extents':>8}")
+    for path in images:
+        try:
+            r = measure(path)
+        except OSError as e:
+            print(f"{path}: {e}", file=sys.stderr)
+            return 2
+        r["overhead_pct"] = round(100 * r["stranded"] / r["referenced"], 1) if r["referenced"] else 0.0
+        worst = max(worst, r["overhead_pct"])
+        if args.json:
+            print(json.dumps(r))
+        else:
+            print(f"{path:<28} {gib(r['size']):>8} {gib(r['referenced']):>11} {gib(r['on_disk']):>9} "
+                  f"{gib(r['stranded']):>9} {r['overhead_pct']:>8.1f}% {r['extents']:>8}")
+
+    if worst > args.max_overhead:
+        sys.stdout.flush()
+        if not args.json:
+            print(f"\nFAIL: an image occupies {worst:.1f}% more disk than it references (limit {args.max_overhead:g}%).\n"
+                  "Offline discard has stranded extents: `homectl inspect <user> | grep 'LUKS Discard'` should say\n"
+                  "offline=no. Only rewriting the image returns the space; see docs/skills/pam.md\n"
+                  "§ Offline discard strands btrfs extents.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
