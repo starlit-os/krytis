@@ -282,15 +282,56 @@ ignore:
     package:
       name: zip
       version: "8.5.1"
-  # ruby 4.0.6, BIT-ruby-2026-97229 (bitnami, Critical, KEV, fixed 4.0.8).
-  # Blocked publish from 2026-11-18. freedesktop-sdk components/ruby.bst is a
-  # build-only element: opencl.bst and asciidoctor.bst build-depend on it, and
-  # neither has it in its runtime closure (`bst show --deps run`). The SBOM lists
-  # it because it is generated with --deps all. Checked 2026-11-19 on a full
-  # build: no ruby binary, libruby, .rb or .gem file in the image, and no ruby
-  # entry in /usr/manifest.json. Version-pinned: re-check when the fdsdk junction
-  # moves ruby, and triage any new ruby advisory the same way.
+  # ruby 4.0.6 (freedesktop-sdk components/ruby.bst): build-only, not shipped.
+  # opencl.bst build-depends on it. asciidoctor.bst runtime-depends on it, but
+  # asciidoctor is itself only a build tool (man pages). The SBOM lists ruby
+  # because it is generated with --deps all. Checked 2026-11-19 on a full build:
+  # no ruby binary, libruby, .rb or .gem file in the image (so no asciidoctor
+  # either), and no ruby entry in /usr/manifest.json. Version-pinned: re-check
+  # when the fdsdk junction moves ruby, and triage any new ruby advisory the
+  # same way.
+  # - BIT-ruby-2026-97229 (bitnami, Critical, KEV, fixed 4.0.8). Blocked publish
+  #   from 2026-11-18.
+  # - Nine GHSAs from ruby-lang's 2026-11-18 Regexp/String advisory batch
+  #   (github:language:binary, 5 Critical, 3 High, 1 Medium; fixed 4.0.8-4.0.10). Blocked
+  #   publish run 44638046960 on 2026-11-20.
   - vulnerability: BIT-ruby-2026-97229
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-22mf-ggw7-pxfx
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-34m4-m9fh-gqp5
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-3p8q-wmhx-vm2w
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-7x2q-68qv-6p8x
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-qm4g-8pfh-6996
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-7whj-cfh7-xgm4
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-87fm-7w84-j2px
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-wpqw-5qxg-m68r
+    package:
+      name: ruby
+      version: "4.0.6"
+  - vulnerability: GHSA-pvgc-g7gj-pv6h
     package:
       name: ruby
       version: "4.0.6"
