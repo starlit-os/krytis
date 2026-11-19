@@ -78,6 +78,10 @@ config:
     # Pillow 13.0.0 ahead of the junction for GHSA-8g5g-8vmr-9782 (Critical,
     # JPEG decoder heap overflow). Drift and exit condition: `mise run python3-pil-check`.
     components/python3-pil.bst: overrides/python3-pil.bst
+    # ruby 4.0.10 ahead of the junction's 4.0.6 for BIT-ruby-2026-97229 (Critical,
+    # KEV). Ships as a runtime dependency of opencl. Drift and exit condition:
+    # `mise run ruby-check`.
+    components/ruby.bst: overrides/ruby.bst
     # Held at 0.3.0: niri's vendored libdisplay-info-sys caps at < 0.4.0 and
     # has no v0_4 bindings. Only niri and wlroots consume it.
     components/libdisplay-info.bst: overrides/libdisplay-info.bst

@@ -377,6 +377,35 @@ A new `overrides:` entry also needs its row in `docs/design/image-inventory.md`:
 `image-inventory --check` fails until that's done, and none of the other checks above
 notice the missing row.
 
+**Second case, with no fdsdk bump to mirror: ruby (2026-11-18).** The publish gate
+blocked on BIT-ruby-2026-97229 (ruby 4.0.6, Critical, KEV, fixed in 4.0.8). Ruby ships
+as a runtime dependency of fdsdk's `components/opencl.bst`, which
+`desktop/mesa-all-codecs.bst` pulls in. As of 2026-11-19 neither the 26.08.4 tag nor
+`release/26.08` had a newer ruby, and no fdsdk MR bumped it. What differed from Pillow:
+
+- **With no MR, mirror the junction's own element and change only the version.**
+  `overrides/ruby.bst` is fdsdk `114ae909`'s `components/ruby.bst` with a new tarball url
+  and sha256. Check the sha256 against the one in the upstream release announcement, not
+  just against what you downloaded.
+- **Take the newest patch release, not the advisory's minimum.** ruby-lang shipped 4.0.10
+  the same day as a second advisory (Regexp and String case conversion). Holding at 4.0.8
+  would have traded this match for the next one.
+- **A `kind: tar` url carries the version, so the drift check has to mask it.**
+  `ruby-check` reads the version from `ruby-X.Y.Z.tar` (or an anitya `version:`, since
+  fdsdk's `release/26.08` has already moved ruby to `kind: anitya`) and normalises the url
+  before diffing. Otherwise every legitimate bump reads as drift.
+- **fdsdk's url aliases don't resolve in krytis.** A verbatim copy of a `kind: tar`
+  element fails `bst show` with `Invalid alias 'tar_https'`: aliases are per-project.
+  Add a host alias to `include/aliases.yml` (`ruby_lang:`) and map one to the other in
+  the drift check's normaliser.
+- **Count the rebuild before you start.** Changing ruby's cache key rebuilds everything
+  that build-depends on it, not only its runtime consumers. Through
+  `components/asciidoctor.bst` that reaches `_private/util-linux-base.bst`,
+  `_private/cryptsetup-base.bst` and `components/dracut.bst`, so most of the image goes
+  cold. Plan a `cache-warm.yml` run before re-running `publish.yml`. The reverse-dependency
+  walk is the same sentinel trick as above:
+  `--format '@@%{name}%{deps}'`, then print each `@@` record that lists the element.
+
 ### `--fail-on` / severity gating
 
 Both `mise run vuln-scan --fail-on <severity>` and `mise run push --fail-on <severity>` pass straight through to Grype's own `-f/--fail-on` flag (`negligible|low|medium|high|critical`) — Grype exits 2 when a match at or above that severity exists; the wrapping task turns that into a normal non-zero exit. **No flag = warn-only** (report generated and attached either way, never blocks). **`mise run push`'s ordering (#392):** SBOM generation and the vuln scan run *before* login/tag/push — a `--fail-on` breach aborts there, before anything reaches the registry. This is possible because `buildstream-sbom` reads static element/source metadata via `bst show`, which does not require the image to be built (verified: `bst show` reports `oci/krytis/image.bst waiting` — not cached — in a checkout that still produces a complete, accurate SBOM). `.github/workflows/publish.yml` additionally runs `mise run vuln-scan --fail-on <severity>` as its own standalone step *before* `mise run build`, so a blocking finding skips the ~20-25 minute BST build entirely, not just the push — `mise run push`'s own scan-before-push is the defense-in-depth guarantee for the case where that earlier gate is skipped or `mise run push` is run standalone. Before #392, the image was already pushed by the time the scan ran, so `--fail-on` only failed the job after the fact (the same non-blocking shape as dakota's `publish-sbom` job, `continue-on-error: true`) — that ordering is no longer how this works.

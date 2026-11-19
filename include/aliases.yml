@@ -27,6 +27,10 @@ aliases:
   proton_me: https://proton.me/
   pypi: https://files.pythonhosted.org/packages/
   qemu: https://download.qemu.org/
+  # ruby-lang's release tarballs. fdsdk reaches the same host through its own
+  # generic `tar_https:` alias, which doesn't exist in this project
+  # (overrides/ruby.bst, mise/tasks/ruby-check).
+  ruby_lang: https://cache.ruby-lang.org/
   # Tailscale's own package host. Stable Linux tarballs only; GitHub releases
   # carry no assets. distsign.pub lives at the host root, not under stable/
   # (mise/tasks/tailscale-update).
