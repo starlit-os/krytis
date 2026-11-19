@@ -73,8 +73,9 @@ time from `SOURCE_DATE_EPOCH` instead (`asn1_timestamp()` in systemd v262
   stays in the image for `sbverify` and `sbsiglist` anyway.
 - **Krytis gains reproducibility, not smaller updates.** Dakota's motivation was layer
   churn: a re-signed kernel forced a new kernel-modules layer on every update. A sealed
-  krytis image is still published as one squashed layer, so that doesn't apply here yet. It
-  will once publish chunks the sealed image (#1688, § Chunk after sealing, not before). The check is to seal the same commit twice and compare the
+  krytis image was published as one squashed layer, so that didn't apply here. Since #1688
+  publish chunks the sealed image (§ Chunk after sealing, not before), so a re-signed UKI or
+  systemd-boot now costs only its own layer. The check is to seal the same commit twice and compare the
   `sha256sum` of `/usr/lib/systemd/boot/efi/systemd-bootx64.efi` and
   `/boot/EFI/Linux/krytis.efi` in the two images. The UKI only matches when its unsigned
   inputs match too.
@@ -345,7 +346,8 @@ podman build --squash-all -t localhost/krytis:sealed \
 ### Chunk after sealing, not before
 
 Both `seal-uki` phases end in `--squash-all`, so chunking before sealing gets flattened again.
-Chunk the finished `:sealed` image instead. `mise run chunkify` doesn't change the composefs
+Chunk the finished `:sealed` image instead, which is what `publish.yml`'s "Rechunk :sealed" step
+does (#1688). `mise run chunkify` doesn't change the composefs
 digest, so the UKI's baked digest stays valid. Measured for #1688 on 2026-11-19 (bootc
 1.17.4, chunkah v0.7.1):
 

@@ -1099,8 +1099,7 @@ values are strings).
 
 **Audit every input when adding a trigger, not just the one you came for.** The
 null default is only wrong where falsy is not the safe answer. In the same
-workflow `report_only` (falsy → the severity gate blocks), `force_self_hosted`
-(falsy → Blacksmith) and `allow_branch_publish` (falsy, and a scheduled run
+workflow `report_only` (falsy → the severity gate blocks) and `allow_branch_publish` (falsy, and a scheduled run
 always carries the default branch) were all *correct* when null and needed no
 change. Only a `default: true` input is a live trap.
 
@@ -2322,22 +2321,23 @@ bb-storage's SSD.
 | Workflow | Runner | Rationale |
 |---|---|---|
 | `cache-warm.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Blacksmith was the default from #351 until #794 inverted it. A `schedule`-triggered job can never satisfy a `workflow_dispatch`-only opt-in, so the cron run, the one that actually recurs, was stuck paying Blacksmith overage no matter how much dispatched work got routed elsewhere by hand. The `force_blacksmith` fallback that #794 left was removed on 2026-10-09 (#1127): a cold full build is 12h19m on the VPS (#1126), over a hosted runner's 6h. See § Always-on VPS Runner |
-| `publish.yml` | `blacksmith-4vcpu-ubuntu-2404` (default; `8vcpu` until 2026-10-07, see § Sizing the `publish.yml` runner); `[self-hosted, linux, x64]` via `workflow_dispatch` input `force_self_hosted` | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). The escape hatch is for debugging a publish failure on real hardware or falling back when Blacksmith is degraded. Because the input is unconditional (`inputs.force_self_hosted`, no `github.event_name` guard), it is null on the cron run and the job lands on Blacksmith — which is the wanted default. The sealed steps needed the opposite treatment: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** — the self-hosted *container* runner has no podman; see § The self-hosted runner container has no podman |
+| `publish.yml` | `blacksmith-4vcpu-ubuntu-2404`, no override (`8vcpu` until 2026-10-07, see § Sizing the `publish.yml` runner) | Blacksmith-default, and deliberately *not* inverted alongside `cache-warm.yml` even though #824 gave this job a `schedule:` (`30 3 * * 1-5`) — the unattended run is exactly the one that must stay on an ephemeral host, because a sealed publish puts the six UEFI private keys in the workspace. Routing it to `krytis-vps` was investigated and declined (§ Host-native, not a container; `docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md`). A `force_self_hosted` escape hatch to `[self-hosted, linux, x64]` existed until #1688 dropped it: it made every self-hosted runner with GitHub's default labels eligible to hold the UEFI keys. The sealed steps needed their own treatment for the cron run: `inputs.publish_sealed` is null on `schedule` too, so the job resolves `env.PUBLISH_SEALED` once from `github.event_name == 'schedule' \|\| inputs.publish_sealed`, or the nightly run would publish `:latest` and never refresh `:sealed`. **Sealed builds belong on Blacksmith** |
 | `build-iso.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | The VPS is the only runner provisioned with the host tools the job needs (`squashfs-tools`, `mtools`, `dosfstools`, `rclone`); provisioning an ephemeral runner for those on every dispatch repeats work the always-on box has already done. See § `build-iso.yml` |
 | `build-changed.yml` | `[self-hosted, linux, x64, krytis-vps]`, no override | Same-repo PRs only. The VPS's local CAS already holds the closure cache-warm built, so the whole job for a rebuilt `core/sudo-rs.bst` takes about 2 minutes; a hosted runner would pull the closure from bow first. See § PR build gate: `build-changed.yml` (#743) |
 | `bench-cold-build.yml` | `workflow_dispatch` input `runner`: `[self-hosted, linux, x64, krytis-vps]`, or a bench box's own single label, added to the input's options while that box exists (#1126's `bench-onecom-l` became `krytis-vps` and was removed from the options, #1145) | Benchmarks the runner itself, so the input is the subject, not an override. A bench box carries no default labels, so nothing aimed at `[self-hosted, linux, x64]` reaches it. See § Cold-build benchmark: `bench-cold-build.yml` (#1126) |
 | `track-bst-sources.yml` | `ubuntu-26.04` | Lightweight; must run when local machine is off |
 | `checks.yml`, `vuln-scan.yml`, `vuln-diff.yml`, `verify-sealed.yml`, `grype-db-cache.yml` | `ubuntu-26.04` | Static gates, SBOM/Grype scans, the daily Grype database cache refresh and the QEMU enrollment gate. None of them runs a BST build, so a hosted runner is enough and nothing needs the VPS's provisioned toolchain. Moving `vuln-diff.yml` to `krytis-vps` was considered on 2026-10-09 and declined. It would queue behind `build-changed`/cache-warm on the one runner slot, and it runs fork-PR code (after approval) as root on a persistent box. Its ~73s first-Grype-call cost was the database import, which the Actions cache now removes on hosted runners (#1156) |
 
-The self-hosted override only takes effect on a manual `workflow_dispatch` run. `publish.yml` needs no guard, because its override defaults to Blacksmith, so the null input on its cron run already picks the wanted host. `cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above) — as long as no element inlines `%{max-jobs}` into a command, which *would* key it (§ `max-jobs` does NOT affect cache keys, caveat). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
+`cache-warm.yml` derives `builders`/`max-jobs` from the runner it lands on (§ Build concurrency is `builders` x `max-jobs`), which does not affect cache-key matching because `max-jobs` is excluded from cache keys (see above) — as long as no element inlines `%{max-jobs}` into a command, which *would* key it (§ `max-jobs` does NOT affect cache keys, caveat). `publish.yml` does not: it inherits `mise/tasks/bst`'s `max-jobs: 4` and BuildStream's default `builders: 4` on every runner size.
 
-**`force_self_hosted` reaches every runner that carries GitHub's default labels.** It targets
-`["self-hosted","linux","x64"]`, and `config.sh` adds exactly those three labels to every
-runner unless it is given `--no-default-labels`. So any self-hosted runner registered to this
-repo is eligible for a sealed publish, which writes the six UEFI private keys into the
-workspace. That includes krytis-vps, the local container runner, and any box registered later
-for a trial. A runner that must never see a publish has to be registered with
-`--no-default-labels` and its own label only.
+**`runs-on: [self-hosted, linux, x64]` reaches every runner that carries GitHub's default
+labels.** `config.sh` adds exactly those three labels to every runner unless it is given
+`--no-default-labels`, so a job aimed at them can land on krytis-vps, the local container
+runner, or any box registered later for a trial. `publish.yml`'s `force_self_hosted` input
+targeted those labels, which made every one of those runners eligible for a sealed publish and
+its six UEFI private keys. That is why #1688 removed it. Give a runner that must never see a
+particular job `--no-default-labels` and its own label only, and keep any key-holding job on
+an ephemeral hosted runner.
 
 **Fork PRs can name any self-hosted label, so the fork-PR approval policy is
 `all_external_contributors`.** A `pull_request` run uses the workflow file from the PR, so a
@@ -2362,9 +2362,13 @@ with `gh api repos/starlit-os/krytis/actions/permissions/fork-pr-contributor-app
   that, not on `runs-on:` or the runner name.
 - **Documented disk is a floor, not the size.** Blacksmith documents 160 GB for `8vcpu`; run
   37450736296's `Maximize build space` step showed a 246G root, 23G used after cleanup. `4vcpu`
-  is documented at 80 GB, while `mise/tasks/bst` sets a 50G CAS quota and podman storage holds
-  the plain and sealed images on top of it. The job's last diagnostic step, "Record disk usage
-  after build", reports how close a run came to the limit.
+  is documented at 80 GB, but publish run 44579083328 (2026-11-19, 4vcpu) had a 150G root: 25G
+  used after cleanup, 64G at the end of the job, 79G still free. `mise/tasks/bst` sets a 50G CAS
+  quota and podman storage holds the plain and sealed images on top of it. Since #1688 each image
+  also gets rechunked, which briefly holds a root-store copy, the chunked copy and an overlay
+  upper dir; `chunkify --drop-root-copy` deletes the root-store copies once the chunked image is
+  back in the rootless store. The job's last diagnostic step, "Record disk usage after build",
+  reports how close a run came to the limit.
 - **Parallelism does not shrink with the runner.** 4 builders × `max-jobs: 4` = up to 16
   compilers either way (§ Build concurrency is `builders` x `max-jobs` budgets 2 GiB per
   slot). On 32 GB that fit; on 16 GB it does not, so a publish that has to compile a heavy
@@ -2407,14 +2411,15 @@ shells out to podman therefore dies on the self-hosted runner with:
 ./mise/tasks/load-image: line 69: podman: command not found      # exit 127
 ```
 
-`publish.yml` carries a guarded install so the `force_self_hosted` escape hatch works:
+`verify-sealed.yml` carries a guarded install for that reason:
 
 ```yaml
 run: command -v podman >/dev/null || sudo apt-get install -y -qq podman
 ```
 
-Same shape as the one in `verify-sealed.yml`. The `command -v` guard keeps it a no-op on
-a runner that already has podman.
+The `command -v` guard keeps it a no-op on a runner that already has podman. `publish.yml`
+had the same step for its `force_self_hosted` escape hatch until #1688 removed both: it only
+runs on Blacksmith, whose image ships podman.
 
 A red herring in those logs: `dnf: 6 package(s) skipped (dnf not found)` is expected on
 Ubuntu — `[bootstrap.packages]` lists `apt:` and `dnf:` variants and only the matching
@@ -2424,7 +2429,7 @@ set applies. Unrelated to any failure.
 
 **Every sealed image this project has published was built on Blacksmith, with podman
 4.9.3 / buildah 1.33.7** (its image mirrors GitHub's `ubuntu-24.04`). `publish.yml` has
-used Blacksmith since #388; #511 only *added* the `force_self_hosted` input.
+used Blacksmith since #388; #511 only *added* a `force_self_hosted` input, which #1688 removed.
 
 #524 asserted `podman >= 5` in `seal-uki`, reasoning that the two-phase squash was only
 ever verified on 5.x, and routed sealed runs to self-hosted to satisfy it. Both halves

@@ -155,12 +155,34 @@ reading the TSV.
 
 ## chunkify task (#30)
 
-`mise chunkify` mounts `localhost/krytis:latest` as a writable overlay,
+`mise chunkify` mounts `localhost/krytis:latest` (or `--tag`) as a writable overlay,
 runs `fakecap-restore` to physically set `user.component` xattrs from
 `files/fakecap-manifest.tsv`, then runs the pinned `chunkah` container
 against the overlay and re-tags the result back onto the same image tag —
 no new tag, so the `--composefs-backend` flag `mise generate-disk` already
 passes to `bootc install to-disk` needed no change.
+
+**The rootless store is the image of record; the root store is scratch (#1688).** `mise run
+build`, `seal-uki`, `push` and `generate-disk` all read the invoking user's store, but chunking
+needs root (the overlay mount, chunkah's raw xattr reads). So, run as a normal user, the task
+copies the image into the root store with `load-image-root`, chunks it there, copies the result
+back with `sudo podman save --format oci-archive | podman load`, and re-tags it by ID. It then
+removes the unchunked image from both stores. `--drop-root-copy` also removes the chunked root
+copy, for CI's disk. Before #1688 the result stayed in the root store only, so `generate-disk`
+(which calls `load-image-root`) saw a different rootless ID and copied the unchunked image over
+it. Run as root, the task works on the root store directly, as before.
+
+**A sealed image gets its digest checked on the way out.** If the result has
+`/boot/EFI/Linux/krytis.efi`, the task runs `verify-composefs-digest` against it before it
+returns. chunking doesn't change the digest (§ What chunked images look like), but the check
+costs about a minute, and a wrong digest would otherwise only show up when someone installs.
+
+**`publish.yml` chunks both images (#1688).** "Rechunk :latest" runs after `mise run build`, and
+"Rechunk :sealed" runs after an explicit `mise run seal-uki` and before `push --sealed`. Both
+pass `--drop-root-copy`. chunkah keeps the source image's `Created` timestamp, so
+`scripts/ensure-sealed-image.sh`'s freshness check (sealed newer than `:latest`) still holds and
+`push --sealed` doesn't seal again. `files/fakecap-manifest.tsv` stays hand-regenerated: a
+stale manifest only grows the `chunkah/unclaimed` layer.
 
 **Overlay tmpdir disk-pressure fix**, ported from dakota's `e0b5a52`
 (upstream `projectbluefin/dakota`, 2026-06-13 — confirmed via `git log

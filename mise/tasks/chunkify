@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 #MISE description="Rechunk localhost/krytis:latest into composefs-ready component layers via chunkah"
 #USAGE flag "--tag <tag>" default="localhost/krytis:latest" help="Image tag to chunkify in place"
+#USAGE flag "--drop-root-copy" help="Delete the root-store copy once the chunked image is back in the rootless store (CI disk headroom; generate-disk re-copies on demand)"
 
 set -euo pipefail
 
 TAG="${usage_tag:-localhost/krytis:latest}"
+DROP_ROOT_COPY="${usage_drop_root_copy:-false}"
+# Consume flags passed as literal args by a caller that runs this file
+# directly (see docs/skills/mise.md § Propagating flags through tasks that call
+# other tasks).
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tag) TAG="$2"; shift 2 ;;
+        --drop-root-copy) DROP_ROOT_COPY=true; shift ;;
+        *) break ;;
+    esac
+done
 
 # Pinned chunkah image — bump via `mise chunkah-update` (see Task 4).
 CHUNKAH_REF="quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523"
@@ -12,10 +24,24 @@ CHUNKAH_REF="quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3
 echo "==> Chunkifying ${TAG}..."
 
 SUDO_CMD=""
+ROOTLESS=false
 if [ "$(id -u)" -ne 0 ]; then
     SUDO_CMD="sudo"
+    ROOTLESS=true
 fi
 
+# The image of record is the invoking user's: `mise run build` and `seal-uki`
+# write the rootless store, and `push` and `generate-disk` read it. chunking
+# needs root (overlay mount, chunkah's xattr reads), so copy the image into the
+# root store, chunk it there, and copy the result back under the same tag
+# (#1688). Before this, `generate-disk`'s load-image-root saw a rootless ID that
+# differed from the chunked root copy and overwrote the chunked image with the
+# unchunked one.
+if [ "${ROOTLESS}" = true ]; then
+    "$(dirname "$0")/load-image-root" --image "${TAG}"
+fi
+
+SRC_ID=$($SUDO_CMD podman image inspect --format '{{.Id}}' "${TAG}")
 CONFIG=$($SUDO_CMD podman inspect "${TAG}")
 
 FAKECAP_RESTORE="$(pwd)/files/fakecap/fakecap-restore"
@@ -24,7 +50,7 @@ if [ ! -x "${FAKECAP_RESTORE}" ]; then
     gcc -O2 -o "${FAKECAP_RESTORE}" "$(pwd)/files/fakecap/fakecap-restore.c"
 fi
 
-LOWER=$($SUDO_CMD podman image mount "${TAG}")
+LOWER=$($SUDO_CMD podman image mount "${SRC_ID}")
 
 # Initialize overlay variables early so cleanup trap is always safe.
 UPPER=""
@@ -36,7 +62,8 @@ cleanup() {
     [ -n "$UPPER" ] && $SUDO_CMD rm -rf "$UPPER" || true
     [ -n "$WORK" ] && $SUDO_CMD rm -rf "$WORK" || true
     [ -n "$MERGED" ] && $SUDO_CMD rm -rf "$MERGED" || true
-    $SUDO_CMD podman image umount "${TAG}" >/dev/null 2>&1 || true
+    # By ID: TAG names the chunked image by the time this runs.
+    $SUDO_CMD podman image umount "${SRC_ID}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -99,6 +126,45 @@ fi
 if [ -n "${NEW_REF}" ] && [ "${NEW_REF}" != "${TAG}" ]; then
     echo "==> Retagging chunked image to ${TAG}..."
     $SUDO_CMD podman tag "${NEW_REF}" "${TAG}"
+fi
+
+NEW_ID=$($SUDO_CMD podman image inspect --format '{{.Id}}' "${TAG}")
+LAYERS=$($SUDO_CMD podman image inspect --format '{{len .RootFS.Layers}}' "${TAG}")
+echo "==> ${TAG} is ${NEW_ID:0:12}, ${LAYERS} layers."
+if [ "${LAYERS}" -le 1 ]; then
+    echo "==> ERROR: chunkah produced ${LAYERS} layer(s); expected more than one." >&2
+    exit 1
+fi
+
+# Release the overlay and the source mount now: the cleanup trap would do it
+# at exit, but the source image can't be removed while it is mounted.
+cleanup
+trap - EXIT
+MERGED=""; UPPER=""; WORK=""
+
+if [ "${ROOTLESS}" = true ]; then
+    echo "==> Copying the chunked image back to the rootless store..."
+    $SUDO_CMD podman save --format oci-archive "${TAG}" | podman load
+    podman tag "${NEW_ID}" "${TAG}"
+    # The unchunked rootless image is now untagged. Remove it by ID so it
+    # doesn't sit in storage (~7 GB); skip quietly if something else still
+    # tags it.
+    podman rmi "${SRC_ID}" >/dev/null 2>&1 || true
+fi
+# Same for the unchunked root-store copy, which nothing reads any more.
+$SUDO_CMD podman rmi "${SRC_ID}" >/dev/null 2>&1 || true
+if [ "${ROOTLESS}" = true ] && [ "${DROP_ROOT_COPY}" = true ]; then
+    $SUDO_CMD podman rmi "${TAG}" >/dev/null 2>&1 || true
+    echo "==> Dropped the root-store copy (--drop-root-copy)."
+fi
+
+# chunkify must not change the composefs digest (#1688: identical digests and
+# dumpfiles before and after, measured 2026-11-19). For a sealed image that is
+# what keeps the UKI valid, so check it here rather than trust it: a mismatch
+# would only surface at install time, on a user's machine.
+if podman run --rm --entrypoint /bin/sh "${TAG}" -c '[ -f /boot/EFI/Linux/krytis.efi ]' 2>/dev/null; then
+    echo "==> Sealed image: verifying the UKI's composefs digest against the chunked image..."
+    "$(dirname "$0")/verify-composefs-digest" --image "${TAG}"
 fi
 
 echo "==> Done: ${TAG} is now composefs-ready."
