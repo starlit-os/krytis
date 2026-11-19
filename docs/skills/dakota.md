@@ -315,7 +315,7 @@ the rule stands on its own.
 `workflow_run` off `"Publish krytis image"`, and then at `:111`/`:114` runs
 `podman pull ghcr.io/starlit-os/krytis:sealed` and hands the same **mutable tag** to
 `mise run enroll-test` — re-resolved at pull time, with nothing tying it to the run that
-triggered it. The producer already computes the receipt: the `Build and push sealed
+triggered it. The producer already computes the receipt: the `Push sealed
 version tag` step in `publish.yml` writes `krytis-sealed-digests.env`, and the sealed
 sign and promote steps read `image_digest` from that same file, resolving
 `ghcr.io/starlit-os/krytis@${image_digest}`. It is just never uploaded (`publish.yml`

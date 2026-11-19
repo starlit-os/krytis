@@ -98,15 +98,18 @@ rootfs it was computed against. See `docs/design/secure-boot-testing.md`.
 
 ## Build workflow (with composefs)
 
-`mise run build` is `generate-image-version` + `load-image` + `lint`; `chunkify` is a
-separate step run against the built image, not part of that task:
+`mise run build` ends with `lint` and the image gates; `chunkify` is a separate step run
+against the built image, not part of that task. `publish.yml` runs it for both published
+images since #1688: after the build for `:latest`, and after `seal-uki` for `:sealed`
+(sealing squashes, so chunking has to come last; see
+`docs/skills/secure-boot.md` § Chunk after sealing, not before).
 
 ```
 generate-image-version
 validate
 load-image          → localhost/krytis-input:latest
 lint                → localhost/krytis:latest  (single squashed layer)
-chunkify            → localhost/krytis:latest  (same tag, composefs layers)
+chunkify            → localhost/krytis:latest  (same tag, up to 120 layers, back in the rootless store)
 generate-disk       → bootable.raw  (composefs-backend, already enabled)
 boot-vm
 ```

@@ -37,10 +37,6 @@ on:
         description: 'Also build and publish the sealed (signed UKI) image to :sealed. Needs the PROTON_PASS_PAT secret; runs after the unsigned image is published and verified.'
         type: boolean
         default: true
-      force_self_hosted:
-        description: 'Run on the self-hosted runner instead of Blacksmith'
-        type: boolean
-        default: false
       force_publish:
         description: 'Publish even if this version is already pushed and promoted (re-sign, refresh the SBOM and vulnerability report)'
         type: boolean
@@ -70,8 +66,7 @@ env:
   #
   # The other inputs are safe when null and deliberately left alone:
   # report_only falsy means the severity gate blocks (the strict default),
-  # force_self_hosted falsy means Blacksmith, force_publish falsy means the
-  # check below decides, allow_cold_cache falsy means the cold-cache gate
+  # force_publish falsy means the check below decides, allow_cold_cache falsy means the cold-cache gate
   # enforces, and allow_branch_publish falsy is fine because a
   # scheduled run always carries the default branch, which the ref gate
   # accepts.
@@ -123,25 +118,20 @@ jobs:
     # (empty output) still publishes: a broken check costs a redundant
     # publish, never a missed one.
     if: ${{ !cancelled() && needs.check.outputs.publish != 'false' }}
-    # Defaults to Blacksmith; workflow_dispatch can force the self-hosted
-    # runner (docs/skills/ci-runner.md) to debug on the real hardware or
-    # work around a Blacksmith outage/limit. Nothing else in this job is
-    # Blacksmith-specific.
+    # Blacksmith only. Every sealed image this project has published was built
+    # there, and those artifacts are hardware-validated. A force_self_hosted
+    # input used to route this job to any runner with GitHub's default labels;
+    # it was dropped with #1688, because no self-hosted runner may hold the
+    # UEFI signing keys (docs/plans/done/2026-09-25-publish-on-krytis-vps-verification.md).
     #
-    # Blacksmith is where EVERY sealed image this project has published was
-    # built, and those artifacts are hardware-validated. #524 briefly routed
-    # sealed runs to the self-hosted runner on a false premise; that runner's
-    # container image (ubuntu:24.04, Containerfile.runner) ships no podman at
-    # all, so it is the worse host for this job, not the better one.
-    #
-    # 4 vCPU / 16 GB / 80 GB (documented) since 2026-10-07, down from 8vcpu, to
+    # 4 vCPU / 16 GB since 2026-10-07, down from 8vcpu, to
     # measure what the halved core count costs in build time. The parallelism
     # is unchanged — mise/tasks/bst pins max-jobs 4 with BuildStream's default
     # builders, so the same 16 compile slots now share 16 GB instead of 32.
     # Blacksmith may silently bump a 4vcpu job to 8vcpu when it has spare
     # capacity, so compare runs by the "Record runner size" output, not by
     # the label. See docs/skills/ci-runner.md § Sizing the `publish.yml` runner.
-    runs-on: ${{ inputs.force_self_hosted && fromJSON('["self-hosted","linux","x64"]') || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 420
     env:
       # The signer identity every verification in this job pins: publish.yml in
@@ -217,23 +207,6 @@ jobs:
         # package lists, and a superseded .deb 404s on install (#900).
         run: mise bootstrap --yes --update
 
-      - name: Ensure podman is present
-        # podman is not declared in mise.toml's [bootstrap.packages]; it is
-        # assumed to be baked into the runner. That holds on Blacksmith, whose
-        # image mirrors GitHub's ubuntu-24.04 (Podman 4.9.3, Buildah 1.33.7) —
-        # which is where every published sealed image has actually been built.
-        #
-        # It does NOT hold on the self-hosted runner: Containerfile.runner is
-        # FROM ubuntu:24.04 and installs no podman, and runner/start mounts none
-        # from the host. So a `force_self_hosted=true` dispatch died at
-        #   ./mise/tasks/load-image: line 69: podman: command not found
-        # (exit 127, run 31126498486). This step is what makes that escape hatch
-        # usable at all.
-        #
-        # `command -v` guard so a runner that already has podman is left alone.
-        # Same shape as the install in verify-sealed.yml.
-        run: command -v podman >/dev/null || sudo apt-get install -y -qq podman
-
       - name: Install Python dependencies
         run: uv sync
 
@@ -250,9 +223,6 @@ jobs:
         # nothing else. No Tailscale secret is stored here: client ID and
         # audience are repo variables, and the credential only accepts
         # subjects repo:starlit-os/krytis:ref:refs/heads/* (no PR runs).
-        # Skipped on force_self_hosted: krytis-runner's host is already a
-        # tailnet node, and a second tailscaled in the runner would clash.
-        if: ${{ !inputs.force_self_hosted }}
         uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
         with:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
@@ -263,7 +233,6 @@ jobs:
         # The action's README: a new node propagates through the tailnet
         # eventually, and peers refuse it until then. Wait for the Service to
         # resolve and accept TCP rather than letting the cache gate fail on it.
-        if: ${{ !inputs.force_self_hosted }}
         run: |
           for i in $(seq 30); do
             if timeout 3 bash -c '</dev/tcp/bst-cache.werewolf-stonecat.ts.net/7982' 2>/dev/null; then
@@ -337,6 +306,17 @@ jobs:
           # Same cap as the toolchain check above (#1507).
           BST_CACHE_QUOTA: 50G
         run: mise run build --pull
+
+      - name: Rechunk :latest into component layers
+        # `mise run build` leaves one squashed layer, so every bootc upgrade
+        # downloaded the whole ~3.2 GB image (#1688). chunkah splits it into up
+        # to 120 layers grouped by BST element; an upgrade then skips the
+        # layers it already has and fetches the rest in parallel. Two
+        # independent builds shared 110 of 120 layers when measured. The
+        # composefs digest is unchanged by this (docs/skills/chunkah.md).
+        # --drop-root-copy: chunkify works in the root store and copies back;
+        # the root copy is dead weight on this runner.
+        run: mise run chunkify --drop-root-copy
 
       - name: Push version tag, attach SBOM + vulnerability report
         id: push
@@ -463,7 +443,26 @@ jobs:
         if: env.PUBLISH_SEALED == 'true'
         run: mise run pull-keys
 
-      - name: Build and push sealed version tag
+      - name: Build sealed image
+        # Explicit, so the rechunk below sits between sealing and pushing.
+        # `push --sealed` would otherwise run seal-uki itself through
+        # scripts/ensure-sealed-image.sh; it skips that here because the
+        # sealed image is newer than :latest (chunkah keeps the source
+        # image's Created timestamp).
+        if: env.PUBLISH_SEALED == 'true'
+        run: mise run seal-uki
+
+      - name: Rechunk :sealed into component layers
+        # After sealing, never before: both seal-uki phases end in
+        # --squash-all, which would flatten the layers again. chunkify leaves
+        # the composefs digest unchanged, so the UKI stays valid; it runs
+        # verify-composefs-digest on the result before returning, so a
+        # mismatch fails here instead of on a user's install
+        # (docs/skills/secure-boot.md § Chunk after sealing, not before).
+        if: env.PUBLISH_SEALED == 'true'
+        run: mise run chunkify --tag localhost/krytis:sealed --drop-root-copy
+
+      - name: Push sealed version tag
         id: push-sealed
         if: env.PUBLISH_SEALED == 'true'
         env:
@@ -533,7 +532,9 @@ jobs:
       - name: Record disk usage after build
         # Diagnostic only. The BuildStream CAS and podman storage both persist
         # to the end of the job, so this is close to peak usage: the headroom
-        # number that decides whether the 80 GB 4vcpu runner disk is enough.
+        # number that decides whether the 4vcpu runner disk is enough (documented
+        # 80 GB; run 44579083328 had 150G and ended at 64G used, before #1688
+        # added rechunking).
         if: always()
         run: df -h / || true
 

@@ -33,13 +33,15 @@ require_key_pairs files/boot-keys
 # docs/skills/secure-boot.md § `bootc container ukify` must run in a
 # throwaway stage / § `--composefs-backend` requires a single layer, but
 # squashing breaks the UKI digest for the full reasoning. Short version:
-# `--composefs-backend` requires a single-layer image (multi-layer fails
-# with "Unexpected EOF in splitstream", matching dakota#841), but squashing
+# the raw multi-layer build fails `--composefs-backend` installs ("Unexpected
+# EOF in splitstream", matching dakota#841), so it must be squashed, but squashing
 # changes /tmp and /var/tmp mtimes, which breaks the UKI's baked composefs=
 # digest if squashing happens after ukify runs. So: squash first (producing
 # a stable reference), compute the digest against that already-squashed
 # reference, then squash again for the final image — verified to produce a
-# matching digest AND a single-layer image.
+# matching digest AND a single-layer image. chunkify can split that image into
+# component layers afterwards without touching the digest (#1688); publish.yml
+# does.
 
 echo "==> [1/3] Building + squashing sealed rootfs -> localhost/krytis:sealed-base..."
 podman build --squash-all --target sealed -t localhost/krytis:sealed-base \
