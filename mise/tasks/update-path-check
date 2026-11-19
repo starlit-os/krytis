@@ -88,10 +88,6 @@ DERIVED = {
         "freedesktop-sdk's components/python3-pil.bst, taken ahead of the junction for a CVE",
         "python3-pil-check",
     ),
-    "overrides/ruby.bst": (
-        "freedesktop-sdk's components/ruby.bst, taken ahead of the junction for a CVE",
-        "ruby-check",
-    ),
 }
 
 # element -> the decision that blocks moving it. Empty is the healthy state.

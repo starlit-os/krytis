@@ -80,11 +80,6 @@ These look like carries but are out of scope for this file and its check:
   - `overrides/libdisplay-info.bst`: holds the 0.3.0 version. `mise run libdisplay-info-check`
     is an exit-condition check, not a drift check, by design. It fails when niri's
     vendored `libdisplay-info-sys` stops capping below 0.4.0.
-  - `overrides/ruby.bst`: runs ruby 4.0.10 ahead of the junction's 4.0.6 for
-    BIT-ruby-2026-97229 (Critical, KEV), which blocked the 2026-11-18 and 2026-11-19
-    scheduled publishes. Only the tarball version differs from fdsdk's element, so it
-    isn't a carry. `mise run ruby-check` checks drift and fails once the junction
-    ships ruby ≥ 4.0.10.
   - `overrides/frei0r.bst` disabled SSE 4.1 on x86_64 (`-mno-sse4.1`) for
     dyne/frei0r#228/#239. It was dropped on 2026-11-04: dyne/frei0r#285 fixed the build
     in v3.3.0 (2026-08-16), and the junction's v3.6.0 builds without the flag. The

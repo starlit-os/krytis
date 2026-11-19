@@ -221,7 +221,6 @@ element does, its row's text is a review question.
 | `overrides/libdecor.bst` | `freedesktop-sdk.bst:components/libdecor.bst` | Built without its GTK3 plugin (#1075). |
 | `overrides/plymouth.bst` | `freedesktop-sdk.bst:components/plymouth.bst` | Built without its GTK3 X11 renderer (#1035). |
 | `overrides/python3-pil.bst` | `freedesktop-sdk.bst:components/python3-pil.bst` | Pillow 13.0.0, one release ahead of the junction, for a Critical JPEG decoder overflow (GHSA-8g5g-8vmr-9782). |
-| `overrides/ruby.bst` | `freedesktop-sdk.bst:components/ruby.bst` | ruby 4.0.10, ahead of the junction's 4.0.6, for a Critical KEV-listed advisory (BIT-ruby-2026-97229). |
 | `overrides/libdisplay-info.bst` | `freedesktop-sdk.bst:components/libdisplay-info.bst` | Held at 0.3.0 for niri's bindings. |
 | `core/openssh.bst` | `freedesktop-sdk.bst:components/openssh.bst` | Config under `/etc/ssh/` with an `Include` for drop-ins (#408). |
 | `desktop/mesa-all-codecs.bst` | `freedesktop-sdk.bst:extensions/mesa/mesa.bst` | Mesa built with `video_codecs: all`. |

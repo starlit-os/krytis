@@ -1783,9 +1783,9 @@ If the exception is dropped, add the standard patterns. oo7 has used `.alpha`, `
 `-beta.3` (`0.1.0-beta.3`).
 
 **Junction mirrors are the exception: leave their `track:` exactly as upstream wrote it,
-with no added `exclude:`.** `elements/overrides/{btrfs-progs,libdisplay-info,libdecor,libportal,plymouth,python3-pil,ruby}.bst`
+with no added `exclude:`.** `elements/overrides/{btrfs-progs,libdisplay-info,libdecor,libportal,plymouth,python3-pil}.bst`
 copy an fdsdk or gnome-build-meta element verbatim. They are deliberately kept out of the
-track matrix and are pinned to the junction's ref (python3-pil and ruby run ahead of it);
+track matrix and are pinned to the junction's ref (python3-pil runs one release ahead of it);
 their `track:` exists only so the copy matches upstream's element. An added `exclude:`
 protects nothing there, and it fails `mise run btrfs-progs-check` and `mise run
 python3-pil-check`, which compare the whole
@@ -1919,10 +1919,10 @@ any element with a network source that isn't in one of three lists:
 - **`PINNED`**, with a written decision that blocks the move. Its rule: "A missing updater
   is not a pin reason."
 
-Krytis's version is `mise/tasks/update-path-check`. Its `DERIVED` table holds the
-junction mirrors and overrides (count them in the task, not here). Each entry names what the element follows and, where one
+Krytis's version is `mise/tasks/update-path-check`. Its `DERIVED` table holds the eight
+junction mirrors and overrides. Each entry names what the element follows and, where one
 exists, the check task that catches drift (`btrfs-progs-check`, `gtk3-mirror-check`,
-`libdisplay-info-check`, `python3-pil-check`, `ruby-check`, `gnome-disk-utility-check`). `PINNED` is
+`libdisplay-info-check`, `python3-pil-check`, `gnome-disk-utility-check`). `PINNED` is
 empty. The task also fails on a stale entry: an element that's gone, has no network source
 any more, or is now in the workflow anyway, and on a DERIVED entry whose check task doesn't
 exist. **None of those check tasks runs in any workflow** (`grep -rn <task> .github/` finds
@@ -4087,7 +4087,7 @@ BST validates `kind: local` paths at resolution time (before any build), so the 
 
    Convention: every `elements/overrides/*.bst` gets a matching `mise run <name>-check` task. A mirror without a check is a mirror that will rot silently. There are two shapes of check, and picking the wrong one makes it useless:
 
-   - **Drift checks**, for mirrors that are meant to equal upstream apart from a patch — `btrfs-progs-check`, `python3-pil-check`, `ruby-check`, `gnome-disk-utility-check` (and `rust-bindgen-check` until #1222, `abseil-cpp-check`/`systemd-base-check` until #483). They diff the copy against the junction's version and re-apply the patches. They fail when upstream moves.
+   - **Drift checks**, for mirrors that are meant to equal upstream apart from a patch — `btrfs-progs-check`, `python3-pil-check`, `gnome-disk-utility-check` (and `rust-bindgen-check` until #1222, `abseil-cpp-check`/`systemd-base-check` until #483). They diff the copy against the junction's version and re-apply the patches. They fail when upstream moves.
    - **Exit-condition checks**, for overrides that are *deliberately* different — `libdisplay-info-check`, which holds 0.3.0 while the junction ships 0.4.0. Diffing that against upstream would be red forever and tell nobody anything, so it instead watches for the condition that makes the override droppable (here: a `libdisplay-info-sys` release that can consume 0.4) and fails when the block *lifts*. A red run is good news.
 
    A mirror keeps upstream's dependency choices even where krytis's own convention differs. The abseil mirror kept `public-stacks/runtime-minimal.bst` instead of the `runtime-gnu` that the 26.08 rename applied everywhere else, because a drift check enforces mirror fidelity and upstream uses the stripped-down runtime there.

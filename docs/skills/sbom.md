@@ -318,6 +318,20 @@ Two shortcuts made this quicker than #500's hand-written BFS:
   as not reachable from anything krytis ships, which is the same judgment this class
   makes, so it is pinned the same way.
 
+  **Second instance, which first got the wrong fix: ruby 4.0.6 (2026-11-19).**
+  BIT-ruby-2026-97229 (`bitnami`, Critical, KEV) blocked publish from 2026-11-18. The first
+  PR (#1683) took it for a shipped dependency of `components/opencl.bst` and overrode
+  fdsdk's `components/ruby.bst` with 4.0.10. That invalidated the cache of 96 fdsdk elements
+  that build-depend on ruby, most of the image among them. A full build then showed no
+  ruby at all: no binary, no libruby, no `.rb`/`.gem`, no `/usr/manifest.json` entry.
+  `opencl.bst` and `asciidoctor.bst` list ruby under `%{build-deps}`, and
+  `bst show --deps run freedesktop-sdk.bst:components/opencl.bst` doesn't include it. The
+  override was replaced by a version-pinned `.grype.yaml` rule. **Before carrying a newer
+  version of a junction element, check that it ships.** Run `bst show --deps run` on its
+  consumer, or grep `/usr/manifest.json` in any recent image. A `bitnami` match says
+  nothing about runtime reachability. "A runtime dependency of X" needs that command's
+  output behind it, not the fact that X depends on it somewhere.
+
 
 ### A `cargo update -p X` "fix" is only real if it clears the advisory's actual range
 
@@ -347,7 +361,9 @@ the fix is a version bump, never a `.grype.yaml` rule. What worked:
   dependency list as multi-line YAML, so a line-oriented filter finds nothing. Prefix
   each record with a sentinel (`--format '@@%{name}|||%{runtime-deps}|||%{build-deps}'`)
   and split on `@@`. For Pillow the only dependent was fdsdk's `components/fwupd.bst`,
-  a runtime dependency.
+  a runtime dependency. If every dependent lists it under `%{build-deps}` only, it doesn't
+  ship. Stop here and pin it instead (ruby, § Mitigated: dependency-graph-proven
+  unreachable crate versions).
 - **fdsdk's autoupdater has usually done the bump already.** It opens one MR per
   branch, master and `release/<series>`, titled `Update components/<name>.bst`. Search
   with `https://gitlab.com/api/v4/projects/freedesktop-sdk%2Ffreedesktop-sdk/merge_requests?search=<name>&state=all`.
@@ -376,35 +392,6 @@ A new `overrides:` entry also needs its row in `docs/design/image-inventory.md`:
 `mise run image-inventory --write`, then fill in the empty description cell. CI's
 `image-inventory --check` fails until that's done, and none of the other checks above
 notice the missing row.
-
-**Second case, with no fdsdk bump to mirror: ruby (2026-11-18).** The publish gate
-blocked on BIT-ruby-2026-97229 (ruby 4.0.6, Critical, KEV, fixed in 4.0.8). Ruby ships
-as a runtime dependency of fdsdk's `components/opencl.bst`, which
-`desktop/mesa-all-codecs.bst` pulls in. As of 2026-11-19 neither the 26.08.4 tag nor
-`release/26.08` had a newer ruby, and no fdsdk MR bumped it. What differed from Pillow:
-
-- **With no MR, mirror the junction's own element and change only the version.**
-  `overrides/ruby.bst` is fdsdk `114ae909`'s `components/ruby.bst` with a new tarball url
-  and sha256. Check the sha256 against the one in the upstream release announcement, not
-  just against what you downloaded.
-- **Take the newest patch release, not the advisory's minimum.** ruby-lang shipped 4.0.10
-  the same day as a second advisory (Regexp and String case conversion). Holding at 4.0.8
-  would have traded this match for the next one.
-- **A `kind: tar` url carries the version, so the drift check has to mask it.**
-  `ruby-check` reads the version from `ruby-X.Y.Z.tar` (or an anitya `version:`, since
-  fdsdk's `release/26.08` has already moved ruby to `kind: anitya`) and normalises the url
-  before diffing. Otherwise every legitimate bump reads as drift.
-- **fdsdk's url aliases don't resolve in krytis.** A verbatim copy of a `kind: tar`
-  element fails `bst show` with `Invalid alias 'tar_https'`: aliases are per-project.
-  Add a host alias to `include/aliases.yml` (`ruby_lang:`) and map one to the other in
-  the drift check's normaliser.
-- **Count the rebuild before you start.** Changing ruby's cache key rebuilds everything
-  that build-depends on it, not only its runtime consumers. Through
-  `components/asciidoctor.bst` that reaches `_private/util-linux-base.bst`,
-  `_private/cryptsetup-base.bst` and `components/dracut.bst`, so most of the image goes
-  cold. Plan a `cache-warm.yml` run before re-running `publish.yml`. The reverse-dependency
-  walk is the same sentinel trick as above:
-  `--format '@@%{name}%{deps}'`, then print each `@@` record that lists the element.
 
 ### `--fail-on` / severity gating
 
