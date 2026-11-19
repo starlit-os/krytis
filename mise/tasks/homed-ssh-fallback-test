@@ -176,6 +176,7 @@ echo "==> [3/7] Creating homed user ${TEST_USER} with the first-boot wizard's fl
 ROOT "cat > /run/${TEST_USER}.pub" < "${WORKDIR}/id_user.pub"
 printf '%s' "${TEST_PASS}" | ROOT "NEWPASSWORD=\$(cat) homectl create ${TEST_USER} \
     --member-of=wheel --auto-resize-mode=off --rebalance-weight=off --disk-size=35% \
+    --luks-offline-discard=no \
     --ssh-authorized-keys=@/run/${TEST_USER}.pub && rm -f /run/${TEST_USER}.pub" \
     || { echo "==> FAIL: homectl create failed" >&2; exit 1; }
 

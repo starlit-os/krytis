@@ -1473,14 +1473,17 @@ deactivated/logged-out first, and xfs, which cannot shrink at all). Note this re
 itself flips `Rebalance` to `off` per the mechanism above, so pair it with
 `--rebalance-weight=100`.
 
-**Do not "fix" this by enabling `--luks-discard=on` (online discard).** `homectl inspect`
-normally shows `LUKS Discard: online=no offline=yes` — that split is systemd's deliberate
-default, not a misconfiguration: online discard thin-provisions the home area live, so if the
-*outer* filesystem fills up, the *inner* one gets I/O errors mid-write instead of behaving like
-a normal disk. `--auto-resize-mode`/`--rebalance-weight` reclaim space through explicit,
-bounded resize operations instead, which is why krytis's first-boot wizard does not touch
-discard (see `docs/design/first-boot-setup.md`,
-`files/systemd-firstboot/firstboot-wizard.sh`).
+**Do not "fix" this by enabling `--luks-discard=on` (online discard).** systemd's default is
+`LUKS Discard: online=no offline=yes`, and its online half is right: online discard
+thin-provisions the home area live, so if the *outer* filesystem fills up, the *inner* one gets
+I/O errors mid-write instead of behaving like a normal disk. `--auto-resize-mode`/`--rebalance-weight`
+reclaim space through explicit, bounded resize operations instead.
+
+**The offline half is not harmless, and the wizard turns it off (#1646).** On a btrfs-hosted
+image, offline discard strands space on every logout, invisibly to `du` and `stat`. See
+§ Offline discard strands btrfs extents below. A home created by the first-boot wizard since
+#1646 shows `online=no offline=no`. Some of the 2026-09-08 gap above may have been this too:
+nothing that existed then could see it, because only the extent tree shows it.
 
 ## A logout shrink blocks the next login: "Login service stopped responding. Restart greetd."
 
@@ -1601,7 +1604,7 @@ the same workaround:
 |---|---|
 | [Arch BBS 281563](https://bbs.archlinux.org/viewtopic.php?id=281563) (2022, marked SOLVED) | 2.2T image / 1.2T used, login took **2 minutes**. Accepted answer: `homectl update <user> --auto-resize-mode=off --rebalance-weight=off`. Reporter: "It worked. Much faster now." This is the canonical answer for "homed login is slow". |
 | [systemd#22901](https://github.com/systemd/systemd/issues/22901) | "On shutdown, homed resizes until it gets killed" — byte-for-byte the same log shape as ours, including `Allocated additional …G` and `Worker process for home <u> is still running while exiting`. Closed with no fix; the reporter's workaround was `TimeoutStopSec=infinity` drop-ins on `systemd-homed.service`/`systemd-homed-activate.service`, and he notes **the same shrink then recurs on every subsequent shutdown**. |
-| [systemd#24937](https://github.com/systemd/systemd/issues/24937) | Open since 2022, still open as of 2026-10-11: the image grows to fill the whole backing partition while under half full inside; reporter ran `homectl resize <u> <size>` manually "every ~week". A later commenter was **locked out** by it (`Activation failed: No space left on device`). |
+| [systemd#24937](https://github.com/systemd/systemd/issues/24937) | Open since 2022, still open and undiagnosed as of 2026-11-19: the image grows to fill the whole backing partition while under half full inside; reporter ran `homectl resize <u> <size>` manually "every ~week". A later commenter was **locked out** by it (`Activation failed: No space left on device`). The reporter's record shows `offline=yes` on a btrfs host, and resize-to-recover fits § Offline discard strands btrfs extents below, so it is likely the same bug mixed with auto-resize growth (#1680). |
 | [systemd#27625](https://github.com/systemd/systemd/issues/27625) | Same excessive-space behaviour under `--auto-resize-mode=grow`. |
 | [systemd#35719](https://github.com/systemd/systemd/issues/35719) | f2fs homes need `--auto-resize-mode=off` to activate at all. |
 
@@ -1618,6 +1621,81 @@ Two facts worth extracting, both confirmed by more than one independent report:
 
 Until #996 krytis's first-boot wizard asked for the one setting every upstream thread tells
 people to disable. It no longer does.
+
+## Offline discard strands btrfs extents: a 150G home image occupied 359G
+
+**Symptom (laptop, 2026-11-17, #1646):** the root btrfs was 95% full while `du` found only
+about 235 GB. `ls`, `du` and `stat` on `/var/home/<user>.home` all said 150 GB, the home's
+`Disk Size`. On disk it occupied **359 GB**: `compsize` reported 359G "Disk Usage" for 150G
+"Referenced", and `filefrag` counted 559,924 extents. There were no snapshots, the file
+already had the `C` (nodatacow) flag, and auto-resize had been off since #996.
+
+**Mechanism.** systemd's default `--luks-offline-discard=yes` makes homework discard the inner
+filesystem's free ranges at every deactivation (logout, shutdown). That reaches the image file
+as `fallocate` punch-holes (`Discarded unused 21.7G.`). The next activation allocates the
+same amount back (`Allocated additional 21.7G.`). btrfs frees an extent only when **no** byte
+of it is referenced anymore. The inner filesystem's free space is scattered small ranges
+inside large extents, so the punching frees almost nothing. The refill then allocates
+**new** extents for the holes, while the old ones stay pinned by their still-referenced
+neighbours. `nodatacow` doesn't help, because the punched ranges no longer exist to be
+overwritten in place. Each cycle strands up to the discarded amount. The laptop's journal
+held 78 such cycles in three months.
+
+Unprivileged reproduction on any btrfs (`/var/tmp` on krytis):
+
+```sh
+touch img; chattr +C img
+dd if=/dev/urandom of=img bs=1M count=1024 conv=fsync
+for i in $(seq 0 2 255); do fallocate -p -o $((i*4))M -l 4M img; done   # punch 128 x 4M holes
+for i in $(seq 0 2 255); do fallocate    -o $((i*4))M -l 4M img; done   # refill them
+sudo mise run homed-image-check "$PWD/img"   # 1.0G referenced, 1.5G on disk, 137 extents
+```
+
+The punch frees **0 bytes**, and the refill takes 512 MB more. A single contiguous punch frees
+space normally, because it drops whole extents. Only scattered holes strand space, and that
+is exactly the pattern a filesystem's free-space discard produces.
+
+**With auto-resize off the discard never bought anything.** The image is a fixed allocation,
+and the next login refills every punched byte. So `files/systemd-firstboot/firstboot-wizard.sh`
+creates the account with `--luks-offline-discard=no` since #1646. On an existing account,
+`homectl update <user> --luks-offline-discard=no` stops further growth but returns nothing
+already stranded.
+
+**Seeing it.** `du` and `stat` don't show it: on the laptop both reported 150 GB, because
+they count the file's own blocks, not the full extents behind them. Use:
+
+```sh
+mise run homed-image-check          # every /var/home/*.home; exit 1 above 10% overhead
+homectl inspect <user> | grep 'LUKS Discard'
+journalctl -t systemd-homework | grep -c 'Discarded unused'
+```
+
+`homed-image-check` reads the file's `EXTENT_DATA` items with `BTRFS_IOC_TREE_SEARCH_V2`,
+the same data `compsize` reads, so it needs nothing the image doesn't ship. It re-runs itself
+under sudo, because that ioctl is `CAP_SYS_ADMIN`-only. Against the reproduction above it
+reports exactly the issue's `df` numbers.
+
+**Proving the fix: `mise run homed-discard-test`.** It boots the image and creates a control
+home with the default discard and a home with the wizard's flags. Both go through the same
+log-in, write 16 × 24 MiB, delete every other file, log-out cycles. The control must strand
+space, otherwise the VM doesn't reproduce the bug and the run fails rather than passing
+vacuously. The fix home must log no discards and stay flat. First run (2026-11-19, 1 GiB
+homes, 4 cycles): the control stranded 446–730 MiB per cycle and the fix home 0. The
+measurement is taken after logout, with the image in its punched state, so "stranded" is
+what the next login adds on top of the image's size. Measured on an active home, as on
+the laptop, the same space shows up as on-disk usage above the referenced size.
+
+**Getting the space back means rewriting the image** with the home deactivated. Done on the
+laptop on 2026-11-19: copy the image to another disk, delete it, and copy it back into a
+fresh `chattr +C` file. That took root free space from ~61 GB to 264 GB and the extent count
+from 559,924 to 356. `btrfs filesystem defragment` on the file in ranges is the in-place
+alternative; untested here. `homectl resize` to a smaller size frees only the truncated tail.
+
+**Upstream, as of 2026-11-19:** no systemd/systemd issue diagnoses this. The closest is
+[systemd#24937](https://github.com/systemd/systemd/issues/24937) (§ Prior art above), and no PR
+touches homed's discard or `fallocate` handling. The watch, and the open question of whether
+to report it, is #1680. systemd's policy needs any report to be human-written and
+human-posted (`docs/design/upstream-ai-policies.md`).
 
 ## The lock screen authenticates through `login`, not `greetd` — and only its first password prompt is answered
 
