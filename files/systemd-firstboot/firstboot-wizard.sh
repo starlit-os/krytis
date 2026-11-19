@@ -144,6 +144,19 @@ fi
 # reference, the first operator to size this by hand chose 150G against 74.7G
 # in use -- roughly 2x actual usage, well under half of free space.
 #
+# --luks-offline-discard=no is the #1646 decision. systemd's default (offline
+# discard on, online off) punches the inner filesystem's free ranges out of the
+# image file on every logout and shutdown, and the next login fallocates them
+# back. On a btrfs-hosted image that strands space: the holes are small and
+# scattered, btrfs frees an extent only when nothing in it is referenced, and
+# the refill takes new extents. On real hardware a 150G image came to occupy
+# 359G of the root fs while du/stat still said 150G. With auto-resize off the
+# image is a fixed allocation that the next login refills anyway, so the
+# discard never returned anything. `mise run homed-image-check` measures the
+# stranding; `mise run homed-discard-test` proves both halves in a VM; the
+# upstream state is #1680. Do not turn on online discard either
+# (docs/skills/pam.md § systemd-homed disk-space management).
+#
 # --rebalance-weight=off is redundant but kept explicit: homectl already
 # forces rebalanceWeight to off whenever --disk-size= is given
 # (homectl.c parse_disk_size_field), and that implicit coupling is exactly the
@@ -156,6 +169,7 @@ fi
 if ! homectl firstboot --prompt-new-user --prompt-shell=no \
         --prompt-groups=no --member-of=wheel \
         --auto-resize-mode=off --rebalance-weight=off --disk-size=35% \
+        --luks-offline-discard=no \
         --mute-console=yes; then
     log "initial user creation failed"
 fi

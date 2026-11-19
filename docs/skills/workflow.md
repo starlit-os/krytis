@@ -895,6 +895,19 @@ Couldn't sign message (signer): agent refused operation?
 fatal: failed to write commit object
 ```
 
+With `env -u SSH_AUTH_SOCK` (signing straight from the key file, as AGENTS.md says to), the
+same missed touch prints a different and more misleading line, for a key that has no
+passphrase:
+
+```
+Couldn't sign message: incorrect passphrase supplied to decrypt private key?
+fatal: failed to write commit object
+```
+
+Seen 2026-11-19 (#1646): three attempts failed this way, one of them in a real pty, and the
+retry loop below then signed at once. So this line doesn't mean a missing tty, a PIN problem
+or a broken key. Treat it exactly like `agent refused operation`.
+
 Two behaviours make this read as a configuration fault when it isn't. The refusal is
 **instant** (2–4 s) once the token has stopped waiting, so it looks like a hard "no" rather
 than a timeout; and after one touch the key signs *without* further prompting for a short
