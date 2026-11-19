@@ -100,6 +100,10 @@
 "XF86AudioRaiseVolume" = "spawn noctalia msg volume-up"
 "XF86AudioLowerVolume" = "spawn noctalia msg volume-down"
 "XF86AudioMute" = "spawn noctalia msg volume-mute"
+# The mic-mute key (F4 on a ThinkPad T14 Gen 4 sends XF86AudioMicMute). Neither
+# upstream's packaged binds nor niri's ever bound it. Usable at the lock screen
+# for the same reason as media keys: muting a call shouldn't need an unlock.
+"XF86AudioMicMute" = { action = "spawn noctalia msg mic-mute", allow_when_locked = true, repeat = false }
 
 "XF86MonBrightnessUp" = "spawn noctalia msg brightness-up"
 "XF86MonBrightnessDown" = "spawn noctalia msg brightness-down"

@@ -1540,10 +1540,22 @@ Current binds of note (see `binds.kdl` / `binds/*.kdl` for the full set):
 
 | Bind | Action |
 |---|---|
-| `Mod+Return` | ghostty (terminal) |
+| `Mod+Return` | seance (terminal) |
 | `Mod+Space` | noctalia launcher (`noctalia msg panel-toggle launcher`) |
 | `Mod+Alt+L` | lock screen (`noctalia msg session lock`) |
 | `Mod+E` | nautilus (file manager) |
+| `XF86AudioMicMute` | toggle the default source's mute (`noctalia msg mic-mute`), usable while locked |
+
+**Laptop mute keys come in two kinds, and each needs its own bind.** Nothing binds
+`XF86AudioMicMute` unless krytis does: neither umbriel's packaged
+`/usr/share/umbriel/config.toml` nor the niri config this was ported from bound it. Until
+it was added, the ThinkPad T14 Gen 4's F4 did nothing, even though the kernel sends that
+keysym. noctalia's IPC has a separate `mic-mute` command next to `volume-mute`, and the
+mute LED follows the source's mute state once the ALSA UCM profile is in use (§ ALSA UCM:
+freedesktop-sdk ships none, so Intel SOF mics record silence). A new hardware key goes
+into **both** `files/umbriel/binds.toml` and `files/niri/binds/noctalia.kdl`, because
+`binds.toml` names every niri counterpart. Verified 2026-11-19 by binding it live in a user
+umbriel config: one press flipped `pactl get-source-mute @DEFAULT_SOURCE@` from no to yes.
 
 The lock bind calls noctalia's IPC rather than a separate locker: noctalia is the
 lock screen (see `docs/skills/pam.md` § The lock screen authenticates through `login`, not
