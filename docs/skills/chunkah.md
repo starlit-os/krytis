@@ -178,6 +178,28 @@ for untagged archives on some podman versions) — this is copied from
 dakota verbatim since it is itself a defensive workaround for
 podman-version skew, not something worth re-deriving.
 
+**What chunked images look like, and what they share.** Measured for #1688 on 2026-11-19
+(chunkah v0.7.1, bootc 1.17.4):
+
+- `chunkify` doesn't change the composefs digest, and a chunked image installs and boots with
+  `--composefs-backend`, sealed or not. That makes "seal, then chunk" the order for a sealed
+  image. See [`secure-boot.md`](secure-boot.md) § Chunk after sealing, not before.
+- Layers follow the `user.component` groups: `linux-firmware.bst` 984 MB, `gcc-base.bst` 472 MB,
+  `zen-browser.bst` 433 MB, and so on, uncompressed. Large single files (`vmlinuz`,
+  `initramfs.img`, `krytis.efi`, some kernel modules) get `bigfiles/<name>` layers. chunkah puts
+  the layer name in each history entry's `comment`
+  (`podman image inspect <img> | jq '.[0].History[].comment'`).
+- **A stale `fakecap-manifest.tsv` costs space, not correctness.** With the committed manifest,
+  `fakecap-restore` set 163,989 xattrs and skipped 210,857 rows. Files no row covers land in a
+  single `chunkah/unclaimed` layer, 210 MB of 7.2 GB here. Because that layer changes on every
+  build, regenerating the manifest keeps it small.
+- **Two independent builds shared 110 of 120 layers (86% of the uncompressed bytes).** One
+  image was unsealed and built locally, the other was the published `:sealed` from CI. They
+  differed only in `krytis.efi`, `initramfs.img`, `unclaimed`, systemd (sealed has the signed
+  systemd-boot) and the elements that changed between the two builds. These are uncompressed
+  layer digests. Whether an update skips a layer depends on how the registry copy is
+  compressed and which digest bootc compares, so check it on the first chunked publish.
+
 **Don't pass `SOURCE_DATE_EPOCH` to chunkah.** zirconium-hawaii added
 `-e SOURCE_DATE_EPOCH=1320937200` to its chunkah run for reproducibility
 (`99f6285`, 2026-10-10) and reverted it three days later (`2e309db`): bootc's
