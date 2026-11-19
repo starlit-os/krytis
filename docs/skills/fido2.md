@@ -236,6 +236,17 @@ Diagnostic order that separates all three, cheapest first, before spending touch
 2. Listed but `caps` shows `nocbor` → CTAP2-dead; replug.
 3. Listed with `cbor`, and only the *agent* path fails → gcr-agent problem; use `env -u SSH_AUTH_SOCK`.
 
+**`Couldn't sign message: invalid format?` is the same fault class, not a key-file
+problem.** Seen 2026-11-18 on OpenSSH 10.3p1 (which appends `?` to these messages):
+`env -u SSH_AUTH_SOCK git commit` printed `Confirm user presence for key ED25519-SK …` and
+then `invalid format?` twice, with a `device not found?` between them, all with the YubiKey
+(`1050:0402`) attached. `user.signingkey` pointed at the intact resident-key handle file, so
+the handle was not the cause. `fido2-token -L` listed nothing at that point, which is step
+1 above. A physical replug gave a fresh `hidraw` node with the `user:<you>:rw-` ACL and `caps: 0x05 (wink, cbor, msg)`,
+and the next commit signed on the first touch. So treat `invalid format?` as one more
+spelling of "the token isn't answering": run the checks above and replug. Don't
+regenerate or re-download the handle file.
+
 ### Retiring a per-host key: unauthorize it first, then delete the credential
 
 Order matters, because deleting the resident credential first leaves its public key
