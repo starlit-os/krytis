@@ -282,3 +282,15 @@ ignore:
     package:
       name: zip
       version: "8.5.1"
+  # ruby 4.0.6, BIT-ruby-2026-97229 (bitnami, Critical, KEV, fixed 4.0.8).
+  # Blocked publish from 2026-11-18. freedesktop-sdk components/ruby.bst is a
+  # build-only element: opencl.bst and asciidoctor.bst build-depend on it, and
+  # neither has it in its runtime closure (`bst show --deps run`). The SBOM lists
+  # it because it is generated with --deps all. Checked 2026-11-19 on a full
+  # build: no ruby binary, libruby, .rb or .gem file in the image, and no ruby
+  # entry in /usr/manifest.json. Version-pinned: re-check when the fdsdk junction
+  # moves ruby, and triage any new ruby advisory the same way.
+  - vulnerability: BIT-ruby-2026-97229
+    package:
+      name: ruby
+      version: "4.0.6"

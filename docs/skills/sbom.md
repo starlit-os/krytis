@@ -318,6 +318,20 @@ Two shortcuts made this quicker than #500's hand-written BFS:
   as not reachable from anything krytis ships, which is the same judgment this class
   makes, so it is pinned the same way.
 
+  **Second instance, which first got the wrong fix: ruby 4.0.6 (2026-11-19).**
+  BIT-ruby-2026-97229 (`bitnami`, Critical, KEV) blocked publish from 2026-11-18. The first
+  PR (#1683) took it for a shipped dependency of `components/opencl.bst` and overrode
+  fdsdk's `components/ruby.bst` with 4.0.10. That invalidated the cache of 96 fdsdk elements
+  that build-depend on ruby, most of the image among them. A full build then showed no
+  ruby at all: no binary, no libruby, no `.rb`/`.gem`, no `/usr/manifest.json` entry.
+  `opencl.bst` and `asciidoctor.bst` list ruby under `%{build-deps}`, and
+  `bst show --deps run freedesktop-sdk.bst:components/opencl.bst` doesn't include it. The
+  override was replaced by a version-pinned `.grype.yaml` rule. **Before carrying a newer
+  version of a junction element, check that it ships.** Run `bst show --deps run` on its
+  consumer, or grep `/usr/manifest.json` in any recent image. A `bitnami` match says
+  nothing about runtime reachability. "A runtime dependency of X" needs that command's
+  output behind it, not the fact that X depends on it somewhere.
+
 
 ### A `cargo update -p X` "fix" is only real if it clears the advisory's actual range
 
@@ -347,7 +361,9 @@ the fix is a version bump, never a `.grype.yaml` rule. What worked:
   dependency list as multi-line YAML, so a line-oriented filter finds nothing. Prefix
   each record with a sentinel (`--format '@@%{name}|||%{runtime-deps}|||%{build-deps}'`)
   and split on `@@`. For Pillow the only dependent was fdsdk's `components/fwupd.bst`,
-  a runtime dependency.
+  a runtime dependency. If every dependent lists it under `%{build-deps}` only, it doesn't
+  ship. Stop here and pin it instead (ruby, § Mitigated: dependency-graph-proven
+  unreachable crate versions).
 - **fdsdk's autoupdater has usually done the bump already.** It opens one MR per
   branch, master and `release/<series>`, titled `Update components/<name>.bst`. Search
   with `https://gitlab.com/api/v4/projects/freedesktop-sdk%2Ffreedesktop-sdk/merge_requests?search=<name>&state=all`.
