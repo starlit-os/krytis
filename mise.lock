@@ -46,15 +46,15 @@ url = "https://github.com/protonpass/pass-cli/releases/download/2.7.1/pass-cli-l
 url_api = "https://api.github.com/repos/protonpass/pass-cli/releases/assets/754345234"
 
 [[tools.grype]]
-version = "0.122.0"
+version = "0.122.1"
 backend = "aqua:anchore/grype"
-specifiers = ["0.122.0"]
+specifiers = ["0.122.1"]
 
 [tools.grype."platforms.linux-x64"]
-checksum = "sha256:e697e6f7224637df87e267e4318cc027feae99a8e1b80280241d32b9ee5d4920"
+checksum = "sha256:f1ba7e2917ee1395618de20a98da0aa7c0fb1788927797651047c50502a37538"
 checksum_source = "mise-versions"
-url = "https://github.com/anchore/grype/releases/download/v0.122.0/grype_0.122.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/anchore/grype/releases/assets/756374293"
+url = "https://github.com/anchore/grype/releases/download/v0.122.1/grype_0.122.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/anchore/grype/releases/assets/763662038"
 
 [[tools.gum]]
 version = "2.0.2"
