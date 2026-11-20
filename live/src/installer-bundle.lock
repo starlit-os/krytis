@@ -2,6 +2,7 @@
 # install-flatpaks.sh downloads releases/download/<tag>/<file> and refuses a
 # bundle whose SHA-256 differs from the value listed here (#1454).
 # Refresh with: mise run installer-bundle-update [<tag>]
-tag=v2026.11.20-285f3743
-org.bootcinstaller.Installer.flatpak=9acd2f250333de093e3567efb0c1ed20af96b49d466482d7a1754320f4dff6a4
-org.bootcinstaller.Installer.Devel.flatpak=f721febda224034a11c3e4dd348bc9d08ea4a891eada4732848533a45cfa7dd0
+hold=#1717: every release from v2026.11.06 passes --karg=rootflags=… and breaks sealed installs; lift when #1718 is fixed
+tag=v2026.11.02-48dd84a4
+org.bootcinstaller.Installer.flatpak=37c516f1e9c6864be1ddbcfba122424a15263c7a21a24ab7f351579c058fa8f0
+org.bootcinstaller.Installer.Devel.flatpak=fe426c0e47422b6d90e65f8b48ce379fa1082585ab2a08ebb958a2ee40848466

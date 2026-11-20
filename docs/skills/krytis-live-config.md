@@ -503,6 +503,21 @@ both hashes. The `track-installer-bundle` job in `track-bst-sources.yml` runs it
 tracking schedule and opens an `auto/track-installer-bundle` PR with the 24 h cooldown. That
 PR needs an ISO install test before merge, because the bump changes fisherman.
 
+**Holding a pin.** A `hold=<reason>` line in the lock makes the no-argument run (the
+tracking job) exit without touching anything. An explicit tag still re-pins, and its
+rewrite drops the hold. `install-flatpaks.sh` reads only `tag=` and the bundle keys, so the
+line is inert at build time. First used for #1717: every release from
+`v2026.11.06-4e299562` breaks sealed installs, so the lock holds at `v2026.11.02-48dd84a4`
+until #1718 is fixed upstream.
+
+**Which fisherman a bundle carries.** bootc-installer vendors fisherman as a git submodule
+(`fisherman`, branch `prod`), and the release tag's suffix is the installer commit. So
+`gh api "repos/tuna-os/bootc-installer/contents/fisherman?ref=<commit>" -q .sha` gives the
+exact fisherman commit, and `git merge-base --is-ancestor` against a fisherman fix or
+regression shows which releases have it. Confirm on the shipped bytes with the
+extract-and-`strings` recipe above. That's how #1717 was bisected without an ISO build per
+candidate: one sealed `iso-install-test --secure` confirmed the result at the end.
+
 **Gotchas:**
 
 - **The Devel channel uses the same tag.** `INSTALLER_CHANNEL=dev` installs the Devel bundle
