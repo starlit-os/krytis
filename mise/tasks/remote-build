@@ -75,7 +75,7 @@ if [ -z "$SESSION" ]; then
 fi
 
 SHORT=${IMAGE##*/}
-REMOTE_ID=""
+BUILT_ID=""
 if [ -z "$SHIP_ONLY" ]; then
 # --- What to build -----------------------------------------------------------
 # The remote host builds from origin, never from this checkout's files, so the
@@ -162,7 +162,7 @@ if [ "$RC" != "0" ]; then
     echo "remote-build: build FAILED on $HOST (exit $RC). The tab stays open there; full log in ~/.cache/krytis-remote-build/$SHA.log on that host." >&2
     exit "$RC"
 fi
-REMOTE_ID=$(r capture -s "$SESSION" -b "$BLOCK" --trim --unwrap 2>/dev/null | sed -n 's/^remote-build: image //p' | tail -n1 || true)
+BUILT_ID=$(r capture -s "$SESSION" -b "$BLOCK" --trim --unwrap 2>/dev/null | sed -n 's/^remote-build: image //p' | tail -n1 || true)
 r block close -s "$SESSION" "$BLOCK" >/dev/null 2>&1 || true
 
 fi # SHIP_ONLY
@@ -176,10 +176,17 @@ fi
 # One-shot HTTP server on the host's loopback streams `podman save | zstd`;
 # `rex forward open` tunnels to it over the Rex connection, so nothing needs
 # ssh or a firewall hole on the host.
+# Before it binds, the server prints the ID of the image it will ship (#1705):
+# it is what the loaded image is checked against, in --ship-only runs too.
+# A missing image is reported once here instead of as an empty stream.
 # shellcheck disable=SC2016
 SERVE='
 import http.server, shutil, subprocess, sys
 image = sys.argv[1]
+q = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, text=True)
+if q.returncode != 0 or not q.stdout.strip():
+    print("remote-build-server: no image", image, "on this host:", q.stderr.strip(), flush=True)
+    sys.exit(3)
 class H(http.server.BaseHTTPRequestHandler):
     done = False
     def do_GET(self):
@@ -189,7 +196,7 @@ class H(http.server.BaseHTTPRequestHandler):
         shutil.copyfileobj(p.stdout, self.wfile, 1 << 20)
         H.done = p.wait() == 0
 srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-print("serving", image, "on port", srv.server_port, flush=True)
+print("serving", image, "id", q.stdout.strip(), "on port", srv.server_port, flush=True)
 while not H.done:
     srv.handle_request()
 '
@@ -198,16 +205,30 @@ while not H.done:
 # (#1689). The attempt's state lives in these globals so the EXIT trap can
 # tear down an attempt that Ctrl-C interrupted.
 SERVE_BLOCK=""
+SERVE_LABEL=""
 SERVE_PORT=""
+SHIP_ID=""
 FWD_PID=""
 fwd_log=$(mktemp)
 attempt_log=$(mktemp)
+server_log=$(mktemp)
 
-# The server prints its port when it binds. Read it while the block is alive:
-# after a successful copy the server exits and its block may already be gone.
-server_port() {
-    [ -n "$SERVE_PORT" ] || SERVE_PORT=$(r capture -s "$SESSION" -b "$SERVE_BLOCK" --trim --unwrap 2>/dev/null |
-        sed -n 's/^serving .* on port \([0-9]*\)$/\1/p' | head -n1 || true)
+# Wait for the server's first line and read the port and image ID from it.
+# Returns 0 when it is serving, 2 when the host has no such image (not worth
+# retrying), 1 when it never said either.
+server_ready() {
+    local out
+    for _ in $(seq 1 40); do
+        out=$(r capture -s "$SESSION" -b "$SERVE_BLOCK" --trim --unwrap 2>/dev/null || true)
+        # The message itself reaches the report through the server's log tail.
+        grep -q '^remote-build-server: no image' <<<"$out" && return 2
+        SERVE_PORT=$(sed -n 's/^serving .* on port \([0-9]*\)$/\1/p' <<<"$out" | head -n1)
+        SHIP_ID=$(sed -n 's/^serving .* id \([0-9a-f]*\) on port [0-9]*$/\1/p' <<<"$out" | head -n1)
+        [ -n "$SERVE_PORT" ] && [ -n "$SHIP_ID" ] && return 0
+        sleep 0.5
+    done
+    echo "the image server on $HOST never reported its port and image ID" >>"$attempt_log"
+    return 1
 }
 
 # Close the forwards this attempt owns: the ones whose target is this attempt's
@@ -215,8 +236,6 @@ server_port() {
 # krytis-build session is shared with other runs.
 close_own_forwards() {
     local ids
-    [ -n "$SERVE_BLOCK" ] || return 0
-    server_port
     [ -n "$SERVE_PORT" ] || return 0
     ids=$(r forward ls -s "$SESSION" --json 2>/dev/null |
         jq -r --arg c "127.0.0.1:$SERVE_PORT" '.forwards[] | select(.connect == $c) | .block_id' || true)
@@ -236,34 +255,55 @@ stop_forward_process() {
 ship_teardown() {
     close_own_forwards
     stop_forward_process
+    # Interrupted between `rex run` creating the block and SERVE_BLOCK being
+    # set: find the block by this attempt's unique label instead.
+    if [ -z "$SERVE_BLOCK" ] && [ -n "$SERVE_LABEL" ]; then
+        SERVE_BLOCK=$(r block ls -s "$SESSION" --json 2>/dev/null |
+            jq -r --arg l "$SERVE_LABEL" '.blocks[] | select(.label == $l) | .block_id' | head -n1 || true)
+    fi
     if [ -n "$SERVE_BLOCK" ]; then
         # The host-side error (e.g. podman save: image not known) is only in
         # the server's block, so keep its tail before the block goes away.
+        # It goes to its own file so the failure report can't cut it off.
         { echo "--- image server on $HOST:"
           r capture -s "$SESSION" -b "$SERVE_BLOCK" --trim --unwrap 2>/dev/null | tail -n 5
-        } >>"$attempt_log" || true
+        } >"$server_log" || true
         r block close -s "$SESSION" "$SERVE_BLOCK" >/dev/null 2>&1 || true
         SERVE_BLOCK=""
     fi
+    SERVE_LABEL=""
     SERVE_PORT=""
 }
 
 cleanup() {
     ship_teardown
-    rm -f "$fwd_log" "$attempt_log"
+    rm -f "$fwd_log" "$attempt_log" "$server_log"
 }
 trap cleanup EXIT
-trap "exit 130" INT TERM
+trap "exit 130" INT
+trap "exit 143" TERM
 
-# Returns 0 only when curl, zstd -d and podman load all exited 0. Called from
-# `if`, so set -e is off in here: every step sets rc explicitly, and the one
-# teardown always runs.
+# Returns 0 only when curl, zstd -d and podman load all exited 0, 2 for a
+# failure a retry can't fix, 1 otherwise. Called from `if`, so set -e is off
+# in here: every step sets rc explicitly, and the one teardown always runs.
 ship_attempt() {
     local rc=0 served URL=""
-    : >"$attempt_log"
-    if served=$(r run -s "$SESSION" --label "ship $SHORT" --focus=false --json -- python3 -I -c "$SERVE" "$IMAGE" 2>>"$attempt_log") &&
-        SERVE_BLOCK=$(jq -er '.block_ids[0]' <<<"$served"); then
-        # The server needs a moment to bind before forward open can find its port.
+    : >"$attempt_log"; : >"$server_log"
+    SERVE_LABEL="ship $SHORT #$$.$1"
+    served=$(r run -s "$SESSION" --label "$SERVE_LABEL" --focus=false --json -- python3 -I -c "$SERVE" "$IMAGE" 2>>"$attempt_log") || rc=1
+    [ "$rc" != 0 ] || SERVE_BLOCK=$(jq -er '.block_ids[0]' <<<"$served") || rc=1
+    if [ "$rc" != 0 ]; then
+        echo "could not start the image server" >>"$attempt_log"
+    else
+        server_ready || rc=$?
+    fi
+    # The build tagged $IMAGE; if the host's tag now names another image,
+    # another build retagged it in between and no retry will bring it back.
+    if [ "$rc" = 0 ] && [ -n "$BUILT_ID" ] && [ "$SHIP_ID" != "$BUILT_ID" ]; then
+        echo "$IMAGE on $HOST is now $SHIP_ID, not the $BUILT_ID this run built (another build retagged it)" >>"$attempt_log"
+        rc=2
+    fi
+    if [ "$rc" = 0 ]; then
         for _ in $(seq 1 30); do
             # Truncate here, not in the background job's own redirect: the
             # first grep below could otherwise read a previous attempt's URL.
@@ -272,7 +312,7 @@ ship_attempt() {
             FWD_PID=$!
             for _ in $(seq 1 10); do
                 URL=$(grep -Eo 'http://(localhost|127\.0\.0\.1):[0-9]+[^ ]*' "$fwd_log" | head -n1 || true)
-                [ -n "$URL" ] && { server_port; break 2; }
+                [ -n "$URL" ] && break 2
                 kill -0 "$FWD_PID" 2>/dev/null || break
                 sleep 0.5
             done
@@ -284,9 +324,6 @@ ship_attempt() {
             { echo "could not forward to the image server:"; cat "$fwd_log"; } >>"$attempt_log"
             rc=1
         fi
-    else
-        echo "could not start the image server" >>"$attempt_log"
-        rc=1
     fi
     if [ "$rc" = 0 ]; then
         echo "remote-build: streaming $IMAGE from $HOST (attempt $1/3)"
@@ -307,16 +344,28 @@ while pgrep -f "[p]odman build --squash-all|[m]ise/tasks/boot-test|[q]emu-system
     echo "remote-build: a build or boot-test is running on this machine; waiting 60s before loading"; sleep 60
 done
 
+if [ -z "$SHIP_ONLY" ] && [ -z "$BUILT_ID" ]; then
+    echo "remote-build: WARNING: could not read the built image's ID from the build log;" >&2
+    echo "  the copy is still checked against the ID $HOST reports when it serves $IMAGE." >&2
+fi
+
 loaded=""
 for n in 1 2 3; do
     start=$(date +%s)
-    if ship_attempt "$n"; then
+    rc=0
+    ship_attempt "$n" || rc=$?
+    if [ "$rc" = 0 ]; then
         echo "remote-build: transfer took $(( $(date +%s) - start ))s"
         loaded=1
         break
     fi
     echo "remote-build: copy attempt $n/3 failed:" >&2
-    tail -n 12 "$attempt_log" | sed 's/^/  /' >&2
+    tail -n 8 "$attempt_log" | sed 's/^/  /' >&2
+    sed 's/^/  /' "$server_log" >&2
+    if [ "$rc" = 2 ]; then
+        echo "remote-build: not retrying: another attempt would fail the same way" >&2
+        exit 1
+    fi
     [ "$n" = 3 ] || sleep 5
 done
 if [ -z "$loaded" ]; then
@@ -326,10 +375,11 @@ if [ -z "$loaded" ]; then
 fi
 
 LOCAL_ID=$(podman image inspect --format '{{.Id}}' "$IMAGE")
-if [ -n "$REMOTE_ID" ] && [ "$LOCAL_ID" != "$REMOTE_ID" ]; then
-    echo "remote-build: image ID mismatch: $HOST has $REMOTE_ID, loaded $LOCAL_ID" >&2
+if [ "$LOCAL_ID" != "$SHIP_ID" ]; then
+    echo "remote-build: image ID mismatch: $HOST served $SHIP_ID, loaded $LOCAL_ID" >&2
     exit 1
 fi
+echo "remote-build: loaded image ID matches what $HOST served"
 if [ -n "$SHIP_ONLY" ]; then
     echo "remote-build: $IMAGE is $LOCAL_ID (copied from $HOST; no build ran)"
 else

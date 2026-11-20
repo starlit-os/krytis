@@ -406,7 +406,8 @@ Each design choice exists for a reason:
 - **Boot-test stays local.** melog's `sudo` goes through `pam_u2f`
   (`/etc/pam.d/system-auth`), so `generate-disk` there would need a key touch at the desktop.
   Shipping the ~7 GB image back lets the laptop's key answer it, as in § Agents can run the
-  sudo steps: use a pty. The task compares the image ID on both ends after the load.
+  sudo steps: use a pty. After the load the task checks the image ID: see the bullet
+  below on how it's checked (#1705).
   Measured 2026-11-19: the 7 GB image took 176 s to copy, and the IDs matched.
 - **A dedicated worktree on melog.** The build runs in
   `~/Projects/StarlitOS/krytis.worktrees/remote-build`, checked out detached at the SHA. The
@@ -441,11 +442,23 @@ Each design choice exists for a reason:
     stage fails. `--speed-limit 1024 --speed-time 300` catches a tunnel that stays open but
     stops moving data, the `git push`-style hang. It's set loose on purpose: the measured
     runs don't show how long `podman save` takes to send its first bytes.
-  - **A missing image fails on this machine, not on the host.** `podman save` fails on the
-    host, but `zstd -c` still emits a valid empty frame, so the local error is
-    `podman load`'s "payload does not match any of the supported image formats". The real
-    cause (`image not known`) is only in the server's Rex block. Teardown captures that
-    block's tail into the attempt log before closing the block.
+  - **The server checks the image, and reports its ID, before it binds (#1705).** It runs
+    `podman image inspect` on `--image` and prints `serving <image> id <ID> on port <N>`.
+    Otherwise it prints `remote-build-server: no image …` and exits, and the task stops
+    after that one attempt: a retry can't make the image exist. Without this check
+    `podman save` would fail on the host, but `zstd -c` would still emit a valid empty
+    frame. The only local error would then be `podman load`'s "payload does not match any
+    of the supported image formats". The server-reported ID is what the loaded image is
+    checked against, for `--ship-only` too, which before had no ID check at all. After a
+    build, the task also compares it with the ID the build logged: if they differ, another
+    build retagged the host's `localhost/krytis:latest` in between, and the task stops
+    rather than ship the wrong image. The server block's tail goes into a separate log and
+    is printed whole after the local errors, so a long forward error can't push it out of
+    view.
+  - **Each attempt's server block gets a unique label** (`ship <sha> #<pid>.<n>`). A Ctrl-C
+    that lands after `rex run` creates the block, but before the task stores the block's
+    ID, is still cleaned up: teardown finds the block by its label. INT exits 130 and TERM
+    exits 143.
   - **Close only your own forwards.** The forward's ID is its tunnel block's `block_id` in
     `rex forward ls --json`, and its `.connect` is `127.0.0.1:<server port>`. The task
     matches on that port. It reads the port as soon as the forward is up, because a
