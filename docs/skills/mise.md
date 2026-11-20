@@ -370,8 +370,29 @@ mise run boot-test               # boot-test locally, with the laptop's FIDO2 ke
 
 `--build-only` leaves the image on melog. `--ship-only --image <tag>` copies an image that
 melog already has, for example to retry a failed transfer. `--push` builds with `--push`.
-`--ref <rev>` builds a commit other than `HEAD`. Set `KRYTIS_REMOTE_HOST` (a Rex label or
-address) to build somewhere other than melog's Rex server (`https://rex-melog.werewolf-stonecat.ts.net`).
+`--ref <rev>` builds a commit other than `HEAD`.
+
+**Configuration.** `KRYTIS_REMOTE_HOST` (the build host's Rex label or address) is required
+and has no default: the build host is one operator's machine, so its name stays out of the
+repo (#1689). Put it in the **parent directory's** `.mise.local.toml`, the directory that
+holds both `krytis/` and `krytis.worktrees/`:
+
+```toml
+# ~/Projects/StarlitOS/.mise.local.toml
+[env]
+KRYTIS_REMOTE_HOST = "https://<rex-host>"   # Rex label or address
+```
+
+mise loads `.mise.local.toml` from every parent directory, so that one file reaches the
+main checkout and every worktree. A `.mise.local.toml` inside `krytis/` doesn't reach the
+worktrees, which are siblings of the checkout, not children of it. That's the trap that
+made the `runner-vps` tasks unrunnable (`ci-runner.md` § The PAT never lives on the VPS).
+Check the placement from a worktree: `mise config ls` lists
+`…/StarlitOS/.mise.local.toml`, and `mise env | grep KRYTIS_REMOTE_HOST` shows the value
+(verified 2026-11-19 and 2026-11-20). Unlike `RUNNER_VPS_HOST`, the task has **no fnox
+fallback**. A tailnet name isn't a secret, and the parent-directory file already covers
+every worktree, which is the gap fnox closed for the VPS. If the variable is unset or empty,
+the task exits 1 before running `rex` or `git`, and prints the snippet above.
 
 Each design choice exists for a reason:
 
@@ -385,7 +406,8 @@ Each design choice exists for a reason:
 - **Boot-test stays local.** melog's `sudo` goes through `pam_u2f`
   (`/etc/pam.d/system-auth`), so `generate-disk` there would need a key touch at the desktop.
   Shipping the ~7 GB image back lets the laptop's key answer it, as in § Agents can run the
-  sudo steps: use a pty. The task compares the image ID on both ends after the load.
+  sudo steps: use a pty. After the load the task checks the image ID: see the bullet
+  below on how it's checked (#1705).
   Measured 2026-11-19: the 7 GB image took 176 s to copy, and the IDs matched.
 - **A dedicated worktree on melog.** The build runs in
   `~/Projects/StarlitOS/krytis.worktrees/remote-build`, checked out detached at the SHA. The
@@ -407,6 +429,49 @@ Each design choice exists for a reason:
   local task polls in `rex wait --for 10m` slices and reads the result from
   `rex block call … process` (`.last_exit.exit_code`). `rex wait` exits with the child's
   status, so its exit code alone can't tell a timeout from a build that exited 1.
+- **The copy retries, the build doesn't (#1689).** On 2026-11-19 a built and gated image
+  was lost to a flaky network: `zstd` reported `Read error (39) : premature end` and
+  `podman load` reported `unexpected EOF`, and the task exited 125. The copy now gets up to
+  3 attempts. Each attempt starts its own server block and `forward open`, and tears both
+  down whether it succeeded or not. The server can't be reused: after a dropped stream its
+  `podman save | zstd` child is left blocked on a pipe nobody reads. Things that aren't obvious, all checked on 2026-11-20 by
+  closing the forward mid-copy:
+  - **curl doesn't notice the drop.** The server sends no `Content-Length`, so a closed
+    connection is a normal EOF to curl. Only `zstd -d` (truncated frame) and `podman load`
+    catch it, which is why the pipeline runs under `pipefail` and the attempt fails if any
+    stage fails. `--speed-limit 1024 --speed-time 300` catches a tunnel that stays open but
+    stops moving data, the `git push`-style hang. It's set loose on purpose: the measured
+    runs don't show how long `podman save` takes to send its first bytes.
+  - **The server checks the image, and reports its ID, before it binds (#1705).** It runs
+    `podman image inspect` on `--image` and prints `serving <image> id <ID> on port <N>`.
+    Otherwise it prints `remote-build-server: no image …` and exits, and the task stops
+    after that one attempt: a retry can't make the image exist. Without this check
+    `podman save` would fail on the host, but `zstd -c` would still emit a valid empty
+    frame. The only local error would then be `podman load`'s "payload does not match any
+    of the supported image formats". The server-reported ID is what the loaded image is
+    checked against, for `--ship-only` too, which before had no ID check at all. After a
+    build, the task also compares it with the ID the build logged: if they differ, another
+    build retagged the host's `localhost/krytis:latest` in between, and the task stops
+    rather than ship the wrong image. The server block's tail goes into a separate log and
+    is printed whole after the local errors, so a long forward error can't push it out of
+    view.
+  - **Each attempt's server block gets a unique label** (`ship <sha> #<pid>.<n>`). A Ctrl-C
+    that lands after `rex run` creates the block, but before the task stores the block's
+    ID, is still cleaned up: teardown finds the block by its label. INT exits 130 and TERM
+    exits 143.
+  - **Close only your own forwards.** The forward's ID is its tunnel block's `block_id` in
+    `rex forward ls --json`, and its `.connect` is `127.0.0.1:<server port>`. The task
+    matches on that port. It reads the port as soon as the forward is up, because a
+    successful server exits and its block can be gone by teardown. It closes the forward
+    before it kills the `forward open` client. `rex forward close --orphaned` would close every orphan in the
+    shared `krytis-build` session, including another run's.
+  - **Closing the server block takes its `podman save | zstd` child with it.** After the
+    mid-copy drop, only the next attempt's `podman save` was running on the host.
+  - **`set -e` is off inside `ship_attempt`, because it's called from `if`.** Every step
+    sets `rc` explicitly, and one unconditional `ship_teardown` runs before `return`. An
+    early `return 1` would skip teardown, and the EXIT trap doesn't run between attempts.
+  - After 3 failures the image is still on the host: retry with
+    `mise run remote-build --ship-only --image <tag>`.
 
 ## File tasks
 
