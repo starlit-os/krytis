@@ -75,6 +75,7 @@ carry. Other text in Stake is free. **AI policy**: exactly `Yes`, `Partial` or `
 | Zen Browser | `github.com/zen-browser/desktop` | Native-messaging issues zen-browser/desktop#11084 and zen-browser/desktop#10622 (`docs/design/native-messaging-proxy.md`). | No | Nothing written, but maintainers close PRs that look AI-generated (zen-browser/desktop#15898). |
 | arboard | `github.com/1Password/arboard` | 1Password/arboard#209 (Wayland clipboard backend), `docs/design/proton-pass-flatpak.md`. | No | No contributor docs. |
 | umbriel | `github.com/noctalia-dev/umbriel` | noctalia-dev/umbriel#259 (XWayland grabs), tracked in #1055. | No | No rule. Conventional Commits. |
+| noctalia-greeter | `github.com/noctalia-dev/noctalia-greeter` | Patch `elements/desktop/noctalia-greeter.bst` (#1588), not proposed. | No | No rule in CONTRIBUTING.md (`434b809`, 2026-10-18), same as the rest of the noctalia-dev org. |
 | seance | `github.com/no1msd/seance` | Own patch `elements/desktop/seance.bst` (omp agent tracking from `kitten-lily/seance`, kitten-lily/seance#1); proposed as no1msd/seance#23 (issue no1msd/seance#22) on 2026-10-22, #1018 stage 3. no1msd/seance#21, cited in #1018. no1msd/seance#13 moved with the session-restore work to kitten-lily/seance#11. | No | No rule. Bigger features go to a Discussion first. |
 | Rust | `github.com/rust-lang/rust` | rust-lang/rust#150123 and rust-lang/rust#156675 (aarch64 Windows PGO), cited in #681. | Yes | LLMs may "analyze, … check, suggest, review. But not to **create**". No LLM-written comments or docs. LLM code only if pre-arranged, well reviewed, **with disclosure**. |
 
@@ -252,7 +253,8 @@ nothing was found, so an absence is evidenced and not assumed.
   either. A contributor noted the absence in
   [noctalia-dev/noctalia#4380](https://github.com/noctalia-dev/noctalia/issues/4380).
 - The same org's noctalia-greeter (formerly a krytis fork pin, see carried-patches.md §
-  Historical carries) and umbriel also have no rule.
+  Historical carries; carried again as a patch since #1588) and umbriel also have no rule.
+  noctalia-greeter checked at CONTRIBUTING.md `434b809` (2026-10-18).
 - As of: CONTRIBUTING.md `127c43eff6` (2026-10-08).
 
 ### omarchy-mxcontrol

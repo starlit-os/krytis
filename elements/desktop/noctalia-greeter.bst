@@ -78,3 +78,8 @@ sources:
   - '*alpha*'
   - '*beta*'
   ref: v1.7.0-0-gaf0bf4b1e1c40738db917b04c9c0563b4f718953
+
+# Hides the one-entry session picker once Umbriel is the only session (#1588).
+# Carried: docs/design/carried-patches.md.
+- kind: patch
+  path: patches/noctalia-greeter/hide-single-session-selector.patch
