@@ -184,6 +184,9 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
 # Passed as --build-arg CACHE_BUST=$(date +%Y%m%d) in iso-container-build.
 ARG CACHE_BUST=0
 COPY src/flatpaks /tmp/flatpaks-list
+# The bind mount below doesn't feed the layer cache key, so copy the installer
+# lock in: a re-pin must invalidate the cached install-flatpaks layer (#1454).
+COPY src/installer-bundle.lock /tmp/installer-bundle.lock
 RUN --mount=type=bind,source=src,target=/src \
     --mount=type=cache,target=/var/cache/flatpak-dl,id=krytis-flatpak-${TARGET} \
     bash -c 'if command -v flatpak >/dev/null 2>&1; then /src/install-flatpaks.sh; else echo "Skipping flatpaks — flatpak not present on ${TARGET}"; fi'

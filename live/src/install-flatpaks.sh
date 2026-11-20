@@ -58,9 +58,14 @@ flatpak remote-add --system --if-not-exists flathub "${FLATHUB_DESCRIPTOR}"
 # the live session installs with (configure-live-krytis.sh symlinks it out of
 # the app dir).
 #
-# INSTALLER_CHANNEL controls which release to pull from:
-#   stable (default) → GitHub "latest" release (non-pre-release)
-#   dev              → latest-dev rolling pre-release (tracks dev branch)
+# INSTALLER_CHANNEL picks the bundle: stable (default) or dev (the Devel app).
+# Both come from ONE pinned release: the tag and each bundle's SHA-256 live in
+# installer-bundle.lock next to this script (#1454, ported from
+# projectbluefin/dakota-iso c1c4c6f). The bundle runs as root on every machine
+# that boots the ISO, so the build refuses any bytes that differ from the
+# reviewed lock instead of trusting the moving releases/latest/ or latest-dev
+# redirects it used to follow. `mise run installer-bundle-update` re-pins, and
+# the track-installer-bundle job opens that PR.
 #
 # Source is tuna-os/bootc-installer. Development moved back to the tuna-os org:
 # projectbluefin/bootc-installer (this script's previous primary) and
@@ -82,14 +87,24 @@ INSTALLER_REPO="tuna-os/bootc-installer"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
-    INSTALLER_URL="https://github.com/${INSTALLER_REPO}/releases/download/latest-dev/${FLATPAK_FILENAME}"
-else
-    # GitHub's /releases/latest/download/ redirect — always the current stable
-    # release, no version tag to keep in sync. tuna-os/bootc-installer cuts one
-    # per merge (v2026.09.19-cee9ba29 and friends), so "latest" moves daily.
-    INSTALLER_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
 fi
+INSTALLER_LOCK_DIR="${BASH_SOURCE[0]%/*}"
+[[ "${INSTALLER_LOCK_DIR}" == "${BASH_SOURCE[0]}" ]] && INSTALLER_LOCK_DIR="."
+INSTALLER_LOCK="${INSTALLER_LOCK_DIR}/installer-bundle.lock"
+INSTALLER_TAG=$(sed -n 's/^tag=//p' "${INSTALLER_LOCK}" | head -1)
+INSTALLER_SHA256=$(sed -n "s/^${FLATPAK_FILENAME}=//p" "${INSTALLER_LOCK}" | head -1)
+if [[ -z "${INSTALLER_TAG}" || ! "${INSTALLER_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: ${INSTALLER_LOCK} must pin tag= and ${FLATPAK_FILENAME}=<sha256>" >&2
+    exit 1
+fi
+INSTALLER_URL="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/${FLATPAK_FILENAME}"
 curl --retry 3 --fail --location "${INSTALLER_URL}" -o /tmp/tuna-installer.flatpak
+if ! echo "${INSTALLER_SHA256}  /tmp/tuna-installer.flatpak" | sha256sum --check --quiet --strict -; then
+    rm -f /tmp/tuna-installer.flatpak
+    echo "ERROR: ${FLATPAK_FILENAME} from ${INSTALLER_TAG} does not match the SHA-256 in ${INSTALLER_LOCK}" >&2
+    exit 1
+fi
+echo "Installer bundle ${FLATPAK_FILENAME} @ ${INSTALLER_TAG} verified against ${INSTALLER_LOCK}"
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 

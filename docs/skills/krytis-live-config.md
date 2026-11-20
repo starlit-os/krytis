@@ -462,8 +462,8 @@ ISO built the same day still carried the bug, with nothing in the build log to s
 **Fix:** `INSTALLER_REPO="tuna-os/bootc-installer"`, and **no fallback** — both former
 fallbacks are archived, and quietly installing a months-old bundle is worse than a hard
 curl failure. That repo cuts a release per merge (`v2026.09.19-cee9ba29`), so
-`releases/latest/download/` moves daily and `latest-dev` still names the Devel asset;
-neither URL shape needed changing.
+`releases/latest/download/` moved daily. Since #1454 the script no longer follows it (next
+section).
 
 **How to check what a bundle actually contains** — the flatpak is an ostree bundle, so
 the binary is two commands away:
@@ -482,6 +482,35 @@ and writes `state/deploy/<hash>/etc/hostname` directly — confirmed in the inst
 Its only other action patched Universal Blue's `rechunker-group-fix.service`, which
 krytis has never shipped, and which had been printing "deployment etc/ not found" on
 every run instead of patching anything.
+
+### The installer bundle is pinned by tag and SHA-256 (#1454, 2026-11-20)
+
+**What:** `live/src/installer-bundle.lock` names one tuna-os/bootc-installer release
+(`tag=`) and the SHA-256 of **both** bundles (stable and Devel). `install-flatpaks.sh`
+downloads `releases/download/<tag>/<file>` for the channel it builds and fails the ISO build
+when the bytes don't match, or when the lock lacks the tag or that bundle's hash. Ported
+from projectbluefin/dakota-iso `c1c4c6f`.
+
+**Why:** the bundle runs as root on every machine that boots the ISO, and it *is* the install
+backend (fisherman). Following `releases/latest/` meant an upstream release could change
+installs with no krytis commit at all. #1479 is the precedent: bootc-installer
+`v2026.10.31-23e47c51` made the media receipt mandatory overnight, and every ISO built after
+it failed to install.
+
+**How to re-pin:** `mise run installer-bundle-update [<tag>]` (default: what `releases/latest`
+redirects to). It refuses moving names (`latest`, `latest-dev`, …) and rewrites the lock with
+both hashes. The `track-installer-bundle` job in `track-bst-sources.yml` runs it on the
+tracking schedule and opens an `auto/track-installer-bundle` PR with the 24 h cooldown. That
+PR needs an ISO install test before merge, because the bump changes fisherman.
+
+**Gotchas:**
+
+- **The Devel channel uses the same tag.** `INSTALLER_CHANNEL=dev` installs the Devel bundle
+  *from the pinned release*, not from the rolling `latest-dev` pre-release. Upstream attaches
+  both bundles to every release.
+- **`live/Containerfile` `COPY`s the lock** before the `RUN --mount=type=bind,source=src` that
+  runs `install-flatpaks.sh`. A bind mount's content isn't part of the layer cache key, so
+  without the `COPY` a re-pin could reuse the old cached layer.
 
 ### fisherman requires a media-input.json receipt and a read-only OCI layout on live media (#1479, 2026-11-02)
 

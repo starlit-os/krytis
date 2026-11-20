@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#MISE description="Pin the live ISO's bootc-installer bundles (tag + SHA-256) in live/src/installer-bundle.lock"
+#USAGE arg "[tag]" help="Exact tuna-os/bootc-installer release tag. Default: what releases/latest points at"
+
+# The installer flatpak runs as root on every machine that boots the ISO, and it
+# carries fisherman, the install backend. live/src/install-flatpaks.sh therefore
+# installs only the bundles whose SHA-256 this lock lists, from the exact tag it
+# names. A new upstream release reaches the ISO only through a reviewed change to
+# the lock (#1454). Ported from projectbluefin/dakota-iso c1c4c6f
+# (scripts/bump-installer-bundle.sh).
+#
+# Update path: this task plus the track-installer-bundle job in
+# .github/workflows/track-bst-sources.yml (AGENTS.md update path gate, option (b)).
+#
+#   INSTALLER_REPO  override the upstream repository (tests)
+#   INSTALLER_LOCK  override the lock path (tests)
+
+set -euo pipefail
+
+INSTALLER_REPO="${INSTALLER_REPO:-tuna-os/bootc-installer}"
+INSTALLER_LOCK="${INSTALLER_LOCK:-live/src/installer-bundle.lock}"
+BUNDLES=(org.bootcinstaller.Installer.flatpak org.bootcinstaller.Installer.Devel.flatpak)
+
+TAG="${usage_tag:-${1:-}}"
+if [[ -z "${TAG}" ]]; then
+    final_url=$(curl --silent --show-error --fail --location --head \
+        --output /dev/null --write-out '%{url_effective}' \
+        "https://github.com/${INSTALLER_REPO}/releases/latest")
+    TAG="${final_url##*/tag/}"
+fi
+case "${TAG}" in
+    ""|*/*|latest|latest-dev|latest-stable|dev-rolling)
+        echo "ERROR: refusing release tag '${TAG}': need an exact versioned tag" >&2
+        exit 1
+        ;;
+esac
+
+CURRENT=$(sed -n 's/^tag=//p' "${INSTALLER_LOCK}" 2>/dev/null | head -1 || true)
+if [[ "${CURRENT}" == "${TAG}" ]]; then
+    echo "==> Already pinned to ${TAG}"
+    exit 0
+fi
+echo "==> ${CURRENT:-<none>} -> ${TAG}"
+
+workdir=$(mktemp -d)
+trap 'rm -rf "${workdir}"' EXIT
+
+{
+    echo "# bootc-installer release baked into every live ISO (${INSTALLER_REPO})."
+    echo "# install-flatpaks.sh downloads releases/download/<tag>/<file> and refuses a"
+    echo "# bundle whose SHA-256 differs from the value listed here (#1454)."
+    echo "# Refresh with: mise run installer-bundle-update [<tag>]"
+    echo "tag=${TAG}"
+    for bundle in "${BUNDLES[@]}"; do
+        curl --silent --show-error --fail --location --retry 3 \
+            "https://github.com/${INSTALLER_REPO}/releases/download/${TAG}/${bundle}" \
+            -o "${workdir}/${bundle}"
+        sum=$(sha256sum "${workdir}/${bundle}" | cut -d' ' -f1)
+        echo "${bundle}=${sum}"
+    done
+} > "${workdir}/lock"
+
+mv "${workdir}/lock" "${INSTALLER_LOCK}"
+echo "==> Updated ${INSTALLER_LOCK}:"
+grep -v '^#' "${INSTALLER_LOCK}"

@@ -468,9 +468,11 @@ Two downloads in `live/src/install-flatpaks.sh` worked like an unpinned action:
 - **The installer bundle** came through `releases/latest/download/`, and it runs as root on
   every machine that boots the ISO. Upstream pins the release tag and both bundles'
   SHA-256 in a lock file and fails the build on a mismatch, and has bumped it twice since
-(`95bab1ac` for fisherman v0.5.3, `7974f6fa` for tuna-os/fisherman#399). Krytis still
-fetches `latest` / `latest-dev` (`live/src/install-flatpaks.sh`). #1454 tracks it. It was
-closed on 2026-11-01 by a docs-only PR's closing keyword and reopened 2026-11-15.
+(`95bab1ac` for fisherman v0.5.3, `7974f6fa` for tuna-os/fisherman#399). **Ported in
+#1454 (2026-11-20):** `live/src/installer-bundle.lock`, verified by
+`live/src/install-flatpaks.sh`, re-pinned by `mise run installer-bundle-update` and the
+`track-installer-bundle` job. See [`krytis-live-config.md`](krytis-live-config.md) § The
+installer bundle is pinned by tag and SHA-256.
 - **Flathub's `.flatpakrepo`** was handed to `flatpak remote-add` by URL. Its `GPGKey=` is
   the trust root for every later Flatpak download, and `/var/lib/flatpak` is copied onto
   installed systems, so one bad response would become every installed machine's Flathub
