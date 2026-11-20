@@ -1,0 +1,126 @@
+Hide the session picker when only one session is installed (krytis #1588).
+
+With niri gone (#1567), Umbriel is the only session, and noctalia-greeter v1.7.0
+still draws a one-entry session picker. This mirrors showsUserDropdown() (users > 1):
+showsSessionSelector() is sessions > 1. When it's false the panel reserves no
+row or gap for the picker, hides its nodes, drops it from the Tab focus ring,
+and makes F3 and toggleSessionMenu() no-ops. With two or more sessions, nothing
+changes.
+
+Krytis-only carry for now. Proposing it upstream is the owner's call (Upstream Gate).
+
+diff --git a/src/greeter/greeter_surface.cpp b/src/greeter/greeter_surface.cpp
+index c362af0..d3de597 100644
+--- a/src/greeter/greeter_surface.cpp
++++ b/src/greeter/greeter_surface.cpp
+@@ -712,6 +712,11 @@ void GreeterSurface::applyInitialUserSelection() {
+ 
+ bool GreeterSurface::showsUserDropdown() const noexcept { return m_users.size() > 1; }
+ 
++// With a single installed session there is nothing to choose, so the picker
++// row, its focus stop and the F3 shortcut are dropped, like the user picker
++// with a single user.
++bool GreeterSurface::showsSessionSelector() const noexcept { return m_sessions.size() > 1; }
++
+ void GreeterSurface::setKeyboardOwner(const bool owner) noexcept {
+   m_isKeyboardOwner = owner;
+   if (owner) {
+@@ -1159,8 +1164,8 @@ void GreeterSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
+   const float headerToContentGap = Style::spaceLg();
+   const float headerBlockHeight = headerTopPadding + headerGlyphBlock + subtitleGap + headerToContentGap;
+ 
+-  const float sessionRowH = rowHeight;
+-  const float sessionRowGap = rowGap;
++  const float sessionRowH = showsSessionSelector() ? rowHeight : 0.0f;
++  const float sessionRowGap = showsSessionSelector() ? rowGap : 0.0f;
+ 
+   const float userBlockHeight = showsUserDropdown() ? rowHeight : 0.0f;
+   const float userPickerContentHeight = userBlockHeight + sessionRowGap + sessionRowH;
+@@ -1374,7 +1379,11 @@ void GreeterSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
+ 
+   const float sessionY = m_passwordVisible ? (contentTop + Style::controlHeight() + sessionRowGap)
+                                            : (contentTop + userBlockHeight + sessionRowGap);
+-  layoutPanelSessionSelector(contentLeft, sessionY, contentWidth, sessionRowH);
++  if (showsSessionSelector()) {
++    layoutPanelSessionSelector(contentLeft, sessionY, contentWidth, sessionRowH);
++  } else {
++    hidePanelSessionSelector();
++  }
+ 
+   if (hasStatus) {
+     const float statusY = contentTop + contentBlockHeight + statusGap;
+@@ -2174,6 +2183,9 @@ void GreeterSurface::openUserMenu() {
+ }
+ 
+ void GreeterSurface::toggleSessionMenu() {
++  if (!showsSessionSelector() && !m_sessionMenuOpen) {
++    return;
++  }
+   m_sessionMenuOpen = !m_sessionMenuOpen;
+   if (m_sessionMenuOpen) {
+     m_userMenuOpen = false;
+@@ -2328,7 +2340,7 @@ void GreeterSurface::rebuildFocusRing() {
+                            }});
+   }
+ 
+-  if (m_sessionSelectArea != nullptr) {
++  if (m_sessionSelectArea != nullptr && showsSessionSelector()) {
+     m_focusRing.push_back({m_sessionSelectArea, [this]() { toggleSessionMenu(); }});
+   }
+   if (m_schemeSelectArea != nullptr && m_schemeSelectArea->visible()) {
+@@ -2564,6 +2576,24 @@ void GreeterSurface::syncPanelSessionChrome() {
+   }
+ }
+ 
++void GreeterSurface::hidePanelSessionSelector() {
++  if (m_sessionSelectBox != nullptr) {
++    m_sessionSelectBox->setVisible(false);
++  }
++  if (m_sessionSelectIcon != nullptr) {
++    m_sessionSelectIcon->setVisible(false);
++  }
++  if (m_sessionSelectLabel != nullptr) {
++    m_sessionSelectLabel->setVisible(false);
++  }
++  if (m_sessionSelectGlyph != nullptr) {
++    m_sessionSelectGlyph->setVisible(false);
++  }
++  if (m_sessionSelectArea != nullptr) {
++    m_sessionSelectArea->setVisible(false);
++  }
++}
++
+ void GreeterSurface::layoutPanelSessionSelector(float x, float y, float w, float h) {
+   auto* renderer = m_renderContext;
+   if (renderer == nullptr
+@@ -3180,6 +3210,10 @@ bool GreeterSurface::handleNavigationKey(std::uint32_t sym, std::uint32_t utf32,
+   // F3 / F7 jump straight to the session / color-scheme menus from anywhere
+   // (even from inside the password field or with another menu open).
+   if (KeySymbol::isF3(sym)) {
++    // Nothing to pick with a single session
++    if (!showsSessionSelector()) {
++      return true;
++    }
+     if (m_sessionMenuOpen) {
+       closeMenusAndRestoreFocus();
+     } else {
+diff --git a/src/greeter/greeter_surface.h b/src/greeter/greeter_surface.h
+index e418d10..1d73776 100644
+--- a/src/greeter/greeter_surface.h
++++ b/src/greeter/greeter_surface.h
+@@ -129,6 +129,7 @@ private:
+   void layoutSelector(Box* box, Glyph* icon, Glyph* chevron, InputArea* area, float x, float y, float w, float h);
+   void layoutPanelUserSelector(float x, float y, float w, float h);
+   void layoutPanelSessionSelector(float x, float y, float w, float h);
++  void hidePanelSessionSelector();
+   void layoutPowerButtons(float ox, float oy, float sw, float sh);
+   void
+   layoutClock(float ox, float oy, float sw, float sh, float panelX, float panelY, float panelWidth, float panelHeight);
+@@ -174,6 +175,7 @@ private:
+   void reconcileKeyboardFocus();
+   [[nodiscard]] bool ownsInputArea(const InputArea* area) const;
+   [[nodiscard]] bool showsUserDropdown() const noexcept;
++  [[nodiscard]] bool showsSessionSelector() const noexcept;
+   void savePreferences() const;
+   void buildSchemeNames();
+   void applyScheme(std::size_t schemeIndex);

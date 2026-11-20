@@ -520,6 +520,14 @@ track` follow tags automatically (option A in the update-path gate), so no mise 
 or `track-mise` CI job is needed. A matrix entry in the `track` job in
 `track-bst-sources.yml` is all that's required.
 
+**Greeter changes are carried as krytis patches, not on a fork.** The
+`kitten-lily/noctalia-greeter` fork no longer exists (`git fetch` returns "repository not found",
+checked 2026-11-20), so a greeter change goes in `patches/noctalia-greeter/` as a `kind: patch`
+source after the `git_repo` source, with its `carried-patches.md` row. Develop it in a throwaway
+clone checked out at the pinned `ref:`, and `git apply --check` it against the newest upstream
+tag before opening the PR, because the next `auto/track-noctalia-greeter` bump has to apply it.
+The first one is `hide-single-session-selector.patch` (#1588).
+
 ## noctalia (shell) build dependencies
 
 `desktop/noctalia.bst` also uses `git_repo` with `track: v*` against upstream
