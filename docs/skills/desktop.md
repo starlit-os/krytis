@@ -2229,6 +2229,19 @@ xdg-utils v1.2.x uses `org.freedesktop.portal.OpenURI` (via `gdbus`) to open URL
 
 **Tag format in repo:** `v*.*.*` (not `xdg-utils-*.*.*` as one might expect).
 
+## Two activation files for one D-Bus name
+
+When two packages each install a `/usr/share/dbus-1/services/*.service` file with the same `Name=`, neither package decides which one the session bus activates. The file names differ, so nothing collides at install time and no gate catches it. `desktop/luciole.bst` (#1649) did this with `org.freedesktop.FileManager1`: Luciole's `dev.noctalia.luciole.FileManager1.service` and Nautilus's `org.freedesktop.FileManager1.service` both claimed it. The bus chose Luciole, so every "open folder" and "show in folder" request from browsers and portals opened Luciole, even though the element said Nautilus stayed the default.
+
+The fix is to delete the losing package's activation file in its element's `install-commands` (`(>):`) instead of hoping for a particular order. That covers activation only. A process that calls `g_bus_own_name` without `DO_NOT_QUEUE` still queues for the name and takes it whenever the name has no owner. Luciole's normal windows do this, so a Luciole started by hand owns `FileManager1` while it runs if Nautilus wasn't already running.
+
+To find duplicates on a booted image:
+
+```shell
+grep -h '^Name=' /usr/share/dbus-1/services/*.service | sort | uniq -d
+busctl --user status org.freedesktop.FileManager1 | grep -E '^(Comm|CommandLine)='
+```
+
 ## URL scheme handlers need `desktop-file-utils` in the image (#945)
 
 **Symptom:** `steam://…`, `discord://…` — any URL scheme, and any MIME type — resolves to nothing for GIO-based callers (browsers, xdg-desktop-portal, `gio open`), even when the claiming `.desktop` file is installed and its `MimeType=` line is correct.

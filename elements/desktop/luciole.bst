@@ -44,10 +44,15 @@
 #   with no FileChooser key, which shadows that, so Open/Save stays on
 #   xdp-gnome. mise run portal-routing-check asserts it. Changing it is a
 #   Design/Breakage Gate decision (#1649 question 3).
-# - org.freedesktop.FileManager1: Luciole's
-#   dev.noctalia.luciole.FileManager1.service claims the same bus name as
-#   Nautilus's org.freedesktop.FileManager1.service. Which one the bus
-#   activates isn't something upstream defines.
+# - org.freedesktop.FileManager1: Nautilus keeps it. Luciole's
+#   dev.noctalia.luciole.FileManager1.service claimed the same bus name as
+#   Nautilus's org.freedesktop.FileManager1.service, and with two activation
+#   files for one name the bus picked Luciole, so "open folder" / "show in
+#   folder" opened Luciole windows. install-commands below deletes Luciole's
+#   file. A Luciole window started by hand still queues for the name
+#   (src/app/file_manager_service.cpp, G_BUS_NAME_OWNER_FLAGS_NONE) and holds
+#   it while it runs if Nautilus isn't already the owner.
+#   docs/skills/desktop.md § Two activation files for one D-Bus name.
 # - inode/directory: installing Luciole doesn't change the MIME default.
 kind: meson
 
@@ -92,6 +97,11 @@ depends:
 - freedesktop-sdk.bst:components/libxml2.bst
 # Shared library (libtomlplusplus.so.3), so `depends` (desktop/noctalia.bst).
 - freedesktop-sdk.bst:components/tomlplusplus.bst
+
+config:
+  install-commands:
+    (>):
+    - rm "%{install-root}%{datadir}/dbus-1/services/dev.noctalia.luciole.FileManager1.service"
 
 variables:
   meson-local: >-
