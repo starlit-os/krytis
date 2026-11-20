@@ -34,7 +34,17 @@ travier's `fedora-atomic-desktops-sealed` `uki.sh` uses `ukify --measure` and ma
 - `--measure` populates PCR 11 for TPM attestation/unlock flows. With no TPM-bound volumes it buys nothing and makes PCR 11 part of the boot contract a future TPM design must inherit. Re-evaluate inside a TPM-LUKS feature, where PCR selection (7+11 vs others) is designed as a whole.
 - The masks work around specific hardware TPM hangs across a large Fedora Atomic fleet. Masking four units "just in case" — with no observed failures — is debt a future TPM feature has to unmask and debug.
 
-**Escalation rule:** only mask if sealed-boot verification or real hardware shows a `systemd-tpm2-*`/`systemd-pcr*` unit failing or hanging (`systemctl --failed`, `journalctl -b -p err`). Then mask per travier's list and record the finding in the TPM-LUKS issue.
+**Escalation rule:** only mask if sealed-boot verification or real hardware shows a `systemd-tpm2-*`/`systemd-pcr*` unit failing or hanging (`systemctl --failed`, `journalctl -b -p err`). Then mask the unit that failed, not travier's whole list, and record the finding in the TPM-LUKS issue (#368).
+
+## `systemd-pcrlock-make-policy.service` is masked: its NV index goes stale on the first firmware update (#1584)
+
+The escalation rule above has fired once. systemd's preset enables `systemd-pcrlock-make-policy.service`, and it runs on every boot whose UKI systemd-stub measured (`ConditionSecurity=measured-uki`), which means any real machine with a TPM. Its first run allocates a TPM2 NV index and writes `/var/lib/systemd/pcrlock.json`. Each later run must satisfy the policy already in that NV index before it may rewrite it. The automatic access PIN doesn't help, because it is sealed under a policy bound to the same NV index (`man systemd-pcrlock`, `make-policy`). After a firmware update changes PCR 0, or a firmware setting changes PCR 1, the stored policy can never be satisfied again. The unit then fails on every boot with `Esys_PolicyOR() … ErrorCode (0x000001c4)` / `None of the alternative values for PCR 0 encoded in policy match the current TPM state`, and the system is `degraded`.
+
+On adora that state dated from 2026-08-07 and failed every boot from 2026-08-19 until the mask. Nothing reads the policy: there are no TPM2 LUKS slots (§ Signed UKI PCR changes do not affect FIDO2 or passphrase LUKS unlock), and no `sysupdate.d` transfers, so `systemd-sysupdate-notify-pcrlock.socket` never asks for a recompute. `config/pcrlock-policy-mask.bst` masks only `make-policy`, from `/etc` like `config/networkd-mask.bst`, so bootc's `/etc` merge carries it to installed machines. The other `systemd-pcrlock-*.service` units only write `.pcrlock` files into `/var/lib/pcrlock.d` and succeed. `systemd-pcrphase*` and `systemd-tpm2-setup*` are untouched.
+
+- **Existing machines keep the stale NV index and `pcrlock.json`.** They're harmless while nothing reads them. `systemd-pcrlock remove-policy` deallocates the index and deletes the file.
+- **No VM gate sees this unit.** `boot-test` has no TPM, so the condition is false and the unit is skipped. `tpm-boot-test` stops in the initrd, while `make-policy` runs after switch-root. A fresh swtpm also succeeds on the first run, because the failure needs a PCR 0/1 change after that run. Verify on hardware with `systemctl is-enabled systemd-pcrlock-make-policy.service` (expect `masked`) and `systemctl is-system-running`.
+- **For #368:** a TPM-bound LUKS design that wants pcrlock must also cover firmware updates: re-run `make-policy` (or `lock-firmware-code`) *before* the reboot that changes PCR 0, or set a `--recovery-pin`. Otherwise it hits this failure and the volume won't unlock.
 
 ## `sbsign` ships as `sbsigntools-maybe.bst`, not `sbsigntools.bst`
 
