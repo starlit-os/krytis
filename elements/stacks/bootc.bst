@@ -15,5 +15,8 @@ depends:
   - core/efibootmgr.bst
   - config/bootc.bst
   - config/secureboot-loader-conf.bst
+  # Masks systemd-pcrlock-make-policy.service. Its NV-index policy goes stale
+  # on the first firmware update and fails every measured-UKI boot (#1584).
+  - config/pcrlock-policy-mask.bst
   # Refuses ghcr.io/starlit-os/krytis images without the static-key signature (#418).
   - config/container-sigpolicy.bst
