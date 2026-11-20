@@ -370,8 +370,29 @@ mise run boot-test               # boot-test locally, with the laptop's FIDO2 ke
 
 `--build-only` leaves the image on melog. `--ship-only --image <tag>` copies an image that
 melog already has, for example to retry a failed transfer. `--push` builds with `--push`.
-`--ref <rev>` builds a commit other than `HEAD`. Set `KRYTIS_REMOTE_HOST` (a Rex label or
-address) to build somewhere other than melog's Rex server (`https://rex-melog.werewolf-stonecat.ts.net`).
+`--ref <rev>` builds a commit other than `HEAD`.
+
+**Configuration.** `KRYTIS_REMOTE_HOST` (the build host's Rex label or address) is required
+and has no default: the build host is one operator's machine, so its name stays out of the
+repo (#1689). Put it in the **parent directory's** `.mise.local.toml`, the directory that
+holds both `krytis/` and `krytis.worktrees/`:
+
+```toml
+# ~/Projects/StarlitOS/.mise.local.toml
+[env]
+KRYTIS_REMOTE_HOST = "https://<rex-host>"   # Rex label or address
+```
+
+mise loads `.mise.local.toml` from every parent directory, so that one file reaches the
+main checkout and every worktree. A `.mise.local.toml` inside `krytis/` doesn't reach the
+worktrees, which are siblings of the checkout, not children of it. That's the trap that
+made the `runner-vps` tasks unrunnable (`ci-runner.md` § The PAT never lives on the VPS).
+Check the placement from a worktree: `mise config ls` lists
+`…/StarlitOS/.mise.local.toml`, and `mise env | grep KRYTIS_REMOTE_HOST` shows the value
+(verified 2026-11-19 and 2026-11-20). Unlike `RUNNER_VPS_HOST`, the task has **no fnox
+fallback**. A tailnet name isn't a secret, and the parent-directory file already covers
+every worktree, which is the gap fnox closed for the VPS. If the variable is unset or empty,
+the task exits 1 before running `rex` or `git`, and prints the snippet above.
 
 Each design choice exists for a reason:
 

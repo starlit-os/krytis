@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Run `mise run build --pull` on another machine through Rex (default: melog), then stream the built image back into this machine's podman store"
+#MISE description="Run `mise run build --pull` on another machine through Rex (KRYTIS_REMOTE_HOST), then stream the built image back into this machine's podman store"
 #USAGE flag "--ref <rev>" default="HEAD" help="Commit to build. It must already be on origin: the remote host fetches it from there"
 #USAGE flag "--push" help="Build with --push instead of --pull (the remote host needs push credentials)"
 #USAGE flag "--force" help="Forwarded to build: reload into podman even if the image key is unchanged"
@@ -12,14 +12,28 @@
 #
 # Environment overrides:
 #   KRYTIS_REMOTE_HOST  Rex server to build on (label or address).
-#                       Default: melog's Rex server on the tailnet.
+#                       Required, no default: set it in .mise.local.toml (the
+#                       error below shows where and how).
 #   KRYTIS_REMOTE_REPO  krytis checkout on that host. Default: ~/Projects/StarlitOS/krytis.
 #                       Only `git fetch` runs there; the build uses a separate worktree.
 #   KRYTIS_REMOTE_LOCAL_FREE_GB  Free GB the local podman store needs before a load. Default 12.
 
 set -euo pipefail
 
-HOST="${KRYTIS_REMOTE_HOST:-https://rex-melog.werewolf-stonecat.ts.net}"
+# No default: the build host is one operator's machine, so it comes from
+# their gitignored .mise.local.toml, like RUNNER_VPS_HOST (mise.toml).
+HOST="${KRYTIS_REMOTE_HOST:-}"
+if [ -z "$HOST" ]; then
+    cat >&2 <<'EOF'
+remote-build: KRYTIS_REMOTE_HOST is not set. Add it to the .mise.local.toml in the
+directory that holds both the checkout and krytis.worktrees/
+(e.g. ~/Projects/StarlitOS/.mise.local.toml), so every worktree sees it:
+
+  [env]
+  KRYTIS_REMOTE_HOST = "https://<rex-host>"   # Rex label or address
+EOF
+    exit 1
+fi
 REMOTE_REPO="${KRYTIS_REMOTE_REPO:-\$HOME/Projects/StarlitOS/krytis}"
 REF="${usage_ref:-HEAD}"
 IMAGE="${usage_image:-localhost/krytis:latest}"
