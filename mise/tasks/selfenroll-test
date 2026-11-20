@@ -98,8 +98,15 @@ PROBE
 cat > "${WORKDIR}/probe.sh" <<'PROBESH'
 #!/bin/bash
 sleep 50
+# Reopen the serial port now rather than writing to the fd the unit opened at start:
+# when serial-getty@ttyS0 starts in between, agetty vhangup()s the tty and every
+# write through the earlier fd is silently lost, so no verdict would ever arrive.
+exec >/dev/ttyS0 2>&1
 echo "===KRYTIS-SELFENROLL==="
-echo "state: $(systemctl is-system-running)"
+# A fresh first boot is still settling at 50 s (state "starting"), so wait for the
+# manager to finish instead of sampling once. Capped well inside the host deadline.
+echo "state: $(timeout 150 systemctl is-system-running --wait)"
+echo "jobs:"; systemctl list-jobs --no-legend --no-pager | head -5
 bootctl status 2>&1 | grep -iE 'secure boot|setup mode' | sed 's/^ */sb: /'
 echo "image: $(bootc status --json 2>/dev/null | python3 -c 'import json,sys
 d = json.load(sys.stdin)
@@ -132,7 +139,7 @@ boot_once() {
         -serial "file:${WORKDIR}/${label}.log" \
         -daemonize -pidfile "${WORKDIR}/qemu.pid"
 
-    local deadline=$((SECONDS + 240))
+    local deadline=$((SECONDS + 300))
     while [ "${SECONDS}" -lt "${deadline}" ]; do
         grep -q 'KRYTIS-SELFENROLL-END' "${WORKDIR}/${label}.log" 2>/dev/null && break
         grep -qE 'Access Denied|Security Violation' "${WORKDIR}/${label}.log" 2>/dev/null && break

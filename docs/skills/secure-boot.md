@@ -802,6 +802,20 @@ Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
 kargs for anything a test needs to inject. Kargs are a signing-time decision;
 credentials are a runtime one.
 
+**A probe that reports over `/dev/ttyS0` must open it when it writes (#1570,
+2026-11-20).** A probe unit with `StandardOutput=file:/dev/ttyS0` opens the port
+when the unit starts. If `serial-getty@ttyS0.service` starts afterwards, agetty
+`vhangup()`s the tty, every later write through that fd is silently lost, and the run
+looks like a boot that never reported. `selfenroll-test` hit this on a
+`generate-disk`-installed sealed disk under OVMF. The serial log showed the probe
+`Started`, then agetty's `(ttyS0)` banner, then a clean power-off, with no markers in
+between. That machine had a systemd console and a getty on serial although the
+cmdline carries no `console=`, which contradicts "the kernel logs to tty0 only" above
+for this platform. So don't assume the port is free. The probe script does
+`exec >/dev/ttyS0 2>&1` right before printing. It also waits with
+`systemctl is-system-running --wait` rather than sampling once after a fixed sleep,
+because a fresh first boot is still `starting` at 50 s.
+
 ## The `systemd-boot@` serial banner is a debug artefact
 
 Every harness here used to identify "the loader ran" by the line
@@ -1087,6 +1101,11 @@ at install time. The #444 decision above describes installs from before this cha
   up enforcing. `secure-boot-keys-<dir>` is the id systemd-boot gives each `loader/keys/<dir>`
   (`secure_boot_discover_keys()` in `src/boot/boot.c`). A one-shot entry stands in for the
   user's menu pick without any keystroke timing.
+- **Verified 2026-11-20 on a `generate-disk --image localhost/krytis:sealed` disk**
+  (`selfenroll-test --disk …` and `enroll-test`, both PASS). The ISO path couldn't be run
+  that day: every sealed ISO install fails on an installer karg (#1717). `generate-disk`
+  runs the same `bootc install` → `install_systemd_boot()` copy without kargs, so the
+  loader.conf behaviour is the same.
 
 **Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
 the source disk, so an install disk stays a first-boot disk no matter how many times
