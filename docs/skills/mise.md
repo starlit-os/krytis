@@ -523,6 +523,22 @@ escape. mise then only *warns* ("invalid usage spec") and runs the task with no
 parsed flags, so the first `${usage_<flag>}` under `set -u` fails as an unbound
 variable. Write `$` bare, or leave it out.
 
+**Running the script without mise ignores its flags.** mise parses `#USAGE` and sets
+`usage_<flag>`; the script never reads `$@` for them. So `bash mise/tasks/<task> --flag`
+silently drops `--flag` and runs the task's default path. A task whose default is the
+expensive or destructive path is the dangerous case: for example, `bash mise/tasks/remote-build
+--build-only` would start a real remote build and copy the image back. To run a task outside
+mise, such as a fault-injected copy in a scratch directory, pass the flags as environment
+variables instead:
+
+```shell
+usage_ship_only=true usage_image=docker.io/library/alpine:3.22 bash /tmp/remote-build-injected
+```
+
+A boolean flag is `true` when set. A value flag gets its value as given. An unset flag stays
+unset, so `${usage_<flag>:-default}` in the script supplies its default. #1704 and #1706
+verified their failure paths this way (`docs/plans/done/2026-11-20-harden-remote-build.md`).
+
 ### Calling other tasks
 
 Use `#MISE depends=["other-task"]` to declare a prerequisite task (no args). mise runs it
