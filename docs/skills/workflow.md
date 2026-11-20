@@ -996,6 +996,13 @@ env -u SSH_AUTH_SOCK ssh-keygen -Y sign \
   `git config user.signingkey` before relying on it, since a `key::`-style value or a bare
   public key would need the agent.
 
+- `device not found` from a direct `env -u SSH_AUTH_SOCK` sign while `fido2-token -L`
+  **does** list the YubiKey, often right after an `invalid format?` failure → the token is
+  wedged, not absent. Retries keep failing, and only a physical re-plug clears it. Seen twice
+  on melog on 2026-11-20, both times after the key had sat idle for a while; each time the
+  first signature after the re-plug worked. Ask the operator to unplug and replug, and don't
+  spend more retries before that.
+
 Do not bother retrying against the inner plain agent gcr spawns
 (`ps -eo args | grep ssh-agent` → `-a <gcr-base-dir>/.ssh`, note the leading dot). On
 2026-09-24 both the gcr proxy at `$SSH_AUTH_SOCK` and that inner agent refused the same

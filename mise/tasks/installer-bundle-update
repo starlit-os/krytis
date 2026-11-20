@@ -22,6 +22,15 @@ INSTALLER_LOCK="${INSTALLER_LOCK:-live/src/installer-bundle.lock}"
 BUNDLES=(org.bootcinstaller.Installer.flatpak org.bootcinstaller.Installer.Devel.flatpak)
 
 TAG="${usage_tag:-${1:-}}"
+# A `hold=<reason>` line in the lock freezes the pin against the automatic bump, e.g.
+# while every newer release is known broken (#1717). An explicit tag overrides it, and
+# the rewrite below drops the hold, so re-pinning by hand is how a hold ends.
+HOLD=$(sed -n 's/^hold=//p' "${INSTALLER_LOCK}" 2>/dev/null | head -1 || true)
+if [[ -z "${TAG}" && -n "${HOLD}" ]]; then
+    echo "==> Held at $(sed -n 's/^tag=//p' "${INSTALLER_LOCK}" | head -1): ${HOLD}"
+    echo "    Re-pin explicitly to lift it: mise run installer-bundle-update <tag>"
+    exit 0
+fi
 if [[ -z "${TAG}" ]]; then
     final_url=$(curl --silent --show-error --fail --location --head \
         --output /dev/null --write-out '%{url_effective}' \
