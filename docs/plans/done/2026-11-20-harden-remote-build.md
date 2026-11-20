@@ -26,7 +26,7 @@ fixes the placement: `~/Projects/StarlitOS/.mise.local.toml`.
   ```
 - Placement to document: `~/Projects/StarlitOS/.mise.local.toml` (the parent of `krytis/` and `krytis.worktrees/`). Verified 2026-11-19 with `mise config ls` from a worktree (issue comment).
 - No fnox fallback. Say why in the docs: the value is a tailnet name, not a secret, and the parent-directory file already reaches every worktree. That trap is what pushed `RUNNER_VPS_HOST` to fnox (`scripts/runner-vps-host.sh`).
-- `rex-melog.werewolf-stonecat.ts.net` must not appear in `mise/tasks/remote-build` or `docs/skills/mise.md` afterwards. Other `werewolf-stonecat` hits (bst-cache in `project.conf` and the workflows) are out of scope.
+- melog's Rex FQDN must not appear in `mise/tasks/remote-build` or `docs/skills/mise.md` afterwards. Other `werewolf-stonecat` hits (bst-cache in `project.conf` and the workflows) are out of scope.
 - Retry: **3 attempts**. Each attempt restarts the one-shot server block **and** the `rex forward open`. Log each failed attempt's error. Keep the image-ID comparison after a successful load.
 - Curl stall detection targets a *dead* stream, not a slow one: `--connect-timeout 30 --speed-limit 1024 --speed-time 300`, so a stream that moves under 1 KiB/s for 5 minutes fails. The measured runs (176–261 s for 7 GB uncompressed) don't show the first-byte latency of `podman save`, or the slowest legitimate interval in compressed bytes. So the threshold stays deliberately loose: it replaces an indefinite hang, it doesn't police throughput. Codex review, finding 4.
 - The diff touches no BuildStream input or `Containerfile*`, so it needs no `mise run build` or `boot-test` (AGENTS.md § Verification exemption). Verify by running the task.
@@ -91,7 +91,7 @@ mise config ls | grep StarlitOS/.mise.local.toml
 
 - [ ] **Step 4: Docs**
 
-In `docs/skills/mise.md` § Building on melog, replace the sentence "Set `KRYTIS_REMOTE_HOST` … (`https://rex-melog.werewolf-stonecat.ts.net`)." with a **Configuration** paragraph that says:
+In `docs/skills/mise.md` § Building on melog, replace the sentence "Set `KRYTIS_REMOTE_HOST` … (`https://<melog FQDN>`)." with a **Configuration** paragraph that says:
 - `KRYTIS_REMOTE_HOST` is required and has no default. It goes in `[env]` of `~/Projects/StarlitOS/.mise.local.toml`, the parent directory. mise loads parent-directory config, so it reaches the main checkout and every `krytis.worktrees/*` worktree. A `.mise.local.toml` inside `krytis/` doesn't reach the worktrees: the same trap as § `RUNNER_VPS_HOST` in `docs/skills/ci-runner.md`. Verify the placement with `mise config ls` from a worktree.
 - No fnox fallback, and why: it's a tailnet name, not a secret, and the parent file already covers worktrees.
 
@@ -102,7 +102,7 @@ The sentence "Its Rex server sits behind its own tailnet node, `rex-melog`" can 
 ```bash
 shellcheck mise/tasks/remote-build
 mise run docs-links
-git grep -n 'rex-melog.werewolf' -- mise/tasks/remote-build docs/skills/mise.md   # expect no output
+git grep -n "$OLD_FQDN" -- mise/tasks/remote-build docs/skills/mise.md   # expect no output
 env -u SSH_AUTH_SOCK git commit -am "fix(remote-build): require KRYTIS_REMOTE_HOST from .mise.local.toml" -m "Refs #1689" ...
 ```
 

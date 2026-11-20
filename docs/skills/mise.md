@@ -428,6 +428,37 @@ Each design choice exists for a reason:
   local task polls in `rex wait --for 10m` slices and reads the result from
   `rex block call … process` (`.last_exit.exit_code`). `rex wait` exits with the child's
   status, so its exit code alone can't tell a timeout from a build that exited 1.
+- **The copy retries, the build doesn't (#1689).** On 2026-11-19 a built and gated image
+  was lost to a flaky network: `zstd` reported `Read error (39) : premature end` and
+  `podman load` reported `unexpected EOF`, and the task exited 125. The copy now gets up to
+  3 attempts. Each attempt starts its own server block and `forward open`, and tears both
+  down whether it succeeded or not. The server can't be reused: after a dropped stream its
+  `podman save | zstd` child is left blocked on a pipe nobody reads. Things that aren't obvious, all checked on 2026-11-20 by
+  closing the forward mid-copy:
+  - **curl doesn't notice the drop.** The server sends no `Content-Length`, so a closed
+    connection is a normal EOF to curl. Only `zstd -d` (truncated frame) and `podman load`
+    catch it, which is why the pipeline runs under `pipefail` and the attempt fails if any
+    stage fails. `--speed-limit 1024 --speed-time 300` catches a tunnel that stays open but
+    stops moving data, the `git push`-style hang. It's set loose on purpose: the measured
+    runs don't show how long `podman save` takes to send its first bytes.
+  - **A missing image fails on this machine, not on the host.** `podman save` fails on the
+    host, but `zstd -c` still emits a valid empty frame, so the local error is
+    `podman load`'s "payload does not match any of the supported image formats". The real
+    cause (`image not known`) is only in the server's Rex block. Teardown captures that
+    block's tail into the attempt log before closing the block.
+  - **Close only your own forwards.** The forward's ID is its tunnel block's `block_id` in
+    `rex forward ls --json`, and its `.connect` is `127.0.0.1:<server port>`. The task
+    matches on that port. It reads the port as soon as the forward is up, because a
+    successful server exits and its block can be gone by teardown. It closes the forward
+    before it kills the `forward open` client. `rex forward close --orphaned` would close every orphan in the
+    shared `krytis-build` session, including another run's.
+  - **Closing the server block takes its `podman save | zstd` child with it.** After the
+    mid-copy drop, only the next attempt's `podman save` was running on the host.
+  - **`set -e` is off inside `ship_attempt`, because it's called from `if`.** Every step
+    sets `rc` explicitly, and one unconditional `ship_teardown` runs before `return`. An
+    early `return 1` would skip teardown, and the EXIT trap doesn't run between attempts.
+  - After 3 failures the image is still on the host: retry with
+    `mise run remote-build --ship-only --image <tag>`.
 
 ## File tasks
 
