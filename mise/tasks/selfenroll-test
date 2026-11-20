@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Boot an installed sealed disk against a pristine firmware and assert it enrols its own keys, then comes up enforcing (#438)"
+#MISE description="Boot an installed sealed disk against a pristine firmware: it must not enrol on its own, and must enrol and come up enforcing when the key entry is picked (#438, #1570)"
 #USAGE flag "--disk <path>" default="/var/tmp/krytis-install.img" help="Installed sealed disk, as left behind by 'mise run iso-install-test'"
 #USAGE flag "--keep" help="Keep the workdir (disk copy, varstore, serial log) for inspection"
 
@@ -15,6 +15,16 @@ set -euo pipefail
 # machine that has never seen krytis looks like. .ovmf-vars-secure.fd would defeat
 # the point: it already contains the keys, so nothing would need enrolling and
 # `boot-test --secure` already covers that case.
+#
+# Since #1570 the image ships secure-boot-enroll manual as an install-time
+# loader.conf, so a VM no longer auto-enrols on its first boot (if-safe used to do
+# that). The test now checks the three things that design promises:
+#   1. the installed ESP's loader/loader.conf carries `secure-boot-enroll manual`;
+#   2. a plain first boot does NOT enrol (control);
+#   3. picking "Enroll Secure Boot keys: auto" enrols and comes up enforcing. The
+#      pick is LoaderEntryOneShot=secure-boot-keys-auto in the varstore, the entry id
+#      systemd-boot gives loader/keys/auto (src/boot/boot.c, secure_boot_discover_keys).
+#      That's the same entry a user selects from the menu, without timing keystrokes.
 #
 # Verdict comes over SMBIOS type-11 credentials, never the serial console: a
 # sealed system's cmdline is frozen inside the signed UKI, so console=ttyS0 cannot
@@ -55,11 +65,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> [1/3] Preparing a copy of ${DISK} and a pristine varstore..."
-# Always a copy: enrolling mutates the varstore, and a booted disk is no longer a
-# first-boot disk. Reflink keeps a 64G sparse image free on btrfs.
-cp --reflink=auto "${DISK}" "${WORKDIR}/disk.raw"
-cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars.fd"
+echo "==> [1/4] Checking the installed ESP's loader.conf..."
+# Read the ESP straight out of the image with mtools at the partition's byte
+# offset: no loop device, no root.
+ESP_START=$(sfdisk -J "${DISK}" | python3 -c 'import json,sys
+for p in json.load(sys.stdin)["partitiontable"]["partitions"]:
+    if p["type"].upper() == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B":
+        print(p["start"]); break')
+[ -n "${ESP_START}" ] || { echo "FAIL: no EFI System Partition in ${DISK}." >&2; exit 1; }
+export MTOOLS_SKIP_CHECK=1
+LOADER_CONF=$(mtype -i "${DISK}@@$((ESP_START * 512))" ::loader/loader.conf 2>/dev/null | tr -d '\r') || true
+printf '%s\n' "${LOADER_CONF}" | sed 's/^/    /'
+if ! printf '%s\n' "${LOADER_CONF}" | grep -qx 'secure-boot-enroll manual'; then
+    echo "FAIL: the installed ESP has no 'secure-boot-enroll manual'. bootc (>= 1.17.4) should" >&2
+    echo "      have copied /usr/lib/bootc/install/systemd-boot/loader.conf from the image (#1570)." >&2
+    exit 1
+fi
 
 printf '[Unit]\nWants=krytis-selfenroll-probe.service\n' > "${WORKDIR}/mu.conf"
 cat > "${WORKDIR}/probe.service" <<'PROBE'
@@ -77,8 +98,15 @@ PROBE
 cat > "${WORKDIR}/probe.sh" <<'PROBESH'
 #!/bin/bash
 sleep 50
+# Reopen the serial port now rather than writing to the fd the unit opened at start:
+# when serial-getty@ttyS0 starts in between, agetty vhangup()s the tty and every
+# write through the earlier fd is silently lost, so no verdict would ever arrive.
+exec >/dev/ttyS0 2>&1
 echo "===KRYTIS-SELFENROLL==="
-echo "state: $(systemctl is-system-running)"
+# A fresh first boot is still settling at 50 s (state "starting"), so wait for the
+# manager to finish instead of sampling once. Capped well inside the host deadline.
+echo "state: $(timeout 150 systemctl is-system-running --wait)"
+echo "jobs:"; systemctl list-jobs --no-legend --no-pager | head -5
 bootctl status 2>&1 | grep -iE 'secure boot|setup mode' | sed 's/^ */sb: /'
 echo "image: $(bootc status --json 2>/dev/null | python3 -c 'import json,sys
 d = json.load(sys.stdin)
@@ -91,66 +119,107 @@ PROBESH
 
 cred_b64() { base64 -w0 < "$1"; }
 
-echo "==> [2/3] Booting against a setup-mode firmware (no keys enrolled)..."
-qemu-system-x86_64 \
-    -enable-kvm -m "${VM_RAM:-4096}" -cpu host -smp "${VM_CPUS:-4}" \
-    -machine q35,smm=on \
-    -global driver=cfi.pflash01,property=secure,value=on \
-    -drive "file=${WORKDIR}/disk.raw,format=raw,if=virtio" \
-    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-    -drive "if=pflash,format=raw,file=${WORKDIR}/vars.fd" \
-    -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu.conf")" \
-    -smbios "type=11,value=io.systemd.credential.binary:systemd.extra-unit.krytis-selfenroll-probe.service=$(cred_b64 "${WORKDIR}/probe.service")" \
-    -smbios "type=11,value=io.systemd.credential.binary:probe.sh=$(cred_b64 "${WORKDIR}/probe.sh")" \
-    -display none \
-    -serial "file:${WORKDIR}/serial.log" \
-    -daemonize -pidfile "${WORKDIR}/qemu.pid"
+# boot_once <label> <vars.fd>: boots a fresh reflink copy of the installed disk
+# (always a first-boot disk) and leaves the serial log in ${WORKDIR}/<label>.log.
+boot_once() {
+    local label="$1" vars="$2"
+    cp --reflink=auto "${DISK}" "${WORKDIR}/disk.raw"
+    rm -f "${WORKDIR}/qemu.pid"
+    qemu-system-x86_64 \
+        -enable-kvm -m "${VM_RAM:-4096}" -cpu host -smp "${VM_CPUS:-4}" \
+        -machine q35,smm=on \
+        -global driver=cfi.pflash01,property=secure,value=on \
+        -drive "file=${WORKDIR}/disk.raw,format=raw,if=virtio" \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${vars}" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.multi-user.target=$(cred_b64 "${WORKDIR}/mu.conf")" \
+        -smbios "type=11,value=io.systemd.credential.binary:systemd.extra-unit.krytis-selfenroll-probe.service=$(cred_b64 "${WORKDIR}/probe.service")" \
+        -smbios "type=11,value=io.systemd.credential.binary:probe.sh=$(cred_b64 "${WORKDIR}/probe.sh")" \
+        -display none \
+        -serial "file:${WORKDIR}/${label}.log" \
+        -daemonize -pidfile "${WORKDIR}/qemu.pid"
 
-DEADLINE=$((SECONDS + 240))
-while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
-    grep -q 'KRYTIS-SELFENROLL-END' "${WORKDIR}/serial.log" 2>/dev/null && break
-    grep -qE 'Access Denied|Security Violation' "${WORKDIR}/serial.log" 2>/dev/null && break
-    sleep 5
-done
-# The guest powers itself off at the end of the probe, so qemu usually exits and
-# removes its own pidfile before we get here. Only kill what is still there.
-[ -f "${WORKDIR}/qemu.pid" ] && kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
-sleep 1
+    local deadline=$((SECONDS + 300))
+    while [ "${SECONDS}" -lt "${deadline}" ]; do
+        grep -q 'KRYTIS-SELFENROLL-END' "${WORKDIR}/${label}.log" 2>/dev/null && break
+        grep -qE 'Access Denied|Security Violation' "${WORKDIR}/${label}.log" 2>/dev/null && break
+        sleep 5
+    done
+    # The guest powers itself off at the end of the probe, so qemu usually exits and
+    # removes its own pidfile before we get here. Only kill what is still there.
+    [ -f "${WORKDIR}/qemu.pid" ] && kill "$(cat "${WORKDIR}/qemu.pid")" 2>/dev/null || true
+    sleep 1
 
-echo "==> [3/3] Verdict"
-# Firmware lines only: the `systemd-boot@`/`systemd-stub@` banners are compiled in
-# only under EFI_DEBUG and no longer appear — see mise/tasks/enroll-test.
-grep -E 'Enrolling|successfully enrolled|BdsDxe: (loading|starting|failed to load)' \
-    "${WORKDIR}/serial.log" | head -12 | sed 's/^/    /'
-sed -n '/===KRYTIS-SELFENROLL===/,/===KRYTIS-SELFENROLL-END===/p' "${WORKDIR}/serial.log" \
-    | tr -d '\r' | sed 's/^/    /'
+    # Firmware lines only: the `systemd-boot@`/`systemd-stub@` banners are compiled in
+    # only under EFI_DEBUG and no longer appear — see mise/tasks/enroll-test.
+    grep -E 'Enrolling|successfully enrolled|BdsDxe: (loading|starting|failed to load)' \
+        "${WORKDIR}/${label}.log" | head -12 | sed 's/^/    /'
+    sed -n '/===KRYTIS-SELFENROLL===/,/===KRYTIS-SELFENROLL-END===/p' "${WORKDIR}/${label}.log" \
+        | tr -d '\r' | sed 's/^/    /'
+}
 
-if ! grep -q 'successfully enrolled' "${WORKDIR}/serial.log"; then
-    echo "FAIL: the system never enrolled its own keys from ESP loader/keys/auto." >&2
-    echo "      Either the .auth files are missing from the image, or secure-boot-enroll" >&2
-    echo "      declined. Check with: mise run enroll-test" >&2
+echo "==> [2/4] Control: plain first boot against a setup-mode firmware (must NOT enrol)..."
+cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars-control.fd"
+boot_once control "${WORKDIR}/vars-control.fd"
+if grep -q 'successfully enrolled' "${WORKDIR}/control.log"; then
+    echo "FAIL: the first boot enrolled keys without anyone picking the entry." >&2
+    echo "      secure-boot-enroll manual wasn't in force on the first boot (#1570, #444)." >&2
+    exit 1
+fi
+if ! grep -q 'state: running' "${WORKDIR}/control.log"; then
+    echo "FAIL: the control boot (no enrolment) did not reach 'running'." >&2
+    echo "      Inspect with: mise run selfenroll-test --keep" >&2
+    exit 1
+fi
+if grep -qi 'sb:.*Secure Boot: enabled' "${WORKDIR}/control.log"; then
+    echo "FAIL: Secure Boot is enabled on the control boot, which never enrolled anything." >&2
     exit 1
 fi
 
-if grep -qE 'Access Denied|Security Violation' "${WORKDIR}/serial.log"; then
+echo "==> [3/4] Picking 'Enroll Secure Boot keys: auto' (LoaderEntryOneShot) and booting..."
+cp "${OVMF_VARS_SRC}" "${WORKDIR}/vars.fd"
+# LoaderEntryOneShot: systemd-boot's vendor GUID, NV|BS|RT, UTF-16LE + NUL.
+python3 - "${WORKDIR}/oneshot.json" <<'ONESHOT'
+import json, sys
+data = "secure-boot-keys-auto\0".encode("utf-16-le").hex()
+json.dump({"version": 2, "variables": [{
+    "name": "LoaderEntryOneShot",
+    "guid": "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f",
+    "attr": 7,
+    "data": data,
+}]}, open(sys.argv[1], "w"))
+ONESHOT
+virt-fw-vars --inplace "${WORKDIR}/vars.fd" --set-json "${WORKDIR}/oneshot.json" >/dev/null
+boot_once enroll "${WORKDIR}/vars.fd"
+
+echo "==> [4/4] Verdict"
+LOG="${WORKDIR}/enroll.log"
+if ! grep -q 'successfully enrolled' "${LOG}"; then
+    echo "FAIL: picking the key entry never enrolled krytis's keys from ESP loader/keys/auto." >&2
+    echo "      Either the .auth files are missing from the image, LoaderEntryOneShot didn't" >&2
+    echo "      select secure-boot-keys-auto, or enrolment failed. Check with: mise run enroll-test" >&2
+    exit 1
+fi
+
+if grep -qE 'Access Denied|Security Violation' "${LOG}"; then
     echo "FAIL: the firmware refused the loader AFTER enrolling this system's own keys." >&2
     echo "      That is #438's shape — the enrolled db does not authorise our binaries." >&2
     echo "      Confirm with: scripts/parse-efi-auth.py on the image's .auth files" >&2
     exit 1
 fi
 
-if ! grep -q 'state: running' "${WORKDIR}/serial.log"; then
+if ! grep -q 'state: running' "${LOG}"; then
     echo "FAIL: enrolled and started, but the system did not reach 'running'." >&2
     echo "      Not a Secure Boot failure — look at the failed units above." >&2
     echo "      Inspect with: mise run selfenroll-test --keep" >&2
     exit 1
 fi
 
-if ! grep -qi 'sb:.*Secure Boot: enabled' "${WORKDIR}/serial.log"; then
+if ! grep -qi 'sb:.*Secure Boot: enabled' "${LOG}"; then
     echo "FAIL: reached 'running' but Secure Boot is not enabled — enrollment did not take" >&2
     echo "      effect, so this boot proves nothing about enforcement." >&2
     exit 1
 fi
 
-echo "==> PASS: installed system enrolled its own keys from a pristine firmware and"
-echo "    came up healthy under Secure Boot enforcement."
+echo "==> PASS: the first boot left the firmware alone (manual), and picking the key"
+echo "    entry enrolled krytis's keys and came up healthy under Secure Boot enforcement."

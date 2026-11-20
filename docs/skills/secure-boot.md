@@ -802,6 +802,20 @@ Corollary for any future sealed-boot tooling: prefer SMBIOS credentials over
 kargs for anything a test needs to inject. Kargs are a signing-time decision;
 credentials are a runtime one.
 
+**A probe that reports over `/dev/ttyS0` must open it when it writes (#1570,
+2026-11-20).** A probe unit with `StandardOutput=file:/dev/ttyS0` opens the port
+when the unit starts. If `serial-getty@ttyS0.service` starts afterwards, agetty
+`vhangup()`s the tty, every later write through that fd is silently lost, and the run
+looks like a boot that never reported. `selfenroll-test` hit this on a
+`generate-disk`-installed sealed disk under OVMF. The serial log showed the probe
+`Started`, then agetty's `(ttyS0)` banner, then a clean power-off, with no markers in
+between. That machine had a systemd console and a getty on serial although the
+cmdline carries no `console=`, which contradicts "the kernel logs to tty0 only" above
+for this platform. So don't assume the port is free. The probe script does
+`exec >/dev/ttyS0 2>&1` right before printing. It also waits with
+`systemctl is-system-running --wait` rather than sampling once after a fixed sleep,
+because a fresh first boot is still `starting` at 50 s.
+
 ## The `systemd-boot@` serial banner is a debug artefact
 
 Every harness here used to identify "the loader ran" by the line
@@ -1057,17 +1071,41 @@ not exist when #444 was decided. Either would have required nontrivial new plumb
 change a state that already matches the design intent on the only surface that ships
 to users — real hardware.
 
-**The hook exists now (bootc v1.17.4, pinned on `main` since `f6e1e19`, 2026-11-04).**
-bootc-dev/bootc `cbd34248` ("sd-boot: Pick `loader.conf` from the image", bootc#2558)
-copies `/usr/lib/bootc/install/systemd-boot/loader.conf` from the image onto the ESP as
-`loader/loader.conf` right after `bootctl install`, overwriting bootctl's commented
-template (`install_systemd_boot()` in `crates/lib/src/bootloader.rs`). An image that
-ships `secure-boot-enroll manual` there has the setting in force on the very first
-boot, which would close the first-boot gap above and make the oneshot redundant for new
-installs. It does nothing for machines already installed, and it changes what a VM's
-first boot does (`if-safe` auto-enrolment, which `mise run selfenroll-test` relies on),
-so adopting it is a Breakage Gate decision, not a doc edit. Tracked in #1570; read from
-source 2026-11-10, not yet tested in a VM.
+**Superseded by the install-time hook (#1570, 2026-11-20).** bootc v1.17.4 (pinned on
+`main` since `f6e1e19`) has bootc-dev/bootc `cbd34248` ("sd-boot: Pick `loader.conf` from
+the image", bootc#2558). It copies `/usr/lib/bootc/install/systemd-boot/loader.conf` from the
+image onto the ESP as `loader/loader.conf` right after `bootctl install`, replacing bootctl's
+template (`install_systemd_boot()`, `crates/lib/src/bootloader.rs`). krytis now ships that
+file from `config/secureboot-loader-conf.bst` with `secure-boot-enroll manual`, so
+**`manual` is in force on the first boot of every new install**: hardware and VMs both show
+an "Enroll Secure Boot keys: auto" entry, and neither enrols until someone picks it. The
+oneshot stays for machines installed before the change, since bootc writes loader.conf only
+at install time. The #444 decision above describes installs from before this change.
+
+- **It reaches the ISO path too.** For composefs installs fisherman runs
+  `podman run --privileged <payload> bootc install to-filesystem`
+  (tuna-os/fisherman `fisherman/internal/install/bootc.go`), so it's the payload image's own
+  bootc that copies the file.
+- **The file replaces bootctl's template wholesale,** so it carries the template's two
+  commented lines (`#timeout 3`, `#console-mode keep`). It sets **no `timeout`**, which keeps
+  the hidden menu every install has had. bootc ≤ 1.17.3's fallback `timeout 5` in
+  `write_systemd_uki_config()` only fired when no `loader.conf` existed, and `bootctl install`'s
+  `install_loader_config()` always wrote one first (systemd v262 `src/bootctl/bootctl-install.c`).
+  A `timeout` change would therefore be a separate, visible UX decision.
+- **`mise run selfenroll-test` no longer relies on if-safe auto-enrolment.** It reads
+  `loader/loader.conf` out of the installed disk's ESP with mtools at the partition offset
+  (`mtype -i disk@@<offset>`, no root needed). It then boots a control first boot that must
+  *not* enrol. Finally it boots with `LoaderEntryOneShot=secure-boot-keys-auto` written into a
+  pristine varstore (`virt-fw-vars --set-json`, systemd-boot vendor GUID
+  `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`, UTF-16LE plus NUL, attr 7). That boot must enrol and come
+  up enforcing. `secure-boot-keys-<dir>` is the id systemd-boot gives each `loader/keys/<dir>`
+  (`secure_boot_discover_keys()` in `src/boot/boot.c`). A one-shot entry stands in for the
+  user's menu pick without any keystroke timing.
+- **Verified 2026-11-20 on a `generate-disk --image localhost/krytis:sealed` disk**
+  (`selfenroll-test --disk …` and `enroll-test`, both PASS). The ISO path couldn't be run
+  that day: every sealed ISO install fails on an installer karg (#1717). `generate-disk`
+  runs the same `bootc install` → `install_systemd_boot()` copy without kargs, so the
+  loader.conf behaviour is the same.
 
 **Testing trap this creates.** `boot-test` always boots a *copy* and never mutates
 the source disk, so an install disk stays a first-boot disk no matter how many times
