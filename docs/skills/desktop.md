@@ -2062,6 +2062,29 @@ That is how krytis's `config/xdg-portals.bst` — `portals/niri.portal` holding 
 niri routing is identical with and without it. `portal-routing-check` now fails on that
 warning.
 
+### Experimental portals: a case-sensitive flag and a hard-coded handler
+
+xdg-desktop-portal 23.0 (unreleased `main` as of 2026-11-20) adds *experimental* portals
+(`org.freedesktop.portal.experimental.<Name>`, e.g. Credential from #1889). They have three traps
+(read from flatpak/xdg-desktop-portal `3152e60`, 2026-11-20, for #1573):
+
+- **They start only when named in `XDG_DESKTOP_PORTAL_ENABLE_EXPERIMENTAL`, and the match is
+  exact.** `xdp_context_is_experimental_portal_enabled` is a `g_hash_table_contains` on the
+  comma-split value (`desktop-portal/xdp-context.c`), checked against `"Credential"`.
+  credentialsd's own `BUILDING.md` says `=credential`, which enables nothing and logs nothing.
+  Verify with the portal's `Enabling experimental Credential portal` info line, or by
+  introspecting `/org/freedesktop/portal/desktop`.
+- **Not every backend is routed.** Credential has a UI backend
+  (`impl.portal.experimental.Credential`, chosen through `.portal` + `portals.conf` as usual)
+  *and* a new `handler` interface, whose D-Bus name is compiled in
+  (`CREDENTIALSD_HANDLER_DBUS_NAME`, `desktop-portal/credential.c`). Routing can't swap the
+  handler.
+- **Route `experimental.*` interfaces explicitly.** No backend in krytis's `default=` list
+  implements them, so the lookup falls through every file (§ above). Write the per-interface
+  key.
+
+Plan: `docs/plans/2026-11-20-credentialsd.md`.
+
 ## Camera Stack
 
 libcamera + PipeWire + WirePlumber are wired in `stacks/desktop.bst`. Key facts:
