@@ -13,11 +13,11 @@
 # 2. Dependency-graph-proven unreachable rust-matcher/purl-scoped matches (docs/skills/
 #    sbom.md § Mitigated: dependency-graph-proven unreachable crate versions, issue
 #    #500). A real purl-scoped match against a genuinely vulnerable crate version that
-#    is present in an SBOM vendor snapshot but never linked into any binary krytis
-#    actually builds — confirmed by walking the real upstream Cargo.lock, not by
-#    ecosystem mismatch. Narrower and requires more evidence than class 1: only use
-#    when the full reachability graph from every enabled build target has been walked
-#    and shown to exclude the vulnerable crate entirely.
+#    is present in an SBOM vendor snapshot. Walk the full dependency graph in the
+#    real upstream Cargo.lock to show that the version is reachable only from
+#    (a) targets krytis never builds or (b) a built artifact deleted from the shipped
+#    image. For (b), name the deleting command in the rule's comment, as for
+#    rustls-webpki 0.102.8 below.
 #
 #    The `bitnami`-namespace entries (Pillow, sqlite) are a third, smaller shape: a
 #    real advisory for that exact project whose cited fixed-in version is *below* the
@@ -41,10 +41,10 @@
 # GHSA-3pv8-6f4r-ffg2 (`github:language:rust`) is NOT suppressed and still reports.
 #
 # Class 2 and the `bitnami` entries keep an exact `package.version`, because those
-# judgments ARE version-dependent: "this crate version is unreachable from any enabled
-# build target" and "the installed version already postdates the cited fix" are both
-# claims about one specific version. A bump there must re-open the question, so the
-# rule going inert is the correct behaviour, not a maintenance bug.
+# judgments ARE version-dependent: "this crate version is unreachable from any
+# artifact in the shipped image" and "the installed version already postdates the
+# cited fix" are both claims about one specific version. A bump there must re-open
+# the question, so the rule going inert is the correct behaviour, not a maintenance bug.
 #
 # Grype semantics relied on here (verified against grype/match/ignore.go at v0.119.0,
 # `getIgnoreConditionsForRule`): every populated field is an AND-ed condition and an
@@ -208,12 +208,7 @@ ignore:
   # freedesktop-sdk-26.08.4 pins; re-traced 2026-11-02, first traced on 0.15.3) to be
   # reachable *only* from the `aws` and `webrtc` plugins, both disabled by krytis's
   # meson config (only rtp/gif/hlssink3/dav1d/spotify enabled) — confirmed unreachable
-  # from every plugin cdylib krytis actually builds. rustls-webpki 0.102.8 (same
-  # GHSAs, via rustls 0.22.4) is deliberately NOT ignored here: it IS reachable, from
-  # the enabled `spotify` plugin (librespot-core -> hyper-proxy2/rustls ->
-  # hyper-rustls 0.26 -> rustls 0.22.4) — that needs a product decision (drop
-  # `-Dspotify=enabled`, or wait on an upstream librespot-core/hyper-proxy2 bump), not
-  # a scan suppression. See issue #500 for the full trace.
+  # from every plugin cdylib krytis actually builds. See issue #500 for the full trace.
   - vulnerability: GHSA-82j2-j2ch-gfr8
     package:
       name: rustls-webpki
@@ -226,6 +221,29 @@ ignore:
     package:
       name: rustls-webpki
       version: "0.101.7"
+  # rustls-webpki 0.102.8 (via rustls 0.22.4), same vendor snapshot: reachable only
+  # from the `spotify` plugin (librespot-core -> hyper-proxy2/rustls -> hyper-rustls
+  # 0.26 -> rustls 0.22.4; same 0.15.4 trace as above). That plugin IS built, but
+  # elements/oci/krytis/image.bst deletes libgstspotify.so at assembly (#500), so
+  # nothing on the image reaches 0.102.8. The `rm` there has no -f: if fdsdk stops
+  # shipping the plugin the build fails, and this rule goes with that command. GHSA
+  # list from `mise run vuln-scan` on 2026-11-21.
+  - vulnerability: GHSA-82j2-j2ch-gfr8
+    package:
+      name: rustls-webpki
+      version: "0.102.8"
+  - vulnerability: GHSA-pwjx-qhcg-rvj4
+    package:
+      name: rustls-webpki
+      version: "0.102.8"
+  - vulnerability: GHSA-965h-392x-2mh5
+    package:
+      name: rustls-webpki
+      version: "0.102.8"
+  - vulnerability: GHSA-xgp8-3hg3-c2mh
+    package:
+      name: rustls-webpki
+      version: "0.102.8"
   # zip (Rust crate) 8.6.0 and 8.5.1, five advisories published 2026-10-28/29
   # (GHSA-m665-v7pm-7grj Critical, fixed 9.0.5; the rest fixed 9.0.0). Traced
   # 2026-11-01 on main 04cecdf, where it blocked publish run 41326214673:

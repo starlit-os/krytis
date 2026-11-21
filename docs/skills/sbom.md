@@ -237,7 +237,8 @@ has a real purl (`rust-matcher`-typed, ecosystem-scoped by construction) and gen
 matches a vulnerable crate *version* that is really present in an SBOM vendor snapshot.
 It's still safe to ignore when the vendor snapshot is workspace-wide (shared across many
 optional build targets, e.g. a Cargo `[[workspace]]`) but the specific crate version is
-provably reachable only from targets krytis never builds.
+provably reachable only from (a) targets krytis never builds or (b) a built artifact
+that krytis deletes from the shipped image.
 
 First instance: `rustls-webpki` in `freedesktop-sdk.bst:components/gstreamer-plugins-rs.bst`
 (issue #500, 2026-09-01). fdsdk's `cargo2` vendor block for `gst-plugins-rs` is generated
@@ -261,7 +262,7 @@ between the two refs:
 | `rustls-webpki` version | rustls | CVE status | Reachable from |
 |---|---|---|---|
 | 0.101.7 | 0.21.12 | vulnerable | `aws`, `webrtc` only — **both disabled** |
-| 0.102.8 | 0.22.4 | vulnerable | `spotify` only — **enabled** (`librespot-core -> hyper-proxy2/rustls -> hyper-rustls 0.26 -> rustls 0.22.4`) |
+| 0.102.8 | 0.22.4 | vulnerable | `spotify` only — built, but `libgstspotify.so` is deleted in `oci/krytis/image.bst` (#500; `librespot-core -> hyper-proxy2/rustls -> hyper-rustls 0.26 -> rustls 0.22.4`) |
 | 0.103.15 | 0.23.45 | fixed | `spotify` (direct `rustls` dep) + 15 other disabled plugins |
 
 **fdsdk's vendored crate set isn't the upstream lockfile.** The element carries fdsdk's
@@ -274,20 +275,32 @@ on it gave 0 here), and diff the element's `cargo2` `{name, version}` set agains
 lock's registry packages before trusting the BFS.
 
 `0.101.7` is ignored in `.grype.yaml` (class 2 there) — proven unreachable from every
-plugin cdylib krytis actually builds. `0.102.8` is **not** ignored, deliberately: the
-`spotify` plugin enables `librespot-core`'s `rustls-tls-native-roots` feature, which
-(confirmed from `librespot-core`'s own `Cargo.toml.orig` on crates.io) unconditionally
-turns on `hyper-proxy2/rustls` — the vulnerable path is compiled in regardless of runtime
-proxy usage. That's a real, reachable dependency of a plugin krytis ships; closing it needs
-a product decision (drop `-Dspotify=enabled`, or wait on an upstream bump), not a scan
-suppression, so it stays flagged.
+plugin cdylib krytis actually builds. `0.102.8` is reachable from a plugin that *is* built:
+`spotify` enables `librespot-core`'s `rustls-tls-native-roots` feature, which (confirmed
+from `librespot-core`'s own `Cargo.toml.orig` on crates.io) unconditionally turns on
+`hyper-proxy2/rustls`, so the vulnerable path is compiled in regardless of runtime proxy
+usage. Until 2026-11-21 it stayed flagged for that reason. #500 then dropped the plugin
+from the image: `oci/krytis/image.bst` deletes `libgstspotify.so` at assembly time, so
+the version reaches nothing that ships, and `.grype.yaml` ignores it with the same
+class-2 justification under case (b). A grep for `spotifyaudiosrc` on 2026-11-21 found
+no consumer in `elements/`, `files/` or `mise/tasks/`. Flatpaks load their runtime's
+GStreamer, never the host's.
 
-**When this class applies vs. when it doesn't:** only use it when the *entire* reachable
-build-target graph has been walked from source (not inferred from "this feature sounds
-unrelated") and shown to exclude the vulnerable version. A single enabled target reaching
-the vulnerable version means the whole version stays un-ignored, even if most other
-targets sharing the same vendor snapshot don't reach it — as `0.102.8` above shows. Don't
-extend an existing rule's `package.version` to a sibling version without re-walking the
+**Deleting the artifact is the cheap way to make a built target unreachable.** Disabling
+the meson feature in an override mirror would rebuild the whole Rust workspace on every
+fdsdk bump, and it wouldn't shrink the SBOM anyway, because the `cargo2` vendor block
+lists the whole workspace either way. The `rm` in `image.bst` is deliberately plain
+`rm`, not `rm -f`: if fdsdk stops shipping or moves the plugin, the image build fails, and
+the `rm` and the 0.102.8 ignore are removed together rather than leaving an ignore whose
+justification no longer has a check behind it.
+
+**When this class applies.** Walk the *entire* build-target dependency graph from
+source to show that the vulnerable version is reachable only from (a) targets krytis
+never builds or (b) a built artifact deleted from the shipped image. Case (b) requires
+a build-time check that the artifact is gone. Here, plain `rm` without `-f` fails the
+image build if it cannot delete `libgstspotify.so`. A scan suppression alone never
+proves removal. Don't extend an existing rule's `package.version` to a sibling version
+without re-walking the
 graph for that specific version; different versions of the same crate can easily sit on
 different dependency chains (confirmed here: `0.101.7` and `0.102.8` have completely
 disjoint reachable-plugin sets).
