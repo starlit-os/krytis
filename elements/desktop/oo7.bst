@@ -104,7 +104,7 @@ sources:
   # a systemd-managed session, because the login scope holds only the session
   # leader while niri and its children are user units. See krytis#588.
   track: '[0-9]*.[0-9]*.[0-9]*'
-  ref: 0.7.2-0-g7101ed2e139fbef945f1fd54fc053fb6abb7c48d
+  ref: 0.7.3-0-g5cbd7a60afd8bd73063b98e553d908205cdc14a2
 
 - kind: cargo2
   url: crates:crates
@@ -151,8 +151,8 @@ sources:
     sha: 330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470
   - kind: registry
     name: ashpd
-    version: 0.14.1
-    sha: 72e703b2bc5ba8e903b7845ae92657c281391116ccb8eef89cf6a0ee68d96d76
+    version: 0.14.2
+    sha: b2cdaefc3d7fbc3a90a868ae471cf8b35407b7186c95ffc63bb787cbd5cf9fa5
   - kind: registry
     name: async-channel
     version: 2.5.0
