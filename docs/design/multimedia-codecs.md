@@ -35,4 +35,9 @@ Two additions the original port did not have:
 - `desktop/vainfo.bst` (#183) — queries the VA-API driver for supported profiles and
   entrypoints; the way to verify hardware decode on a booted image.
 
+One plugin of `gstreamer-plugins-rs.bst` is not shipped: `oci/krytis/image.bst` deletes
+`libgstspotify.so` (`spotifyaudiosrc`), the only path to a vulnerable `rustls-webpki`
+among the plugins krytis builds (#500, `docs/skills/sbom.md`). Host GStreamer apps lose
+Spotify streaming; Flatpaks are unaffected, since they use their runtime's GStreamer.
+
 Note: `intel-media-driver` is x86_64-only — fine for krytis since we are x86_64_v3 only.

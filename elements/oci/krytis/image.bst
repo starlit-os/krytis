@@ -54,6 +54,15 @@ config:
       # it has no runtime purpose and bootc flags non-dir files in /var.
       rm -f /layer/var/db/Makefile
 
+    - |
+      # gst-plugins-rs's spotify plugin (spotifyaudiosrc) is the only path to
+      # rustls-webpki 0.102.8 in its vendored workspace (#500, .grype.yaml
+      # Class 2). No host element uses it, and Flatpaks load their runtime's
+      # GStreamer, never this one. Plain `rm`, no -f, so the build fails if
+      # fdsdk stops shipping or moves the plugin: then drop this command and
+      # the 0.102.8 ignore together.
+      rm /layer%{libdir}/gstreamer-1.0/libgstspotify.so
+
     - glib-compile-schemas /layer/usr/share/glib-2.0/schemas
 
     - |
