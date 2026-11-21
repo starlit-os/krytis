@@ -1,0 +1,22 @@
+# Mount the btrfs root with transparent zstd compression (#1719).
+#
+# systemd-gpt-auto-generator mounts the root at /sysroot and appends every
+# rootflags= to its options with a comma (systemd v262.1
+# gpt-auto-generator.c, strextend_with_separator), so this merges with a
+# rootflags=subvol=/ from an older install, not replaces it. compress is a
+# superblock option, so /etc, /var and the composefs objects all get it.
+#
+# Only new writes are compressed: updates (new composefs objects), Flatpaks,
+# user data. An existing install keeps its old data uncompressed until an
+# update replaces it. Measured on the 2026-11-21 image: the 6.6G payload is
+# 3.3G compressed, and fs-verity digests and composefs boot are unaffected.
+# See docs/skills/bootc-vm.md § Btrfs root compression.
+#
+# BTRFS ONLY. ext4 rejects compress=, and the root mount then fails. Every
+# install path is btrfs (the ISO offers nothing else, since composefs needs
+# fs-verity). `mise run generate-disk --filesystem ext4` strips this karg from
+# the BLS entry after the install, which only a non-sealed disk has.
+#
+# Applied by bootc at deploy time via /usr/lib/bootc/kargs.d/, and baked into
+# the signed UKI by `bootc container ukify`.
+kargs = ["rootflags=compress=zstd:1"]

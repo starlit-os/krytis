@@ -70,6 +70,19 @@ KARGS=()
 if [ "${IS_UKI}" != "yes" ]; then
     KARGS=(--karg console=ttyS0 --karg console=tty1)
 fi
+# The image's kargs.d carries rootflags=compress=zstd:1 (#1719), which ext4
+# rejects, so an ext4 root mount fails. bootc's composefs install can't drop it:
+# --karg-delete is read only by the ostree path, and the composefs path
+# (bootc 1.17.4 bootc_composefs/boot.rs, setup_composefs_bls_boot) merges
+# kargs.d after the CLI kargs. So it is stripped from the BLS entry after the
+# install (below). A sealed UKI's cmdline is fixed, so a sealed ext4 disk
+# cannot boot at all.
+if [ "${FS}" = "ext4" ] && [ "${IS_UKI}" = "yes" ]; then
+    echo "ERROR: --filesystem ext4 cannot boot a sealed image: its UKI cmdline carries" >&2
+    echo "       rootflags=compress=zstd:1 (files/bootc-config/40-btrfs-compress.toml)," >&2
+    echo "       and ext4 refuses that mount option. Use btrfs, or a non-sealed image." >&2
+    exit 1
+fi
 # Mount the disk image's PARENT directory at /data, and address the file by
 # basename inside the container. The previous form mounted $(pwd) and passed
 # --via-loopback "/data/${DISK}" verbatim, which silently broke for any
@@ -107,5 +120,26 @@ sudo podman run \
         "${SSH_KEY_ARGS[@]}"
 
 rm -f "${DISK_DIR}/.boot-test-root-ssh.pub"
+
+# ext4: strip the btrfs-only karg from the BLS entries on the ESP (see above).
+# mtools edits the FAT image in place by byte offset, so this needs no root.
+if [ "${FS}" = "ext4" ]; then
+    ESP_START=$(sfdisk -J "${DISK}" | python3 -c 'import json,sys
+for p in json.load(sys.stdin)["partitiontable"]["partitions"]:
+    if p["type"].upper() == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B": print(p["start"]); break')
+    [ -n "${ESP_START}" ] || { echo "ERROR: no EFI System Partition in ${DISK}." >&2; exit 1; }
+    export MTOOLS_SKIP_CHECK=1
+    ESP="${DISK}@@$((ESP_START * 512))"
+    STRIPPED=0
+    for entry in $(mdir -b -i "${ESP}" ::loader/entries 2>/dev/null | grep '\.conf$'); do
+        TMP_ENTRY=$(mktemp)
+        mtype -i "${ESP}" "${entry}" | sed 's/ rootflags=compress=zstd:1//' > "${TMP_ENTRY}"
+        mcopy -o -i "${ESP}" "${TMP_ENTRY}" "${entry}"
+        rm -f "${TMP_ENTRY}"
+        echo "==> ext4: removed rootflags=compress=zstd:1 from ${entry#::}"
+        STRIPPED=$((STRIPPED + 1))
+    done
+    [ "${STRIPPED}" -gt 0 ] || { echo "ERROR: no BLS entry under loader/entries on the ESP to strip; the ext4 root would not mount." >&2; exit 1; }
+fi
 
 echo "==> Done: ${DISK}"

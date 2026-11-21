@@ -3097,8 +3097,8 @@ plymouth element keeps one.
 
 - **Candidates:**
   - `config/bootc.bst` is the exact zirconium-hawaii case: a `kind: local` source
-    (`files/bootc-config`) and five `install -Dm644 -t` lines (`prepare-root.conf`,
-    `10-bootc.conf`, three `kargs.d` tomls). Moving the files into `ostree/`, `tmpfiles.d/`
+    (`files/bootc-config`) and six `install -Dm644 -t` lines (`prepare-root.conf`,
+    `10-bootc.conf`, four `kargs.d` tomls). Moving the files into `ostree/`, `tmpfiles.d/`
     and `bootc/kargs.d/` makes it an import with `target: '%{indep-libdir}'`.
   - `config/desktop-udev.bst`, per the pattern note above.
 - **Not candidates:** elements that write files from heredocs (`config/gtk-settings.bst`),

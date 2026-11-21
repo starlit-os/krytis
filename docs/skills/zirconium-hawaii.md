@@ -191,8 +191,8 @@ in elements that never appear in a changed-file list you are looking at.
 **Second instance, 2026-10-14 (zirconium-hawaii `1ecc16d`):** zirconium turned its
 `config/bootc.bst` from `kind: manual` + `install -Dm644` lines into `kind: import`, after
 reshaping `files/bootc-config/` to mirror the target tree. krytis's
-`elements/config/bootc.bst` is the pre-change port: five `install -Dm644` lines over a flat
-`files/bootc-config/` (`prepare-root.conf`, `10-bootc.conf`, three `kargs.d` tomls). The
+`elements/config/bootc.bst` is the pre-change port: six `install -Dm644` lines over a flat
+`files/bootc-config/` (`prepare-root.conf`, `10-bootc.conf`, four `kargs.d` tomls). The
 pattern and its constraints are in `docs/skills/bst.md` § File-drop config elements:
 `kind: import`.
 

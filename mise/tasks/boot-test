@@ -813,6 +813,22 @@ else
     echo "    no installer leftovers on the physical root"
 fi
 
+# A btrfs root must mount with zstd compression (#1719,
+# files/bootc-config/40-btrfs-compress.toml). Checked only when the booted
+# image ships that karg, so --reuse-disk of an older disk still passes, and
+# only on btrfs, since generate-disk --filesystem ext4 deletes the karg.
+ROOT_MNT=$(SSH 'test -e /usr/lib/bootc/kargs.d/40-btrfs-compress.toml && findmnt -no FSTYPE,OPTIONS /sysroot' 2>/dev/null || true)
+case "${ROOT_MNT}" in
+    "") ;;
+    btrfs*compress=zstd:1*) echo "    btrfs root is mounted with compress=zstd:1" ;;
+    btrfs*)
+        echo "    FAIL: btrfs root is not mounted with compress=zstd:1 (#1719):" >&2
+        printf '      %s\n' "${ROOT_MNT}" >&2
+        FAILED=1
+        ;;
+    *) echo "    root is ${ROOT_MNT%% *}, no compression expected" ;;
+esac
+
 # The first-boot wizard must actually reach its prompts (#531). For months it
 # exited instantly, skipping keymap and timezone without a word, because both
 # files already existed: /etc/vconsole.conf copied from the factory by
