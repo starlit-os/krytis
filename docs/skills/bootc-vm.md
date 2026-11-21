@@ -466,6 +466,45 @@ implicit `After=` from the target, so a oneshot deleting ~161k files would hold 
 (`krytis-fisherman-scratch-cleanup.service`). It still counts as a boot job, so
 `systemctl is-system-running --wait` waits for it.
 
+## Btrfs root compression: `rootflags=compress=zstd:1` in `kargs.d` (#1719)
+
+`files/bootc-config/40-btrfs-compress.toml` ships `rootflags=compress=zstd:1`, so the root
+mounts with transparent zstd compression. The karg lives in the image, not the installer:
+bootc refuses installer-passed kargs for a sealed image (#1717), and a UKI's cmdline is
+fixed at seal time anyway. What was measured on 2026-11-21 (bootc 1.17.4, systemd 262.1):
+
+- **Two `rootflags=` merge.** gpt-auto-generator and fstab-generator both append each
+  `rootflags=` with `strextend_with_separator(…, ",", …)`, so an older install's
+  `rootflags=subvol=/` and this one become `subvol=/,compress=zstd:1`.
+- **It pays.** `compsize` on a fresh install: 6.6G as written, 3.3G after
+  `btrfs filesystem defragment -r -czstd` (5.1G compresses to 36%, 1.4G doesn't).
+  Nearly all of it is `/composefs/objects`, plain file contents, so nothing upstream
+  already compresses it.
+- **fs-verity is unaffected.** `fsverity measure` on an object gave the same digest before
+  and after recompression, and the recompressed disk passed `boot-test` with no
+  `FILE CORRUPTED` lines (§ A switch-root timeout can be Btrfs data corruption).
+- **Only new writes compress.** Neither the pinned bootc-installer nor `bootc install
+  to-disk` mounts the target with `compress`, so the install payload goes down
+  uncompressed. Existing machines get the karg on their next update (kargs.d is applied at
+  every deployment) and converge as updates replace objects. `defragment -r -czstd` over
+  the physical root (§ Writing to the physical root from a running system) recompresses the
+  rest, but it unshares reflinked extents, so a machine holding a rollback deployment can
+  briefly use more space, not less.
+- **ext4 can't take it.** ext4 rejects `compress=`, and the root mount fails.
+  `--karg-delete` can't drop it: bootc 1.17.4's composefs install
+  (`bootc_composefs/boot.rs`, `setup_composefs_bls_boot`) never reads `--karg-delete`, which
+  only the ostree path honours, and merges `kargs.d` after the CLI kargs, so nothing at install
+  time can take a `kargs.d` karg back out. `generate-disk --filesystem ext4` instead strips it
+  from the BLS entry on the ESP after the install, with mtools (no root), and refuses a sealed
+  image outright, since a UKI's cmdline can't be edited. No user install is ext4: the ISO
+  offers btrfs only.
+- **Existing non-sealed machines get it from the upgrade path.** The same file's
+  `compute_new_kargs(…, current_root, …)` diffs the booted and new images' `kargs.d` on
+  upgrade and applies the difference. Sealed machines get it in the new UKI's `.cmdline`.
+- **To check a machine:** `findmnt -no OPTIONS /sysroot` shows `compress=zstd:1`, and the
+  boot's kernel log has `BTRFS info (device …): use zstd compression, level 1`. `boot-test`
+  asserts the first whenever the booted image ships the toml.
+
 ## Boot debug techniques
 
 ### An EMPTY serial log is never an image bug — read it as "firmware never printed"

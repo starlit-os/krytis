@@ -160,7 +160,7 @@ mise run generate-disk → bootc install to-disk (from sealed image)
 
 ### kargs immutability
 
-With a UKI, the kernel cmdline is **frozen inside the signed PE**. `bootc kargs` and editing `kargs.d` post-install have **no effect** on a UKI boot. Currently krytis ships `kargs.d/20-plymouth.toml` (`quiet splash`) and `30-fido2-luks.toml` (`rd.luks.options=fido2-device=auto`) — these are baked into the UKI at seal time by `bootc container ukify`'s `get_kargs_in_root()`. Confirm this picks up krytis's `kargs.d` correctly.
+With a UKI, the kernel cmdline is **frozen inside the signed PE**. `bootc kargs` and editing `kargs.d` post-install have **no effect** on a UKI boot. Currently krytis ships `kargs.d/10-root-rw.toml` (`rw`), `20-plymouth.toml` (`quiet splash`), `30-fido2-luks.toml` (`rd.luks.options=fido2-device=auto`) and `40-btrfs-compress.toml` (`rootflags=compress=zstd:1`, #1719) — these are baked into the UKI at seal time by `bootc container ukify`'s `get_kargs_in_root()`. Confirm this picks up krytis's `kargs.d` correctly.
 
 If users need runtime karg changes, signed UKI addons (`.addon.efi` in `loader/addons/` or `<uki>.efi.extra.d/`) are the mechanism (travier documents this). Out of scope for this epic but noted for future.
 
