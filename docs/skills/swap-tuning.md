@@ -111,6 +111,18 @@ A machine that ran `mise run swap-eval arm zswap` or `hybrid` already has `/var/
 `/var/swap/swapfile` from the evaluation. The init script sees the file and leaves it alone.
 The evaluation created it at the same path and the same default size.
 
+## A swapfile can make hibernation reachable (#1751)
+
+zram doesn't count as a hibernation target. On the zram image, logind returned `na` for
+`CanHibernate`, `CanHybridSleep` and `CanSuspendThenHibernate` (`melog`, 2026-11-22). A
+disk swapfile can change that. UPower ships `CriticalPowerAction=Auto`, and its own
+comment in `/etc/UPower/UPower.conf` gives the order: HybridSleep, then Hibernate, then
+PowerOff. So a laptop at critical battery would hibernate instead of powering off as
+soon as logind offers it. Nothing on krytis has tested resume: through LUKS + FIDO2,
+after `bootc` staged an update, or from the sealed UKI. Whether to turn hibernation off
+with a `sleep.conf.d` drop-in is #1751
+(`docs/plans/2026-11-22-hibernation-decision.md`).
+
 ## Testing it
 
 - `mise run swap-audit` reads the files in the image. It runs `krytis-swapfile-init`
