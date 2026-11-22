@@ -824,7 +824,8 @@ its local cache and would otherwise re-report a flaky failure instantly.
    which accepts the skipped run a fork PR produces; see § One required check:
    `ci-passed.yml` (#1562).
 4. **The image gates never run.** `mise run build` ends with `lint`,
-   `umbriel-config-validate`, `cracklib-dict-check` and `portal-routing-check`, and all of
+   `umbriel-config-validate`, `cracklib-dict-check`, `portal-routing-check`, `sigpolicy-check`
+   and `swap-audit`, and all of
    them need the assembled image, so only `publish` runs them. A bump that breaks shipped
    config therefore merges green. The umbriel bump in #1450 (`auto/track-umbriel`, 2026-11-01)
    passed every check and broke publish run 41437757676 the next morning (fixed in #1485).

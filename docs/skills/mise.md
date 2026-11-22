@@ -33,6 +33,7 @@ mise umbriel-config-validate  # umbriel validate on the shipped /etc/xdg config 
 mise cracklib-dict-check      # pwscore must reject a dictionary word in the built image (#1001)
 mise portal-routing-check     # which portal backend serves each interface under niri/Umbriel (#1027)
 mise sigpolicy-check          # the container signature policy hosts enforce: in force, parses, key present (#418)
+mise swap-audit               # swap is zswap + swapfile, no zram, nothing overriding config/swap.bst (#510)
 mise generate-fakecap-manifest --pull # regenerate files/fakecap-manifest.tsv (only when elements change; --pull fetches artifacts the build never downloaded)
 mise chunkify                 # rechunk into composefs-ready component layers
 mise load-image-root          # copy krytis:latest into the ROOT podman store (sudo)
@@ -83,7 +84,7 @@ exhausting input failed (error: write …/containers/storage/overlay-layers/tmp/
 
 `podman image prune -f` clears the dangling layers (freed 33 GB on 2026-09-28, #869), then
 re-run `mise run build --pull --force` — every BST artifact is already cached, so only
-`load-image`/`lint`/`umbriel-config-validate`/`cracklib-dict-check`/`portal-routing-check`/`sigpolicy-check`
+`load-image`/`lint`/`umbriel-config-validate`/`cracklib-dict-check`/`portal-routing-check`/`sigpolicy-check`/`swap-audit`
 actually re-run.
 
 **Check the right filesystem.** On a Fedora-derived host `$HOME` is typically its own
@@ -196,7 +197,7 @@ process whose parent is `systemd --user` is an orphan.
   success. Observed while testing an element swap: `lint` passed while the image still
   contained the elements the branch had removed. Use `mise run build`
   (`generate-image-version` → `load-image` → `lint` → `umbriel-config-validate` →
-  `cracklib-dict-check` → `portal-routing-check` → `sigpolicy-check`), and confirm
+  `cracklib-dict-check` → `portal-routing-check` → `sigpolicy-check` → `swap-audit`), and confirm
   the change by inspecting image *contents* — `podman run --rm localhost/krytis:latest ...`,
   or `/usr/manifest.json` for element-level presence — never by the lint exit code alone.
 - **`localhost/krytis:latest` and `localhost/krytis-input:latest` are shared across
@@ -1739,6 +1740,16 @@ check exists to catch for deletions.
 **Digest-pinned means `--pull=always` is dead weight.** A digest names exactly one
 image; if it is in local storage, re-fetching cannot produce anything different.
 `boot-vm` carried the flag from its unpinned days and no longer does.
+
+## Don't edit a bash task while it runs
+
+bash reads a script as it executes it, not all at once. An edit that inserts or deletes
+bytes *before* the line the shell has reached shifts everything after it, and the run
+then executes a fragment of some other line. Saving a one-line comment change to
+`mise/tasks/boot-test` partway through a run, during #510, put the rest of that run at
+risk. It was reverted to the exact original bytes while the task was blocked in a
+child (`generate-disk`), and the run passed. Wait for the run to finish, or edit a
+copy. Tasks that `exec` another file aren't affected; the file being executed is.
 
 ## Never add loose shell scripts
 

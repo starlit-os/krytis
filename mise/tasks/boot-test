@@ -108,7 +108,7 @@ if ! command -v qemu-system-x86_64 &>/dev/null; then
     exit 1
 fi
 
-# Use /var/tmp, not /tmp: the disk image (default 15G sparse) is too large
+# Use /var/tmp, not /tmp: the disk image (24G sparse; 15G before #510) is too large
 # for /tmp, which is a per-user-quota-limited tmpfs here (systemd's tmp.mount
 # with usrquota, ~12.8G effective limit). A 15G disk there failed with "Disk
 # quota exceeded" back when generate-disk fallocated it; it is sparse now, but
@@ -162,12 +162,16 @@ if [ -n "${REUSE_DISK}" ] && [ -n "${IN_PLACE}" ]; then
     DISK="${REUSE_DISK}"
 elif [ -n "${REUSE_DISK}" ]; then
     echo "==> [1/5] Reusing ${REUSE_DISK} (no install, no root)..."
-    # Reflink where the filesystem supports it so a 15G image costs nothing, and
+    # Reflink where the filesystem supports it so a 24G image costs nothing, and
     # so the source disk is never mutated by the boot.
     cp --reflink=auto "${REUSE_DISK}" "${DISK}"
 else
     echo "==> [1/5] Installing ${IMAGE} → ${DISK} (filesystem: ${FS})..."
-    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size 15G
+    # 24G, sparse: krytis-swapfile-init (#510) skips the swapfile unless /var has
+    # RAM/2 + 4 GiB free, which is 8 GiB for this 8 GiB guest. 15G left about
+    # 7.4 GiB after the 6.6 GiB payload, so the swap check failed on a disk
+    # too small to hold a swapfile, not on the image.
+    ./mise/tasks/generate-disk --image "${IMAGE}" --disk "${DISK}" --size 24G
 fi
 
 # Everything SSH is provisioned as systemd credentials handed to the guest over
@@ -828,6 +832,35 @@ case "${ROOT_MNT}" in
         ;;
     *) echo "    root is ${ROOT_MNT%% *}, no compression expected" ;;
 esac
+
+# Swap must be zswap in front of the swapfile, with no zram (#510,
+# config/swap.bst). swap-audit checks the files in the image; only a boot shows
+# the kargs reached the kernel and the swapfile was created and activated.
+# Checked only when the booted image ships the toml, so --reuse-disk of an older
+# disk still passes.
+SWAP_STATE=$(SSH 'test -e /usr/lib/bootc/kargs.d/50-zswap.toml || exit 0
+    echo "zswap=$(cat /sys/module/zswap/parameters/enabled)"
+    echo "init=$(systemctl show -P Result krytis-swapfile-init.service)"
+    echo "unit=$(systemctl is-active var-swap-swapfile.swap)"
+    echo "swaps=$(awk "NR > 1 { printf \"%s \", \$1 }" /proc/swaps)"
+    echo "swappiness=$(cat /proc/sys/vm/swappiness) page_cluster=$(cat /proc/sys/vm/page-cluster)"
+    echo "init_log=$(journalctl -b -q -u krytis-swapfile-init -o cat | tail -1)"' 2>/dev/null || true)
+if [ -n "${SWAP_STATE}" ]; then
+    SWAP_BAD=""
+    grep -qx 'zswap=Y' <<<"${SWAP_STATE}" || SWAP_BAD+=" zswap-off"
+    grep -qx 'init=success' <<<"${SWAP_STATE}" || SWAP_BAD+=" init-failed"
+    grep -qx 'unit=active' <<<"${SWAP_STATE}" || SWAP_BAD+=" swapfile-inactive"
+    grep -q '^swaps=.*/var/swap/swapfile' <<<"${SWAP_STATE}" || SWAP_BAD+=" swapfile-not-in-proc-swaps"
+    grep -q '^swaps=.*/dev/zram' <<<"${SWAP_STATE}" && SWAP_BAD+=" zram-active"
+    grep -qx 'swappiness=100 page_cluster=0' <<<"${SWAP_STATE}" || SWAP_BAD+=" sysctls"
+    if [ -z "${SWAP_BAD}" ]; then
+        echo "    swap is zswap in front of /var/swap/swapfile, no zram"
+    else
+        echo "    FAIL: swap stack is not zswap + swapfile (#510):${SWAP_BAD}" >&2
+        printf '      %s\n' "${SWAP_STATE}" >&2
+        FAILED=1
+    fi
+fi
 
 # The first-boot wizard must actually reach its prompts (#531). For months it
 # exited instantly, skipping keymap and timezone without a word, because both

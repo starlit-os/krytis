@@ -157,15 +157,13 @@ depends:
   - config/logind-lid.bst
 
   # ── Container / toolbox (from gnome-build-meta) ────────────────────
-  # distrobox, toolbox, zram-generator and android-udev-rules moved out of
-  # gnome-build-meta's own tree into its freedesktop-sdk-extra.bst junction
-  # (gnome-build-meta eaa10b21, MR !5085); reached through that nested junction.
+  # distrobox, toolbox and android-udev-rules moved out of gnome-build-meta's own
+  # tree into its freedesktop-sdk-extra.bst junction (gnome-build-meta eaa10b21,
+  # MR !5085); reached through that nested junction. zram-generator moved with
+  # them and is deliberately not listed: krytis swaps through zswap and a
+  # swapfile (config/swap.bst, #510).
   - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/distrobox.bst
   - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/toolbox.bst
-  - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/zram-generator.bst
-  # The moved zram-generator ships no config, and without one it creates no zram
-  # device: this restores the zram0 (ram / 2, zstd) gnome-build-meta used to install.
-  - config/zram-generator.bst
   - gnome-build-meta.bst:gnomeos-deps/ld-config.bst
   - gnome-build-meta.bst:freedesktop-sdk-extra.bst:components/android-udev-rules.bst
   - gnome-build-meta.bst:gnomeos-deps/hidraw-udev.bst
@@ -180,7 +178,11 @@ depends:
   # check whether systemd v261 (fdsdk 26.08) handles it natively first.
 
   # ── Memory / OOM protection ────────────────────────────────────────
-  # zram-generator is already included above (gnomeos-deps).
+  # swap: zswap (set by karg, not left to the kernel default) in front of a
+  # half-RAM swapfile at /var/swap, replacing zram-generator (#510). zram with
+  # zswap stacked in front of it filled up and OOM-killed on melog; see
+  # docs/skills/swap-tuning.md.
+  - config/swap.bst
   # oomd: enables systemd-oomd.service and arms a memory-pressure kill on each
   # user's app.slice, so a runaway app is killed before the kernel OOM killer
   # runs. Never the session (session.slice) and no swap kill (#219, #1216).

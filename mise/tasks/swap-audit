@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#MISE description="Assert the built image swaps through zswap and a swapfile, with no zram and nothing overriding the pinned settings (#510)"
+#USAGE flag "--image <tag>" default="localhost/krytis:latest" help="Image to check"
+
+# Why this exists: #510. For months krytis ran zswap stacked on zram without
+# knowing it. zswap came from a kernel default (CONFIG_ZSWAP_DEFAULT_ON) and zram
+# from a junction element, and no krytis commit chose the combination. dakota
+# shipped the same accident: its #1131 lost a staging race to gnome-build-meta's
+# zram config, and only its `just swap-audit` (53952c7, #1262) catches that now.
+#
+# config/swap.bst sets the stack explicitly. This gate fails when anything else
+# in the image undoes that:
+#
+#   zram        a zram-generator binary or config is back (a junction bump, a
+#               new stack entry)
+#   kargs       50-zswap.toml is missing or lost zswap.enabled=1, or another
+#               kargs.d file sets zswap.*
+#   udev        a udev rule writes zswap's enabled parameter (CachyOS's
+#               30-zram.rules turns zswap off)
+#   sysctl      60-krytis-swap.conf lost a pinned value, or another sysctl.d
+#               file also sets vm.swappiness or vm.page-cluster
+#   units       the swapfile units or the swap.target.wants link are missing
+#   init        krytis-swapfile-init doesn't exit 0 when it can't create a file.
+#               It runs here on the container's overlayfs, where it must skip.
+#
+# The live half (zswap really on, the swapfile really active) is in boot-test.
+# See docs/skills/swap-tuning.md.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+IMAGE="${usage_image:-localhost/krytis:latest}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) IMAGE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+if ! podman image exists "$IMAGE"; then
+    echo "==> FAILED: no such image '$IMAGE' — run 'mise run build' first." >&2
+    exit 1
+fi
+
+echo "==> Auditing the swap stack inside $IMAGE..."
+
+# shellcheck disable=SC2016 # expanded inside the container
+podman run --rm --entrypoint bash "$IMAGE" -c '
+set -uo pipefail
+status=0
+fail() { echo "    FAIL: $*" >&2; status=1; }
+ok() { echo "    ok: $*"; }
+
+for f in /usr/lib/systemd/system-generators/zram-generator /usr/lib/systemd/zram-generator.conf \
+         /usr/lib/systemd/zram-generator.conf.d /etc/systemd/zram-generator.conf /etc/systemd/zram-generator.conf.d; do
+    [ -e "$f" ] && fail "zram: $f exists; zram-generator is back in the image"
+done
+[ "$status" = 0 ] && ok "no zram-generator binary or config"
+
+K=/usr/lib/bootc/kargs.d/50-zswap.toml
+if [ ! -f "$K" ]; then
+    fail "kargs: $K missing"
+else
+    for a in zswap.enabled=1 zswap.compressor=zstd zswap.max_pool_percent=20 zswap.shrinker_enabled=1; do
+        grep -qF "\"$a\"" "$K" || fail "kargs: $K lacks \"$a\""
+    done
+    # Comments excluded: the toml explains why it has no zpool.
+    grep -v "^[[:space:]]*#" "$K" | grep -q zpool && fail "kargs: $K sets zswap.zpool, which kernel 7.x removed"
+fi
+others=$(grep -l "zswap\." /usr/lib/bootc/kargs.d/*.toml 2>/dev/null | grep -vxF "$K")
+[ -n "$others" ] && fail "kargs: other kargs.d files set zswap.*: $others"
+[ -f "$K" ] && [ -z "$others" ] && ok "kargs: zswap set only by $K"
+
+rules=$(grep -l "zswap/parameters" /usr/lib/udev/rules.d/*.rules /etc/udev/rules.d/*.rules 2>/dev/null)
+if [ -n "$rules" ]; then fail "udev: rules write zswap parameters: $rules"; else ok "udev: no rule touches zswap"; fi
+
+S=/usr/lib/sysctl.d/60-krytis-swap.conf
+grep -qxE "vm\.swappiness *= *100" "$S" 2>/dev/null || fail "sysctl: $S does not set vm.swappiness = 100"
+grep -qxE "vm\.page-cluster *= *0" "$S" 2>/dev/null || fail "sysctl: $S does not set vm.page-cluster = 0"
+over=$(grep -lE "^[[:space:]]*vm[./](swappiness|page[-_]cluster)" \
+    /usr/lib/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /etc/sysctl.d/*.conf /etc/sysctl.conf 2>/dev/null | grep -vxF "$S")
+if [ -n "$over" ]; then fail "sysctl: also set by $over"; else ok "sysctl: swappiness and page-cluster set only by $S"; fi
+
+U=/usr/lib/systemd/system
+for f in "$U/krytis-swapfile-init.service" "$U/var-swap-swapfile.swap"; do
+    [ -f "$f" ] || fail "units: $f missing"
+done
+[ "$(readlink -f "$U/swap.target.wants/var-swap-swapfile.swap")" = "$U/var-swap-swapfile.swap" ] \
+    || fail "units: swap.target.wants/var-swap-swapfile.swap does not resolve to the unit"
+[ -x /usr/libexec/krytis-swapfile-init ] || fail "units: /usr/libexec/krytis-swapfile-init missing or not executable"
+grep -qx "What=/var/swap/swapfile" "$U/var-swap-swapfile.swap" 2>/dev/null && ok "units: swapfile units wired into swap.target"
+
+if [ -x /usr/libexec/krytis-swapfile-init ]; then
+    out=$(/usr/libexec/krytis-swapfile-init 2>&1); rc=$?
+    echo "      $out"
+    if [ "$rc" != 0 ]; then fail "init: exited $rc on a filesystem it should skip"
+    elif [ -e /var/swap/swapfile ]; then fail "init: created a swapfile on $(stat -f -c %T /var)"
+    else ok "init: skipped cleanly"; fi
+fi
+exit "$status"
+'
+rc=$?
+
+if [ "$rc" -eq 0 ]; then
+    echo "==> swap-audit PASSED"
+    exit 0
+fi
+echo "==> swap-audit FAILED (see docs/skills/swap-tuning.md, #510)" >&2
+exit 1

@@ -9,8 +9,12 @@ kind: manual
 #   60-ioschedulers  — BFQ for HDDs, mq-deadline for SSDs, kyber for NVMe
 #   99-cpu-dma-lat   — cpu_dma_latency device: group=audio, mode=0660
 #
-# Omitted: 69-hdparm.rules (hdparm not in fdsdk), 30-zram.rules (conflicts with
-# zram-generator), 71-nvidia.rules (out of scope), 85-iw-regulatory.rules.
+# Omitted: 69-hdparm.rules (hdparm not in fdsdk), 71-nvidia.rules (out of scope),
+# 85-iw-regulatory.rules, and 30-zram.rules, which turns zswap off and sets
+# swappiness=150 when a zram device appears. krytis ships no zram since #510
+# (zswap plus a swapfile, config/swap.bst), so it has nothing to act on. The old
+# reason given here, that it "conflicts with zram-generator", was wrong: it was the
+# fix for zswap stacking on zram, and leaving it out is how the image came to run both.
 #
 # modprobe.d (usr/lib/modprobe.d/):
 #   amdgpu.conf — force amdgpu for GCN 1.0+ (SI/CIK) cards; disable radeon fallback

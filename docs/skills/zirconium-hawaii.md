@@ -440,7 +440,8 @@ Each body lives in `docs/skills/bst.md`. This list is the record of where they c
 - **gnome-build-meta's freedesktop-sdk-extra split** (`6f55e0b`, `0b6b6a3`) and its
   zram-generator config (`b784cbe`): krytis's #1222 (merged 2026-11-01) does the same three things
   (moved paths, `components/krb5.bst` override mirror, `config/zram-generator.bst`), so
-  nothing new was written here.
+  nothing new was written here. (#510 later removed `config/zram-generator.bst` in favour
+  of zswap plus a swapfile.)
 
 ## 2026-11-15 pass (`b784cbe..060610d`): where the lessons went
 

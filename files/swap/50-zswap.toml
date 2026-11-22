@@ -1,0 +1,19 @@
+# zswap in front of the disk swapfile from config/swap.bst (#510).
+#
+# The CachyOS kernel already defaults to these values (CONFIG_ZSWAP_DEFAULT_ON,
+# CONFIG_ZSWAP_SHRINKER_DEFAULT_ON, CONFIG_ZSWAP_COMPRESSOR_DEFAULT="zstd"), but
+# leaving zswap to a kernel default is how krytis ended up running zswap stacked
+# on zram without knowing it. A kernel bump can change a default without a krytis
+# commit; it can't change a karg. mise run swap-audit fails if this file loses
+# zswap.enabled=1.
+#
+# No zswap.zpool: kernel 7.x removed the parameter (zsmalloc is the only pool).
+#
+# Applied by bootc at deploy time via /usr/lib/bootc/kargs.d/, and baked into
+# the signed UKI by `bootc container ukify`.
+kargs = [
+    "zswap.enabled=1",
+    "zswap.compressor=zstd",
+    "zswap.max_pool_percent=20",
+    "zswap.shrinker_enabled=1",
+]

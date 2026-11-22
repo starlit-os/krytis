@@ -243,7 +243,9 @@ as a per-host override in `/etc`. For `zram`, that override is
   and which rule decided it in #510. Done 2026-11-22: `zswap` for the fleet, with a
   half-RAM swapfile
   ([decision](https://github.com/starlit-os/krytis/issues/510#issuecomment-7083038858)).
-- [ ] **6. Decision PR** (a separate PR that closes #510):
+- [ ] **6. Decision PR** (a separate PR; #510 stays open for step 7). The zswap arm ships
+  as `config/swap.bst`, and `zram-generator` and `config/zram-generator.bst` are gone from
+  `stacks/base-system.bst`:
   - Create a new skill doc, `swap-tuning.md`, in the skills directory. It records the
     decision, the data, the zswap-in-front-of-zram trap, and the reason zswap has to be set
     explicitly.
@@ -254,15 +256,18 @@ as a per-host override in `/etc`. For `zram`, that override is
     `elements/stacks/base-system.bst`. Its oomd comment was already corrected by #1216.
   - Add an image assertion for the shipped arm, following dakota's `just swap-audit`
     precedent, so a later kernel or junction bump cannot silently change the arm again.
+    Done as `mise run swap-audit`, the last gate of `mise run build`, plus live checks in
+    `mise run boot-test`.
   - Verify with `mise run build` and `mise boot-test`. Then reboot both machines into the
     built image and check that `swap-eval snapshot` reports the intended arm.
   - Tick #479's `zswap over zram` item and correct its "deliberately" sentence. Find other
     issue bodies that describe the old setup with
     `gh issue list --state open --search 'zram in:body'` (and the same for `zswap`), and
     correct them.
-  - Clean up both machines: `mise run swap-eval arm shipped --remove-swapfile` removes the
-    evaluation swapfile (the shipped arm brings its own). Keep
-    `~/.local/state/krytis/swap-eval` and the sampler unit for step 7.
+  - Leave both machines' evaluation swapfiles in place. `/var/swap/swapfile` is also the
+    shipped path, and `krytis-swapfile-init` keeps an existing file. Don't run
+    `arm ... --remove-swapfile`. Keep `~/.local/state/krytis/swap-eval` and the sampler
+    unit for step 7.
 - [ ] **7. Rule 4 after the switch** (replaces step 2's wear check). After both machines
   boot the zswap image, keep `krytis-swap-eval-sample.service` running
   (`mise run swap-eval-sampler:status`) for at least 5 working days. Then post
