@@ -1333,7 +1333,7 @@ this line claimed 100/75 while the tree held 96/71 on the very commit that wrote
 | Dependency updates | `renovate-check` — validate/explain/dry-run `.github/renovate.json5` (see [`renovate.md`](renovate.md)); `mise-lock` — refresh/verify `mise.lock`; `mise-pin-check` — assert every `jdx/mise-action` step pins a Renovate-tracked mise version (see [`ci-runner.md`](ci-runner.md) § Pin the mise version, not just the action) |
 | Element updates | one `<name>-update` per tracked element, all hidden — see § Element update tasks |
 | Element pin checks | `gnome-disk-utility-check` `btrfs-progs-check` — assert a forked override still matches the freedesktop-sdk / gnome-build-meta element it was copied from; `gtk3-mirror-check` — the same for every GTK3-strip mirror of #641 (`overrides/libportal.bst`, `gnome-desktop.bst`, `libdecor.bst`, `plymouth.bst`, plus the `kind: local` files a mirror copies), table-driven, failing with "delete this mirror" once upstream drops GTK3 itself (see [`bst.md`](bst.md) § Default-`auto` meson features are *on* in both junctions); `libdisplay-info-check` — whether the 0.3.0 hold can be dropped yet; `python3-pil-check` — drift of the Pillow-ahead-of-junction mirror, failing with "delete" once the junction catches up (see [`sbom.md`](sbom.md) § A genuine Critical in a junction component: run fdsdk's pending bump as an override); `greetd-relock` — regenerate greetd's `Cargo.lock` bump patch; `gtk3-audit [--tag]` — graph + ELF scan of what still pulls GTK3 in, against a ratcheting allowlist that each #641 step trims (see [`bst.md`](bst.md) § "What pulls library X into the image" needs the graph *and* an ELF scan) |
-| Dev host | `switch-local` — `bootc switch` this machine to the local build; `homed-image-check [--max-overhead <pct>] [--json] [image...]` — report how much of the root btrfs each `/var/home/*.home` really occupies versus what it references (compsize's numbers, from the extent tree; re-runs itself under sudo), exit 1 above 10% (see [`pam.md`](pam.md) § Offline discard strands btrfs extents); `noctalia-session-try [--debug] [--revert]` — run the last-built noctalia in the current session through a runtime drop-in, no reboot (see [`desktop.md`](desktop.md) § Trying a noctalia build in the running session); `fido2:enroll-signing` — enroll a FIDO2 resident key for commit signing (see [`fido2.md`](fido2.md)); `swap-eval snapshot\|sample\|summary\|arm\|pressure` — measure this host's swap stack and memory pressure, and switch it at runtime between the four arms of #510 (see [`docs/plans/2026-10-13-zram-vs-zswap-evaluation.md`](../plans/2026-10-13-zram-vs-zswap-evaluation.md)) |
+| Dev host | `switch-local` — `bootc switch` this machine to the local build; `homed-image-check [--max-overhead <pct>] [--json] [image...]` — report how much of the root btrfs each `/var/home/*.home` really occupies versus what it references (compsize's numbers, from the extent tree; re-runs itself under sudo), exit 1 above 10% (see [`pam.md`](pam.md) § Offline discard strands btrfs extents); `noctalia-session-try [--debug] [--revert]` — run the last-built noctalia in the current session through a runtime drop-in, no reboot (see [`desktop.md`](desktop.md) § Trying a noctalia build in the running session); `fido2:enroll-signing` — enroll a FIDO2 resident key for commit signing (see [`fido2.md`](fido2.md)); `swap-eval snapshot\|sample\|summary\|arm\|pressure` — measure this host's swap stack and memory pressure, and switch it at runtime between the four arms of #510 (see [`docs/plans/2026-10-13-zram-vs-zswap-evaluation.md`](../plans/2026-10-13-zram-vs-zswap-evaluation.md)); `swap-eval-sampler:install [--interval <s>]\|uninstall\|status` — run `swap-eval sample` as an enabled user unit on every login, so no boot goes unsampled (see § A task that installs a user unit runs a copy, not the checkout) |
 
 `generate-keys` ensures secure boot keys exist (pull from Proton Pass or generate).
 `push` tags and pushes to `ghcr.io/starlit-os/krytis`. `docs-links` resolves five
@@ -2346,6 +2346,31 @@ repo needs a `/var/tmp` that supports `O_TMPFILE`. Check with:
 ```bash
 podman info --format '{{.Store.GraphDriverName}}'
 ```
+
+## A task that installs a user unit runs a copy, not the checkout
+
+`mise run swap-eval-sampler:install` (#510) writes `krytis-swap-eval-sample.service` to
+`~/.config/systemd/user/`, enabled for `default.target`. It replaced asking people to run
+`swap-eval sample --detach` after every boot. That instruction went unfollowed for weeks
+at a time on both machines, and a boot nobody remembered to sample left no data at all.
+Two details are easy to get wrong when writing a task like this:
+
+- **`ExecStart=` must not point into the checkout.** Agents run tasks from worktrees
+  under `krytis.worktrees/`, and `mise run prune-worktrees` deletes them after merge. A
+  unit whose `ExecStart=` names `$(readlink -f "$0")` keeps working until the next login
+  after the prune, then fails, and only `journalctl --user` shows it. The install task
+  copies the script to `~/.local/share/krytis/swap-eval/` and the unit runs that copy.
+  `swap-eval-sampler:status` compares the copy with the checkout and says when to
+  re-run `install`.
+- **Guard against a second writer.** `sample` appends to one log per boot, so an
+  installed unit plus a leftover `sample --detach` transient unit interleave rows and
+  `summary` counts their hours twice. `install` stops the transient unit. `sample`
+  refuses to start while the installed unit is active, unless `SWAP_EVAL_UNIT=1` is set,
+  which only the unit's own `Environment=` sets.
+
+A user unit runs from the first login of each boot, not from boot itself, unless
+`loginctl enable-linger` is on. For desktop measurements, that is the window that
+matters.
 
 ## `awk … /proc/[0-9]*/status` dies when a process exits mid-read
 

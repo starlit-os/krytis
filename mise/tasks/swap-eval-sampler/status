@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#MISE description="Show whether the swap-eval sampler user unit is installed, running and current"
+
+set -euo pipefail
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/swap-eval"
+LIBDIR="${XDG_DATA_HOME:-${HOME}/.local/share}/krytis/swap-eval"
+LOGDIR="${XDG_STATE_HOME:-${HOME}/.local/state}/krytis/swap-eval"
+UNIT=krytis-swap-eval-sample.service
+BOOT="$(tr -d - </proc/sys/kernel/random/boot_id)"
+
+if [ ! -e "${LIBDIR}/swap-eval" ]; then
+    echo "not installed; run: mise run swap-eval-sampler:install"
+    exit 1
+fi
+echo "enabled: $(systemctl --user is-enabled "${UNIT}" 2>&1 || true)"
+echo "active:  $(systemctl --user is-active "${UNIT}" 2>&1 || true)"
+# The unit runs a copy; say so when this checkout's swap-eval has moved on since install.
+if cmp -s "${SRC}" "${LIBDIR}/swap-eval"; then
+    echo "script:  matches this checkout"
+else
+    echo "script:  differs from this checkout; refresh with: mise run swap-eval-sampler:install"
+fi
+log=("${LOGDIR}/$(cat /proc/sys/kernel/hostname)"-*-"${BOOT:0:8}".tsv)
+if [ -e "${log[0]}" ]; then
+    echo "this boot: ${log[0]} ($(($(wc -l <"${log[0]}") - 1)) rows)"
+else
+    echo "this boot: no log yet"
+fi

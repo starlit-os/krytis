@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#MISE description="Install the swap-eval sampler as a user unit that starts on every login (#510)"
+#USAGE flag "--interval <seconds>" default="30" help="seconds between sample rows"
+
+# Installs krytis-swap-eval-sample.service into ~/.config/systemd/user, enabled for
+# default.target, so `mise run swap-eval sample` runs from the start of every session and
+# a boot can't be missed because nobody started it by hand. Re-running it refreshes the
+# installed copy of the script and the interval.
+#
+# The unit runs a *copy* of mise/tasks/swap-eval, kept in
+# ~/.local/share/krytis/swap-eval/, rather than the checkout's file: the checkout this
+# task ran from may be a worktree that gets pruned, and a unit pointing into it would
+# fail on the next login with no sign until someone looked at the logs.
+#
+# Sample logs land where `sample` always writes them:
+# ${XDG_STATE_HOME:-~/.local/state}/krytis/swap-eval/<host>-<date>-<boot>.tsv.
+
+set -euo pipefail
+
+INTERVAL="${usage_interval:-30}"
+case "${INTERVAL}" in '' | *[!0-9]*) echo "swap-eval-sampler: --interval must be a whole number of seconds" >&2; exit 1 ;; esac
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/swap-eval"
+LIBDIR="${XDG_DATA_HOME:-${HOME}/.local/share}/krytis/swap-eval"
+UNITDIR="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
+UNIT=krytis-swap-eval-sample.service
+
+install -Dm755 "${SRC}" "${LIBDIR}/swap-eval"
+mkdir -p "${UNITDIR}"
+cat >"${UNITDIR}/${UNIT}" <<UNIT
+# Installed by \`mise run swap-eval-sampler:install\` (krytis #510). Remove with
+# \`mise run swap-eval-sampler:uninstall\`.
+[Unit]
+Description=Sample swap and memory pressure for the krytis swap evaluation (#510)
+
+[Service]
+# Tells swap-eval it is the installed sampler, so its duplicate-writer guard lets it run.
+Environment=SWAP_EVAL_UNIT=1
+ExecStart=${LIBDIR}/swap-eval sample --interval ${INTERVAL}
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+UNIT
+
+# A transient sampler from `sample --detach` would write the same per-boot log as the
+# unit, interleaving rows and double-counting hours in `summary`.
+if systemctl --user is-active -q swap-eval-sample.service; then
+    echo "==> Stopping the transient swap-eval-sample.service (the installed unit replaces it)"
+    systemctl --user stop swap-eval-sample.service
+fi
+
+systemctl --user daemon-reload
+systemctl --user enable -q "${UNIT}"
+systemctl --user restart "${UNIT}"
+echo "==> ${UNIT} enabled and running, one row every ${INTERVAL}s"
+echo "    It starts with your user session on every boot. Check it with: mise run swap-eval-sampler:status"
