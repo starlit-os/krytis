@@ -119,7 +119,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -214,7 +214,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -309,7 +309,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -407,7 +407,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -498,7 +498,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -589,7 +589,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -680,7 +680,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -773,7 +773,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -866,7 +866,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1126,7 +1126,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1279,7 +1279,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1335,7 +1335,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1426,7 +1426,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1520,7 +1520,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1609,7 +1609,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1698,7 +1698,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1792,7 +1792,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1891,7 +1891,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -1981,7 +1981,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -2076,7 +2076,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -2172,7 +2172,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -2263,7 +2263,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -2339,7 +2339,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -2434,7 +2434,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
@@ -2529,7 +2529,7 @@ jobs:
           private-key: ${{ secrets.TRACKING_APP_PRIVATE_KEY }}
 
       - name: Setup mise
-        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.12
