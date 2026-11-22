@@ -47,7 +47,7 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/community-plugins.git
   track: refs/heads/main
-  ref: 546e0b72fda2bcb41a6bd07acfc41e37e4508eae
+  ref: 106de15f8878f26feb2c513a6bd6d8b6ff423374
 - kind: patch
   path: patches/noctalia-plugin-mx-control/accept-pro-device-names.patch
 - kind: patch
