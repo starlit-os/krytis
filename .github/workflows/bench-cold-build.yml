@@ -105,7 +105,7 @@ jobs:
         uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           # renovate: datasource=github-releases depName=jdx/mise
-          version: 2026.11.11
+          version: 2026.11.12
           experimental: true
           # Both runners this targets are persistent boxes with mise's tools
           # already on disk; the actions/cache round trip installs nothing
