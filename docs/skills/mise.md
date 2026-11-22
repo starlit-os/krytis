@@ -165,6 +165,21 @@ How to spot it:
   `[build:freedesktop-sdk.bst:bootstrap/build/gcc-stage2.bst] START` in the build log
   means the remote did not have it either. That is the point to stop and ask.
 
+#### A strong-key index entry evicted while the weak one survives: --push can't heal it
+
+As of 2026-11-21 (BuildStream 2.7.0), `buildstream/_artifactcache.py` calls
+`_push_artifact_proto()` from `push()` and sends both the strong and weak URNs in
+one `FetchBlob` request. A hit on either URN skips the index push. On that date
+bow had evicted the strong entry for `freedesktop-sdk.bst:bootstrap/build/stripper.bst`
+while its weak entry survived. BuildStream logged “already has artifact … cached”
+while the toolchain check reported “not in index”.
+
+Run `mise run toolchain-cache-check --push --repair` from a machine whose local
+cache holds the artifact for the current key. Repair checks bow even for local
+hits, runs `bst artifact push` for candidates, then registers the strong URN
+only after confirming that bow storage holds the matching local Artifact proto.
+It rechecks those artifacts for pullability.
+
 When you stop a build, make sure its sandbox stops too. Killing only the `bst` client
 can leave `buildbox-run`/`bwrap` compiling under `systemd --user` with nobody to collect
 the result. Find them with `ps -eo pid,ppid,etimes,args | grep buildbox`; a `buildbox-*`

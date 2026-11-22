@@ -3,6 +3,7 @@
 #MISE depends=["generate-image-version"]
 #USAGE flag "--push" help="Check bow with the push token (BUILDBARN_PUSH_TOKEN env var or fnox)"
 #USAGE flag "--pull" help="Check bow with the pull token (BUILDBARN_PULL_TOKEN env var or fnox)"
+#USAGE flag "--repair" help="With --push, check all toolchain artifacts and restore missing strong-key index entries from the local cache"
 
 # The Toolchain Gate (AGENTS.md § Human Decision Points) as a check: before a
 # build that cannot stop to ask, refuse to start one that would compile
@@ -32,6 +33,11 @@ cd "$(git rev-parse --show-toplevel)"
 ROLE=""
 [ "${usage_pull:-false}" = "true" ] && ROLE=pull
 [ "${usage_push:-false}" = "true" ] && ROLE=push
+REPAIR="${usage_repair:-false}"
+if [ "$REPAIR" = true ] && [ "$ROLE" != push ]; then
+    echo "ERROR: --repair requires --push." >&2
+    exit 1
+fi
 
 # "<state>|<full key>|<name>" for every toolchain element of the build closure.
 # bst's stderr is kept aside rather than discarded: when `bst show` itself fails
@@ -51,15 +57,19 @@ fi
 
 local_hits=0
 REMOTE_INPUT=""
+declare -A LOCAL_KEYS=()
 for row in "${ROWS[@]}"; do
     state="${row%%|*}"; rest="${row#*|}"; key="${rest%%|*}"; name="${rest#*|}"
     if [ "$state" = "cached" ]; then
         local_hits=$((local_hits + 1))
-    else
+        LOCAL_KEYS["$name"]="$key"
+    fi
+    if [ "$state" != cached ] || [ "$REPAIR" = true ]; then
         REMOTE_INPUT+="${name}"$'\t'"${key}"$'\n'
     fi
 done
 remote_count=$(( ${#ROWS[@]} - local_hits ))
+[ "$REPAIR" = true ] && remote_count="${#ROWS[@]}"
 echo "==> ${#ROWS[@]} toolchain artifacts: ${local_hits} in the local cache, ${remote_count} to check${ROLE:+ in bow (index + storage)}"
 
 if [ "$remote_count" -eq 0 ]; then
@@ -89,15 +99,45 @@ if [ -z "$TOKEN" ]; then
     fi
 fi
 
-set +e
-RESULT="$(printf '%s' "$REMOTE_INPUT" | BOW_TOKEN="$TOKEN" uv run --quiet python3 scripts/bow-artifact-check.py \
-    bst-cache.werewolf-stonecat.ts.net:7981 bst-cache.werewolf-stonecat.ts.net:7982 quadlet/buildbarn/certs/bow-server.crt)"
-rc=$?
-set -e
+BOW_ARGS=(bst-cache.werewolf-stonecat.ts.net:7981 bst-cache.werewolf-stonecat.ts.net:7982 quadlet/buildbarn/certs/bow-server.crt)
+check_bow() {
+    printf '%s' "$1" | BOW_TOKEN="$TOKEN" uv run --quiet python3 scripts/bow-artifact-check.py "${BOW_ARGS[@]}"
+}
+
+rc=0
+RESULT="$(check_bow "$REMOTE_INPUT")" || rc=$?
+
+if [ "$REPAIR" = true ] && [ "$rc" -eq 1 ]; then
+    repair_elements=()
+    repair_input=""
+    remaining=""
+    while IFS=$'\t' read -r status name detail; do
+        if [ "$status" = missing ] && [ "$detail" = "not in index" ] && [ -n "${LOCAL_KEYS[$name]:-}" ]; then
+            repair_elements+=("$name")
+            repair_input+="$name"$'\t'"${LOCAL_KEYS[$name]}"$'\n'
+        else
+            remaining+="$status"$'\t'"$name"$'\t'"$detail"$'\n'
+        fi
+    done <<< "$RESULT"
+
+    if [ "${#repair_elements[@]}" -gt 0 ]; then
+        BUILDBARN_PUSH_TOKEN="$TOKEN" ./mise/tasks/bst --push artifact push --deps none "${repair_elements[@]}"
+        if ! printf '%s' "$repair_input" | BOW_TOKEN="$TOKEN" uv run --quiet python3 scripts/bow-index-repush.py "${BOW_ARGS[@]}"; then
+            echo "==> Some index entries could not be repushed. Rechecking bow."
+        fi
+        rc=0
+        repaired="$(check_bow "$repair_input")" || rc=$?
+        RESULT="$remaining$repaired"
+    fi
+fi
 
 bad="$(printf '%s\n' "$RESULT" | grep -vE '^ok'$'\t' || true)"
 if [ "$rc" -eq 0 ] && [ -z "$bad" ]; then
-    echo "==> toolchain-cache-check passed: ${local_hits} local, ${remote_count} pullable from bow (index and storage)."
+    if [ "$REPAIR" = true ]; then
+        echo "==> toolchain-cache-check passed: all ${remote_count} pullable from bow (index and storage)."
+    else
+        echo "==> toolchain-cache-check passed: ${local_hits} local, ${remote_count} pullable from bow (index and storage)."
+    fi
     exit 0
 fi
 
@@ -107,8 +147,13 @@ if [ "$rc" -eq 2 ] || printf '%s\n' "$bad" | grep -q '^error'; then
     exit 1
 fi
 
-echo "==> FAILED: $(printf '%s\n' "$bad" | grep -c .) toolchain artifact(s) cannot be pulled from bow, so a build would compile them:"
+if [ "$REPAIR" = true ]; then
+    echo "==> FAILED: $(printf '%s\n' "$bad" | grep -c .) toolchain artifact(s) cannot be pulled from bow:"
+else
+    echo "==> FAILED: $(printf '%s\n' "$bad" | grep -c .) toolchain artifact(s) cannot be pulled from bow, so a build would compile them:"
+fi
 printf '%s\n' "$bad" | awk -F'\t' 'NF {print "    " $2 "  (" $3 ")"}'
 echo "    Run cache-warm first (gh workflow run cache-warm.yml --ref <this branch>, or mise run warm-cache --push)."
+echo "    If bow evicted the strong-key index entry, run mise run toolchain-cache-check --push --repair from a machine whose local cache holds the artifact."
 echo "    See docs/skills/mise.md § Standard build workflow (stop and ask before rebuilding the toolchain)."
 exit 1
