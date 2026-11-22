@@ -3,7 +3,7 @@
 #USAGE arg "<action>" help="snapshot | sample | summary | arm | pressure"
 #USAGE arg "[args]" var=#true help="arm: shipped, zram, zswap or hybrid. pressure: the command to run. summary: sample logs (default: all of this host's)"
 #USAGE flag "--interval <seconds>" default="30" help="sample: seconds between rows"
-#USAGE flag "--detach" help="sample: run as the transient user unit swap-eval-sample instead of in the foreground"
+#USAGE flag "--detach" help="sample: run as the transient user unit swap-eval-sample instead of in the foreground (for one boot; mise run swap-eval-sampler:install starts it on every login)"
 #USAGE flag "--days <n>" default="60" help="snapshot: how far back to read the journal"
 #USAGE flag "--high <size>" default="4G" help="pressure: MemoryHigh= of the scope the command runs in"
 #USAGE flag "--size <size>" help="arm zswap|hybrid: swapfile size in MiB when creating it (default: half of RAM)"
@@ -256,6 +256,12 @@ row() {
 }
 
 do_sample() {
+    # Two samplers in one boot append to the same log, interleaving rows and
+    # double-counting hours in summary. The installed unit sets SWAP_EVAL_UNIT=1 so it
+    # isn't refused by its own guard.
+    if [ -z "${SWAP_EVAL_UNIT:-}" ] && systemctl --user is-active -q krytis-swap-eval-sample.service 2>/dev/null; then
+        die "krytis-swap-eval-sample.service is already sampling this boot (mise run swap-eval-sampler:status)"
+    fi
     if [ "${DETACH}" = true ]; then
         systemd-run --user --quiet --collect --unit swap-eval-sample \
             -- "$(readlink -f "$0")" sample --interval "${INTERVAL}"

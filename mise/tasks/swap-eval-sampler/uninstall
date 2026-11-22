@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Stop and remove the swap-eval sampler user unit (keeps the sample logs)"
+
+set -euo pipefail
+
+LIBDIR="${XDG_DATA_HOME:-${HOME}/.local/share}/krytis/swap-eval"
+UNITDIR="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
+UNIT=krytis-swap-eval-sample.service
+
+systemctl --user disable -q --now "${UNIT}" 2>/dev/null || true
+rm -f "${UNITDIR}/${UNIT}" "${LIBDIR}/swap-eval"
+rmdir "${LIBDIR}" 2>/dev/null || true
+systemctl --user daemon-reload
+echo "==> ${UNIT} removed. Sample logs in ${XDG_STATE_HOME:-${HOME}/.local/state}/krytis/swap-eval were left in place."

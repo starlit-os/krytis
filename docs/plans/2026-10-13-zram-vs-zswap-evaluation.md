@@ -1,8 +1,12 @@
 # Evaluate zram vs zswap
 
-**Issue:** #510 · **Status (2026-10-13): step 1 running.** Step 0 is done on both machines,
-which both run image `26.08.202610131212`, and the snapshots are in #510. Natural-demand
-sampling started on both the same day.
+**Issue:** #510 · **Status (2026-11-22): decided, `zswap`; the evaluation stopped after
+step 1.** Steps 0 and 1 are done (data in #510). On 2026-11-21 `melog` exhausted zram and
+the kernel OOM killer fired three times, which ruled out `shipped` and `zram`. The
+maintainer chose `zswap` without running steps 2 and 3, using rule 3's simplicity order as
+the tie-break. Rule 4 is checked after the switch instead (step 7). The decision and its
+reasoning are in
+[#510](https://github.com/starlit-os/krytis/issues/510#issuecomment-7083038858).
 
 #510 asks whether krytis should keep zram or move to zswap, decided from measurements on the
 desktop and the laptop. This plan sets out how to measure, adds the tool that measures
@@ -146,7 +150,7 @@ from `memory.swap.current` and `memory.zswap.current`.
 | Action | What it does |
 |---|---|
 | `snapshot [--days N]` | Prints hardware, the kernel's zswap/zram/MGLRU config, the active arm, `/proc/swaps`, `zramctl`, zswap parameters, the vm sysctls, counters since boot, the top swap users by process and by cgroup, oomd state and config warnings, OOM kills, and suspend history (attempts, returns, failures, sleeps that never returned). |
-| `sample [--interval 30] [--detach]` | Appends one TSV row per interval to `$XDG_STATE_HOME/krytis/swap-eval/<host>-<date>-<boot>.tsv`, one file per boot. `--detach` runs it as the transient user unit `swap-eval-sample` (stop it with `systemctl --user stop swap-eval-sample`). |
+| `sample [--interval 30] [--detach]` | Appends one TSV row per interval to `$XDG_STATE_HOME/krytis/swap-eval/<host>-<date>-<boot>.tsv`, one file per boot. `--detach` runs it as the transient user unit `swap-eval-sample` (stop it with `systemctl --user stop swap-eval-sample`), for the current boot only. To sample every boot without having to remember, run `mise run swap-eval-sampler:install` once per machine: it installs `krytis-swap-eval-sample.service`, enabled for every login (`swap-eval-sampler:status`, `swap-eval-sampler:uninstall`). |
 | `summary [files…]` | Prints one markdown row per arm: hours sampled, peak and p95 swap as % of RAM, samples with zram ≥ 80 % full, peak zswap pool, compression ratios, swap-out to the backing device, zswap writeback, PSI full stall per hour, max PSI `full avg10`, and suspend gaps. A second table shows swap use at each sleep attempt and failure. |
 | `arm <shipped\|zram\|zswap\|hybrid> [--size MiB] [--remove-swapfile] [--dry-run]` | Switches the arm at runtime, as described above. |
 | `pressure [--high 4G] -- <command>` | Runs a real command in a user scope with `MemoryHigh=`, so the kernel reclaims and swaps that cgroup only while the rest of the desktop is untouched. It reports wall time, the scope's peak memory, swap and zswap, stall time (`some`/`full`), `memory.high` events, and system-wide swap traffic during the run. Each run is appended to `<host>-pressure.tsv`. |
@@ -209,17 +213,22 @@ as a per-host override in `/etc`. For `zram`, that override is
     `melog` has a 970 EVO 1 TB rated 600 TB. `adora` has a PM981a 512 GB with no published
     rating, so the 970 EVO Plus 500 GB (300 TB) stands in for it. On both machines the
     10 GiB/day cap is the limit that applies.
-- [ ] **1. Natural demand, `shipped`**: at least 5 working days per machine.
-  - After every boot, run `mise run swap-eval sample --detach`.
+- [x] **1. Natural demand, `shipped`**: at least 5 working days per machine. Done
+  2026-11-22: 114.7 h on `melog`, 49.3 h on `adora`
+  ([checkpoint](https://github.com/starlit-os/krytis/issues/510#issuecomment-7082952294)).
+  - After every boot, run `mise run swap-eval sample --detach`. Once
+    `mise run swap-eval-sampler:install` has run, this is automatic.
   - The workload is whatever you normally do, but include the heaviest regular tasks: the
     browser with its usual tabs, a local `bst` build, and a game if that is normal use.
-- [ ] **2. Natural demand, other arms**: at least 3 working days each for `zram`, `zswap`
+- [ ] ~~**2. Natural demand, other arms**~~ **Skipped** (decision, 2026-11-22). Its rule 4
+  half moves to step 7.: at least 3 working days each for `zram`, `zswap`
   and `hybrid`.
   - After every boot, run `mise run swap-eval arm <arm>`, then `sample --detach`.
   - Keep workloads comparable across arms. This step is mainly about demand and disk writes
     (rules 2 and 4). Performance is compared in step 3, because natural workloads differ from
     day to day.
-- [ ] **3. Controlled runs.** On each machine, pick two real workloads it actually runs. For
+- [ ] ~~**3. Controlled runs.**~~ **Skipped** (decision, 2026-11-22). Rule 3's tie-break order
+  decided between `zswap` and `hybrid` instead. On each machine, pick two real workloads it actually runs. For
   example, a clean `cargo build --release` of a Rust checkout that is already on disk, or a
   `mise run bst build` of an element whose artifact you have deleted first. Do not pick
   anything that compiles the toolchain (AGENTS.md Toolchain Gate).
@@ -227,10 +236,13 @@ as a per-host override in `/etc`. For `zram`, that override is
   - Set `--high` to about 60 % of that peak, and use the same value for every arm.
   - For each arm (`arm <name>`, then 3× `mise run swap-eval pressure --high <N> -- <cmd>`),
     alternate the order between machines.
-- [ ] **4. Report.** For each machine, paste `mise run swap-eval summary` and the
+- [x] **4. Report.** Done for step 1 only (the checkpoint above); there are no
+  `pressure` rows. For each machine, paste `mise run swap-eval summary` and the
   `<host>-pressure.tsv` rows into a single #510 comment.
-- [ ] **5. Decide** per machine and for the fleet using the rules above. Record the decision
-  and which rule decided it in #510.
+- [x] **5. Decide** per machine and for the fleet using the rules above. Record the decision
+  and which rule decided it in #510. Done 2026-11-22: `zswap` for the fleet, with a
+  half-RAM swapfile
+  ([decision](https://github.com/starlit-os/krytis/issues/510#issuecomment-7083038858)).
 - [ ] **6. Decision PR** (a separate PR that closes #510):
   - Create a new skill doc, `swap-tuning.md`, in the skills directory. It records the
     decision, the data, the zswap-in-front-of-zram trap, and the reason zswap has to be set
@@ -248,9 +260,18 @@ as a per-host override in `/etc`. For `zram`, that override is
     issue bodies that describe the old setup with
     `gh issue list --state open --search 'zram in:body'` (and the same for `zswap`), and
     correct them.
-  - Clean up both machines: `mise run swap-eval arm shipped --remove-swapfile`, then delete
-    `~/.local/state/krytis/swap-eval` once the data is in #510.
-  - Run `git mv` to move this plan into `docs/plans/done/`.
+  - Clean up both machines: `mise run swap-eval arm shipped --remove-swapfile` removes the
+    evaluation swapfile (the shipped arm brings its own). Keep
+    `~/.local/state/krytis/swap-eval` and the sampler unit for step 7.
+- [ ] **7. Rule 4 after the switch** (replaces step 2's wear check). After both machines
+  boot the zswap image, keep `krytis-swap-eval-sample.service` running
+  (`mise run swap-eval-sampler:status`) for at least 5 working days. Then post
+  `mise run swap-eval summary` for the zswap boots to #510.
+  - Pass: `swap-out to backing dev` × 24 h stays under 10 GiB/day on both machines.
+  - Fail on either machine: switch the shipped arm to `hybrid`. Restore the zram
+    elements, add the zswap-off udev rule, and keep the swapfile at a lower priority.
+  - Then run `mise run swap-eval-sampler:uninstall`, delete
+    `~/.local/state/krytis/swap-eval`, and `git mv` this plan into `docs/plans/done/`.
 
 ## Risks
 
