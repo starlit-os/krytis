@@ -844,7 +844,13 @@ SWAP_STATE=$(SSH 'test -e /usr/lib/bootc/kargs.d/50-zswap.toml || exit 0
     echo "unit=$(systemctl is-active var-swap-swapfile.swap)"
     echo "swaps=$(awk "NR > 1 { printf \"%s \", \$1 }" /proc/swaps)"
     echo "swappiness=$(cat /proc/sys/vm/swappiness) page_cluster=$(cat /proc/sys/vm/page-cluster)"
-    echo "init_log=$(journalctl -b -q -u krytis-swapfile-init -o cat | tail -1)"' 2>/dev/null || true)
+    echo "init_log=$(journalctl -b -q -u krytis-swapfile-init -o cat | tail -1)"
+    if test -e /usr/lib/systemd/sleep.conf.d/50-krytis-no-hibernate.conf; then
+        for m in CanHibernate CanHybridSleep CanSuspendThenHibernate; do
+            printf "%s=%s " "$m" "$(busctl call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager "$m" | cut -d" " -f2)"
+        done; echo
+        echo "upower_critical=$(busctl call org.freedesktop.UPower /org/freedesktop/UPower org.freedesktop.UPower GetCriticalAction 2>/dev/null | cut -d" " -f2)"
+    fi' 2>/dev/null || true)
 if [ -n "${SWAP_STATE}" ]; then
     SWAP_BAD=""
     grep -qx 'zswap=Y' <<<"${SWAP_STATE}" || SWAP_BAD+=" zswap-off"
@@ -853,8 +859,17 @@ if [ -n "${SWAP_STATE}" ]; then
     grep -q '^swaps=.*/var/swap/swapfile' <<<"${SWAP_STATE}" || SWAP_BAD+=" swapfile-not-in-proc-swaps"
     grep -q '^swaps=.*/dev/zram' <<<"${SWAP_STATE}" && SWAP_BAD+=" zram-active"
     grep -qx 'swappiness=100 page_cluster=0' <<<"${SWAP_STATE}" || SWAP_BAD+=" sysctls"
+    # Hibernation off (#1751): logind must say "no" (not "yes", and not "na", which
+    # would mean the drop-in isn't what decided it). UPower 1.91's Auto calls
+    # logind's Sleep(), which with all three off can only suspend; Hibernate or
+    # HybridSleep here would mean UPower found a way round the drop-in. Only
+    # checked when the image ships the drop-in.
+    if grep -q '^CanHibernate=' <<<"${SWAP_STATE}"; then
+        grep -qx 'CanHibernate="no" CanHybridSleep="no" CanSuspendThenHibernate="no" *' <<<"${SWAP_STATE}" || SWAP_BAD+=" hibernation-not-off"
+        grep -qxE 'upower_critical="(Sleep|PowerOff)"' <<<"${SWAP_STATE}" || SWAP_BAD+=" upower-would-hibernate"
+    fi
     if [ -z "${SWAP_BAD}" ]; then
-        echo "    swap is zswap in front of /var/swap/swapfile, no zram"
+        echo "    swap is zswap in front of /var/swap/swapfile, no zram; hibernation off"
     else
         echo "    FAIL: swap stack is not zswap + swapfile (#510):${SWAP_BAD}" >&2
         printf '      %s\n' "${SWAP_STATE}" >&2

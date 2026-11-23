@@ -78,7 +78,7 @@ element does, its row's text is a review question.
 | `config/esp-automount.bst` | Generator that automounts the ESP on a LUKS root, which systemd-gpt-auto-generator skips, so `systemd-boot-update.service` can update the boot loader (#1328). |
 | `core/uutils-coreutils.bst` | uutils Rust coreutils, installed alongside GNU coreutils rather than replacing it. |
 | `config/logind-lid.bst` | Pins logind's lid-switch policy (#558). |
-| `config/swap.bst` | Swap: zswap set by karg (zstd, 20 % pool, shrinker on) in front of a half-RAM swapfile at `/var/swap`, created on first boot; pins `vm.swappiness`/`vm.page-cluster`. Replaced zram-generator (#510). |
+| `config/swap.bst` | Swap: zswap set by karg (zstd, 20 % pool, shrinker on) in front of a half-RAM swapfile at `/var/swap`, created on first boot; pins `vm.swappiness`/`vm.page-cluster`; turns hibernation off (#1751). Replaced zram-generator (#510). |
 | `config/oomd.bst` | Enables systemd-oomd and arms its memory-pressure kill on each user's `app.slice` (#1216). |
 
 #### `stacks/bootc.bst`

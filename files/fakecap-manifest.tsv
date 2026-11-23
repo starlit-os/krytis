@@ -158727,6 +158727,7 @@
 /./usr/lib/systemd/repart/definitions/sysext.repart.d/30-root-verity-sig.conf	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/resolv.conf	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/resolv.conf	core-deps/systemd.bst	monthly
+/./usr/lib/systemd/sleep.conf.d/50-krytis-no-hibernate.conf	config/swap.bst	monthly
 /./usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/sshd_config.d/20-systemd-userdb.conf	core-deps/systemd-base.bst	monthly
