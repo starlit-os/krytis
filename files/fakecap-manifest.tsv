@@ -14583,6 +14583,7 @@
 /./usr/lib/bootc/kargs.d/10-root-rw.toml	config/bootc.bst	monthly
 /./usr/lib/bootc/kargs.d/20-plymouth.toml	config/bootc.bst	monthly
 /./usr/lib/bootc/kargs.d/30-fido2-luks.toml	config/bootc.bst	monthly
+/./usr/lib/bootc/kargs.d/50-zswap.toml	config/swap.bst	monthly
 /./usr/lib/bootc/storage	core/bootc.bst	monthly
 /./usr/lib/cups/backend/dnssd	components/_private/cups-base.bst	monthly
 /./usr/lib/cups/backend/http	components/_private/cups-base.bst	monthly
@@ -125435,7 +125436,6 @@
 /./usr/lib/debug/usr/lib/systemd/system-generators/systemd-tpm2-generator.debug	core-deps/systemd.bst	monthly
 /./usr/lib/debug/usr/lib/systemd/system-generators/systemd-veritysetup-generator.debug	core-deps/systemd-base.bst	monthly
 /./usr/lib/debug/usr/lib/systemd/system-generators/systemd-veritysetup-generator.debug	core-deps/systemd.bst	monthly
-/./usr/lib/debug/usr/lib/systemd/system-generators/zram-generator.debug	components/zram-generator.bst	monthly
 /./usr/lib/debug/usr/lib/systemd/systemd-backlight.debug	core-deps/systemd-base.bst	monthly
 /./usr/lib/debug/usr/lib/systemd/systemd-backlight.debug	core-deps/systemd.bst	monthly
 /./usr/lib/debug/usr/lib/systemd/systemd-battery-check.debug	core-deps/systemd-base.bst	monthly
@@ -158475,6 +158475,7 @@
 /./usr/lib/sysctl.d/50-default.conf	core-deps/systemd.bst	monthly
 /./usr/lib/sysctl.d/50-pid-max.conf	core-deps/systemd-base.bst	monthly
 /./usr/lib/sysctl.d/50-pid-max.conf	core-deps/systemd.bst	monthly
+/./usr/lib/sysctl.d/60-krytis-swap.conf	config/swap.bst	monthly
 /./usr/lib/sysctl.d/99-userns.conf	config/desktop-udev.bst	monthly
 /./usr/lib/sysctl.d/README	core-deps/systemd-base.bst	monthly
 /./usr/lib/sysctl.d/README	core-deps/systemd.bst	monthly
@@ -158769,7 +158770,6 @@
 /./usr/lib/systemd/system-generators/systemd-tpm2-generator	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system-generators/systemd-veritysetup-generator	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system-generators/systemd-veritysetup-generator	core-deps/systemd.bst	monthly
-/./usr/lib/systemd/system-generators/zram-generator	components/zram-generator.bst	monthly
 /./usr/lib/systemd/system-preset/70-krytis-oomd.preset	config/oomd.bst	monthly
 /./usr/lib/systemd/system-preset/71-krytis-ananicy-cpp.preset	desktop/ananicy-cpp.bst	monthly
 /./usr/lib/systemd/system-preset/71-krytis-falcond.preset	desktop/falcond.bst	monthly
@@ -159015,6 +159015,7 @@
 /./usr/lib/systemd/system/krytis-fisherman-scratch-cleanup.service	config/fisherman-cleanup.bst	monthly
 /./usr/lib/systemd/system/krytis-greeter-fallback.service	config/greetd-config.bst	monthly
 /./usr/lib/systemd/system/krytis-subuid-provision.service	config/subuid-provision.bst	monthly
+/./usr/lib/systemd/system/krytis-swapfile-init.service	config/swap.bst	monthly
 /./usr/lib/systemd/system/ldconfig.service	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/ldconfig.service	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system/ldconfig.service.d/after-tmpfiles.conf	gnomeos-deps/ld-config.bst	monthly
@@ -159248,6 +159249,7 @@
 /./usr/lib/systemd/system/suspend.target	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system/swap.target	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/swap.target	core-deps/systemd.bst	monthly
+/./usr/lib/systemd/system/swap.target.wants/var-swap-swapfile.swap	config/swap.bst	monthly
 /./usr/lib/systemd/system/sys-fs-fuse-connections.mount	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/sys-fs-fuse-connections.mount	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system/sys-kernel-config.mount	core-deps/systemd-base.bst	monthly
@@ -159820,7 +159822,6 @@
 /./usr/lib/systemd/system/systemd-vmspawn@.service	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system/systemd-volatile-root.service	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/systemd-volatile-root.service	core-deps/systemd.bst	monthly
-/./usr/lib/systemd/system/systemd-zram-setup@.service	components/zram-generator.bst	monthly
 /./usr/lib/systemd/system/tailscaled.service	core/tailscale.bst	monthly
 /./usr/lib/systemd/system/time-set.target	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/time-set.target	core-deps/systemd.bst	monthly
@@ -159854,6 +159855,7 @@
 /./usr/lib/systemd/system/user@0.service.d/10-login-barrier.conf	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system/var-lib-machines.mount	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/var-lib-machines.mount	core-deps/systemd.bst	monthly
+/./usr/lib/systemd/system/var-swap-swapfile.swap	config/swap.bst	monthly
 /./usr/lib/systemd/system/veritysetup-pre.target	core-deps/systemd-base.bst	monthly
 /./usr/lib/systemd/system/veritysetup-pre.target	core-deps/systemd.bst	monthly
 /./usr/lib/systemd/system/veritysetup.target	core-deps/systemd-base.bst	monthly
@@ -160257,7 +160259,6 @@
 /./usr/lib/systemd/user/xdg-permission-store.service	components/xdg-desktop-portal.bst	monthly
 /./usr/lib/systemd/user/xdg-user-dirs.service	components/xdg-user-dirs.bst	monthly
 /./usr/lib/systemd/user/xwayland-satellite.service	config/xwayland-satellite.bst	monthly
-/./usr/lib/systemd/zram-generator.conf	config/zram-generator.bst	monthly
 /./usr/lib/sysusers.d/README	core-deps/systemd-base.bst	monthly
 /./usr/lib/sysusers.d/README	core-deps/systemd.bst	monthly
 /./usr/lib/sysusers.d/android-udev.conf	components/android-udev-rules.bst	monthly
@@ -171959,6 +171960,7 @@
 /./usr/libexec/installed-tests/libsoup-3.0/ws-test-helper	sdk/libsoup.bst	monthly
 /./usr/libexec/installed-tests/rtkit/rtkit-test	components/rtkit.bst	monthly
 /./usr/libexec/keyboxd	components/gnupg.bst	monthly
+/./usr/libexec/krytis-swapfile-init	config/swap.bst	monthly
 /./usr/libexec/krytis-tailscale-authorize	config/tailscale-setup.bst	monthly
 /./usr/libexec/krytis/battery-power-profile-hook.sh	config/battery-power-profile-hook.bst	monthly
 /./usr/libexec/krytis/bazaar-host-etc.sh	config/bazaar-config.bst	monthly
@@ -221643,7 +221645,6 @@
 /./usr/share/doc/xz/history.txt	bootstrap/xz.bst	monthly
 /./usr/share/doc/xz/lzma-file-format.txt	bootstrap/xz.bst	monthly
 /./usr/share/doc/xz/xz-file-format.txt	bootstrap/xz.bst	monthly
-/./usr/share/doc/zram-generator/zram-generator.conf.example	components/zram-generator.bst	monthly
 /./usr/share/edk2/ovmf/OVMF_CODE.fd	dev/ovmf.bst	monthly
 /./usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd	dev/ovmf.bst	monthly
 /./usr/share/edk2/ovmf/OVMF_VARS.fd	dev/ovmf.bst	monthly
@@ -331876,7 +331877,6 @@
 /./usr/share/licenses/freedesktop-sdk-extra/toolbox/src/vendor/tags.cncf.io/container-device-interface/specs-go/LICENSE	components/toolbox.bst	monthly
 /./usr/share/licenses/freedesktop-sdk-extra/toolbox/test/system/libs/bats-assert/LICENSE	components/toolbox.bst	monthly
 /./usr/share/licenses/freedesktop-sdk-extra/toolbox/test/system/libs/bats-support/LICENSE	components/toolbox.bst	monthly
-/./usr/share/licenses/freedesktop-sdk-extra/zram-generator/LICENSE	components/zram-generator.bst	monthly
 /./usr/share/licenses/freedesktop-sdk/aardvark-dns/LICENSE	components/aardvark-dns.bst	monthly
 /./usr/share/licenses/freedesktop-sdk/abseil-cpp/LICENSE	components/abseil-cpp.bst	monthly
 /./usr/share/licenses/freedesktop-sdk/acl/doc/COPYING	bootstrap/acl.bst	monthly

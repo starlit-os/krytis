@@ -1,0 +1,60 @@
+#!/bin/sh
+# Create the disk swapfile that zswap fronts (config/swap.bst, #510).
+#
+# Size: half of RAM, the capacity the old zram0 had. Idempotent: exits 0 if the
+# swapfile exists, if /var lacks the space, or if the filesystem can't hold a
+# swapfile. A partial file is removed so the next boot retries.
+set -eu
+
+SWAPDIR=/var/swap
+SWAPFILE="${SWAPDIR}/swapfile"
+
+[ -e "${SWAPFILE}" ] && exit 0
+
+mem_kib=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+size_mib=$((mem_kib / 2048))
+
+# The filesystem /var/swap will live on, before /var/swap exists.
+parent=/var
+[ -d "${SWAPDIR}" ] && parent="${SWAPDIR}"
+
+# stat -f, not df: uutils df rejects -P with --output (dakota 53952c7).
+free_mib=$(($(stat -f -c '%a' "${parent}") * $(stat -f -c '%S' "${parent}") / 1048576))
+if [ "${free_mib}" -lt $((size_mib + 4096)) ]; then
+    echo "krytis-swapfile-init: ${free_mib} MiB free on ${parent}, need $((size_mib + 4096)) MiB for a ${size_mib} MiB swapfile; skipping"
+    exit 0
+fi
+
+fstype=$(stat -f -c %T "${parent}")
+case "${fstype}" in
+    btrfs | xfs | ext2/ext3) ;;
+    *)
+        # e.g. the overlayfs of `podman run` (mise run swap-audit runs this
+        # script there) or a virtiofs root.
+        echo "krytis-swapfile-init: ${fstype} cannot back a swapfile; skipping"
+        exit 0
+        ;;
+esac
+
+cleanup() { rm -f "${SWAPFILE}"; }
+trap cleanup EXIT
+
+if [ "${fstype}" = btrfs ]; then
+    # Its own subvolume: btrfs refuses to snapshot a subvolume that holds an
+    # active swapfile, so the swapfile must not sit in /var's subvolume.
+    [ -d "${SWAPDIR}" ] || btrfs -q subvolume create "${SWAPDIR}"
+    chmod 0700 "${SWAPDIR}"
+    # mkswapfile sets NOCOW (which also keeps compress=zstd:1 off the file) and
+    # allocates real extents. A plain fallocate'd file fails swapon.
+    btrfs -q filesystem mkswapfile --size "${size_mib}m" "${SWAPFILE}"
+else
+    install -d -m 0700 "${SWAPDIR}"
+    # dd, not fallocate: xfs rejects unwritten extents at swapon ("swapfile has holes").
+    touch "${SWAPFILE}"
+    chmod 0600 "${SWAPFILE}"
+    dd if=/dev/zero of="${SWAPFILE}" bs=1M count="${size_mib}" conv=fsync status=none
+    mkswap -q "${SWAPFILE}"
+fi
+
+trap - EXIT
+echo "krytis-swapfile-init: created ${size_mib} MiB swapfile at ${SWAPFILE} (${fstype})"

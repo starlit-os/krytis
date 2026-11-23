@@ -25,9 +25,9 @@
 #             kernel reclaim and swap that cgroup only, and records what it cost.
 #
 # The arm of every row is read from the kernel, never from a state file:
-#   shipped  zswap on, zram0 on, no disk swap   (what the image boots into)
+#   shipped  zswap on, zram0 on, no disk swap   (the image before #510's decision)
 #   zram     zswap off, zram0 on, no disk swap
-#   zswap    zswap on, zram0 off, disk swapfile
+#   zswap    zswap on, zram0 off, disk swapfile (what the image boots into since #510)
 #   hybrid   zswap off, zram0 on, disk swapfile at lower priority
 
 set -euo pipefail
@@ -214,7 +214,8 @@ do_snapshot() {
     oomctl 2>&1 | sed -n '1,4p;/Monitored CGroups/,$p'
     journalctl -q -b -u systemd-oomd -g 'Unknown section|Unknown key|Failed to parse' -o cat 2>/dev/null | sed 's/^/config warning: /' || true
     echo "oomd kills, last ${DAYS}d:       $(journalctl -q --since "-${DAYS}d" -u systemd-oomd -g 'Killed' -o cat 2>/dev/null | wc -l)"
-    echo "kernel OOM kills, last ${DAYS}d: $(journalctl -q -k --since "-${DAYS}d" -g 'Out of memory: Killed process' -o cat 2>/dev/null | wc -l)"
+    # _TRANSPORT=kernel, not -k: -k implies -b and would count only this boot.
+    echo "kernel OOM kills, last ${DAYS}d: $(journalctl -q _TRANSPORT=kernel --since "-${DAYS}d" -g 'Out of memory: Killed process' -o cat 2>/dev/null | wc -l)"
     echo
 
     echo "## Suspend history, last ${DAYS}d (systemd-sleep)"

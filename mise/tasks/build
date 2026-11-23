@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="generate-image-version + load-image + lint + umbriel-config-validate + cracklib-dict-check + portal-routing-check + sigpolicy-check — full local build pipeline"
+#MISE description="generate-image-version + load-image + lint + umbriel-config-validate + cracklib-dict-check + portal-routing-check + sigpolicy-check + swap-audit — full local build pipeline"
 #USAGE flag "--container" help="Use the bst2 podman container instead of native BST"
 #USAGE flag "--push" help="Wire krytis's bow Buildbarn cache with push+pull access"
 #USAGE flag "--pull" help="Wire krytis's bow Buildbarn cache with pull-only access"
@@ -39,3 +39,8 @@ FORCE=${usage_force:+--force}
 # unparsable or names a missing key stops every host's next upgrade — see
 # docs/skills/signing.md § Host enforcement (#418).
 ./mise/tasks/sigpolicy-check
+# Same cost class (~2s, one podman run). The swap stack used to come from a kernel
+# default and a junction element, and a bump of either changed it silently: the
+# image ran zswap stacked on zram for months that way. This fails if zram comes
+# back or anything overrides config/swap.bst — see docs/skills/swap-tuning.md (#510).
+./mise/tasks/swap-audit

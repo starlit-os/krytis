@@ -1,0 +1,21 @@
+# Creates /var/swap/swapfile before var-swap-swapfile.swap activates it (#510).
+#
+# DefaultDependencies=no: default dependencies would add After=sysinit.target,
+# but swap.target (var-swap-swapfile.swap pulls this unit in) completes before
+# sysinit.target. That is an ordering cycle, and systemd would break it by
+# dropping the swap unit (dakota 53952c7).
+[Unit]
+Description=Create the swapfile zswap writes back to
+Documentation=https://github.com/starlit-os/krytis/issues/510
+DefaultDependencies=no
+RequiresMountsFor=/var
+After=systemd-remount-fs.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Only the dd fallback (xfs, ext4) writes the whole file; give slow media room.
+TimeoutStartSec=15min
+ExecStart=/usr/libexec/krytis-swapfile-init

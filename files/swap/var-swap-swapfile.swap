@@ -1,0 +1,13 @@
+# The swapfile zswap writes back to (#510). Enabled by a static
+# swap.target.wants symlink, not a preset: presets only apply on first boot
+# (empty machine-id), so a preset would never reach machines already installed.
+[Unit]
+Description=Swapfile behind zswap
+Documentation=https://github.com/starlit-os/krytis/issues/510
+Requires=krytis-swapfile-init.service
+After=krytis-swapfile-init.service
+# The init service skips creation when /var is too small; skip cleanly too.
+ConditionPathExists=/var/swap/swapfile
+
+[Swap]
+What=/var/swap/swapfile

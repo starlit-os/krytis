@@ -46,6 +46,7 @@ Agent entry point. Load only the skill for your current task — do not load eve
 | Replace native Proton Pass with the Flathub `me.proton.Pass`, or debug a sandboxed app whose copy button shows "copied" but pastes the old clipboard | [`docs/design/proton-pass-flatpak.md`](design/proton-pass-flatpak.md), [`docs/skills/desktop.md`](skills/desktop.md) § Sandboxed apps can't reach the clipboard through Xwayland without an X11 window in focus |
 | Debug the Zed Flatpak (`dev.zed.Zed`): toolchains, terminal, git signing, where its settings live, why there's no `zed` command | [`docs/skills/desktop.md`](skills/desktop.md) § Zed's Flatpak runs on the host, not in its sandbox |
 | Add a Flatpak to what krytis preinstalls, including on existing installs | [`docs/skills/bst.md`](skills/bst.md) § Flatpak Pre-install Service Pattern |
+| Change krytis's swap (zswap, the `/var/swap` swapfile, swappiness), read why zram was dropped, or debug a `mise run swap-audit` failure | [`docs/skills/swap-tuning.md`](skills/swap-tuning.md) |
 | Use or extend mise tasks and tool installation | [`docs/skills/mise.md`](skills/mise.md) |
 | Reference or borrow from the sibling zirconium-hawaii project | [`docs/skills/zirconium-hawaii.md`](skills/zirconium-hawaii.md) |
 | Reference the upstream live-ISO/installer project krytis's ISO pipeline was forked out of | [`docs/skills/dakota-iso.md`](skills/dakota-iso.md) |

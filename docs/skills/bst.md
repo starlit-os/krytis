@@ -1243,7 +1243,9 @@ is somebody else's recipe and need not install the same files. gnome-build-meta'
 `ram / 2`, zstd) from its install-commands. freedesktop-sdk-extra's
 `components/zram-generator.bst` builds only the generator, and zram-generator creates no
 device without a config. The image built, linted and passed `boot-test` with **no swap at
-all**; `elements/config/zram-generator.bst` now ships the file. Nothing but a file
+all**. #1222 restored the file with a `config/zram-generator.bst` of its own. Since #510,
+krytis ships no zram (zswap plus a swapfile, `config/swap.bst`; see
+[`swap-tuning.md`](swap-tuning.md)), but the lesson stands for any moved element. Nothing but a file
 comparison catches this. List what the committed `files/fakecap-manifest.tsv` credits to the
 old element names, then test each path in the new image:
 
@@ -1259,7 +1261,8 @@ Read everything else. The same pass found that freedesktop-sdk-extra's accountss
 ships no headers or `.pc` file (runtime library and daemon unchanged), which matters only
 to something building against the image.
 
-`boot-test` doesn't check swap, so check zram from the image. `zram-generator` run inside
+At the time, `boot-test` didn't check swap, so zram had to be checked from the image. (It
+checks the swap stack since #510.) `zram-generator` run inside
 `podman run` exits 0 and writes nothing: it detects the container and skips silently, even
 with `RUST_LOG=debug`. Give it a fake root through `ZRAM_GENERATOR_ROOT`, which needs a
 `sys/module/zram` directory and a copy of `/proc/meminfo`:
@@ -3051,7 +3054,7 @@ Rules go in `/usr/lib/udev/rules.d/` (not `/etc/udev/rules.d/` — the latter is
 
 **Codeberg tarball sources:** Codeberg serves release tarballs at `https://codeberg.org/<user>/<repo>/archive/<tag>.tar.gz`. Add `codeberg_files: https://codeberg.org/` to `include/aliases.yml` file aliases (distinct from the `codeberg:` git alias which already exists) and use `codeberg_files:<user>/<repo>/archive/<tag>.tar.gz` in `kind: tar` sources. Update path via mise task + CI job (`track-mise` pattern) — `bst source track` is a no-op on `kind: tar`.
 
-**Desktop performance config element pattern (`config/desktop-udev.bst`):** A single element with a `kind: local` source can install across multiple `/usr/lib/` subdirectories (udev/rules.d, modprobe.d, modules-load.d, tmpfiles.d, sysctl.d). `config/desktop-udev.bst` does it as `kind: manual`, with `install -Dm644` lines and glob loops over `files/desktop-tweaks/`. That is pure copying, so a new element of this shape should be `kind: import`, with the files directory mirroring the target layout (§ File-drop config elements: `kind: import`, below). desktop-udev itself would only need `udev/` renamed to `udev/rules.d/`. CachyOS-Settings (`github.com/CachyOS/CachyOS-Settings`) is a reference for performance udev rules: IO schedulers, audio PM, SATA link power, THP tmpfiles, amdgpu modprobe, ntsync modules-load. Omit: `30-zram.rules` (conflicts with `zram-generator`), `85-iw-regulatory.rules` (needs extra service), `69-hdparm.rules` (hdparm not in fdsdk), NVIDIA rules.
+**Desktop performance config element pattern (`config/desktop-udev.bst`):** A single element with a `kind: local` source can install across multiple `/usr/lib/` subdirectories (udev/rules.d, modprobe.d, modules-load.d, tmpfiles.d, sysctl.d). `config/desktop-udev.bst` does it as `kind: manual`, with `install -Dm644` lines and glob loops over `files/desktop-tweaks/`. That is pure copying, so a new element of this shape should be `kind: import`, with the files directory mirroring the target layout (§ File-drop config elements: `kind: import`, below). desktop-udev itself would only need `udev/` renamed to `udev/rules.d/`. CachyOS-Settings (`github.com/CachyOS/CachyOS-Settings`) is a reference for performance udev rules: IO schedulers, audio PM, SATA link power, THP tmpfiles, amdgpu modprobe, ntsync modules-load. Omit: `30-zram.rules` (krytis ships no zram since #510, so it has nothing to act on. The old reason given here, "conflicts with `zram-generator`", was wrong. The rule turns zswap off when zram appears, which fixes zswap stacking on zram, and leaving it out is how the image came to run both: [`swap-tuning.md`](swap-tuning.md) § zswap stacked on zram), `85-iw-regulatory.rules` (needs extra service), `69-hdparm.rules` (hdparm not in fdsdk), NVIDIA rules.
 
 ### File-drop config elements: `kind: import`
 
