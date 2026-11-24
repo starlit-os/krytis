@@ -77,7 +77,10 @@ The CachyOS kernel compiles them in (checked against the `cachyos-7.2.9-2` sourc
 - `vm_swappiness = 100` sits under `#ifdef CONFIG_CACHY` in `mm/vmscan.c`. Mainline uses 60.
 - `page_cluster = 0` is set unconditionally in `swap_setup()` in `mm/swap.c`. Mainline uses 3.
 - MGLRU's `min_ttl_ms = 100` also sits under `CONFIG_CACHY`. When the working set of the
-  last 100 ms doesn't fit in memory, it invokes the OOM killer.
+  last 100 ms doesn't fit in memory, it invokes the OOM killer. That is kswapd calling
+  `out_of_memory()` from `lru_gen_age_node()` (re-checked in `cachyos-7.3.5-2`, #1752), and
+  it is why every 2026-11-21 kill read `kswapd0 invoked oom-killer`. oomd's swap kill on
+  `app.slice` now acts first (`desktop.md` § systemd-oomd); this path stays the backstop.
 
 `core/linux-cachyos.bst` repackages whatever CachyOS builds, so a kernel bump can change any
 of these without a krytis commit. `60-krytis-swap.conf` pins the first two, at the values

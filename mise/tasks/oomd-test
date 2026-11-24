@@ -4,7 +4,7 @@
 #USAGE flag "--reuse-disk <path>" help="Boot a copy of this already-installed raw disk instead of running generate-disk (skips the only step that needs root)"
 #USAGE flag "--keep" help="Keep WORKDIR (disk copy, serial log, keys) and print its path"
 #USAGE flag "--scenario <name>" default="pressure" help="pressure: the MemoryHigh= hog oomd must kill. swap: fill RAM and the swapfile, record who kills (#1752)"
-#USAGE flag "--oomd <config>" default="current" help="Runtime oomd config in the VM: current (the image's), swap (+ManagedOOMSwap=kill on app.slice), ruleset (+an OOMRules= kill-by-swap rule), pressure30 (pressure kill at 30 %/10 s)"
+#USAGE flag "--oomd <config>" default="current" help="Runtime oomd config in the VM: current (the image's), pre1752 (swap kill off, as before #1752), ruleset (+an OOMRules= kill-by-swap rule), pressure30 (pressure kill at 30 %/10 s)"
 #USAGE flag "--parts <list>" default="fast,slow" help="swap: comma-separated hogs to run, fast (1 process, 1 GiB/s) and/or slow (4 units, 50 MiB/s each)"
 #USAGE flag "--runs <n>" default="1" help="swap: runs of each part, all in one boot"
 #USAGE flag "--results <path>" help="swap: TSV to append one row per run to (default: $XDG_STATE_HOME/krytis/oomd-test/results.tsv)"
@@ -14,8 +14,9 @@
 #   1. systemd-oomd parses its config cleanly (no "Unknown section" line, the
 #      #219 drop-in's failure mode).
 #   2. A user's app.slice carries config/oomd.bst's ManagedOOMMemoryPressure=
-#      kill, and the user manager registered it with oomd: `oomctl` lists that
-#      app.slice as pressure-monitored, and lists nothing under swap.
+#      kill and ManagedOOMSwap=kill (#1752), and the user manager registered it
+#      with oomd: `oomctl` lists that app.slice as pressure- and swap-monitored,
+#      and lists nothing but users' app.slices under either.
 #   3. A memory hog in app.slice is killed BY OOMD (oomd's journal names its
 #      cgroup, the unit's Result is oom-kill), not by the kernel OOM killer.
 #   4. An idle sibling in app.slice and a canary in session.slice, where
@@ -82,7 +83,7 @@ PARTS="${CLI_PARTS:-${usage_parts:-fast,slow}}"
 RUNS="${CLI_RUNS:-${usage_runs:-1}}"
 RESULTS="${CLI_RESULTS:-${usage_results:-${XDG_STATE_HOME:-${HOME}/.local/state}/krytis/oomd-test/results.tsv}}"
 case "${SCENARIO}" in pressure|swap) ;; *) echo "ERROR: --scenario is pressure or swap" >&2; exit 1 ;; esac
-case "${OOMD_CONFIG}" in current|swap|ruleset|pressure30) ;; *) echo "ERROR: --oomd is current, swap, ruleset or pressure30" >&2; exit 1 ;; esac
+case "${OOMD_CONFIG}" in current|pre1752|ruleset|pressure30) ;; *) echo "ERROR: --oomd is current, pre1752, ruleset or pressure30" >&2; exit 1 ;; esac
 for p in ${PARTS//,/ }; do case "${p}" in fast|slow) ;; *) echo "ERROR: --parts takes fast and/or slow" >&2; exit 1 ;; esac; done
 [[ "${RUNS}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --runs must be a positive integer" >&2; exit 1; }
 
@@ -189,8 +190,8 @@ fail() { echo "    FAIL  $1" >&2; FAILED=1; }
 # image's 10-krytis-oomd.conf, so its keys win.
 case "${OOMD_CONFIG}" in
     current) ;;
-    swap)
-        ROOT "install -d /etc/systemd/user/app.slice.d && printf '[Slice]\nManagedOOMSwap=kill\n' > /etc/systemd/user/app.slice.d/50-oomdtest.conf" ;;
+    pre1752)
+        ROOT "install -d /etc/systemd/user/app.slice.d && printf '[Slice]\nManagedOOMSwap=auto\n' > /etc/systemd/user/app.slice.d/50-oomdtest.conf" ;;
     ruleset)
         ROOT "install -d /etc/systemd/oomd/rules.d /etc/systemd/user/app.slice.d \
               && printf '[Rule]\nSwapUsageMax=90%%\nAction=kill-by-swap\n' > /etc/systemd/oomd/rules.d/oomdtest-swap.oomrule \
@@ -224,21 +225,32 @@ sleep 3
 echo "==> [4/6] oomd configuration and registration..."
 WARN=$(ROOT "journalctl -b -q -u systemd-oomd -g 'Unknown section|Unknown key|Failed to parse' -o cat" || true)
 [ -z "${WARN}" ] && pass "oomd logged no config warnings" || fail "oomd config warnings: ${WARN}"
-PROPS=$(U systemctl --user show -p ManagedOOMMemoryPressure -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec app.slice | tr '\n' ' ')
+PROPS=$(U systemctl --user show -p ManagedOOMMemoryPressure -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec -p ManagedOOMSwap app.slice | tr '\n' ' ')
 echo "    app.slice: ${PROPS}"
 case "${PROPS}" in
     *ManagedOOMMemoryPressure=kill*) pass "app.slice has ManagedOOMMemoryPressure=kill" ;;
     *) fail "app.slice is not armed: ${PROPS}" ;;
 esac
+case "${OOMD_CONFIG}:${PROPS}" in
+    pre1752:*ManagedOOMSwap=auto*) pass "app.slice has ManagedOOMSwap=auto (--oomd pre1752)" ;;
+    pre1752:*) fail "--oomd pre1752 did not turn the swap kill off: ${PROPS}" ;;
+    *ManagedOOMSwap=kill*) pass "app.slice has ManagedOOMSwap=kill (#1752)" ;;
+    *) fail "app.slice has no swap kill: ${PROPS}" ;;
+esac
 OOMCTL=$(ROOT oomctl)
 printf '%s\n' "${OOMCTL}" | sed 's/^/    | /'
 SWAP_PATHS=$(printf '%s\n' "${OOMCTL}" | awk '/^Swap Monitored CGroups:/{f=1;next} /^Memory Pressure Monitored CGroups:/{f=0} f && /Path:/')
 PRESSURE_PATHS=$(printf '%s\n' "${OOMCTL}" | awk '/^Memory Pressure Monitored CGroups:/{f=1;next} /^[A-Z]/{f=0} f && /Path:/ {print $2}')
-if [ "${OOMD_CONFIG}" = swap ]; then
-    grep -qF "${APP_SLICE}" <<<"${SWAP_PATHS}" \
-        && pass "oomd swap-monitors ${APP_SLICE} (--oomd swap)" || fail "--oomd swap: ${APP_SLICE} is not swap-monitored (got: ${SWAP_PATHS:-nothing})"
+# config/oomd.bst arms ManagedOOMSwap=kill on app.slice too (#1752); --oomd pre1752
+# turns it off again.
+SWAP_PATHS=$(awk '{print $2}' <<<"${SWAP_PATHS}")
+if [ "${OOMD_CONFIG}" = pre1752 ]; then
+    [ -z "${SWAP_PATHS}" ] && pass "no cgroup is swap-monitored (--oomd pre1752)" || fail "--oomd pre1752: swap-monitored cgroups: ${SWAP_PATHS}"
 else
-    [ -z "${SWAP_PATHS}" ] && pass "no cgroup is swap-monitored" || fail "swap-monitored cgroups: ${SWAP_PATHS}"
+    grep -qx "${APP_SLICE}" <<<"${SWAP_PATHS}" \
+        && pass "oomd swap-monitors ${APP_SLICE}" || fail "oomd does not swap-monitor ${APP_SLICE} (got: ${SWAP_PATHS:-nothing})"
+    OTHER_SWAP=$(grep -vxE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/app\.slice' <<<"${SWAP_PATHS}" || true)
+    [ -z "${OTHER_SWAP}" ] && pass "every swap-monitored cgroup is a user's app.slice" || fail "unexpected swap-monitored cgroups: ${OTHER_SWAP}"
 fi
 grep -qx "${APP_SLICE}" <<<"${PRESSURE_PATHS}" \
     && pass "oomd monitors ${APP_SLICE}" || fail "oomd does not list ${APP_SLICE} (got: ${PRESSURE_PATHS:-nothing})"
