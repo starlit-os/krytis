@@ -1,7 +1,7 @@
 # Make oomd catch swap exhaustion
 
-**Issue:** #1752 · **Status (2026-11-22): planned; step 1 can start now, step 3 needs
-the #1750 image.** Follows #510 and #1216.
+**Issue:** #1752 · **Status (2026-11-24): steps 0–5 done; step 6 after both machines
+upgrade.** Follows #510 and #1216.
 
 ## What happened
 
@@ -46,10 +46,14 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
 
 ## Steps
 
-- [ ] **0. Confirm the MGLRU reading.** Check `lru_gen_age_node()` in the `cachyos-<ver>`
+- [x] **0. Confirm the MGLRU reading.** Check `lru_gen_age_node()` in the `cachyos-<ver>`
   tree that `core/linux-cachyos.bst` repackages, and record the line on #1752. If kswapd
   doesn't call `out_of_memory()` there, find out what did.
-- [ ] **1. Record `app.slice` pressure in `swap-eval sample`.** Append columns at the end
+  Result (2026-11-24, #1752 comment): it holds. `CachyOS/linux` tag `cachyos-7.3.5-2`
+  `mm/vmscan.c` L4213–4217 sets `lru_gen_min_ttl = 100` under `CONFIG_CACHY` (jiffies;
+  `CONFIG_HZ=1000`), and `lru_gen_age_node()` (L4219, kswapd only) calls `out_of_memory()`
+  when no memcg's oldest generation is older. `cachyos-7.3.4-1` is identical.
+- [x] **1. Record `app.slice` pressure in `swap-eval sample`.** Append columns at the end
   of the row, so older logs still parse:
   - `app_psi_full_avg10` and `app_psi_full_total_us` from
     `/sys/fs/cgroup/user.slice/user-$UID.slice/user@$UID.service/app.slice/memory.pressure`
@@ -58,7 +62,7 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
   `summary` gains `max app full avg10` and `samples ≥ 50 % app full`. Both machines already
   sample on every login (#1748), so this data arrives without anyone starting anything.
   Skill entry: `docs/skills/swap-tuning.md` § Measuring.
-- [ ] **2. Add a swap-exhaustion scenario to `mise run oomd-test`.** The task already boots
+- [x] **2. Add a swap-exhaustion scenario to `mise run oomd-test`.** The task already boots
   the image, starts a lingering user's manager and runs a python3 hog in `app.slice`
   (`docs/skills/desktop.md` § systemd-oomd, "Proof run"). Its existing hog uses
   `MemoryHigh=128M` and proves the pressure kill. Add `--scenario swap`, which runs the hog
@@ -75,14 +79,26 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
   `invoked oom-killer` and whether it was kswapd or a task), which cgroup, time from swap
   ≥ 90 % to the kill, the canary's worst wake-up delay, and `app.slice` `full avg10` at the
   kill. Skill entry: `docs/skills/desktop.md` § systemd-oomd, "Proof run".
-- [ ] **3. Run the matrix on the #1750 image** (zswap + swapfile), 3 runs per cell, each
+  Result (2026-11-24): `--oomd <config>`, `--parts`, `--runs` and `--results` added;
+  `--reuse-disk` of one `generate-disk --size 24G` disk runs the matrix without root. Trial
+  on image `26.08.202611232111`, `--oomd current`: both parts were killed by the kernel
+  (`kswapd0 invoked oom-killer`) 1.6 s and 4.2 s after swap reached 90 %, oomd logged
+  nothing, and the canary's worst wake-up was 28 ms (fast) and 409 ms (slow). That is the
+  2026-11-21 pattern.
+- [x] **3. Run the matrix on the #1750 image** (zswap + swapfile), 3 runs per cell, each
   scenario under each config, applied as runtime drop-ins in the VM:
   - **current:** pressure kill on `app.slice` at 50 %/20 s
   - **+swap:** also `ManagedOOMSwap=kill` on `app.slice` (system `SwapUsedLimit=90%`)
   - **ruleset:** an `oomd.conf` ruleset with `Action=kill-by-swap` scoped to `app.slice`,
     if `oomd.conf(5)` allows that scoping
   - **lower pressure:** pressure kill at 30 %/10 s
-- [ ] **4. Decide**, using rules fixed now, before any data:
+
+  Result (2026-11-24, image `26.08.202611232111`, #1752 comment 7141598240): no config
+  broke rule 1. Median seconds from swap ≥ 90 % to the kill, fast / slow: current 1.4 /
+  11.6 (kernel, kswapd0), +swap ≤ 0 / 1.4 (oomd), ruleset 0.6 / 1.0 (oomd), lower
+  pressure 1.6 / 10.5 (kernel). The canary's worst wake-up stayed under 1 s in all 24 runs.
+  `app.slice` `full avg10` at the kill was about 0 on the slow part.
+- [x] **4. Decide**, using rules fixed now, before any data:
   1. A config is disqualified if it ever kills anything outside `app.slice`, or kills
      `rex.service` or a `session.slice` unit as a whole.
   2. Among the rest, prefer the one whose kill comes first (lowest median time from swap
@@ -93,11 +109,21 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
      `swap-tuning.md`, and close #1752 there.
   4. Record the decision and the matrix on #1752 (Design Gate: what gets killed is
      user-visible).
-- [ ] **5. Implement** the chosen config in `config/oomd.bst`, and rewrite its header's
+
+  Result: **+swap** and **ruleset** both beat current on the slow part by far more than
+  the spread, and tie with each other. The maintainer chose **+swap** (2026-11-24): it also
+  needs RAM nearly gone, needs no rules file, shows in `oomctl`, and oomd logs its victim.
+- [x] **5. Implement** the chosen config in `config/oomd.bst`, and rewrite its header's
   "Deliberately NOT armed" paragraph if the swap-kill reasoning changes. Extend
   `swap-audit`, or add an oomd assertion to `boot-test`, so the unit properties are checked
   in the image (`systemctl --user show app.slice -p ManagedOOMSwap`). Verify with
   `mise run build`, `mise run boot-test` and `mise run oomd-test --scenario swap`.
+  Result (2026-11-24, image `26.08.202611241927`): `ManagedOOMSwap=kill` added to
+  `10-krytis-oomd.conf`; `swap-audit` checks it and that no `oomd.conf` sets
+  `SwapUsedLimit=`; `oomd-test` asserts the property and the swap-monitored list (`--oomd
+  pre1752` turns it off for comparisons). `build --push` passed every gate, `boot-test`
+  passed, `oomd-test` (pressure) passed, and `oomd-test --scenario swap --runs 3` passed
+  with oomd's swap kill acting in 6/6 runs, 0–2.5 s after swap reached 90 %.
 - [ ] **6. Field check:** after both machines upgrade, keep sampling for 5 working days. Any
   kill goes on #1752 with its oomd or kernel journal line and the `app.slice` columns from
   step 1.

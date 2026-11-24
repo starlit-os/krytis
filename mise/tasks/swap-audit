@@ -22,6 +22,9 @@
 #   sleep       hibernation, hybrid sleep or suspend-then-hibernate is not off,
 #               or another sleep.conf file sets those keys (#1751: the swapfile
 #               would make them reachable, untested)
+#   oomd        app.slice lost ManagedOOMSwap=kill, another drop-in sets it, or an
+#               oomd.conf sets SwapUsedLimit= (#1752: the swap kill was measured
+#               at the default 90 % of this swapfile)
 #   units       the swapfile units or the swap.target.wants link are missing
 #   init        krytis-swapfile-init doesn't exit 0 when it can't create a file.
 #               It runs here on the container's overlayfs, where it must skip.
@@ -94,6 +97,17 @@ grep -qxE "vm\.page-cluster *= *0" "$S" 2>/dev/null || fail "sysctl: $S does not
 over=$(grep -lE "^[[:space:]]*vm[./](swappiness|page[-_]cluster)" \
     /usr/lib/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /etc/sysctl.d/*.conf /etc/sysctl.conf 2>/dev/null | grep -vxF "$S")
 if [ -n "$over" ]; then fail "sysctl: also set by $over"; else ok "sysctl: swappiness and page-cluster set only by $S"; fi
+
+O=/usr/lib/systemd/user/app.slice.d/10-krytis-oomd.conf
+grep -qx "ManagedOOMSwap=kill" "$O" 2>/dev/null || fail "oomd: $O does not set ManagedOOMSwap=kill"
+oover=$(grep -lE "^ManagedOOMSwap=" /usr/lib/systemd/user/app.slice.d/*.conf /usr/lib/systemd/user/slice.d/*.conf \
+    /usr/local/lib/systemd/user/app.slice.d/*.conf /etc/systemd/user/app.slice.d/*.conf /etc/systemd/user/slice.d/*.conf \
+    2>/dev/null | grep -vxF "$O")
+lim=$(grep -lE "^SwapUsedLimit=" /usr/lib/systemd/oomd.conf /usr/lib/systemd/oomd.conf.d/*.conf /etc/systemd/oomd.conf \
+    /etc/systemd/oomd.conf.d/*.conf 2>/dev/null)
+if [ -n "$oover" ]; then fail "oomd: ManagedOOMSwap= also set by $oover"
+elif [ -n "$lim" ]; then fail "oomd: SwapUsedLimit= set by $lim"
+else ok "oomd: app.slice swap kill at the default SwapUsedLimit, set only by $O"; fi
 
 U=/usr/lib/systemd/system
 for f in "$U/krytis-swapfile-init.service" "$U/var-swap-swapfile.swap"; do

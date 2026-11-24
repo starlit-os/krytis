@@ -137,8 +137,8 @@ Whichever arm wins, the decision PR has to set zswap explicitly, with a karg or 
 Leaving it to the kernel default is how the image got into its current state.
 
 The swapfile is half of RAM by default (`--size <MiB>` overrides this), the same capacity as
-zram0. (This no longer matters for oomd: #1216 armed only a memory-pressure kill on users'
-`app.slice` and no swap kill, so oomd never reads swap capacity.)
+zram0. (Since #1752, oomd's swap kill on users' `app.slice` fires at a percentage of
+`SwapTotal`, so this size also sets when oomd acts.)
 
 ## Tool: `mise run swap-eval`
 

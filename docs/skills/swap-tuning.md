@@ -77,7 +77,10 @@ The CachyOS kernel compiles them in (checked against the `cachyos-7.2.9-2` sourc
 - `vm_swappiness = 100` sits under `#ifdef CONFIG_CACHY` in `mm/vmscan.c`. Mainline uses 60.
 - `page_cluster = 0` is set unconditionally in `swap_setup()` in `mm/swap.c`. Mainline uses 3.
 - MGLRU's `min_ttl_ms = 100` also sits under `CONFIG_CACHY`. When the working set of the
-  last 100 ms doesn't fit in memory, it invokes the OOM killer.
+  last 100 ms doesn't fit in memory, it invokes the OOM killer. That is kswapd calling
+  `out_of_memory()` from `lru_gen_age_node()` (re-checked in `cachyos-7.3.5-2`, #1752), and
+  it is why every 2026-11-21 kill read `kswapd0 invoked oom-killer`. oomd's swap kill on
+  `app.slice` now acts first (`desktop.md` § systemd-oomd); this path stays the backstop.
 
 `core/linux-cachyos.bst` repackages whatever CachyOS builds, so a kernel bump can change any
 of these without a krytis commit. `60-krytis-swap.conf` pins the first two, at the values
@@ -160,6 +163,18 @@ image, its sample rows report the arm as **`zswap`**. `shipped` in older logs me
 pre-#510 stack (zswap on zram). Install the sampler once per machine with
 `mise run swap-eval-sampler:install`, and every login samples on its own
 ([`mise.md`](mise.md) § A task that installs a user unit runs a copy, not the checkout).
+
+**Record `app.slice`'s PSI, not only the system's (#1752).** oomd compares
+`ManagedOOMMemoryPressureLimit=` with the monitored cgroup's own `memory.pressure`, so the
+system-wide `psi_full_avg10` can't say whether oomd came close. Rows carry
+`app_psi_full_avg10`, `app_psi_full_total_us` and `app_swap_k` from
+`user@$UID.service/app.slice`, and `summary` adds `max app full avg10` and the number of
+samples at or over 50 % (`OOMD_LIMIT`, `config/oomd.bst`'s limit). They are appended at the
+end of the row. A log started by an older sampler keeps its 22-column header even after a
+newer one appends 25-column rows in the same boot, so `summary` reads `app_*` only where the
+header names it, and resets its column map for each file. **The installed sampler is a
+copy:** run `mise run swap-eval-sampler:install` again after pulling, or rows stay
+22 columns wide (`swap-eval-sampler:status` says whether the copy is current).
 
 **Count OOM kills across boots with `_TRANSPORT=kernel`, not `-k`.** `journalctl -k` implies
 `-b` and reads only the current boot. The first step-1 checkpoint reported "0 kernel OOM

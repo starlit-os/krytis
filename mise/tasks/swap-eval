@@ -80,6 +80,11 @@ LOGDIR="${XDG_STATE_HOME:-${HOME}/.local/state}/krytis/swap-eval"
 SWAPDIR=/var/swap
 SWAPFILE="${SWAPDIR}/swapfile"
 ZRAM=/sys/block/zram0
+# The slice systemd-oomd watches (config/oomd.bst, #1216). Its PSI, not the system-wide
+# figure, is what ManagedOOMMemoryPressureLimit= is compared with (#1752).
+APP_CG="/sys/fs/cgroup/user.slice/user-${UID}.slice/user@${UID}.service/app.slice"
+# config/oomd.bst's ManagedOOMMemoryPressureLimit=, for summary's count.
+OOMD_LIMIT=50
 
 meminfo() { awk -v k="$1:" '$1 == k { print $2; exit }' /proc/meminfo; }
 vmstat() { awk -v k="$1" '$1 == k { print $2; exit }' /proc/vmstat; }
@@ -93,6 +98,19 @@ zram_stats() {
     else
         echo "0 0 0 0"
     fi
+}
+
+# app.slice "full avg10 full_total_us swap_KiB", "-" for any value that can't be read
+# (no user manager, or run as another user).
+app_stats() {
+    local full="- -" sw="-"
+    if [ -r "${APP_CG}/memory.pressure" ]; then
+        full="$(awk '$1 == "full" { split($2, a, "="); split($5, b, "="); print a[2], b[2] }' "${APP_CG}/memory.pressure")"
+    fi
+    if [ -r "${APP_CG}/memory.swap.current" ]; then
+        sw=$(($(cat "${APP_CG}/memory.swap.current") / 1024))
+    fi
+    echo "${full:-- -} ${sw}"
 }
 
 arm() {
@@ -201,6 +219,7 @@ do_snapshot() {
     for c in pswpin pswpout zswpin zswpout zswpwb; do printf '%s=%s ' "${c}" "$(vmstat "${c}")"; done
     echo
     sed 's/^/PSI memory /' /proc/pressure/memory
+    sed 's/^/PSI app.slice /' "${APP_CG}/memory.pressure" 2>/dev/null || echo "PSI app.slice: ${APP_CG} not readable"
     echo
 
     echo "## Top swap users by process (KiB, /proc/<pid>/status VmSwap)"
@@ -239,21 +258,25 @@ do_snapshot() {
 header() {
     printf 'epoch\tarm\tmem_total_k\tmem_avail_k\tswap_total_k\tswap_free_k\tzswap_k\tzswapped_k\t'
     printf 'zram_disksize_b\tzram_orig_b\tzram_compr_b\tzram_used_b\tpswpin\tpswpout\tzswpin\tzswpout\tzswpwb\t'
-    printf 'psi_some_avg10\tpsi_full_avg10\tpsi_some_total_us\tpsi_full_total_us\ttop_swap\n'
+    printf 'psi_some_avg10\tpsi_full_avg10\tpsi_some_total_us\tpsi_full_total_us\ttop_swap\t'
+    # Appended by #1752. New columns go at the end so older logs still parse.
+    printf 'app_psi_full_avg10\tapp_psi_full_total_us\tapp_swap_k\n'
 }
 
 row() {
-    local disksize orig compr used some full top
+    local disksize orig compr used some full top app_full app_full_total app_swap
     read -r disksize orig compr used <<<"$(zram_stats)"
+    read -r app_full app_full_total app_swap <<<"$(app_stats)"
     some="$(awk '$1 == "some" { split($2, a, "="); split($5, b, "="); print a[2], b[2] }' /proc/pressure/memory)"
     full="$(awk '$1 == "full" { split($2, a, "="); split($5, b, "="); print a[2], b[2] }' /proc/pressure/memory)"
     top="$(top_swap_procs 1 | awk '{ print $2 ":" $1 }')"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${EPOCHSECONDS}" "$(arm)" "$(meminfo MemTotal)" "$(meminfo MemAvailable)" \
         "$(meminfo SwapTotal)" "$(meminfo SwapFree)" "$(meminfo Zswap)" "$(meminfo Zswapped)" \
         "${disksize}" "${orig}" "${compr}" "${used}" \
         "$(vmstat pswpin)" "$(vmstat pswpout)" "$(vmstat zswpin)" "$(vmstat zswpout)" "$(vmstat zswpwb)" \
-        "${some% *}" "${full% *}" "${some#* }" "${full#* }" "${top:--}"
+        "${some% *}" "${full% *}" "${some#* }" "${full#* }" "${top:--}" \
+        "${app_full}" "${app_full_total}" "${app_swap}"
 }
 
 do_sample() {
@@ -306,9 +329,12 @@ do_summary() {
     # Counters are differenced only between consecutive rows of the same file and arm, and
     # only across gaps of at most 10 minutes: a longer gap is a suspend, and a new file
     # is a new boot with reset counters.
-    gawk -F'\t' -v evfile="${EVENTS}" '
+    # A file started before #1752 has no app_* columns in its header, even if a newer
+    # sampler appended rows with them later in the same boot, so app_* is read only where
+    # the header names it.
+    gawk -F'\t' -v evfile="${EVENTS}" -v lim="${OOMD_LIMIT}" '
         FILENAME == evfile { split($0, x, " "); ev_t[++nev] = x[1]; ev_k[nev] = x[2]; next }
-        FNR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; have = 0; next }
+        FNR == 1 { delete col; for (i = 1; i <= NF; i++) col[$i] = i; have = 0; next }
         {
             a = $col["arm"]; t = $col["epoch"]; ram = $col["mem_total_k"]
             used = $col["swap_total_k"] - $col["swap_free_k"]; pct = 100 * used / ram
@@ -321,6 +347,11 @@ do_summary() {
             if ($col["zram_compr_b"] > 0) { zro[a] += $col["zram_orig_b"]; zrc[a] += $col["zram_compr_b"] }
             if ($col["zswap_k"] > 0) { zso[a] += $col["zswapped_k"]; zsc[a] += $col["zswap_k"] }
             if ($col["psi_full_avg10"] > pmax[a]) pmax[a] = $col["psi_full_avg10"]
+            if (("app_psi_full_avg10" in col) && $col["app_psi_full_avg10"] != "-") {
+                ap = $col["app_psi_full_avg10"] + 0; appn[a]++
+                if (ap > apmax[a]) apmax[a] = ap
+                if (ap >= lim) apover[a]++
+            }
             if (have && pa == a) {
                 dt = t - pt
                 if (dt <= 600) {
@@ -334,16 +365,17 @@ do_summary() {
             for (k in cs) prev[cs[k]] = $col[cs[k]]
         }
         END {
-            print "| arm | hours | peak swap | p95 swap | zram >=80% full | peak zswap pool | ratio zram / zswap | swap-out to backing dev | zswap writeback | PSI full stall | max PSI full avg10 | sleeps |"
-            print "|---|---|---|---|---|---|---|---|---|---|---|---|"
+            print "| arm | hours | peak swap | p95 swap | zram >=80% full | peak zswap pool | ratio zram / zswap | swap-out to backing dev | zswap writeback | PSI full stall | max PSI full avg10 | max app full avg10 | samples app full >=" lim "% | sleeps |"
+            print "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
             for (a in n) {
                 m = asort(v[a], s); p95 = s[int(0.95 * m + 0.999)]
                 h = secs[a] / 3600; hh = (h > 0 ? h : 1)
-                printf "| %s | %.1f | %.1f GiB (%.1f%% RAM) | %.1f%% RAM | %d samples | %.0f MiB | %s / %s | %.1f MiB/h | %.1f MiB/h | %.1f s/h | %.2f | %d |\n",
+                printf "| %s | %.1f | %.1f GiB (%.1f%% RAM) | %.1f%% RAM | %d samples | %.0f MiB | %s / %s | %.1f MiB/h | %.1f MiB/h | %.1f s/h | %.2f | %s | %s | %d |\n",
                     a, h, peakk[a] / 1048576, peak[a], p95, zfull[a], zsp[a] / 1024,
                     (zrc[a] > 0 ? sprintf("%.2f", zro[a] / zrc[a]) : "-"), (zsc[a] > 0 ? sprintf("%.2f", zso[a] / zsc[a]) : "-"),
                     sum[a, "pswpout"] * 4 / 1024 / hh, sum[a, "zswpwb"] * 4 / 1024 / hh,
-                    sum[a, "psi_full_total_us"] / 1e6 / hh, pmax[a], gaps[a]
+                    sum[a, "psi_full_total_us"] / 1e6 / hh, pmax[a],
+                    (appn[a] ? sprintf("%.2f", apmax[a]) : "-"), (appn[a] ? sprintf("%d of %d", apover[a], appn[a]) : "-"), gaps[a]
             }
             if (nev) {
                 # Swap use at each sleep attempt, from the last sample before it.

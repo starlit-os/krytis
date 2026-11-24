@@ -183,7 +183,7 @@ depends:
   # zswap stacked in front of it filled up and OOM-killed on melog; see
   # docs/skills/swap-tuning.md.
   - config/swap.bst
-  # oomd: enables systemd-oomd.service and arms a memory-pressure kill on each
-  # user's app.slice, so a runaway app is killed before the kernel OOM killer
-  # runs. Never the session (session.slice) and no swap kill (#219, #1216).
+  # oomd: enables systemd-oomd.service and arms a memory-pressure kill and a swap
+  # kill on each user's app.slice, so a runaway app is killed before the kernel
+  # OOM killer runs. Never the session (session.slice) (#219, #1216, #1752).
   - config/oomd.bst
