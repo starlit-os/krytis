@@ -1,7 +1,6 @@
 # Make oomd catch swap exhaustion
 
-**Issue:** #1752 · **Status (2026-11-24): steps 0 and 1 done; step 2 in progress; step 3
-needs the #1750 image.** Follows #510 and #1216.
+**Issue:** #1752 · **Status (2026-11-24): steps 0–2 done; step 3 running.** Follows #510 and #1216.
 
 ## What happened
 
@@ -62,7 +61,7 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
   `summary` gains `max app full avg10` and `samples ≥ 50 % app full`. Both machines already
   sample on every login (#1748), so this data arrives without anyone starting anything.
   Skill entry: `docs/skills/swap-tuning.md` § Measuring.
-- [ ] **2. Add a swap-exhaustion scenario to `mise run oomd-test`.** The task already boots
+- [x] **2. Add a swap-exhaustion scenario to `mise run oomd-test`.** The task already boots
   the image, starts a lingering user's manager and runs a python3 hog in `app.slice`
   (`docs/skills/desktop.md` § systemd-oomd, "Proof run"). Its existing hog uses
   `MemoryHigh=128M` and proves the pressure kill. Add `--scenario swap`, which runs the hog
@@ -79,6 +78,12 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
   `invoked oom-killer` and whether it was kswapd or a task), which cgroup, time from swap
   ≥ 90 % to the kill, the canary's worst wake-up delay, and `app.slice` `full avg10` at the
   kill. Skill entry: `docs/skills/desktop.md` § systemd-oomd, "Proof run".
+  Result (2026-11-24): `--oomd <config>`, `--parts`, `--runs` and `--results` added;
+  `--reuse-disk` of one `generate-disk --size 24G` disk runs the matrix without root. Trial
+  on image `26.08.202611232111`, `--oomd current`: both parts were killed by the kernel
+  (`kswapd0 invoked oom-killer`) 1.6 s and 4.2 s after swap reached 90 %, oomd logged
+  nothing, and the canary's worst wake-up was 28 ms (fast) and 409 ms (slow). That is the
+  2026-11-21 pattern.
 - [ ] **3. Run the matrix on the #1750 image** (zswap + swapfile), 3 runs per cell, each
   scenario under each config, applied as runtime drop-ins in the VM:
   - **current:** pressure kill on `app.slice` at 50 %/20 s
