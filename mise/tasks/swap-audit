@@ -19,6 +19,9 @@
 #               30-zram.rules turns zswap off)
 #   sysctl      60-krytis-swap.conf lost a pinned value, or another sysctl.d
 #               file also sets vm.swappiness or vm.page-cluster
+#   sleep       hibernation, hybrid sleep or suspend-then-hibernate is not off,
+#               or another sleep.conf file sets those keys (#1751: the swapfile
+#               would make them reachable, untested)
 #   units       the swapfile units or the swap.target.wants link are missing
 #   init        krytis-swapfile-init doesn't exit 0 when it can't create a file.
 #               It runs here on the container's overlayfs, where it must skip.
@@ -74,6 +77,16 @@ others=$(grep -l "zswap\." /usr/lib/bootc/kargs.d/*.toml 2>/dev/null | grep -vxF
 
 rules=$(grep -l "zswap/parameters" /usr/lib/udev/rules.d/*.rules /etc/udev/rules.d/*.rules 2>/dev/null)
 if [ -n "$rules" ]; then fail "udev: rules write zswap parameters: $rules"; else ok "udev: no rule touches zswap"; fi
+
+H=/usr/lib/systemd/sleep.conf.d/50-krytis-no-hibernate.conf
+for k in AllowHibernation AllowHybridSleep AllowSuspendThenHibernate; do
+    grep -qx "$k=no" "$H" 2>/dev/null || fail "sleep: $H does not set $k=no"
+done
+# A later-sorting file under /usr, or a sleep.conf, would turn it back on for everyone.
+hover=$(grep -lE "^[[:space:]]*Allow(Hibernation|HybridSleep|SuspendThenHibernate)=" \
+    /usr/lib/systemd/sleep.conf /usr/lib/systemd/sleep.conf.d/*.conf /usr/local/lib/systemd/sleep.conf.d/*.conf \
+    /etc/systemd/sleep.conf /etc/systemd/sleep.conf.d/*.conf 2>/dev/null | grep -vxF "$H")
+if [ -n "$hover" ]; then fail "sleep: hibernation keys also set by $hover"; else ok "sleep: hibernation off, set only by $H"; fi
 
 S=/usr/lib/sysctl.d/60-krytis-swap.conf
 grep -qxE "vm\.swappiness *= *100" "$S" 2>/dev/null || fail "sysctl: $S does not set vm.swappiness = 100"

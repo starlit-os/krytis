@@ -10,7 +10,8 @@ half of RAM. There is no zram. `elements/config/swap.bst` ships all of it, and
 | sysctls | `files/swap/60-krytis-swap.conf` → `/usr/lib/sysctl.d/` | `vm.swappiness = 100`, `vm.page-cluster = 0` |
 | swapfile creation | `krytis-swapfile-init.service` → `/usr/libexec/krytis-swapfile-init` | first boot: own btrfs subvolume `/var/swap`, `btrfs filesystem mkswapfile` at MemTotal / 2 |
 | swapfile activation | `var-swap-swapfile.swap`, linked from `swap.target.wants/` | `swapon` at boot |
-| live check | `mise run boot-test` | zswap `Y`, swapfile active, no `/dev/zram*` in `/proc/swaps`, sysctls |
+| hibernation off | `files/swap/50-krytis-no-hibernate.conf` → `/usr/lib/systemd/sleep.conf.d/` | `AllowHibernation=no`, `AllowHybridSleep=no`, `AllowSuspendThenHibernate=no` (#1751) |
+| live check | `mise run boot-test` | zswap `Y`, swapfile active, no `/dev/zram*` in `/proc/swaps`, sysctls, logind `Can*Hibernate*` = `no`, UPower critical action `Sleep` (or `PowerOff`), never a hibernate mode |
 
 ## The decision (#510, 2026-11-22)
 
@@ -111,17 +112,33 @@ A machine that ran `mise run swap-eval arm zswap` or `hybrid` already has `/var/
 `/var/swap/swapfile` from the evaluation. The init script sees the file and leaves it alone.
 The evaluation created it at the same path and the same default size.
 
-## A swapfile can make hibernation reachable (#1751)
+## A swapfile makes hibernation reachable, so it is off (#1751)
 
 zram doesn't count as a hibernation target. On the zram image, logind returned `na` for
 `CanHibernate`, `CanHybridSleep` and `CanSuspendThenHibernate` (`melog`, 2026-11-22). A
-disk swapfile can change that. UPower ships `CriticalPowerAction=Auto`, and its own
-comment in `/etc/UPower/UPower.conf` gives the order: HybridSleep, then Hibernate, then
-PowerOff. So a laptop at critical battery would hibernate instead of powering off as
-soon as logind offers it. Nothing on krytis has tested resume: through LUKS + FIDO2,
-after `bootc` staged an update, or from the sealed UKI. Whether to turn hibernation off
-with a `sleep.conf.d` drop-in is #1751
-(`docs/plans/2026-11-22-hibernation-decision.md`).
+disk swapfile can change that, and UPower would then act on it. It ships
+`CriticalPowerAction=Auto`.
+
+**Don't trust the comment in `/etc/UPower/UPower.conf`.** It says Auto tries HybridSleep,
+then Hibernate, then PowerOff. In upower 1.91.5, `up_backend_get_critical_action()`
+(`src/linux/up-backend.c`) maps Auto to logind's `Sleep()`, and logind chooses the
+mode from `SleepOperation=` (default `suspend-then-hibernate suspend`). `GetCriticalAction`
+returned `Sleep` on the zram image too (2026-11-23), so critical battery has always
+suspended on krytis; it never powered off. With a swapfile, `Sleep()` would pick
+suspend-then-hibernate. Nothing on krytis has tested resume: through LUKS +
+FIDO2, after `bootc` staged an update, or from the sealed UKI. The initrd does carry
+`systemd-hibernate-resume`.
+
+So `config/swap.bst` ships `50-krytis-no-hibernate.conf` with all three `Allow*=no`
+(decision on #1751, option A). logind then reports `no` for all three, and UPower's
+`Sleep()` can only suspend, as before the swapfile.
+- `swap-audit` fails if any other `sleep.conf`/`sleep.conf.d` file sets those keys.
+- `boot-test` checks that logind reports `no` (not `na`) and that UPower's
+  `GetCriticalAction` is `Sleep` or `PowerOff`, never `Hibernate` or `HybridSleep`.
+- A user who wants hibernation can opt in with a later-sorting drop-in under
+  `/etc/systemd/sleep.conf.d/`, at their own risk.
+- Supporting it properly (a swapfile ≥ RAM, a resume test through LUKS, staged
+  updates, the UKI) is #1755.
 
 ## Testing it
 

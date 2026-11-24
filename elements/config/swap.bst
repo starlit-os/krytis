@@ -15,6 +15,12 @@
 #   var-swap-swapfile.swap        activates it, wired through a static
 #                                 swap.target.wants symlink so existing installs
 #                                 pick it up on upgrade
+#   sleep.conf.d/50-krytis-no-hibernate.conf
+#                                 hibernation, hybrid sleep and suspend-then-
+#                                 hibernate off (#1751): the swapfile would
+#                                 otherwise make them reachable, untested, and
+#                                 UPower's critical-battery Sleep() would use
+#                                 suspend-then-hibernate
 #
 # /var/swap is created at runtime: bootc lints against /var content in the image.
 # mise run swap-audit (the last gate of mise run build) checks all of the above
@@ -39,6 +45,7 @@ config:
   install-commands:
   - install -Dm644 -t "%{install-root}%{indep-libdir}/bootc/kargs.d" 50-zswap.toml
   - install -Dm644 -t "%{install-root}%{indep-libdir}/sysctl.d" 60-krytis-swap.conf
+  - install -Dm644 -t "%{install-root}%{indep-libdir}/systemd/sleep.conf.d" 50-krytis-no-hibernate.conf
   - install -Dm755 -t "%{install-root}/usr/libexec" krytis-swapfile-init
   - |
     install -Dm644 -t "%{install-root}%{indep-libdir}/systemd/system" \
