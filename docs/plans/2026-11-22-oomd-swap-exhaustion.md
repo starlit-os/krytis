@@ -1,7 +1,7 @@
 # Make oomd catch swap exhaustion
 
-**Issue:** #1752 · **Status (2026-11-22): planned; step 1 can start now, step 3 needs
-the #1750 image.** Follows #510 and #1216.
+**Issue:** #1752 · **Status (2026-11-24): steps 0 and 1 done; step 2 in progress; step 3
+needs the #1750 image.** Follows #510 and #1216.
 
 ## What happened
 
@@ -46,10 +46,14 @@ Use `_TRANSPORT=kernel`, not `-k`, which reads only the current boot
 
 ## Steps
 
-- [ ] **0. Confirm the MGLRU reading.** Check `lru_gen_age_node()` in the `cachyos-<ver>`
+- [x] **0. Confirm the MGLRU reading.** Check `lru_gen_age_node()` in the `cachyos-<ver>`
   tree that `core/linux-cachyos.bst` repackages, and record the line on #1752. If kswapd
   doesn't call `out_of_memory()` there, find out what did.
-- [ ] **1. Record `app.slice` pressure in `swap-eval sample`.** Append columns at the end
+  Result (2026-11-24, #1752 comment): it holds. `CachyOS/linux` tag `cachyos-7.3.5-2`
+  `mm/vmscan.c` L4213–4217 sets `lru_gen_min_ttl = 100` under `CONFIG_CACHY` (jiffies;
+  `CONFIG_HZ=1000`), and `lru_gen_age_node()` (L4219, kswapd only) calls `out_of_memory()`
+  when no memcg's oldest generation is older. `cachyos-7.3.4-1` is identical.
+- [x] **1. Record `app.slice` pressure in `swap-eval sample`.** Append columns at the end
   of the row, so older logs still parse:
   - `app_psi_full_avg10` and `app_psi_full_total_us` from
     `/sys/fs/cgroup/user.slice/user-$UID.slice/user@$UID.service/app.slice/memory.pressure`
