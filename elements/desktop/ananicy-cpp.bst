@@ -97,7 +97,7 @@ sources:
   - '*rc*'
   - '*alpha*'
   - '*beta*'
-  ref: 1.1.49-0-g03ef03fbf7e834385377432ccecaedd32e3414bb
+  ref: 1.1.50-0-ga781d2c5d962c375ba189dec49f6e6633eaebc5a
   directory: ananicy-rules-src
 
 config:
