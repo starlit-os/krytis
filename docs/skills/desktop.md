@@ -3477,6 +3477,42 @@ mouse, and with it the only DPI setting, never reached the panel. krytis carries
 see the next section. Check for this whenever `solaar show` lists a device the panel
 doesn't.
 
+### Battery charge limit on a ThinkPad: `battery-threshold` works as is
+
+*Source: #1775. Verified 2026-11-25 on a ThinkPad T14 Gen 4 (`thinkpad_acpi`) running
+krytis 26.08.202611242106.*
+
+Check which sysfs file a charge plugin writes, because the drivers don't share one.
+`charge-mode` (`neoscaler/charge-mode`) only writes `charge_types`, which
+`ideapad-laptop` creates and `thinkpad_acpi` doesn't. On a ThinkPad it shows `N/A`.
+`thinkpad_acpi` creates `charge_control_{start,end}_threshold` and `charge_behaviour`
+instead. Two community plugins write `charge_control_end_threshold`:
+`damian-ds7/battery-threshold` and `piero-93/battery-power-management`. Read the battery's
+attributes first (`ls /sys/class/power_supply/BAT0/`).
+
+`battery-threshold`'s `setup_rules.sh` works on krytis without changes, including for a
+homed user. It runs `groupadd battery_ctl` and `usermod -aG battery_ctl $USER`, then
+installs `/etc/udev/rules.d/99-battery-threshold.rules`, which runs `chgrp battery_ctl` and
+`chmod g+w` on the end threshold. Writes work from the next login. Before that, test with
+`sg battery_ctl -c '…'`. See `docs/skills/bst.md` § Passwordless sudo for a client that
+self-elevates for why `usermod -aG` works for a homed account. Three details:
+
+- The group gets GID 1000, a regular-user GID, because the script doesn't pass `-r`.
+- The rule only covers the end threshold. A driver that enforces `start <= end` rejects an
+  end value below the start threshold with `EINVAL`. The start threshold is 0 here, so it
+  doesn't matter, but on hardware where firmware sets start to 95 (the case in
+  community-plugins#1535) it does. `battery-power-management` handles this since 1.1.0.
+- The group, the membership and the rule all live in `/etc`, so they survive image updates
+  through bootc's three-way `/etc` merge.
+
+**The ThinkPad firmware keeps the threshold. The plugin doesn't need to.** At 80 %, the limit
+survived a reboot with the plugin disabled (`noctalia msg plugins list` showed it
+`disabled`), and the threshold's sysfs ctime matched udev's boot-time `chgrp` rather than
+any write. While enabled, the plugin's `service.luau` `check_status()` only writes the
+saved `threshold.txt` value back when it differs from the current one, so on this hardware
+it never writes at login. Removing the bar widget doesn't disable the plugin. Its service
+keeps running until the plugin itself is disabled.
+
 ### Carrying a patch on a noctalia plugin: image element + `path` source
 
 *Source: #1220.*
