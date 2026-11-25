@@ -111,6 +111,7 @@ element does, its row's text is a review question.
 | `desktop/noctalia.bst` | noctalia shell, upstream releases with one krytis patch. |
 | `config/noctalia-service.bst` | Runs noctalia as a user service in `session.slice`, out of systemd-oomd's reach (#1253). |
 | `config/battery-power-profile-hook.bst` | Battery/AC power-profile switch script for noctalia's hooks. Opt-in. |
+| `config/idle-suspend-on-battery.bst` | Helper for the skel's 15-minute idle rule. Suspends only on battery (#1774). |
 | `desktop/ghostty.bst` | Ghostty terminal. |
 | `desktop/seance.bst` | Séance, a GTK4 terminal multiplexer for AI coding agents, built on libghostty. |
 | `config/kmscon.bst` | Enables kmscon on VT2-4. |

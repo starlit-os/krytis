@@ -825,9 +825,9 @@ there. The packaging lessons below still hold for any core PR.)
   on a release tag and keeps krytis-only history. The PR branch is one commit on upstream
   `main`, and force-pushing it during review cannot move what krytis builds.
 
-## Lid close locks then suspends — noctalia holds the logind delay inhibit
+## Lid close locks, and suspends on battery — noctalia holds the logind delay inhibit
 
-*Source: #558. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7); the
+*Source: #558; on-AC lock-only and the battery-only idle suspend from #1774. noctalia read locally at the pinned ref, `c366a35ff` (v5.0.0-beta.7); the
 inhibit-release path re-read on the v5.2.1 fork pin for the resume-flash fix below, and on
 v5.3.0 (2026-10-20) after upstream's own fix replaced it.*
 
@@ -838,9 +838,24 @@ noctalia's `src/shell/lockscreen/lock_screen.cpp`, reaching krytis's `system-aut
 prompt, so with an enrolled FIDO2 key plugged in it takes the PIN rather than the password. See
 `docs/skills/pam.md` § The lock screen authenticates through `login`, not `greetd`.
 
+What a lid close does depends on the power source (§ Lid policy per power source):
+
+| Lid closed | logind key | Result |
+|---|---|---|
+| On battery, undocked | `HandleLidSwitch=suspend` | lock, then suspend (chain below) |
+| On AC, undocked | `HandleLidSwitchExternalPower=lock` | lock, keep running |
+| Docked or a second display | `HandleLidSwitchDocked=ignore` | nothing |
+
+**`lock` needs no inhibit.** logind's `lock` action sends `Session.Lock` to every session.
+noctalia subscribes to that signal (below, "Other ways into the same lock") and locks. Nothing
+sleeps, so the delay inhibit and the frame gate below never come into it. Before #1774 shipped
+it, a local `HandleLidSwitchExternalPower=lock` override was checked on a running image with a
+physical lid close on AC: logind saw the lid, the session reported locked, and the machine stayed
+up.
+
 **Do not add swayidle/hypridle/swaylock/a `sleep.target` lock unit to get lock-on-suspend.**
 noctalia already implements it, using the same delay-inhibit pattern those tools use, and a
-second locker would race it. The full chain:
+second locker would race it. The full chain on battery:
 
 ```
 lid close
@@ -877,7 +892,9 @@ Other ways into the same lock:
   names use hyphens, config keys underscores (`lock_and_suspend`).
 - `[idle.behavior.<name>]` with `action = "lock_and_suspend"`, or `action = "suspend"` plus
   `lock_before_suspend` (defaults `true`; `action="suspend"` + `lockBeforeSuspend` normalises to
-  `lock_and_suspend` in `normalizeIdleBehaviorAction()`). Time-based, not lid-based.
+  `lock_and_suspend` in `normalizeIdleBehaviorAction()`). Time-based, not lid-based. These fire
+  on AC as well, which is why the skel uses a command rule instead (§ Idle suspends on battery
+  only).
 
 ### The last frame before sleep is what resume shows
 
@@ -986,29 +1003,119 @@ Other constraints:
 First used on 2026-10-20 to try v5.3.0's upstream fix for the resume flash on the laptop
 before merging the bump.
 
-### Two of the three pinned keys are literal defaults — the third is not
+### Lid policy per power source
 
-`config/logind-lid.bst` pins three keys. Verified against the running image
+`config/logind-lid.bst` pins three keys. Values before pinning are from the running image
 (`busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager …`,
 systemd 260):
 
-| Key | Property before pinning | Pinned to | Same value? |
+| Key | Property before pinning | Pinned to | Same as default? |
 |---|---|---|---|
-| `HandleLidSwitch` | `"suspend"` | `suspend` | yes — literal default |
-| `HandleLidSwitchExternalPower` | `""` | `suspend` | **no — was unset** |
-| `HandleLidSwitchDocked` | `"ignore"` | `ignore` | yes — literal default |
+| `HandleLidSwitch` | `"suspend"` | `suspend` | yes |
+| `HandleLidSwitchExternalPower` | `""` | `lock` (was `suspend` until #1774) | **no** |
+| `HandleLidSwitchDocked` | `"ignore"` | `ignore` | yes |
 
-**`HandleLidSwitchExternalPower` reads back empty, not `suspend`.** Since systemd 256 an unset
+**`HandleLidSwitchExternalPower` reads back empty when unset.** Since systemd 256 an unset
 value means *follow `HandleLidSwitch`* rather than carrying a default of its own
-(`man logind.conf`: "If unset, defaults to the value of `HandleLidSwitch`"). Because
-`HandleLidSwitch=suspend` here, pinning it to `suspend` is a no-op on **today's** behaviour — but
-it is a semantic change, not a restatement: the on-AC case is now *declared* instead of *derived*.
-If `HandleLidSwitch` is ever changed to `lock` or `ignore`, the on-AC case will **not** follow it
-any more, and this file must be edited too.
+(`man logind.conf`: "If unset, defaults to the value of `HandleLidSwitch`"). #558 first pinned
+it to `suspend`, which changed nothing. #1774 set it to `lock`, so a laptop on AC keeps running
+with the lid shut. The two keys no longer move together: change `HandleLidSwitch` and the on-AC
+case stays `lock`.
 
-That is the intended trade — the point of the element is that lid policy is a property of this
-image rather than something inherited — but do not read the pinned file as "these are the
-defaults, written down". Only two of the three are.
+**Docked beats external power.** logind checks for a dock or a second display first, so a
+docked laptop on AC takes `HandleLidSwitchDocked=ignore`, not `lock`. `ExternalPower` covers
+only an undocked laptop on its charger. (`button_lid_switch_handle_action()` in
+systemd v260 `src/login/logind-button.c`.)
+
+**While the lid stays shut, logind re-evaluates, but `lock` fires only on the close itself.**
+After a lid close logind installs a post handler, `button_recheck()`, that re-runs the lid
+decision after its event-loop iterations for as long as the lid is closed. It passes
+`is_edge=false`. `manager_handle_action()` (`src/login/logind-action.c`) returns early for
+`HANDLE_LOCK` when `!is_edge`. The suspend path has no such check. So, with the lid already
+shut:
+
+- **Unplug AC:** the recheck picks `HandleLidSwitch=suspend` and the laptop suspends, locking
+  through noctalia first.
+- **Undock or unplug the external display while still on AC:** the recheck picks
+  `HandleLidSwitchExternalPower=lock`, which is ignored on a recheck. The session stays in the
+  state it was in while docked, normally unlocked. Before #1774 this case suspended.
+
+Both come from reading the source and have not been watched on hardware. The recheck only runs
+when logind's loop wakes, so it can lag the unplug. Open the lid, or lock first, before undocking
+a laptop that stays on its charger.
+
+**To check the live values:**
+
+```sh
+busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+  org.freedesktop.login1.Manager \
+  HandleLidSwitch HandleLidSwitchExternalPower HandleLidSwitchDocked
+# expect: s "suspend" / s "lock" / s "ignore"
+```
+
+A drop-in under `/etc/systemd/logind.conf.d/` overrides the image's
+`/usr/lib/systemd/logind.conf.d/20-krytis-lid.conf`. If the values above are wrong after an
+update, look there first. A leftover override from testing is the usual cause.
+
+### Idle suspends on battery only
+
+*Source: #1774. noctalia read at v5.6.0 (`a5444b9a2`).*
+
+The skel (`files/noctalia-skel/settings.toml`) seeds three idle rules for new accounts:
+
+| Rule | Timeout | Action | On AC | On battery |
+|---|---|---|---|---|
+| `lock` | 300 s | `lock` | yes | yes |
+| `screen-off` | 600 s | `screen_off` | yes | yes |
+| `suspend-on-battery` | 900 s | `command`: `/usr/libexec/krytis/idle-suspend-on-battery.sh` | exits | lock and suspend |
+
+**noctalia 5.6.0 has no power-source condition on idle rules.** `IdleBehaviorConfig` holds
+only `enabled`, `timeout`, `locked_timeout`, `action`, `command`, `resume_command` and
+`lock_before_suspend` (`src/config/config_types.h`). A plain `lock_and_suspend` rule would
+also suspend a laptop on its charger. So the third rule is a `command`, and the helper
+(`config/idle-suspend-on-battery.bst`) checks the power source when the rule fires:
+
+- It reads UPower's `OnBattery` with `busctl --system --timeout=3`. Only an exact `b true`
+  suspends, through `noctalia msg session lock-and-suspend`, the same lock-then-suspend path
+  as the session menu.
+- `b false`, a failed or timed-out query, or any other reply exits 0 without suspending.
+  Each outcome logs one line under the `krytis-idle-suspend` tag
+  (`journalctl --user -t krytis-idle-suspend`).
+- Nothing is cached, so plugging in or unplugging before 900 s changes the outcome.
+
+**Write all three rules, not just the new one.** When `settings.toml` defines any
+`[idle.behavior.*]`, noctalia uses only those rules. `defaultIdleBehaviors()` is applied only
+when the list is empty (`config_service.cpp`), so a file that defined only
+`suspend-on-battery` would lose the lock and screen-off steps. `behavior_order` sets the order
+in the settings UI. Each timeout counts from the last input on its own, not from the
+previous rule.
+
+**The pre-action fade also runs before the 900 s rule.** `[idle] pre_action_fade_seconds`
+defaults to 2 s and runs before every rule, including a `command` (`IdleManager::handleIdled()`).
+noctalia then hides the overlay, because a `command` rule never hands off to the lock screen
+(`willLockSession` is false; `initUi` in `src/app/application_ui.cpp`). By 900 s the session has
+been locked since 300 s and the outputs off since 600 s, so the fade should never be seen. niri
+draws only the lock surface while locked (§ The last frame before sleep is what resume shows).
+This is not checked for Umbriel, and neither is whether an overlay commit can power an output
+back on. Check on hardware that an off panel stays dark through the 900 s mark on AC. A VM has
+no panel power state to watch.
+
+**Existing accounts don't get the new rules.** The skel is copied only when an account is
+created (§ noctalia config paths — no /etc fallback, unlike niri), so an update leaves an
+existing `settings.toml` as it is. The image ships the helper on every install, so an existing
+account can opt in. In `~/.local/state/noctalia/settings.toml`, under `[idle]`:
+
+1. Disable or delete any rule with `action = "lock_and_suspend"` or `action = "suspend"`. It
+   still fires on AC. noctalia's own `lock-and-suspend` default (900 s) is disabled unless you
+   turned it on.
+2. Add the `[idle.behavior.suspend-on-battery]` block from the skel, and add
+   `"suspend-on-battery"` to `behavior_order`.
+3. Keep your `lock` and `screen-off` rules. Add them from the skel if the file has none.
+
+The settings window makes the same change under Power, in the idle group: a rule of kind
+"Custom" with that command and a 900 s timeout. noctalia reloads the file, so a restart isn't needed. The logind drop-in needs no
+opt-in. It applies on the next boot of the updated image, unless an `/etc` drop-in overrides
+it (§ Lid policy per power source).
 
 ### Knobs deliberately left at their defaults
 

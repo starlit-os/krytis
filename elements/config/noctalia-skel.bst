@@ -10,6 +10,12 @@ kind: manual
 # first-run setup wizard. settings.toml is a partial override; noctalia
 # merges missing keys against its own built-in defaults.
 #
+# The [idle] rules (lock 300 s, screen off 600 s, suspend at 900 s on battery
+# only) call /usr/libexec/krytis/idle-suspend-on-battery.sh, shipped by
+# config/idle-suspend-on-battery.bst. Defining any rule replaces noctalia's
+# default rules, so all three are listed. See docs/skills/desktop.md § Idle
+# suspends on battery only.
+#
 # community-palettes/*.json ships the referenced community palette locally
 # so theme resolution doesn't depend on network on first login. noctalia
 # names these files by percent-encoding the palette name (spaces -> %20) —
