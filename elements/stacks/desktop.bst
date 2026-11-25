@@ -39,6 +39,9 @@ depends:
   # battery_discharging / battery_charging. Opt-in -- ships the script only,
   # doesn't enable anything by default. See docs/design/power-profile-auto-switch.md.
   - config/battery-power-profile-hook.bst
+  # Battery-only idle suspend helper, called by the 15-minute idle rule in
+  # noctalia-skel. Exits without suspending on AC (#1774).
+  - config/idle-suspend-on-battery.bst
 
   # ── Terminal ────────────────────────────────────────────────────────────
   - desktop/ghostty.bst
