@@ -13,14 +13,14 @@ url = "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_
 url_api = "https://api.github.com/repos/sharkdp/bat/releases/assets/323549181"
 
 [[tools.cosign]]
-version = "3.1.4"
+version = "3.1.5"
 backend = "aqua:sigstore/cosign"
-specifiers = ["3.1.4"]
+specifiers = ["3.1.5"]
 
 [tools.cosign."platforms.linux-x64"]
-checksum = "sha256:424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
-url = "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64"
-url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/660069428"
+checksum = "sha256:912502def4baf810eaf36b210a4f51e1da214f9f6d664e2a9a2154cfc67ee0d6"
+url = "https://github.com/sigstore/cosign/releases/download/v3.1.5/cosign-linux-amd64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/787764286"
 provenance = "cosign"
 
 [[tools.fnox]]
