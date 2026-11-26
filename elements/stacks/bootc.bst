@@ -18,5 +18,8 @@ depends:
   # Masks systemd-pcrlock-make-policy.service. Its NV-index policy goes stale
   # on the first firmware update and fails every measured-UKI boot (#1584).
   - config/pcrlock-policy-mask.bst
+  # Masks the systemd-sysupdate timers. bootc does the updates, no sysupdate.d
+  # transfers ship, and the reboot unit fails every run (#1794).
+  - config/sysupdate-timer-mask.bst
   # Refuses ghcr.io/starlit-os/krytis images without the static-key signature (#418).
   - config/container-sigpolicy.bst

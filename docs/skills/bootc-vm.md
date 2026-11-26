@@ -49,6 +49,14 @@ Consequences worth designing around:
 
 The merge runs at *finalize* time (shutdown, or `bootc upgrade --apply`), not at stage time — a download-only staged deployment hasn't merged yet.
 
+## A systemd unit that no preset names is enabled: check `timers.target.wants` (#1794)
+
+`systemctl preset-all` enables every unit that has an `[Install]` section and that no preset file names, so it enables anything that `90-systemd.preset` and the `7x-krytis-*.preset` files leave out. That is how the image's own `/etc/systemd/system/timers.target.wants/` came to link `systemd-sysupdate-update.timer` and `systemd-sysupdate-reboot.timer` (symlinks dated 2011-11-11, the build epoch). krytis updates through bootc and ships no `sysupdate.d` transfers, so `systemd-sysupdate-reboot.service` exited 1 with `No transfer definitions found.` every time its timer fired, and left adora `degraded` (30 failures from 2026-09-07 to 2026-11-26). It surfaced only when #1713 checked `systemctl is-system-running` on hardware.
+
+- **Fix an unwanted unit like this with a mask in `/etc`** (`config/sysupdate-timer-mask.bst`, like `config/networkd-mask.bst`). A `disable` line in a preset only changes fresh `preset-all` runs. Installed machines keep their wants symlinks, and the symlink is pristine image content, so whether the bootc merge drops it depends on the new image no longer shipping it. The mask reaches them through the `/etc` merge above, and a wants symlink to a masked unit pulls in nothing.
+- **Find candidates on a live machine** with `systemctl list-unit-files --state=enabled` and look for units with nothing to do. `systemctl --failed` shows only the ones that fail. `systemd-sysupdate-update.service` exits 0 on the same empty config, so it never shows up there.
+- **`boot-test` can't see a failure that comes from a timer.** The reboot timer fires at a calendar time, long after the VM has shut down. So `mise/tasks/boot-test` checks that both timers are `masked` instead of waiting for them to fail.
+
 ## `/etc` and `/var` need the `rw` karg
 
 *Fixed in #396. Symptom set is broad — recognise it fast.*
