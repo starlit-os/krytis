@@ -201,6 +201,41 @@ bootc documents this flow (`bootc install` man page, "Secure Boot Keys" section)
 | `mokutil --import` | Not in fdsdk junction (would need new element). Interactive prompt at first boot. Not bootc-integrated. |
 | `sbctl enroll-keys` | Not in fdsdk junction (would need new element). Manual command from running system. Not bootc-integrated. |
 
+#### Additive enrollment investigation (#1364)
+
+**Recommendation for the Design and Security Gates:** pursue merging in Setup
+Mode (A), subject to the OEM firmware check in #536. Krytis retains its PK,
+sealed UKI, and existing key rotation and dbx append paths. Preserving OEM and
+Microsoft KEKs delegates authority to those holders to update db and dbx,
+including Microsoft-signed dbx servicing. The enrolled db also inherits the
+machine's existing trust, and dbx retains its existing revocations. Capture the
+live KEK, db and dbx before entering Setup Mode. Firmware defaults may survive
+a reset, but they can omit updates applied after manufacture.
+
+**A, VM result.** On QEMU 10.2.4 with Secure Boot-capable OVMF, the sealed
+image's systemd-boot enrolled a manually selected `loader/keys/merged/` set.
+The fixture appended a distinct synthetic OEM certificate to each shipped
+KEK, db and dbx list. An unrelated throwaway key signed those three AUTH_2
+updates, and the fixture reused the shipped PK.auth. The enrolled lists
+matched the input payloads byte for byte (2,096, 9,722 and 24,137 bytes).
+OVMF enabled Secure Boot and restarted the signed loader. A subsequent boot
+using the same enrolled varstore refused an unsigned copy of that loader.
+This confirms enrollment and enforcement on this OVMF build. An OEM run still
+needs to verify the pre-reset capture and post-enrollment results on hardware.
+
+**B, VM result.** Fedora shim 16.1-7 booted Krytis's signed systemd-boot and
+sealed UKI into dracut when the Krytis db certificate was present in MokList.
+With the MOK absent, shim refused systemd-boot. With the MOK present and only
+the UKI signature removed, systemd-boot reported a security violation loading
+the UKI. PK, KEK, db and dbx were byte-identical to the starting Microsoft-key
+OVMF fixture in all three runs. The fixture seeded MokList directly, used a
+placeholder dbx, and had only an ESP attached. MokManager enrollment, current
+OEM revocation state and the installed root were outside this VM test.
+Krytis would take on shim and SBAT updates and inherit the Fedora vendor
+certificate's trust. Its firmware dbx append path would also lose the Krytis
+KEK it requires. That cost makes A the preferred path for preserving the
+current architecture.
+
 ### 4. CI signing strategy: prerequisite for registry publishes — **shipped (#448, #450)**
 
 **CI signing is a hard prerequisite for publishing to a registry that secure-boot users track.** If CI publishes unsigned images, a secure-boot user who runs `bootc upgrade` pulls an unsigned UKI → firmware rejects it → unbootable. This is not a "future nicety" — it's required from day one.
