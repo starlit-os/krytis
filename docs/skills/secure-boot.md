@@ -1034,6 +1034,20 @@ thing that ships:
   asserts the firmware trusts the loader *after* enrolling the image's own keys.
   8 seconds. This is the gate #309 never had.
 
+### Test enrollment and shim verification at each boot stage (#1364)
+
+Use a pristine OVMF varstore for enrollment, then reuse the enrolled copy with
+an unsigned loader to show that the firmware enforces the new db. Compare the
+enrolled KEK, db and dbx payloads against the input lists using
+`virt-fw-vars --output-json`. A nonempty variable can still be missing entries.
+
+For a shim experiment, put the test certificate in MokList via
+`virt-fw-vars --add-mok` and keep it out of the firmware db. Use two controls.
+Boot without the MOK to check shim's rejection of the loader. Then restore
+the MOK and remove only the UKI signature to check rejection at the second
+image load. An ESP-only boot reaching dracut demonstrates that the UKI ran.
+The installed-root and MokManager flows need their own tests.
+
 ### `secure-boot-enroll manual` works — but not on the first boot after install
 
 An earlier revision of this section claimed `manual` "does not prevent it". That was
