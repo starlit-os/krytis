@@ -49,6 +49,14 @@ Consequences worth designing around:
 
 The merge runs at *finalize* time (shutdown, or `bootc upgrade --apply`), not at stage time — a download-only staged deployment hasn't merged yet.
 
+## A systemd unit that no preset rule matches is enabled: check `timers.target.wants` (#1794)
+
+`systemctl preset-all` enables every unit that has an `[Install]` section and that no preset rule matches (systemd v262.2 `src/shared/install.c` falls back to enable). A wildcard such as `disable systemd-journal-remote.*` counts as a match, so check the globs too before concluding a unit is covered. That is how the image's own `/etc/systemd/system/timers.target.wants/` came to link `systemd-sysupdate-update.timer` and `systemd-sysupdate-reboot.timer` (symlinks dated 2011-11-11, the build epoch). krytis updates through bootc and ships no `sysupdate.d` transfers, so `systemd-sysupdate-reboot.service` exited 1 with `No transfer definitions found.` every time its timer fired, and left adora `degraded` (30 failures from 2026-09-07 to 2026-11-26). It surfaced only when #1713 checked `systemctl is-system-running` on hardware.
+
+- **Fix an unwanted unit like this with a mask in `/etc`** (`config/sysupdate-timer-mask.bst`, like `config/networkd-mask.bst`). A `disable` preset applied at image build would also work on unmodified installs: it drops the wants symlink from the new image's `/etc`, the old symlink is pristine image content, and bootc carries that removal onto the install (§ `/etc` changes DO reach existing deployments on `bootc upgrade`). It misses any wants symlink a machine has changed or re-created locally, because the merge keeps that. The mask covers both cases: it reaches every install through the same merge, and a wants symlink that survives points at a masked unit and pulls in nothing.
+- **Find candidates on a live machine** with `systemctl list-unit-files --state=enabled` and look for units with nothing to do. `systemctl --failed` shows only the ones that fail. `systemd-sysupdate-update.service` exits 0 on the same empty config, so it never shows up there.
+- **`boot-test` can't see a failure that comes from a timer.** The reboot timer fires at a calendar time, long after the VM has shut down. So `mise/tasks/boot-test` checks that both timers are `masked` instead of waiting for them to fail.
+
 ## `/etc` and `/var` need the `rw` karg
 
 *Fixed in #396. Symptom set is broad — recognise it fast.*

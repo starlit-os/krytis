@@ -772,6 +772,21 @@ else
     FAILED=1
 fi
 
+# The systemd-sysupdate timers ship masked (#1794). No preset names them, so
+# preset-all enables them. krytis has no sysupdate.d transfers, so
+# systemd-sysupdate-reboot.service fails every time its timer fires and leaves
+# the system degraded. The reboot timer fires at a calendar time, so a
+# boot-test VM never lives long enough to see that failure. Assert the mask
+# instead.
+SU_UPDATE=$(SSH systemctl is-enabled systemd-sysupdate-update.timer 2>/dev/null || true)
+SU_REBOOT=$(SSH systemctl is-enabled systemd-sysupdate-reboot.timer 2>/dev/null || true)
+if [ "${SU_UPDATE}" = "masked" ] && [ "${SU_REBOOT}" = "masked" ]; then
+    echo "    systemd-sysupdate timers are masked"
+else
+    echo "    FAIL: systemd-sysupdate timers must be masked (#1794; config/sysupdate-timer-mask.bst): update=${SU_UPDATE:-<none>} reboot=${SU_REBOOT:-<none>}" >&2
+    FAILED=1
+fi
+
 # systemd must not reset the clock to its epoch (#1595). PID 1 checks twice,
 # in the initrd and again after switch-root, and either check can reset it.
 # With BuildStream's 2011 timestamp as the epoch, every boot from 2026-11-11

@@ -91,6 +91,7 @@ element does, its row's text is a review question.
 | `config/bootc.bst` | bootc install config, kargs (root rw, plymouth, FIDO2 LUKS) and `prepare-root.conf`. |
 | `config/secureboot-loader-conf.bst` | First-boot oneshot that makes systemd-boot auto-enroll secure-boot keys on real hardware. |
 | `config/pcrlock-policy-mask.bst` | Masks `systemd-pcrlock-make-policy.service`, whose TPM NV-index policy goes stale on the first firmware update and fails every measured-UKI boot (#1584). |
+| `config/sysupdate-timer-mask.bst` | Masks the `systemd-sysupdate-update` and `-reboot` timers. bootc does the updates and no `sysupdate.d` transfers ship, so the reboot unit failed on every run (#1794). |
 | `config/container-sigpolicy.bst` | Container signature policy: `bootc` refuses `ghcr.io/starlit-os/krytis` images without the static-key signature (#418). Replaces fdsdk's accept-all `/etc/containers/policy.json`. |
 
 #### `stacks/codecs.bst`
