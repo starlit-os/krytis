@@ -10,8 +10,8 @@ depends:
 
 sources:
 - kind: tar
-  url: github_files:Kistler-Group/sdbus-cpp/archive/refs/tags/v2.3.1.tar.gz
-  ref: 3a289eded586c26d06c1387de72c7bf7c809527a70d51ba6401fe61059b19626
+  url: github_files:Kistler-Group/sdbus-cpp/archive/refs/tags/v2.4.0.tar.gz
+  ref: 83aa631f6a51646ef3e7b12bb0d2705ae2059ae96c593d493621f27da46338ec
 
 variables:
   cmake-local: >-
