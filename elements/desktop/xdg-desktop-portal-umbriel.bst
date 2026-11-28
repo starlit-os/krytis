@@ -94,4 +94,4 @@ sources:
 - kind: git_repo
   url: github:noctalia-dev/xdg-desktop-portal-umbriel.git
   track: refs/heads/main
-  ref: 426d3d433d5a738d4abf01474c34487f884396ae
+  ref: da68a4376cd69595ac2fe439ec8c773e3bed0204
